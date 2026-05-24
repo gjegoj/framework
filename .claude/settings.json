@@ -1,0 +1,12 @@
+{
+  "enabledPlugins": {
+    "superpowers@claude-plugins-official": true,
+    "claude-md-management@claude-plugins-official": true,
+    "commit-commands@claude-plugins-official": true,
+    "skill-creator@claude-plugins-official": true,
+    "context-mode@context-mode": true,
+    "claude-mem@thedotmack": true,
+    "code-craftsmanship@wondelai-skills": true,
+    "systems-architecture@wondelai-skills": true
+  }
+}
