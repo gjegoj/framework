@@ -1,0 +1,36 @@
+# @package _global_
+# Minimal offline smoke: synthetic 64×64 images, 2 epochs, CPU.
+# Run: make smoke  (generates data then trains)
+
+project: smoke-classification
+seed: 0
+epochs: 2
+batch_size: 4
+image_size: [64, 64]
+
+data:
+  source: data/smoke/data.csv
+  image_column: image_path
+  split:
+    train: 0.7
+    val: 0.15
+    test: 0.15
+
+tasks:
+  label:
+    preset: classification
+    target: label
+    # Config-driven bricks (M1.9): loss params + named metric collection, no code.
+    loss: {name: cross_entropy, label_smoothing: 0.05}
+    metrics:
+      accuracy: {top_k: 1}
+      macro_f1: {name: f1, average: macro}
+      precision: {average: macro}
+
+trainer:
+  accelerator: cpu
+  devices: 1
+  precision: 32-true
+  log_every_n_steps: 1
+  enable_checkpointing: false
+  logger: false

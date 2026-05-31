@@ -1,6 +1,7 @@
 """Metrics: torchmetrics adapters and builders behind the ``MetricSet`` port."""
 
 from src.metrics.adapter import TorchMetricsAdapter
-from src.metrics.builders import build_classification_metrics
+from src.metrics.builders import build_metric_set
+from src.metrics.registry import metric_factories
 
-__all__ = ["TorchMetricsAdapter", "build_classification_metrics"]
+__all__ = ["TorchMetricsAdapter", "build_metric_set", "metric_factories"]

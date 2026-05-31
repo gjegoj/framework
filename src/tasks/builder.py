@@ -11,6 +11,8 @@ from collections.abc import Sequence
 
 from src.core.entities import Task
 from src.core.enums import Stage
+from src.core.instantiate import BrickSpec
+from src.metrics.builders import MetricsSpec
 from src.tasks.strategies.objective import ObjectiveStrategy
 from src.tasks.strategies.topology import TopologyStrategy
 
@@ -35,6 +37,8 @@ class TaskBuilder:
         num_classes: int,
         weight: float = 1.0,
         stages: Sequence[Stage] = DEFAULT_STAGES,
+        loss_spec: BrickSpec | None = None,
+        metrics_spec: MetricsSpec | None = None,
     ) -> Task:
         """Build a task; raise if the topology/objective combination is invalid.
 
@@ -43,6 +47,8 @@ class TaskBuilder:
             num_classes (int): Class count (drives head size and metrics).
             weight (float): Weight in the aggregated loss.
             stages (Sequence[Stage]): Stages to build metric sets for.
+            loss_spec (BrickSpec | None): YAML ``loss:`` override; ``None`` -> objective default.
+            metrics_spec (MetricsSpec | None): YAML ``metrics:`` override; ``None`` -> default.
 
         Returns:
             Task: The assembled task bundle.
@@ -58,12 +64,12 @@ class TaskBuilder:
 
         out_features = self._objective.out_features(num_classes)
         head_spec = self._topology.head_spec(out_features)
-        metrics = {stage: self._objective.build_metrics(num_classes) for stage in stages}
+        metrics = {stage: self._objective.build_metrics(num_classes, metrics_spec) for stage in stages}
         return Task(
             name=name,
             head_spec=head_spec,
             codec=self._objective.build_task_codec(),
-            criterion=self._objective.build_criterion(),
+            criterion=self._objective.build_criterion(loss_spec),
             activation=self._objective.build_activation(),
             metrics=metrics,
             weight=weight,

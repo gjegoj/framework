@@ -6,31 +6,15 @@ Heavy I/O (image read, mask decode) runs here, inside DataLoader workers.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
 
 import pandas as pd
 from torch.utils.data import Dataset as TorchDataset
 
 from src.core.entities import Sample
-from src.data.codecs import TargetCodec
+from src.data.bindings import TargetBinding
 from src.data.loaders import ImageLoader
 from src.data.transforms import IMAGE_KEY, Transform
-
-
-@dataclass(frozen=True)
-class TargetBinding:
-    """Binds a task to the data column and codec that produce its target.
-
-    Parameters:
-        name (str): Task name; also the key under which the target is stored.
-        column (str): Source column in the DataFrame.
-        codec (TargetCodec): Codec that decodes the raw column value.
-    """
-
-    name: str
-    column: str
-    codec: TargetCodec
 
 
 class Dataset(TorchDataset[Sample]):

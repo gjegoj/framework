@@ -17,7 +17,8 @@ from torch.utils.data import DataLoader
 from src.core.enums import Stage
 from src.core.runtime import RuntimeContext
 from src.data.collate import collate_samples
-from src.data.dataset import Dataset, TargetBinding
+from src.data.bindings import TargetBinding
+from src.data.dataset import Dataset
 from src.data.loaders import ImageLoader
 from src.data.sources import DataSource
 from src.data.split import split_dataframe
@@ -90,17 +91,18 @@ class DataModule:
             )
             self._runtime.dataset_sizes[stage] = len(self._datasets[stage])
 
-    def _dataloader(self, stage: Stage, *, shuffle: bool) -> DataLoader:
+    def _dataloader(self, stage: Stage, *, shuffle: bool, drop_last: bool = False) -> DataLoader:
         return DataLoader(
             self._datasets[stage],
             batch_size=self._batch_size,
             shuffle=shuffle,
             num_workers=self._num_workers,
             collate_fn=collate_samples,
+            drop_last=drop_last,
         )
 
     def train_dataloader(self) -> DataLoader:
-        return self._dataloader(Stage.TRAIN, shuffle=True)
+        return self._dataloader(Stage.TRAIN, shuffle=True, drop_last=True)
 
     def val_dataloader(self) -> DataLoader:
         return self._dataloader(Stage.VAL, shuffle=False)

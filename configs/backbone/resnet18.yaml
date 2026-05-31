@@ -1,0 +1,3 @@
+kind: timm
+name: resnet18
+pretrained: false    # set true for production; false keeps smoke offline

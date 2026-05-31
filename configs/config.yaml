@@ -1,0 +1,29 @@
+defaults:
+  - backbone: resnet18
+  - optimizer: adamw
+  - experiment: m2_smoke
+  - _self_
+
+project: my-project
+seed: 42
+epochs: 10
+batch_size: 16
+image_size: [224, 224]
+mean: [0.485, 0.456, 0.406]
+std: [0.229, 0.224, 0.225]
+
+data:
+  source: ???          # required: path(s) to CSV/JSON annotation file
+  image_column: image_path
+  split:
+    train: 0.8
+    val: 0.1
+    test: 0.1
+
+tasks: {}              # override in experiment config
+
+trainer:
+  accelerator: auto
+  devices: auto
+  precision: 32-true
+  log_every_n_steps: 10

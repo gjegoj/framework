@@ -56,6 +56,24 @@ class TestValidConfig:
         assert extra is not None
         assert extra["head"]["hidden"] == 256
 
+    def test_loss_and_metrics_specs_parse(self) -> None:
+        raw = _raw()
+        raw["tasks"]["label"]["loss"] = {"name": "cross_entropy", "label_smoothing": 0.1}
+        raw["tasks"]["label"]["metrics"] = {"accuracy": {"top_k": 1}, "f1": None}
+        cfg = load_config(raw)
+        task = cfg.tasks["label"]
+        assert task.loss == {"name": "cross_entropy", "label_smoothing": 0.1}
+        assert task.metrics is not None
+        assert task.metrics["accuracy"] == {"top_k": 1}
+        assert task.metrics["f1"] is None
+
+    def test_optimizer_extra_kwargs_preserved(self) -> None:
+        raw = _raw()
+        raw["optimizer"] = {"name": "sgd", "lr": 1e-2, "momentum": 0.9}
+        cfg = load_config(raw)
+        extra = cfg.optimizer.model_extra
+        assert extra is not None and extra["momentum"] == 0.9
+
 
 class TestInvalidConfig:
     def test_split_must_sum_to_one(self) -> None:

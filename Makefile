@@ -1,4 +1,4 @@
-.PHONY: help install pre-commit clean test test-unit typecheck check
+.PHONY: help install pre-commit clean test test-unit typecheck check generate-smoke smoke
 
 
 help: ## Show help
@@ -31,3 +31,9 @@ typecheck: ## Run mypy static analysis
 	uv run mypy src tests
 
 check: typecheck test ## Run type checks and tests
+
+generate-smoke: ## Generate synthetic smoke dataset in data/smoke/
+	uv run python scripts/generate_smoke_data.py
+
+smoke: generate-smoke ## Run 2-epoch offline smoke training (CPU, no pretrained weights)
+	uv run python main.py

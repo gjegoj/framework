@@ -9,10 +9,14 @@ import pytest
 
 from src.core.enums import Stage
 from src.core.runtime import RuntimeContext
+import torch
+
 from src.data import (
     CsvDataSource,
     DataModule,
+    FloatCodec,
     LabelIndexCodec,
+    MultiLabelBinarizeCodec,
     TargetBinding,
     build_basic_transform,
     collate_samples,
@@ -69,6 +73,81 @@ class TestLabelIndexCodec:
         codec = LabelIndexCodec(class_mapping={0: "a", 1: "b"})
         codec.fit(["a", "a", "a"])  # no-op
         assert codec.num_classes == 2
+
+
+class TestMultiLabelBinarizeCodec:
+    def test_fit_builds_sorted_vocab(self) -> None:
+        codec = MultiLabelBinarizeCodec()
+        codec.fit(["cat,dog", "dog,cow", "cat"])
+        assert codec.num_classes == 3
+        assert codec.class_mapping == {0: "cat", 1: "cow", 2: "dog"}
+
+    def test_encode_multihot(self) -> None:
+        codec = MultiLabelBinarizeCodec()
+        codec.fit(["cat,dog", "cow"])
+        vec = codec.encode("cat,cow")
+        assert vec.dtype == torch.float
+        assert vec.shape == (3,)
+        assert vec[codec.class_mapping[0] == "cat" and 0 or list(codec.class_mapping.values()).index("cat")].item() == 1.0
+
+    def test_encode_multihot_correct_positions(self) -> None:
+        codec = MultiLabelBinarizeCodec()
+        codec.fit(["a,b,c"])
+        # sorted vocab: a=0, b=1, c=2
+        vec = codec.encode("a,c")
+        assert vec.tolist() == [1.0, 0.0, 1.0]
+
+    def test_separator_param(self) -> None:
+        codec = MultiLabelBinarizeCodec(separator="|")
+        codec.fit(["x|y", "z"])
+        assert codec.num_classes == 3
+
+    def test_unknown_label_raises(self) -> None:
+        codec = MultiLabelBinarizeCodec()
+        codec.fit(["cat,dog"])
+        with pytest.raises(KeyError, match="Unknown label"):
+            codec.encode("cat,fish")
+
+    def test_fixed_mapping_skips_fit(self) -> None:
+        codec = MultiLabelBinarizeCodec(class_mapping={0: "a", 1: "b"})
+        codec.fit(["a,b,c"])  # no-op — c would be a new class but mapping is fixed
+        assert codec.num_classes == 2
+
+
+class TestFloatCodec:
+    def test_encode_scalar(self) -> None:
+        codec = FloatCodec()
+        codec.fit([1.0, 2.5, 3.0])
+        t = codec.encode("2.5")
+        assert t.dtype == torch.float
+        assert t.ndim == 0
+        assert t.item() == pytest.approx(2.5)
+
+    def test_num_classes_is_none(self) -> None:
+        codec = FloatCodec()
+        codec.fit([1, 2, 3])
+        assert codec.num_classes is None
+
+
+class TestTaskCodecs:
+    def test_binary_codec_shapes(self) -> None:
+        from src.tasks.codecs import BinaryTaskCodec
+        view = BinaryTaskCodec().adapt(torch.tensor([0, 1, 1, 0]))
+        assert view.loss.shape == (4, 1) and view.loss.dtype == torch.float
+        assert view.metric.shape == (4, 1) and view.metric.dtype == torch.long
+
+    def test_multilabel_codec_shapes(self) -> None:
+        from src.tasks.codecs import MultilabelTaskCodec
+        target = torch.tensor([[1, 0, 1], [0, 1, 0]], dtype=torch.float)
+        view = MultilabelTaskCodec().adapt(target)
+        assert view.loss.dtype == torch.float
+        assert view.metric.dtype == torch.long
+
+    def test_continuous_codec_shapes(self) -> None:
+        from src.tasks.codecs import ContinuousTaskCodec
+        view = ContinuousTaskCodec().adapt(torch.tensor([1.5, 2.3, 0.1]))
+        assert view.loss.shape == (3, 1) and view.loss.dtype == torch.float
+        assert view.metric.shape == (3, 1) and view.metric.dtype == torch.float
 
 
 class TestSplit:

@@ -46,6 +46,24 @@ class Registry[T]:
 
         return decorator
 
+    def register_instance(self, key: str, instance: T) -> None:
+        """Register a ready-made singleton (a value/strategy registry).
+
+        Unlike ``register`` (which stores a *factory*), this stores a single
+        prebuilt object; ``create(key)`` and ``get(key)()`` both return it as-is.
+        Use for components that are configured once and shared, such as task presets.
+
+        Parameters:
+            key (str): Lookup key; must be unique within this registry.
+            instance (T): The object to return whenever ``key`` is requested.
+
+        Raises:
+            ValueError: If ``key`` is already registered.
+        """
+        if key in self._factories:
+            raise ValueError(f"{self._name}: key {key!r} is already registered.")
+        self._factories[key] = lambda *_args, **_kwargs: instance
+
     def get(self, key: str) -> Callable[..., T]:
         """Return the constructor registered under ``key``.
 

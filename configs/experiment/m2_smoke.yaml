@@ -1,0 +1,45 @@
+# @package _global_
+# M2 smoke: 4-task run (multiclass + binary + multilabel + regression) on CPU.
+# Validates that all new objective axes wire end-to-end without code changes.
+
+project: smoke-m2
+seed: 0
+epochs: 2
+batch_size: 4
+image_size: [64, 64]
+
+data:
+  source: data/smoke/data.csv
+  image_column: image_path
+  split:
+    train: 0.7
+    val: 0.15
+    test: 0.15
+
+tasks:
+  label:
+    preset: classification          # GLOBAL × multiclass (M1 baseline)
+    target: label
+
+  is_cat:
+    preset: classification          # GLOBAL × binary
+    target: binary_label
+    objective: binary
+
+  tags:
+    preset: classification          # GLOBAL × multilabel
+    target: tags
+    objective: multilabel
+
+  score:
+    preset: regression              # GLOBAL × continuous (scalar)
+    target: value
+    dim: 1
+
+trainer:
+  accelerator: cpu
+  devices: 1
+  precision: 32-true
+  log_every_n_steps: 1
+  enable_checkpointing: false
+  logger: false
