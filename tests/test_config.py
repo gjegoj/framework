@@ -1,0 +1,89 @@
+"""Unit tests for the experiment config schema and loader."""
+
+from typing import Any
+
+import pytest
+
+from src.config import ConfigError, ExperimentConfig, load_config
+
+
+def _raw(**overrides: Any) -> dict[str, Any]:
+    """Return a minimal valid raw config, with optional top-level overrides."""
+    base: dict[str, Any] = {
+        "project": "demo",
+        "epochs": 5,
+        "batch_size": 8,
+        "image_size": [224, 224],
+        "data": {
+            "source": "data/classification.csv",
+            "image_column": "image_path",
+            "split": {"train": 0.8, "val": 0.1, "test": 0.1},
+        },
+        "backbone": {"name": "resnet18"},
+        "optimizer": {"lr": 1e-3},
+        "tasks": {"label": {"preset": "classification", "target": "label"}},
+    }
+    base.update(overrides)
+    return base
+
+
+class TestValidConfig:
+    def test_minimal_config_builds(self) -> None:
+        cfg = load_config(_raw())
+        assert isinstance(cfg, ExperimentConfig)
+        assert cfg.project == "demo"
+        assert cfg.image_size == (224, 224)  # list coerced to tuple
+        assert cfg.seed == 42  # default
+        assert cfg.mean == [0.485, 0.456, 0.406]  # ImageNet default
+        assert cfg.backbone.kind == "timm"  # default
+
+    def test_num_classes_inferred_by_default(self) -> None:
+        cfg = load_config(_raw())
+        assert cfg.tasks["label"].num_classes is None  # => infer from data
+
+    def test_per_head_optimizer_override(self) -> None:
+        raw = _raw()
+        raw["tasks"]["label"]["optimizer"] = {"lr": 1e-4}
+        cfg = load_config(raw)
+        assert cfg.tasks["label"].optimizer is not None
+        assert cfg.tasks["label"].optimizer.lr == 1e-4
+
+    def test_task_extra_keys_preserved(self) -> None:
+        raw = _raw()
+        raw["tasks"]["label"]["head"] = {"_target_": "my.Head", "hidden": 256}
+        cfg = load_config(raw)
+        extra = cfg.tasks["label"].model_extra
+        assert extra is not None
+        assert extra["head"]["hidden"] == 256
+
+
+class TestInvalidConfig:
+    def test_split_must_sum_to_one(self) -> None:
+        with pytest.raises(ConfigError, match="sum to 1.0"):
+            load_config(_raw(data={
+                "source": "d.csv", "image_column": "p",
+                "split": {"train": 0.5, "val": 0.1, "test": 0.1},
+            }))
+
+    def test_split_rejects_predict(self) -> None:
+        with pytest.raises(ConfigError, match="train/val/test"):
+            load_config(_raw(data={
+                "source": "d.csv", "image_column": "p",
+                "split": {"train": 0.5, "predict": 0.5},
+            }))
+
+    def test_image_size_must_be_positive(self) -> None:
+        with pytest.raises(ConfigError, match="must be positive"):
+            load_config(_raw(image_size=[0, 224]))
+
+    def test_tasks_cannot_be_empty(self) -> None:
+        with pytest.raises(ConfigError):
+            load_config(_raw(tasks={}))
+
+    def test_unknown_top_level_key_rejected(self) -> None:
+        with pytest.raises(ConfigError):
+            load_config(_raw(unexpected="oops"))
+
+    def test_non_positive_lr_rejected(self) -> None:
+        with pytest.raises(ConfigError):
+            load_config(_raw(optimizer={"lr": 0.0}))

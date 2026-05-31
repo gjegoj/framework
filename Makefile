@@ -1,4 +1,4 @@
-.PHONY: help install pre-commit clean test
+.PHONY: help install pre-commit clean test test-unit typecheck check
 
 
 help: ## Show help
@@ -24,3 +24,10 @@ clean: ## Clean cache and temporary files
 test: ## Run all tests
 	uv run pytest tests/ -v
 
+test-unit: ## Run unit tests (exclude slow)
+	uv run pytest tests/ -v -m "not slow"
+
+typecheck: ## Run mypy static analysis
+	uv run mypy src tests
+
+check: typecheck test ## Run type checks and tests

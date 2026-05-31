@@ -1,4 +1,12 @@
 {
+  "permissions": {
+    "allow": [
+      "Bash(uv add *)",
+      "Bash(make test *)",
+      "Bash(uv run *)",
+      "Bash(make typecheck *)"
+    ]
+  },
   "enabledPlugins": {
     "superpowers@claude-plugins-official": true,
     "claude-md-management@claude-plugins-official": true,
