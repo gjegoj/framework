@@ -6,4 +6,10 @@ from src.training.module import LitModule
 from src.training.optimizer import OptimizerBuilder
 from src.training.registry import optimizers
 
-__all__ = ["LitDataModule", "LitModule", "OptimizerBuilder", "WeightedSumAggregator", "optimizers"]
+__all__ = [
+    "LitDataModule",
+    "LitModule",
+    "OptimizerBuilder",
+    "WeightedSumAggregator",
+    "optimizers",
+]

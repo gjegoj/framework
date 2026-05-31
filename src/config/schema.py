@@ -83,17 +83,24 @@ class TaskConfig(BaseModel):
     target: str = Field(..., description="Target column in the data source.")
     objective: str | None = Field(None, description="Override: binary/multiclass/multilabel/continuous.")
     num_classes: int | None = Field(None, gt=0, description="Class count; inferred from data if omitted.")
-    dim: int | None = Field(None, gt=0, description="Output dimension for regression (replaces num_classes).")
+    dim: int | None = Field(
+        None,
+        gt=0,
+        description="Output dimension for regression (replaces num_classes).",
+    )
     weight: float = Field(1.0, gt=0, description="Weight of this task in the total loss.")
     optimizer: OptimizerConfig | None = Field(None, description="Per-head optimizer override (own LR).")
     loss: str | dict[str, Any] | None = Field(
-        None, description="Loss override: registry key, {name/_target_ + params}; None -> objective default."
+        None,
+        description="Loss override: registry key, {name/_target_ + params}; None -> objective default.",
     )
     metrics: dict[str, dict[str, Any] | None] | None = Field(
-        None, description="Metric specs by label: {label: {params}}; None -> objective default."
+        None,
+        description="Metric specs by label: {label: {params}}; None -> objective default.",
     )
     target_codec: str | dict[str, Any] | None = Field(
-        None, description="Data-codec override: registry key or {name/_target_ + params}; None -> inferred from objective."
+        None,
+        description="Data-codec override: registry key or {name/_target_ + params}; None -> inferred from objective.",
     )
 
     model_config = ConfigDict(extra="allow")

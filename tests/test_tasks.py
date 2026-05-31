@@ -5,7 +5,12 @@ import torch
 
 from src.core.entities import HeadSpec, Task
 from src.core.enums import Stage
-from src.losses.criterion import BCEWithLogitsCriterion, CrossEntropyCriterion, L1Criterion, MSECriterion
+from src.losses.criterion import (
+    BCEWithLogitsCriterion,
+    CrossEntropyCriterion,
+    L1Criterion,
+    MSECriterion,
+)
 from src.metrics.builders import build_metric_set
 from src.tasks import (
     BinaryObjective,
@@ -177,12 +182,14 @@ class TestTaskBuilder:
 class TestRegressionPreset:
     def test_regression_builds_continuous_task(self) -> None:
         from src.tasks import regression
+
         task = regression("price", num_classes=1)
         assert task.head_spec.out_features == 1
         assert isinstance(task.codec, ContinuousTaskCodec)
 
     def test_regression_default_metrics_are_mse_mae(self) -> None:
         from src.tasks import regression
+
         task = regression("price", num_classes=1)
         preds = torch.randn(4, 1)
         targets = torch.randn(4, 1)
@@ -191,12 +198,14 @@ class TestRegressionPreset:
 
     def test_preset_carries_topology_and_default_objective(self) -> None:
         from src.tasks.taxonomy import Objective, Topology
+
         preset = task_presets.create("regression")
         assert preset.topology == Topology.GLOBAL
         assert preset.default_objective == Objective.CONTINUOUS
 
     def test_preset_resolves_objective_override(self) -> None:
         from src.tasks.taxonomy import Objective
+
         preset = task_presets.create("classification")
         assert preset.resolve_objective(None) == Objective.MULTICLASS
         assert preset.resolve_objective("binary") == Objective.BINARY
@@ -218,7 +227,11 @@ class TestClassificationPreset:
 
 class TestConfigDrivenBricks:
     def test_loss_override_applies_params(self) -> None:
-        task = classification("label", num_classes=3, loss={"name": "cross_entropy", "label_smoothing": 0.1})
+        task = classification(
+            "label",
+            num_classes=3,
+            loss={"name": "cross_entropy", "label_smoothing": 0.1},
+        )
         assert isinstance(task.criterion, CrossEntropyCriterion)
         assert task.criterion._loss.label_smoothing == pytest.approx(0.1)
 

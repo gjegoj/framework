@@ -16,8 +16,8 @@ from torch.utils.data import DataLoader
 
 from src.core.enums import Stage
 from src.core.runtime import RuntimeContext
-from src.data.collate import collate_samples
 from src.data.bindings import TargetBinding
+from src.data.collate import collate_samples
 from src.data.dataset import Dataset
 from src.data.loaders import ImageLoader
 from src.data.sources import DataSource

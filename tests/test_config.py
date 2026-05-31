@@ -58,7 +58,10 @@ class TestValidConfig:
 
     def test_loss_and_metrics_specs_parse(self) -> None:
         raw = _raw()
-        raw["tasks"]["label"]["loss"] = {"name": "cross_entropy", "label_smoothing": 0.1}
+        raw["tasks"]["label"]["loss"] = {
+            "name": "cross_entropy",
+            "label_smoothing": 0.1,
+        }
         raw["tasks"]["label"]["metrics"] = {"accuracy": {"top_k": 1}, "f1": None}
         cfg = load_config(raw)
         task = cfg.tasks["label"]
@@ -78,17 +81,27 @@ class TestValidConfig:
 class TestInvalidConfig:
     def test_split_must_sum_to_one(self) -> None:
         with pytest.raises(ConfigError, match="sum to 1.0"):
-            load_config(_raw(data={
-                "source": "d.csv", "image_column": "p",
-                "split": {"train": 0.5, "val": 0.1, "test": 0.1},
-            }))
+            load_config(
+                _raw(
+                    data={
+                        "source": "d.csv",
+                        "image_column": "p",
+                        "split": {"train": 0.5, "val": 0.1, "test": 0.1},
+                    }
+                )
+            )
 
     def test_split_rejects_predict(self) -> None:
         with pytest.raises(ConfigError, match="train/val/test"):
-            load_config(_raw(data={
-                "source": "d.csv", "image_column": "p",
-                "split": {"train": 0.5, "predict": 0.5},
-            }))
+            load_config(
+                _raw(
+                    data={
+                        "source": "d.csv",
+                        "image_column": "p",
+                        "split": {"train": 0.5, "predict": 0.5},
+                    }
+                )
+            )
 
     def test_image_size_must_be_positive(self) -> None:
         with pytest.raises(ConfigError, match="must be positive"):

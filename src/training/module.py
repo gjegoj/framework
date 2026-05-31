@@ -137,6 +137,12 @@ class LitModule(L.LightningModule):
     # ---------------------------------------------------------------- utils
 
     def _log_losses(self, combined: LossResult, stage: Stage) -> None:
-        self.log(f"loss/{stage}/total", combined.total, prog_bar=True, on_step=True, on_epoch=True)
+        self.log(
+            f"loss/{stage}/total",
+            combined.total,
+            prog_bar=True,
+            on_step=True,
+            on_epoch=True,
+        )
         for name, value in combined.components.items():
             self.log(f"loss/{stage}/{name}", value, on_step=False, on_epoch=True)

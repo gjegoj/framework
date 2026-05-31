@@ -5,23 +5,34 @@ from __future__ import annotations
 from pathlib import Path
 
 import cv2
+import lightning as L
 import numpy as np
 import pandas as pd
 import pytest
 import torch
-import lightning as L
 
-from src.core.entities import Batch, LossResult
+from src.core.entities import LossResult
 from src.core.enums import Stage
 from src.core.runtime import RuntimeContext
-from src.data import CsvDataSource, DataModule, LabelIndexCodec, TargetBinding, build_basic_transform
+from src.data import (
+    CsvDataSource,
+    DataModule,
+    LabelIndexCodec,
+    TargetBinding,
+    build_basic_transform,
+)
 from src.models import build_composite_model
 from src.models.backbones import TimmBackbone
 from src.tasks import classification
-from src.training import LitDataModule, LitModule, OptimizerBuilder, WeightedSumAggregator
-
+from src.training import (
+    LitDataModule,
+    LitModule,
+    OptimizerBuilder,
+    WeightedSumAggregator,
+)
 
 # ---------------------------------------------------------------- helpers
+
 
 def _loss(value: float, name: str = "ce") -> LossResult:
     t = torch.tensor(value)
@@ -48,6 +59,7 @@ def csv_path(tmp_path: Path) -> Path:
 
 # ---------------------------------------------------------- aggregator
 
+
 class TestWeightedSumAggregator:
     def test_single_task_total(self) -> None:
         agg = WeightedSumAggregator()
@@ -67,6 +79,7 @@ class TestWeightedSumAggregator:
 
 # --------------------------------------------------------- optimizer
 
+
 class TestOptimizerBuilder:
     def test_single_group_without_overrides(self) -> None:
         model = TimmBackbone("resnet18", pretrained=False)
@@ -78,6 +91,7 @@ class TestOptimizerBuilder:
         backbone = TimmBackbone("resnet18", pretrained=False)
         from src.core.entities import HeadSpec
         from src.models import build_composite_model
+
         model = build_composite_model(backbone, {"label": HeadSpec(kind="linear", out_features=3)})
 
         opt = OptimizerBuilder(base_lr=1e-3).build(model, task_lr_overrides={"label": 1e-4})
@@ -89,6 +103,7 @@ class TestOptimizerBuilder:
     def test_no_param_overlap_between_groups(self) -> None:
         backbone = TimmBackbone("resnet18", pretrained=False)
         from src.core.entities import HeadSpec
+
         model = build_composite_model(backbone, {"label": HeadSpec(kind="linear", out_features=3)})
 
         opt = OptimizerBuilder(base_lr=1e-3).build(model, task_lr_overrides={"label": 1e-4})
@@ -100,7 +115,10 @@ class TestOptimizerBuilder:
     def test_from_name_builds_sgd_with_extras(self) -> None:
         model = TimmBackbone("resnet18", pretrained=False)
         builder = OptimizerBuilder.from_name(
-            "sgd", base_lr=1e-2, base_weight_decay=1e-4, extra_kwargs={"momentum": 0.9, "nesterov": True}
+            "sgd",
+            base_lr=1e-2,
+            base_weight_decay=1e-4,
+            extra_kwargs={"momentum": 0.9, "nesterov": True},
         )
         opt = builder.build(model)
         assert isinstance(opt, torch.optim.SGD)
@@ -119,12 +137,13 @@ class TestOptimizerBuilder:
 
 # ------------------------------------------------ LitModule smoke
 
+
 class TestLitModuleSmoke:
     """Single-epoch CPU smoke test — validates the full step loop works."""
 
     def test_fit_one_epoch(self, csv_path: Path) -> None:
         runtime = RuntimeContext()
-        transforms = {s: build_basic_transform((32, 32), [0.5]*3, [0.5]*3) for s in Stage}
+        transforms = {s: build_basic_transform((32, 32), [0.5] * 3, [0.5] * 3) for s in Stage}
         plain_dm = DataModule(
             source=CsvDataSource(str(csv_path)),
             bindings=[TargetBinding("label", "label", LabelIndexCodec())],

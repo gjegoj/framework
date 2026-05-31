@@ -34,6 +34,14 @@ testpaths = ["tests"]
 [tool.ruff]
 line-length = 120
 
+[tool.black]
+line-length = 120
+
+[tool.isort]
+line_length = 120
+profile = "black"
+
+
 [tool.mypy]
 python_version = "3.12"
 plugins = ["pydantic.mypy"]

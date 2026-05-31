@@ -39,13 +39,15 @@ for i in range(NUM_IMAGES):
     tags = ",".join(TAG_POOL[idx] for idx in sorted(set(tag_indices)))
     # regression: synthetic float derived from index
     value = round(float(RNG.uniform(0.0, 10.0)), 4)
-    rows.append({
-        "image_path": str(path),
-        "label": label,
-        "binary_label": binary_label,
-        "tags": tags,
-        "value": value,
-    })
+    rows.append(
+        {
+            "image_path": str(path),
+            "label": label,
+            "binary_label": binary_label,
+            "tags": tags,
+            "value": value,
+        }
+    )
 
 csv_path = OUT / "data.csv"
 with open(csv_path, "w", newline="") as f:

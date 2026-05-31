@@ -4,9 +4,18 @@ Importing this package registers the built-in topology/objective strategies and
 task presets so they are resolvable by key.
 """
 
-from src.tasks.activations import IdentityActivation, SigmoidActivation, SoftmaxActivation
+from src.tasks.activations import (
+    IdentityActivation,
+    SigmoidActivation,
+    SoftmaxActivation,
+)
 from src.tasks.builder import DEFAULT_STAGES, TaskBuilder
-from src.tasks.codecs import BinaryTaskCodec, ContinuousTaskCodec, MultilabelTaskCodec, MulticlassTaskCodec
+from src.tasks.codecs import (
+    BinaryTaskCodec,
+    ContinuousTaskCodec,
+    MulticlassTaskCodec,
+    MultilabelTaskCodec,
+)
 from src.tasks.presets import TaskPreset, classification, regression, task_presets
 from src.tasks.strategies.objective import (
     BinaryObjective,
@@ -16,7 +25,11 @@ from src.tasks.strategies.objective import (
     ObjectiveStrategy,
     objective_strategies,
 )
-from src.tasks.strategies.topology import GlobalTopology, TopologyStrategy, topology_strategies
+from src.tasks.strategies.topology import (
+    GlobalTopology,
+    TopologyStrategy,
+    topology_strategies,
+)
 from src.tasks.taxonomy import Objective, Topology
 
 __all__ = [

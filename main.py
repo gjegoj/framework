@@ -19,7 +19,12 @@ from omegaconf import DictConfig, OmegaConf
 
 import src.models  # noqa: F401 — registers TimmBackbone and LinearHead
 import src.tasks  # noqa: F401 — registers topology/objective strategies and presets
-from src.composition.wiring import build_bindings, build_optimizer_builder, build_tasks, build_transforms
+from src.composition.wiring import (
+    build_bindings,
+    build_optimizer_builder,
+    build_tasks,
+    build_transforms,
+)
 from src.config import load_config
 from src.core.runtime import RuntimeContext
 from src.data import CsvDataSource, DataModule
@@ -36,7 +41,12 @@ def main(cfg: DictConfig) -> None:
     config = load_config(raw)  # type: ignore[arg-type]
 
     L.seed_everything(config.seed, workers=True)
-    log.info("Project: %s | seed: %d | epochs: %d", config.project, config.seed, config.epochs)
+    log.info(
+        "Project: %s | seed: %d | epochs: %d",
+        config.project,
+        config.seed,
+        config.epochs,
+    )
 
     # 1. Runtime context — populated incrementally as setup steps run
     runtime = RuntimeContext(epochs=config.epochs)
@@ -73,9 +83,7 @@ def main(cfg: DictConfig) -> None:
 
     # 5. Optimizer (class resolved from optimizer.name) with optional per-head LR overrides
     task_lr_overrides = {
-        name: task_cfg.optimizer.lr
-        for name, task_cfg in config.tasks.items()
-        if task_cfg.optimizer is not None
+        name: task_cfg.optimizer.lr for name, task_cfg in config.tasks.items() if task_cfg.optimizer is not None
     }
     optimizer_builder = build_optimizer_builder(config.optimizer)
 

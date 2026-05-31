@@ -5,7 +5,13 @@ core ``Sample``/``Batch`` entities. Depends on core, never the reverse.
 """
 
 from src.data.bindings import TargetBinding
-from src.data.codecs import FloatCodec, LabelIndexCodec, MultiLabelBinarizeCodec, TargetCodec, target_codecs
+from src.data.codecs import (
+    FloatCodec,
+    LabelIndexCodec,
+    MultiLabelBinarizeCodec,
+    TargetCodec,
+    target_codecs,
+)
 from src.data.collate import collate_samples
 from src.data.datamodule import DataModule
 from src.data.dataset import Dataset

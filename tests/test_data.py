@@ -6,11 +6,10 @@ import cv2
 import numpy as np
 import pandas as pd
 import pytest
+import torch
 
 from src.core.enums import Stage
 from src.core.runtime import RuntimeContext
-import torch
-
 from src.data import (
     CsvDataSource,
     DataModule,
@@ -88,7 +87,9 @@ class TestMultiLabelBinarizeCodec:
         vec = codec.encode("cat,cow")
         assert vec.dtype == torch.float
         assert vec.shape == (3,)
-        assert vec[codec.class_mapping[0] == "cat" and 0 or list(codec.class_mapping.values()).index("cat")].item() == 1.0
+        assert (
+            vec[codec.class_mapping[0] == "cat" and 0 or list(codec.class_mapping.values()).index("cat")].item() == 1.0
+        )
 
     def test_encode_multihot_correct_positions(self) -> None:
         codec = MultiLabelBinarizeCodec()
@@ -132,12 +133,14 @@ class TestFloatCodec:
 class TestTaskCodecs:
     def test_binary_codec_shapes(self) -> None:
         from src.tasks.codecs import BinaryTaskCodec
+
         view = BinaryTaskCodec().adapt(torch.tensor([0, 1, 1, 0]))
         assert view.loss.shape == (4, 1) and view.loss.dtype == torch.float
         assert view.metric.shape == (4, 1) and view.metric.dtype == torch.long
 
     def test_multilabel_codec_shapes(self) -> None:
         from src.tasks.codecs import MultilabelTaskCodec
+
         target = torch.tensor([[1, 0, 1], [0, 1, 0]], dtype=torch.float)
         view = MultilabelTaskCodec().adapt(target)
         assert view.loss.dtype == torch.float
@@ -145,6 +148,7 @@ class TestTaskCodecs:
 
     def test_continuous_codec_shapes(self) -> None:
         from src.tasks.codecs import ContinuousTaskCodec
+
         view = ContinuousTaskCodec().adapt(torch.tensor([1.5, 2.3, 0.1]))
         assert view.loss.shape == (3, 1) and view.loss.dtype == torch.float
         assert view.metric.shape == (3, 1) and view.metric.dtype == torch.float

@@ -14,8 +14,17 @@ from src.core.ports import Activation, Criterion, MetricSet, TaskCodec
 from src.core.registry import Registry
 from src.losses.criterion import criteria
 from src.metrics.builders import MetricsSpec, build_metric_set
-from src.tasks.activations import IdentityActivation, SigmoidActivation, SoftmaxActivation
-from src.tasks.codecs import BinaryTaskCodec, ContinuousTaskCodec, MultilabelTaskCodec, MulticlassTaskCodec
+from src.tasks.activations import (
+    IdentityActivation,
+    SigmoidActivation,
+    SoftmaxActivation,
+)
+from src.tasks.codecs import (
+    BinaryTaskCodec,
+    ContinuousTaskCodec,
+    MulticlassTaskCodec,
+    MultilabelTaskCodec,
+)
 from src.tasks.taxonomy import Objective, Topology
 
 _REGRESSION_METRICS: MetricsSpec = {"mse": None, "mae": None}

@@ -58,8 +58,7 @@ class TaskBuilder:
         """
         if not self._objective.supports(self._topology.kind):
             raise ValueError(
-                f"Objective {self._objective.kind.value!r} is not supported on "
-                f"topology {self._topology.kind.value!r}."
+                f"Objective {self._objective.kind.value!r} is not supported on topology {self._topology.kind.value!r}."
             )
 
         out_features = self._objective.out_features(num_classes)

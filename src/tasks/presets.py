@@ -67,7 +67,13 @@ class TaskPreset:
             topology=topology_strategies.create(self.topology),
             objective=objective_strategies.create(self.resolve_objective(objective)),
         )
-        return builder.build(name=name, num_classes=num_classes, weight=weight, loss_spec=loss, metrics_spec=metrics)
+        return builder.build(
+            name=name,
+            num_classes=num_classes,
+            weight=weight,
+            loss_spec=loss,
+            metrics_spec=metrics,
+        )
 
 
 task_presets: Registry[TaskPreset] = Registry("task_preset")

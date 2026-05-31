@@ -10,10 +10,10 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from src.composition.wiring import build_bindings, build_tasks, build_transforms
 from src.config import load_config
 from src.core.enums import Stage
 from src.core.runtime import RuntimeContext
-from src.composition.wiring import build_bindings, build_tasks, build_transforms
 from src.data.codecs import FloatCodec, LabelIndexCodec, MultiLabelBinarizeCodec
 
 
@@ -44,7 +44,9 @@ class TestBuildTransforms:
 
     def test_transforms_produce_correct_shape(self) -> None:
         import torch
+
         from src.core.entities import Sample
+
         config = load_config(_minimal_config())
         transform = build_transforms(config)[Stage.TRAIN]
         image = np.zeros((128, 128, 3), dtype=np.uint8)
@@ -102,7 +104,13 @@ class TestBuildBindings:
 
     def test_multilabel_gets_binarize_codec(self) -> None:
         raw = _minimal_config()
-        raw["tasks"] = {"tags": {"preset": "classification", "target": "tags", "objective": "multilabel"}}
+        raw["tasks"] = {
+            "tags": {
+                "preset": "classification",
+                "target": "tags",
+                "objective": "multilabel",
+            }
+        }
         config = load_config(raw)
         bindings = build_bindings(config)
         assert isinstance(bindings[0].codec, MultiLabelBinarizeCodec)
@@ -190,6 +198,7 @@ class TestFullWiringSmoke:
         lit = LitModule(model=model, tasks=tasks, optimizer_builder=OptimizerBuilder(1e-3))
 
         import torch
+
         batch = next(iter(plain_dm.train_dataloader()))
         loss = lit.training_step(batch, 0)
         assert isinstance(loss, torch.Tensor)
