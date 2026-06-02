@@ -10,11 +10,23 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.composition.wiring import build_bindings, build_tasks, build_transforms
+from src.composition.wiring import build_bindings, build_data_source, build_tasks, build_transforms
 from src.config import load_config
 from src.core.enums import Stage
 from src.core.runtime import RuntimeContext
 from src.data.codecs import FloatCodec, LabelIndexCodec, MultiLabelBinarizeCodec
+from src.data.sources import CsvDataSource, JsonDataSource
+
+_RESIZE_NORMALIZE_TOTENSOR = [
+    {"_target_": "albumentations.Resize", "height": 64, "width": 64},
+    {"_target_": "albumentations.Normalize"},
+    {"_target_": "albumentations.pytorch.ToTensorV2"},
+]
+
+_MINIMAL_TRANSFORMS: dict[str, Any] = {
+    "train": {"_target_": "albumentations.Compose", "transforms": _RESIZE_NORMALIZE_TOTENSOR},
+    "val": {"_target_": "albumentations.Compose", "transforms": _RESIZE_NORMALIZE_TOTENSOR},
+}
 
 
 def _minimal_config(**overrides: Any) -> dict[str, Any]:
@@ -24,16 +36,64 @@ def _minimal_config(**overrides: Any) -> dict[str, Any]:
         "batch_size": 4,
         "image_size": [64, 64],
         "data": {
-            "source": "data.csv",
-            "image_column": "image_path",
+            "sources": "data.csv",
+            "inputs": "image_path",
             "split": {"train": 0.8, "val": 0.1, "test": 0.1},
         },
         "backbone": {"name": "resnet18"},
         "optimizer": {"lr": 1e-3},
         "tasks": {"label": {"preset": "classification", "target": "label"}},
+        "transforms": _MINIMAL_TRANSFORMS,
     }
     base.update(overrides)
     return base
+
+
+class TestInstantiateNested:
+    def test_builds_albumentations_resize(self) -> None:
+        import albumentations as A
+
+        from src.core.instantiate import instantiate
+
+        spec = {"_target_": "albumentations.Resize", "height": 32, "width": 32}
+        obj = instantiate(spec)
+        assert isinstance(obj, A.Resize)
+
+    def test_builds_compose_with_nested_transforms(self) -> None:
+        import albumentations as A
+
+        from src.core.instantiate import instantiate
+
+        spec = {
+            "_target_": "albumentations.Compose",
+            "transforms": [
+                {"_target_": "albumentations.HorizontalFlip", "p": 0.5},
+                {"_target_": "albumentations.Normalize"},
+            ],
+        }
+        obj = instantiate(spec)
+        assert isinstance(obj, A.Compose)
+        assert len(obj.transforms) == 2
+
+    def test_drops_hydra_meta_keys(self) -> None:
+        import albumentations as A
+
+        from src.core.instantiate import instantiate
+
+        spec = {
+            "_target_": "albumentations.HorizontalFlip",
+            "_convert_": "partial",
+            "p": 0.3,
+        }
+        obj = instantiate(spec)
+        assert isinstance(obj, A.HorizontalFlip)
+
+    def test_plain_values_pass_through(self) -> None:
+        from src.core.instantiate import instantiate
+
+        assert instantiate(42) == 42
+        assert instantiate("hello") == "hello"
+        assert instantiate([1, 2, 3]) == [1, 2, 3]
 
 
 class TestBuildTransforms:
@@ -53,6 +113,42 @@ class TestBuildTransforms:
         sample = Sample(inputs={"image": image})
         result = transform.apply(sample)
         assert result.inputs["image"].shape == torch.Size([3, 64, 64])
+
+    def test_config_transforms_used_when_present(self) -> None:
+        import torch
+
+        from src.core.entities import Sample
+
+        raw = _minimal_config()
+        raw["transforms"] = {
+            "train": {
+                "_target_": "albumentations.Compose",
+                "transforms": [
+                    {"_target_": "albumentations.Resize", "height": 16, "width": 16},
+                    {"_target_": "albumentations.Normalize"},
+                    {"_target_": "albumentations.pytorch.ToTensorV2"},
+                ],
+            },
+            "val": {
+                "_target_": "albumentations.Compose",
+                "transforms": [
+                    {"_target_": "albumentations.Resize", "height": 16, "width": 16},
+                    {"_target_": "albumentations.Normalize"},
+                    {"_target_": "albumentations.pytorch.ToTensorV2"},
+                ],
+            },
+        }
+        config = load_config(raw)
+        transforms = build_transforms(config)
+        assert set(transforms) >= {Stage.TRAIN, Stage.VAL}
+        # test and predict derived from val
+        assert Stage.TEST in transforms
+        assert Stage.PREDICT in transforms
+
+        image = np.zeros((128, 128, 3), dtype=np.uint8)
+        sample = Sample(inputs={"image": image})
+        result = transforms[Stage.TRAIN].apply(sample)
+        assert result.inputs["image"].shape == torch.Size([3, 16, 16])
 
 
 class TestBuildTasks:
@@ -137,6 +233,168 @@ class TestBuildBindings:
         bindings = build_bindings(config)
         assert isinstance(bindings[0].codec, LabelIndexCodec)
 
+    def test_segmentation_gets_mask_codec(self) -> None:
+        from src.data.codecs import MaskCodec
+
+        raw = _minimal_config()
+        raw["tasks"] = {"mask": {"preset": "segmentation", "target": "mask_path", "num_classes": 4}}
+        config = load_config(raw)
+        bindings = build_bindings(config)
+        assert isinstance(bindings[0].codec, MaskCodec)
+
+
+class TestDataConfigModes:
+    def test_split_mode_str(self) -> None:
+        config = load_config(_minimal_config())
+        assert config.data.sources == "data.csv"
+        assert config.data.split is not None
+
+    def test_split_mode_list(self) -> None:
+        config = load_config(
+            _minimal_config(
+                data={
+                    "sources": ["a.csv", "b.csv"],
+                    "inputs": "image_path",
+                    "split": {"train": 0.8, "val": 0.1, "test": 0.1},
+                }
+            )
+        )
+        assert isinstance(config.data.sources, list)
+
+    def test_presplit_mode_dict(self) -> None:
+        config = load_config(
+            _minimal_config(
+                data={
+                    "sources": {"train": "train.csv", "val": "val.csv"},
+                    "inputs": "image_path",
+                }
+            )
+        )
+        assert isinstance(config.data.sources, dict)
+        assert config.data.split is None
+
+    def test_presplit_list_of_paths_per_stage(self) -> None:
+        config = load_config(
+            _minimal_config(
+                data={
+                    "sources": {"train": ["a.csv", "b.csv"], "val": "val.csv"},
+                    "inputs": "image_path",
+                }
+            )
+        )
+        assert isinstance(config.data.sources, dict)
+        assert isinstance(config.data.sources["train"], list)
+
+    def test_presplit_with_split_raises(self) -> None:
+        with pytest.raises(Exception, match="split"):
+            load_config(
+                _minimal_config(
+                    data={
+                        "sources": {"train": "train.csv", "val": "val.csv"},
+                        "inputs": "image_path",
+                        "split": {"train": 0.8, "val": 0.1, "test": 0.1},
+                    }
+                )
+            )
+
+    def test_split_mode_without_split_raises(self) -> None:
+        with pytest.raises(Exception, match="split"):
+            load_config(
+                _minimal_config(
+                    data={
+                        "sources": "data.csv",
+                        "inputs": "image_path",
+                    }
+                )
+            )
+
+    def test_presplit_missing_train_raises(self) -> None:
+        with pytest.raises(Exception, match="train"):
+            load_config(
+                _minimal_config(
+                    data={
+                        "sources": {"val": "val.csv"},
+                        "inputs": "image_path",
+                    }
+                )
+            )
+
+    def test_invalid_stage_key_raises(self) -> None:
+        with pytest.raises(Exception):
+            load_config(
+                _minimal_config(
+                    data={
+                        "sources": {"train": "train.csv", "predict": "pred.csv"},
+                        "inputs": "image_path",
+                    }
+                )
+            )
+
+
+class TestBuildDataSource:
+    def test_infers_csv_from_extension(self) -> None:
+        config = load_config(
+            _minimal_config(
+                data={
+                    "sources": "data/x.csv",
+                    "inputs": "image_path",
+                    "split": {"train": 0.8, "val": 0.1, "test": 0.1},
+                }
+            )
+        )
+        assert isinstance(build_data_source(config.data), CsvDataSource)
+
+    def test_infers_json_from_extension(self) -> None:
+        config = load_config(
+            _minimal_config(
+                data={
+                    "sources": "data/x.json",
+                    "inputs": "image_path",
+                    "split": {"train": 0.8, "val": 0.1, "test": 0.1},
+                }
+            )
+        )
+        assert isinstance(build_data_source(config.data), JsonDataSource)
+
+    def test_explicit_source_type_overrides_extension(self) -> None:
+        config = load_config(
+            _minimal_config(
+                data={
+                    "sources": "data/x.dat",
+                    "source_type": "csv",
+                    "inputs": "image_path",
+                    "split": {"train": 0.8, "val": 0.1, "test": 0.1},
+                }
+            )
+        )
+        assert isinstance(build_data_source(config.data), CsvDataSource)
+
+    def test_unknown_extension_raises(self) -> None:
+        config = load_config(
+            _minimal_config(
+                data={
+                    "sources": "data/x.parquet",
+                    "inputs": "image_path",
+                    "split": {"train": 0.8, "val": 0.1, "test": 0.1},
+                }
+            )
+        )
+        with pytest.raises(ValueError, match="Unknown source extension"):
+            build_data_source(config.data)
+
+    def test_mixed_extensions_raise(self) -> None:
+        config = load_config(
+            _minimal_config(
+                data={
+                    "sources": ["a.csv", "b.json"],
+                    "inputs": "image_path",
+                    "split": {"train": 0.8, "val": 0.1, "test": 0.1},
+                }
+            )
+        )
+        with pytest.raises(ValueError, match="mixed extensions"):
+            build_data_source(config.data)
+
     def test_multitask_order_preserved(self) -> None:
         raw = _minimal_config()
         raw["tasks"] = {
@@ -176,19 +434,19 @@ class TestFullWiringSmoke:
         from src.training import LitModule, OptimizerBuilder
 
         raw = _minimal_config()
-        raw["data"]["source"] = str(csv_path)
+        raw["data"]["sources"] = str(csv_path)
         config = load_config(raw)
 
         runtime = RuntimeContext(epochs=config.epochs)
         plain_dm = DataModule(
-            source=CsvDataSource([str(csv_path)]),
-            bindings=build_bindings(config),
-            image_column="image_path",
+            target_bindings=build_bindings(config),
+            inputs_config="image_path",
             transforms=build_transforms(config),
-            split=config.data.split,
             runtime=runtime,
             batch_size=4,
             seed=0,
+            source=CsvDataSource([str(csv_path)]),
+            split=config.data.split,
         )
         plain_dm.setup()
 

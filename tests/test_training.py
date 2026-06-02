@@ -4,22 +4,24 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import albumentations as A
 import cv2
 import lightning as L
 import numpy as np
 import pandas as pd
 import pytest
 import torch
+from albumentations.pytorch import ToTensorV2
 
 from src.core.entities import LossResult
 from src.core.enums import Stage
 from src.core.runtime import RuntimeContext
 from src.data import (
+    AlbumentationsTransform,
     CsvDataSource,
     DataModule,
     LabelIndexCodec,
     TargetBinding,
-    build_basic_transform,
 )
 from src.models import build_composite_model
 from src.models.backbones import TimmBackbone
@@ -32,6 +34,15 @@ from src.training import (
 )
 
 # ---------------------------------------------------------------- helpers
+
+
+def _make_transform(
+    size: tuple[int, int] = (32, 32),
+    spatial: list[str] | None = None,
+) -> AlbumentationsTransform:
+    h, w = size
+    compose = A.Compose([A.Resize(h, w, mask_interpolation=0), A.Normalize(), ToTensorV2()])
+    return AlbumentationsTransform(compose, spatial_targets=spatial)
 
 
 def _loss(value: float, name: str = "ce") -> LossResult:
@@ -143,16 +154,16 @@ class TestLitModuleSmoke:
 
     def test_fit_one_epoch(self, csv_path: Path) -> None:
         runtime = RuntimeContext()
-        transforms = {s: build_basic_transform((32, 32), [0.5] * 3, [0.5] * 3) for s in Stage}
+        transforms = {s: _make_transform((32, 32)) for s in Stage}
         plain_dm = DataModule(
-            source=CsvDataSource(str(csv_path)),
-            bindings=[TargetBinding("label", "label", LabelIndexCodec())],
-            image_column="image_path",
+            target_bindings=[TargetBinding("label", "label", LabelIndexCodec())],
+            inputs_config="image_path",
             transforms=transforms,
-            split={Stage.TRAIN: 0.6, Stage.VAL: 0.2, Stage.TEST: 0.2},
             runtime=runtime,
             batch_size=4,
             seed=0,
+            source=CsvDataSource(str(csv_path)),
+            split={Stage.TRAIN: 0.6, Stage.VAL: 0.2, Stage.TEST: 0.2},
         )
         plain_dm.setup()
 
@@ -179,3 +190,59 @@ class TestLitModuleSmoke:
 
         # val accuracy should be logged
         assert "label/accuracy/val" in trainer.logged_metrics
+
+
+class TestSegmentationSmoke:
+    """End-to-end DENSE segmentation: smp backbone + mask pipeline + trainer.fit."""
+
+    @pytest.fixture
+    def seg_csv(self, tmp_path: Path) -> Path:
+        img_dir = tmp_path / "img"
+        msk_dir = tmp_path / "msk"
+        img_dir.mkdir()
+        msk_dir.mkdir()
+        rng = np.random.default_rng(3)
+        rows = []
+        for i in range(12):
+            cv2.imwrite(str(img_dir / f"{i}.jpg"), rng.integers(0, 256, (64, 64, 3), dtype=np.uint8))
+            cv2.imwrite(str(msk_dir / f"{i}.png"), rng.integers(0, 3, (64, 64), dtype=np.uint8))
+            rows.append({"image_path": str(img_dir / f"{i}.jpg"), "mask_path": str(msk_dir / f"{i}.png")})
+        csv = tmp_path / "seg.csv"
+        pd.DataFrame(rows).to_csv(csv, index=False)
+        return csv
+
+    def test_fit_one_epoch_segmentation(self, seg_csv: Path) -> None:
+        from src.data import MaskCodec
+        from src.models.backbones import SmpBackbone
+        from src.tasks import segmentation
+
+        runtime = RuntimeContext()
+        transforms = {s: _make_transform((64, 64), spatial=["mask"]) for s in Stage}
+        plain_dm = DataModule(
+            target_bindings=[TargetBinding("mask", "mask_path", MaskCodec())],
+            inputs_config="image_path",
+            transforms=transforms,
+            runtime=runtime,
+            batch_size=4,
+            seed=0,
+            source=CsvDataSource(str(seg_csv)),
+            split={Stage.TRAIN: 0.6, Stage.VAL: 0.2, Stage.TEST: 0.2},
+        )
+        plain_dm.setup()
+
+        task = segmentation("mask", num_classes=3)  # explicit class count
+        backbone = SmpBackbone(name="unet", encoder_name="resnet18", pretrained=False)
+        model = build_composite_model(backbone, {"mask": task.head_spec})
+
+        lit_module = LitModule(model=model, tasks=[task], optimizer_builder=OptimizerBuilder(base_lr=1e-3))
+        trainer = L.Trainer(
+            max_epochs=1,
+            accelerator="cpu",
+            logger=False,
+            enable_checkpointing=False,
+            enable_progress_bar=False,
+            enable_model_summary=False,
+        )
+        trainer.fit(lit_module, LitDataModule(plain_dm))
+
+        assert "mask/miou/val" in trainer.logged_metrics

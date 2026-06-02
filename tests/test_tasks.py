@@ -7,7 +7,9 @@ from src.core.entities import HeadSpec, Task
 from src.core.enums import Stage
 from src.losses.criterion import (
     BCEWithLogitsCriterion,
+    CompositeCriterion,
     CrossEntropyCriterion,
+    DiceCriterion,
     L1Criterion,
     MSECriterion,
 )
@@ -63,8 +65,15 @@ class TestTaxonomyAndStrategies:
         assert obj.supports(Topology.GLOBAL)
         assert isinstance(obj.build_task_codec(), ContinuousTaskCodec)
 
+    def test_dense_topology_head_spec(self) -> None:
+        from src.tasks import DenseTopology
+
+        spec = DenseTopology().head_spec(out_features=4)
+        assert spec == HeadSpec(kind="conv", out_features=4, feature_key="decoder")
+
     def test_strategies_registered(self) -> None:
         assert Topology.GLOBAL in topology_strategies
+        assert Topology.DENSE in topology_strategies
         assert Objective.MULTICLASS in objective_strategies
         assert Objective.BINARY in objective_strategies
         assert Objective.MULTILABEL in objective_strategies
@@ -120,6 +129,28 @@ class TestBricks:
         assert "l1" in result.components
         result.total.backward()
 
+    def test_dice_multiclass_backprops(self) -> None:
+        logits = torch.randn(2, 4, 8, 8, requires_grad=True)  # [B,C,H,W]
+        target = torch.randint(0, 4, (2, 8, 8))  # [B,H,W]
+        result = DiceCriterion(mode="multiclass")(logits, target)
+        assert result.total.ndim == 0
+        assert "dice" in result.components
+        result.total.backward()
+        assert logits.grad is not None
+
+    def test_composite_ce_dice_combines_and_backprops(self) -> None:
+        logits = torch.randn(2, 4, 8, 8, requires_grad=True)
+        target = torch.randint(0, 4, (2, 8, 8))
+        crit = CompositeCriterion(terms={"cross_entropy": 1.0, "dice": 0.5})
+        result = crit(logits, target)
+        assert {"cross_entropy", "dice"} <= set(result.components)
+        result.total.backward()
+        assert logits.grad is not None
+
+    def test_composite_empty_terms_raises(self) -> None:
+        with pytest.raises(ValueError, match="at least one term"):
+            CompositeCriterion(terms={})
+
     def test_metric_set_update_compute_reset(self) -> None:
         metrics = build_metric_set(None, base_kwargs={"task": "multiclass", "num_classes": 3})
         preds = torch.randn(8, 3).softmax(dim=1)
@@ -168,6 +199,16 @@ class TestTaskBuilder:
         computed = task.metrics[Stage.TRAIN].compute()
         assert {"mse", "mae"} <= set(computed)
 
+    def test_bridge_dense_multiclass_reuses_objective(self) -> None:
+        from src.tasks import DenseTopology
+
+        # Same MulticlassObjective as classification, new DenseTopology → segmentation task.
+        task = TaskBuilder(DenseTopology(), MulticlassObjective()).build("mask", num_classes=5)
+        assert task.head_spec.kind == "conv"
+        assert task.head_spec.feature_key == "decoder"
+        assert task.head_spec.out_features == 5
+        assert isinstance(task.codec, MulticlassTaskCodec)  # objective bricks unchanged
+
     def test_invalid_combination_raises(self) -> None:
         class _EmbeddingTopology(TopologyStrategy):
             kind = Topology.EMBEDDING
@@ -209,6 +250,31 @@ class TestRegressionPreset:
         preset = task_presets.create("classification")
         assert preset.resolve_objective(None) == Objective.MULTICLASS
         assert preset.resolve_objective("binary") == Objective.BINARY
+
+
+class TestSegmentationPreset:
+    def test_builds_dense_multiclass_task(self) -> None:
+        from src.tasks import segmentation
+
+        task = segmentation("mask", num_classes=4)
+        assert task.head_spec.kind == "conv"
+        assert task.head_spec.feature_key == "decoder"
+        assert task.head_spec.out_features == 4
+        assert isinstance(task.codec, MulticlassTaskCodec)
+
+    def test_default_metric_is_miou(self) -> None:
+        from src.tasks import segmentation
+
+        task = segmentation("mask", num_classes=3)
+        preds = torch.randn(2, 3, 8, 8).softmax(dim=1)  # [B,C,H,W]
+        target = torch.randint(0, 3, (2, 8, 8))  # [B,H,W]
+        task.metrics[Stage.TRAIN].update(preds, target)
+        assert "miou" in task.metrics[Stage.TRAIN].compute()
+
+    def test_preset_carries_mask_codec_default(self) -> None:
+        preset = task_presets.create("segmentation")
+        assert preset.default_codec == "mask"
+        assert preset.topology == Topology.DENSE
 
 
 class TestClassificationPreset:

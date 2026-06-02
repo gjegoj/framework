@@ -1,0 +1,4 @@
+kind: smp
+name: unet
+encoder_name: resnet18
+pretrained: false

@@ -9,8 +9,8 @@ batch_size: 4
 image_size: [64, 64]
 
 data:
-  source: data/smoke/data.csv
-  image_column: image_path
+  sources: data/smoke/data.csv
+  inputs: image_path
   split:
     train: 0.7
     val: 0.15

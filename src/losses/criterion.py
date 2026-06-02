@@ -7,6 +7,7 @@ objective strategies — and users — can select them by key.
 
 from __future__ import annotations
 
+import segmentation_models_pytorch as smp
 import torch
 from torch import Tensor, nn
 
@@ -104,3 +105,55 @@ class L1Criterion(Criterion):
     def forward(self, logits: Tensor, target: Tensor) -> LossResult:
         value: Tensor = self._loss(logits, target)
         return LossResult(total=value, components={"l1": value})
+
+
+@criteria.register("dice")
+class DiceCriterion(Criterion):
+    """Soft Dice loss (overlap-based) on logits — strong for segmentation.
+
+    Wraps ``smp.losses.DiceLoss``; for multiclass it consumes ``[B, C, H, W]``
+    logits vs ``[B, H, W]`` index targets.
+
+    Parameters:
+        mode (str): ``"multiclass"`` (default) / ``"multilabel"`` / ``"binary"``.
+    """
+
+    def __init__(self, mode: str = "multiclass") -> None:
+        super().__init__()
+        self._loss = smp.losses.DiceLoss(mode=mode)
+
+    def forward(self, logits: Tensor, target: Tensor) -> LossResult:
+        value: Tensor = self._loss(logits, target)
+        return LossResult(total=value, components={"dice": value})
+
+
+@criteria.register("composite")
+class CompositeCriterion(Criterion):
+    """Weighted sum of several criteria sharing the same (logits, target).
+
+    Lets a YAML ``loss:`` combine bricks, e.g. ``CE + Dice`` for segmentation::
+
+        loss: {name: composite, terms: {cross_entropy: 1.0, dice: 1.0}}
+
+    Each sub-criterion's components are forwarded for logging; the total is the
+    weighted sum of the sub-totals.
+
+    Parameters:
+        terms (dict[str, float]): ``{criterion_key: weight}`` from the ``criteria`` registry.
+    """
+
+    def __init__(self, terms: dict[str, float]) -> None:
+        super().__init__()
+        if not terms:
+            raise ValueError("CompositeCriterion needs at least one term.")
+        self._weights = list(terms.values())
+        self._criteria = nn.ModuleList(criteria.create(key) for key in terms)
+
+    def forward(self, logits: Tensor, target: Tensor) -> LossResult:
+        total = logits.new_zeros(())
+        components: dict[str, Tensor] = {}
+        for weight, criterion in zip(self._weights, self._criteria, strict=True):
+            result = criterion(logits, target)
+            total = total + weight * result.total
+            components.update(result.components)
+        return LossResult(total=total, components=components)

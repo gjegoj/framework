@@ -44,14 +44,37 @@ class TestInstantiate:
     def test_target_escape_bypasses_registry(self) -> None:
         widget = instantiate(
             {"_target_": "tests.test_instantiate._Widget", "color": "green"},
-            _registry(),
         )
         assert isinstance(widget, _Widget) and widget.color == "green"
+
+    def test_target_escape_with_string_kwarg(self) -> None:
+        widget = instantiate(
+            {"_target_": "tests.test_instantiate._Widget", "color": "blue"},
+            _registry(),
+        )
+        assert widget.color == "blue"
 
     def test_mapping_without_name_or_target_raises(self) -> None:
         with pytest.raises(ValueError, match="needs a 'name' or '_target_'"):
             instantiate({"size": 3}, _registry())
 
-    def test_non_spec_type_raises(self) -> None:
-        with pytest.raises(TypeError):
-            instantiate(42, _registry())  # type: ignore[arg-type]
+    def test_scalar_passes_through(self) -> None:
+        assert instantiate(42) == 42
+        assert instantiate(3.14) == pytest.approx(3.14)
+        assert instantiate(True) is True
+
+    def test_string_without_registry_passes_through(self) -> None:
+        assert instantiate("plain_value") == "plain_value"
+
+    def test_list_recurses(self) -> None:
+        result = instantiate([1, "two", 3.0])
+        assert result == [1, "two", 3.0]
+
+    def test_nested_target_in_list(self) -> None:
+        result = instantiate(
+            [
+                {"_target_": "tests.test_instantiate._Widget", "size": 7},
+            ]
+        )
+        assert isinstance(result[0], _Widget)
+        assert result[0].size == 7

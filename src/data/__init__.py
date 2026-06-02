@@ -4,10 +4,11 @@ Interface-adapter layer: turns external data (CSV/JSON, image files) into the
 core ``Sample``/``Batch`` entities. Depends on core, never the reverse.
 """
 
-from src.data.bindings import TargetBinding
+from src.data.bindings import InputBinding, TargetBinding
 from src.data.codecs import (
     FloatCodec,
     LabelIndexCodec,
+    MaskCodec,
     MultiLabelBinarizeCodec,
     TargetCodec,
     target_codecs,
@@ -15,33 +16,31 @@ from src.data.codecs import (
 from src.data.collate import collate_samples
 from src.data.datamodule import DataModule
 from src.data.dataset import Dataset
-from src.data.loaders import ImageLoader
-from src.data.sources import CsvDataSource, DataSource, data_sources
+from src.data.loaders import ImageLoader, InputLoader, TextLoader, input_loaders
+from src.data.sources import CsvDataSource, DataSource, FileDataSource, JsonDataSource, data_sources
 from src.data.split import split_dataframe
-from src.data.transforms import (
-    AlbumentationsTransform,
-    BasicTransform,
-    Transform,
-    build_albumentations_transform,
-    build_basic_transform,
-)
+from src.data.transforms import AlbumentationsTransform, Transform
 
 __all__ = [
     "AlbumentationsTransform",
-    "BasicTransform",
     "CsvDataSource",
     "DataModule",
     "DataSource",
     "Dataset",
+    "FileDataSource",
     "FloatCodec",
     "ImageLoader",
+    "InputBinding",
+    "InputLoader",
+    "TextLoader",
+    "input_loaders",
+    "JsonDataSource",
     "LabelIndexCodec",
+    "MaskCodec",
     "MultiLabelBinarizeCodec",
     "TargetBinding",
     "TargetCodec",
     "Transform",
-    "build_albumentations_transform",
-    "build_basic_transform",
     "collate_samples",
     "data_sources",
     "split_dataframe",

@@ -1,7 +1,14 @@
 """The map-style Dataset: turn a DataFrame row into a model-ready ``Sample``.
 
-Per item: load image(s) -> transform to tensors -> encode targets via codecs.
-Heavy I/O (image read, mask decode) runs here, inside DataLoader workers.
+Per item:
+1. Load all inputs via ``InputBinding.loader.load``:
+   file-based loaders (images) receive a root_path-resolved path;
+   raw-value loaders (text) receive the column value as-is.
+2. Load targets via ``codec.load``:
+   spatial codecs (masks) read the file; scalar codecs return the raw value.
+3. Apply transform — inputs and spatial targets pass through together so
+   geometric operations stay aligned across image and mask.
+4. Finalise all targets to tensors via ``codec.to_tensor``.
 """
 
 from __future__ import annotations
@@ -12,9 +19,8 @@ import pandas as pd
 from torch.utils.data import Dataset as TorchDataset
 
 from src.core.entities import Sample
-from src.data.bindings import TargetBinding
-from src.data.loaders import ImageLoader
-from src.data.transforms import IMAGE_KEY, Transform
+from src.data.bindings import InputBinding, TargetBinding
+from src.data.transforms import Transform
 
 
 class Dataset(TorchDataset[Sample]):
@@ -22,41 +28,52 @@ class Dataset(TorchDataset[Sample]):
 
     Parameters:
         frame (pd.DataFrame): Rows for this split.
-        image_column (str): Column holding the image path.
-        bindings (list[TargetBinding]): Task target bindings.
-        transform (Transform): Input transform (numpy image -> tensor).
-        loader (ImageLoader): Image loader.
-        root_path (str | None): Optional prefix prepended to image paths.
+        input_bindings (list[InputBinding]): Per-input column + loader.
+        target_bindings (list[TargetBinding]): Per-task target column + codec.
+        transform (Transform): Input transform applied after loading.
+        root_path (str | None): Prefix prepended to file-based input paths.
     """
 
     def __init__(
         self,
         frame: pd.DataFrame,
-        image_column: str,
-        bindings: list[TargetBinding],
+        input_bindings: list[InputBinding],
+        target_bindings: list[TargetBinding],
         transform: Transform,
-        loader: ImageLoader,
         root_path: str | None = None,
     ) -> None:
         self._frame = frame.reset_index(drop=True)
-        self._image_column = image_column
-        self._bindings = bindings
+        self._input_bindings = input_bindings
+        self._target_bindings = target_bindings
         self._transform = transform
-        self._loader = loader
         self._root = Path(root_path) if root_path else None
 
     def __len__(self) -> int:
         return len(self._frame)
 
+    def _resolve(self, raw: object) -> str:
+        text = str(raw)
+        return str(self._root / text) if self._root is not None else text
+
     def __getitem__(self, index: int) -> Sample:
         row = self._frame.iloc[index]
+        sample = Sample(inputs={}, meta={"index": index})
 
-        raw_path = str(row[self._image_column])
-        path = str(self._root / raw_path) if self._root is not None else raw_path
-        image = self._loader.load(path)
+        # 1. Load all inputs (file-based → resolved path; raw-value → as-is).
+        for ib in self._input_bindings:
+            value = self._resolve(row[ib.column]) if ib.loader.file_based else str(row[ib.column])
+            sample.inputs[ib.name] = ib.loader.load(value)
 
-        sample = Sample(inputs={IMAGE_KEY: image}, meta={"index": index})
+        # 2. Load all targets (spatial → array; scalar → raw value).
+        for tb in self._target_bindings:
+            raw = self._resolve(row[tb.column]) if tb.codec.spatial else row[tb.column]
+            sample.targets[tb.name] = tb.codec.load(raw)
+
+        # 3. Transform: inputs + spatial targets pass through together.
         sample = self._transform.apply(sample)
-        for binding in self._bindings:
-            sample.targets[binding.name] = binding.codec.encode(row[binding.column])
+
+        # 4. Finalise all targets to tensors.
+        for tb in self._target_bindings:
+            sample.targets[tb.name] = tb.codec.to_tensor(sample.targets[tb.name])
+
         return sample

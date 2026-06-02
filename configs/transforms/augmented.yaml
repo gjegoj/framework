@@ -1,0 +1,48 @@
+# @package transforms
+# Augmented: train uses colour + geometry augmentations; val/test are deterministic.
+train:
+  _target_: albumentations.Compose
+  transforms:
+    - _target_: albumentations.Resize
+      height: ${image_size[0]}
+      width: ${image_size[1]}
+      mask_interpolation: 0
+    - _target_: albumentations.HorizontalFlip
+      p: 0.5
+    - _target_: albumentations.Affine
+      scale: [0.85, 1.15]
+      translate_percent: [-0.05, 0.05]
+      rotate: [-15, 15]
+      shear: [-5, 5]
+      interpolation: 1
+      border_mode: 1
+      p: 0.3
+    - _target_: albumentations.ColorJitter
+      brightness: [0.8, 1.2]
+      contrast: [0.8, 1.2]
+      saturation: [0.8, 1.2]
+      hue: [-0.05, 0.05]
+      p: 0.3
+    - _target_: albumentations.OneOf
+      p: 0.2
+      transforms:
+        - _target_: albumentations.GaussNoise
+          std_range: [0.05, 0.1]
+        - _target_: albumentations.ISONoise
+          intensity: [0.1, 0.3]
+    - _target_: albumentations.Normalize
+      mean: ${mean}
+      std: ${std}
+    - _target_: albumentations.pytorch.ToTensorV2
+
+val:
+  _target_: albumentations.Compose
+  transforms:
+    - _target_: albumentations.Resize
+      height: ${image_size[0]}
+      width: ${image_size[1]}
+      mask_interpolation: 0
+    - _target_: albumentations.Normalize
+      mean: ${mean}
+      std: ${std}
+    - _target_: albumentations.pytorch.ToTensorV2

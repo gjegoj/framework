@@ -2,6 +2,7 @@ defaults:
   - backbone: resnet18
   - optimizer: adamw
   - experiment: m2_smoke
+  - transforms: default      # swap to augmented or your own transforms config
   - _self_
 
 project: my-project
@@ -13,8 +14,8 @@ mean: [0.485, 0.456, 0.406]
 std: [0.229, 0.224, 0.225]
 
 data:
-  source: ???          # required: path(s) to CSV/JSON annotation file
-  image_column: image_path
+  sources: ???         # str/list → split mode; {train: ..., val: ...} → pre-split mode
+  inputs: image_path
   split:
     train: 0.8
     val: 0.1

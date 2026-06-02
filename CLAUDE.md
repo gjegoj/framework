@@ -11,9 +11,9 @@ and torchmetrics. It is a clean-architecture rewrite of the prototype in `old/`
 milestone breakdown live in the approved plan at
 `~/.claude/plans/clean-code-refactoring-patterns-softwar-merry-sunbeam.md`.
 
-Status: building Milestone 1 (a classification tracer bullet) substep by substep;
-each substep is implemented, type-checked, tested, then validated by the user
-before the next.
+Status: M1–M3 complete (classification, all Objective variants, DENSE segmentation).
+Currently in a data-pipeline refactoring phase; each substep is implemented,
+type-checked, tested, then validated before the next.
 
 ## Commands
 
@@ -93,7 +93,7 @@ class in a registry (OCP).
 - **Criterion operates on logits; activation is separate** (used only for metrics /
   inference), so losses stay numerically stable.
 - **Extension points are registries** (`backbones`, `head_builders`, `criteria`,
-  `data_sources`, `target_codecs`, `topology_strategies`, `objective_strategies`,
+  `data_sources`, `target_codecs`, `input_loaders`, `topology_strategies`, `objective_strategies`,
   `task_presets`). Register with the `@registry.register("key")` decorator; importing a
   package's `__init__` populates its registries.
 - Canonical input/feature keys (`IMAGE`, `POOLED`, `DECODER`) live in `core/keys.py` —
@@ -101,13 +101,28 @@ class in a registry (OCP).
 - Dataclasses for domain/application objects; Pydantic only at I/O boundaries
   (config). Google-style docstrings with a `Parameters:` block.
 
+## Key data-layer conventions
+
+- `data.inputs` (not `image_column`) drives input loading: `str` = single image shorthand;
+  `dict[alias, column]` = multiple inputs, loader auto-detected from file extensions at
+  `setup()` time; `dict[alias, {column, loader}]` = explicit loader key.
+- `InputBinding(name, column, loader)` is the input-side counterpart of `TargetBinding(name, column, codec)`.
+  Both use `target_bindings` / `input_bindings` as parameter names in `DataModule` and `Dataset`.
+- `instantiate(spec)` is recursive — handles nested `_target_` graphs (Albumentations pipelines,
+  `OneOf`, etc.); `registry` is optional (omit for pure `_target_` mode with no registry lookup).
+- `build_data_module(config, target_bindings, runtime)` is the single wiring call that replaces
+  manual `DataModule` construction; split/pre-split logic is encapsulated there.
+
 ## Environment notes
 
 - The package root is `src/` (import as `from src.core import ...`); run from repo root.
-- `albumentationsx` may fail to import on this machine (a native `numkong`/SME issue);
-  its import is therefore lazy, and `BasicTransform` (cv2/torch) is the default
-  transform that always works. `build_albumentations_transform` is ready once the
-  install is fixed.
+- `albumentationsx` (2.3.1) imports and works. If it crashes, `uv run python -c "import albumentations"` is the canary.
+  Augmentation pipelines live in `configs/transforms/` as `_target_`-keyed YAML (`default`/`augmented`);
+  `build_albumentations_transform` was removed — transforms always come from config.
+- Data sources: subclass `FileDataSource` and implement `_read_file`; `CsvDataSource`/`JsonDataSource`
+  registered in `data_sources`. Two data modes: `data.sources: str/list` + `data.split` (random or
+  stratified via `data.split_stratify`), or `data.sources: {train: ..., val: ...}` (pre-split files).
+  `data.max_samples: int | float` caps dataset size for fast iteration.
 - The reference dataset `old/data/classification.csv` points at remote URLs with empty
   local placeholder images; tests use synthetic images generated in a tmp dir, and the
   offline smoke should use a synthetic local dataset.

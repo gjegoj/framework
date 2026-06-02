@@ -6,11 +6,12 @@ available by key in the registries.
 
 from src.models.assembly import CompositeModel, build_composite_model
 from src.models.backbones import TimmBackbone
-from src.models.heads import LinearHead
+from src.models.heads import ConvHead, LinearHead
 from src.models.registry import backbones, head_builders
 
 __all__ = [
     "CompositeModel",
+    "ConvHead",
     "LinearHead",
     "TimmBackbone",
     "backbones",

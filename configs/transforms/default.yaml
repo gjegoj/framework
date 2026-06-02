@@ -1,0 +1,26 @@
+# @package transforms
+# Default: resize → normalize → to-tensor (no augmentation).
+# Val and test share the same deterministic pipeline.
+train:
+  _target_: albumentations.Compose
+  transforms:
+    - _target_: albumentations.Resize
+      height: ${image_size[0]}
+      width: ${image_size[1]}
+      mask_interpolation: 0   # NEAREST — preserves segmentation class indices
+    - _target_: albumentations.Normalize
+      mean: ${mean}
+      std: ${std}
+    - _target_: albumentations.pytorch.ToTensorV2
+
+val:
+  _target_: albumentations.Compose
+  transforms:
+    - _target_: albumentations.Resize
+      height: ${image_size[0]}
+      width: ${image_size[1]}
+      mask_interpolation: 0
+    - _target_: albumentations.Normalize
+      mean: ${mean}
+      std: ${std}
+    - _target_: albumentations.pytorch.ToTensorV2

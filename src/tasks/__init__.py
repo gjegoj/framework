@@ -16,7 +16,7 @@ from src.tasks.codecs import (
     MulticlassTaskCodec,
     MultilabelTaskCodec,
 )
-from src.tasks.presets import TaskPreset, classification, regression, task_presets
+from src.tasks.presets import TaskPreset, classification, regression, segmentation, task_presets
 from src.tasks.strategies.objective import (
     BinaryObjective,
     ContinuousObjective,
@@ -26,6 +26,7 @@ from src.tasks.strategies.objective import (
     objective_strategies,
 )
 from src.tasks.strategies.topology import (
+    DenseTopology,
     GlobalTopology,
     TopologyStrategy,
     topology_strategies,
@@ -38,6 +39,7 @@ __all__ = [
     "BinaryTaskCodec",
     "ContinuousObjective",
     "ContinuousTaskCodec",
+    "DenseTopology",
     "GlobalTopology",
     "IdentityActivation",
     "MulticlassObjective",
@@ -54,6 +56,7 @@ __all__ = [
     "classification",
     "objective_strategies",
     "regression",
+    "segmentation",
     "TaskPreset",
     "task_presets",
     "topology_strategies",

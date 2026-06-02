@@ -1,115 +1,55 @@
 """Transforms: adapt raw numpy images into model-ready tensors.
 
-``Transform`` is the framework-agnostic port. Two implementations:
+``Transform`` is the framework-agnostic port. ``AlbumentationsTransform`` wraps an
+Albumentations ``Compose``. Spatial targets (segmentation masks) are registered via
+``add_targets`` at construction so they ride through the same geometric pipeline as
+the image — the same pattern used in the old prototype.
 
-- ``BasicTransform`` — dependency-light resize+normalize+to-tensor (cv2/torch
-  only). The default that always works.
-- ``AlbumentationsTransform`` — adapter over an Albumentations ``Compose`` for
-  rich augmentation pipelines. Albumentations is imported lazily (only when its
-  builder is called), so a broken/absent install never breaks importing this
-  module.
+Augmentation pipelines are declared in YAML using ``_target_``-keyed specs and
+instantiated via ``src.core.instantiate.instantiate``.  See
+``configs/transforms/`` for examples.
 """
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING
 
-import cv2
-import numpy as np
-import torch
+import albumentations as A
 
 from src.core.entities import Sample
-from src.core.keys import IMAGE as IMAGE_KEY
-
-if TYPE_CHECKING:
-    import albumentations as A
 
 
 class Transform(ABC):
-    """Transforms a sample's raw image input into a model-ready tensor in place."""
+    """Transforms a sample's raw image input (and any spatial targets) into tensors."""
 
     @abstractmethod
     def apply(self, sample: Sample) -> Sample:
-        """Transform ``sample`` and return it (image input becomes a CHW tensor)."""
-
-
-class BasicTransform(Transform):
-    """Resize + normalize + to-tensor using only cv2/numpy/torch.
-
-    Mirrors Albumentations' ``Resize`` + ``Normalize`` + ``ToTensorV2`` semantics
-    (scale to [0, 1], subtract mean, divide by std, return ``CxHxW`` float).
-
-    Parameters:
-        image_size (tuple[int, int]): Target ``(height, width)``.
-        mean (list[float]): Per-channel normalization mean.
-        std (list[float]): Per-channel normalization std.
-    """
-
-    def __init__(self, image_size: tuple[int, int], mean: list[float], std: list[float]) -> None:
-        self._height, self._width = image_size
-        self._mean = np.asarray(mean, dtype=np.float32).reshape(-1, 1, 1)
-        self._std = np.asarray(std, dtype=np.float32).reshape(-1, 1, 1)
-
-    def apply(self, sample: Sample) -> Sample:
-        image = sample.inputs[IMAGE_KEY]
-        image = cv2.resize(image, (self._width, self._height), interpolation=cv2.INTER_LINEAR)
-        image = image.astype(np.float32) / 255.0
-        image = np.transpose(image, (2, 0, 1))  # HWC -> CHW
-        image = (image - self._mean) / self._std
-        sample.inputs[IMAGE_KEY] = torch.from_numpy(image)
-        return sample
+        """Transform ``sample`` in place and return it (inputs/targets become tensors)."""
 
 
 class AlbumentationsTransform(Transform):
-    """Adapter over an Albumentations ``Compose`` (built via the lazy builder).
+    """Adapter over an Albumentations ``Compose``.
+
+    Spatial targets (mask arrays already in ``sample.targets``) are passed
+    alongside the image via ``**sample.inputs, **sample.targets`` in a single
+    call, so every geometric operation is applied consistently to all of them.
+
+    ``spatial_targets`` tells Albumentations which target keys are masks so it
+    applies nearest-neighbour resizing and correct dtypes to them.
 
     Parameters:
         compose (A.Compose): Albumentations pipeline ending in ``ToTensorV2``.
+        spatial_targets (list[str] | None): Target key names that are spatial (masks).
+            Registered as ``"mask"`` type via ``add_targets``.
     """
 
-    def __init__(self, compose: A.Compose) -> None:
+    def __init__(self, compose: A.Compose, spatial_targets: list[str] | None = None) -> None:
         self._compose = compose
+        if spatial_targets:
+            self._compose.add_targets({name: "mask" for name in spatial_targets})
 
     def apply(self, sample: Sample) -> Sample:
-        result = self._compose(image=sample.inputs[IMAGE_KEY])
-        sample.inputs[IMAGE_KEY] = result[IMAGE_KEY]
+        result = self._compose(**sample.inputs, **sample.targets)
+        sample.inputs = {k: result[k] for k in sample.inputs}
+        sample.targets = {k: result[k] for k in sample.targets}
         return sample
-
-
-def build_basic_transform(
-    image_size: tuple[int, int],
-    mean: list[float],
-    std: list[float],
-) -> BasicTransform:
-    """Build the dependency-light resize + normalize + to-tensor transform."""
-    return BasicTransform(image_size, mean, std)
-
-
-def build_albumentations_transform(
-    image_size: tuple[int, int],
-    mean: list[float],
-    std: list[float],
-) -> AlbumentationsTransform:
-    """Build a basic Albumentations pipeline (imported lazily).
-
-    Parameters:
-        image_size (tuple[int, int]): Target ``(height, width)``.
-        mean (list[float]): Per-channel normalization mean.
-        std (list[float]): Per-channel normalization std.
-
-    Returns:
-        AlbumentationsTransform: Wrapped Albumentations pipeline.
-    """
-    import albumentations as A
-    from albumentations.pytorch import ToTensorV2
-
-    height, width = image_size
-    compose = A.Compose(
-        [
-            A.Resize(height=height, width=width),
-            A.Normalize(mean=tuple(mean), std=tuple(std)),
-            ToTensorV2(),
-        ]
-    )
-    return AlbumentationsTransform(compose)

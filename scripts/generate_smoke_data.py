@@ -18,10 +18,13 @@ import cv2
 import numpy as np
 
 OUT = pathlib.Path("data/smoke")
+MASK_DIR = OUT / "masks"
 OUT.mkdir(parents=True, exist_ok=True)
+MASK_DIR.mkdir(parents=True, exist_ok=True)
 
 LABELS = ["cat", "dog", "cow"]
 TAG_POOL = ["indoor", "outdoor", "small", "large", "fluffy"]
+SEG_CLASSES = 3
 NUM_IMAGES = 30
 RNG = np.random.default_rng(0)
 
@@ -39,6 +42,10 @@ for i in range(NUM_IMAGES):
     tags = ",".join(TAG_POOL[idx] for idx in sorted(set(tag_indices)))
     # regression: synthetic float derived from index
     value = round(float(RNG.uniform(0.0, 10.0)), 4)
+    # segmentation: single-channel index mask (classes 0..SEG_CLASSES-1)
+    mask = RNG.integers(0, SEG_CLASSES, (64, 64), dtype=np.uint8)
+    mask_path = MASK_DIR / f"{i}.png"
+    cv2.imwrite(str(mask_path), mask)
     rows.append(
         {
             "image_path": str(path),
@@ -46,12 +53,14 @@ for i in range(NUM_IMAGES):
             "binary_label": binary_label,
             "tags": tags,
             "value": value,
+            "mask_path": str(mask_path),
         }
     )
 
 csv_path = OUT / "data.csv"
+fieldnames = ["image_path", "label", "binary_label", "tags", "value", "mask_path"]
 with open(csv_path, "w", newline="") as f:
-    writer = csv.DictWriter(f, fieldnames=["image_path", "label", "binary_label", "tags", "value"])
+    writer = csv.DictWriter(f, fieldnames=fieldnames)
     writer.writeheader()
     writer.writerows(rows)
 

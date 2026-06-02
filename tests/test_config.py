@@ -15,8 +15,8 @@ def _raw(**overrides: Any) -> dict[str, Any]:
         "batch_size": 8,
         "image_size": [224, 224],
         "data": {
-            "source": "data/classification.csv",
-            "image_column": "image_path",
+            "sources": "data/classification.csv",
+            "inputs": "image_path",
             "split": {"train": 0.8, "val": 0.1, "test": 0.1},
         },
         "backbone": {"name": "resnet18"},
@@ -84,8 +84,8 @@ class TestInvalidConfig:
             load_config(
                 _raw(
                     data={
-                        "source": "d.csv",
-                        "image_column": "p",
+                        "sources": "d.csv",
+                        "inputs": "p",
                         "split": {"train": 0.5, "val": 0.1, "test": 0.1},
                     }
                 )
@@ -96,8 +96,8 @@ class TestInvalidConfig:
             load_config(
                 _raw(
                     data={
-                        "source": "d.csv",
-                        "image_column": "p",
+                        "sources": "d.csv",
+                        "inputs": "p",
                         "split": {"train": 0.5, "predict": 0.5},
                     }
                 )

@@ -4,9 +4,9 @@ import pytest
 import torch
 
 from src.core.entities import HeadSpec
-from src.core.keys import IMAGE, POOLED
+from src.core.keys import DECODER, IMAGE, POOLED
 from src.models import CompositeModel, build_composite_model
-from src.models.backbones import TimmBackbone
+from src.models.backbones import SmpBackbone, TimmBackbone
 from src.models.registry import backbones, head_builders
 
 
@@ -27,10 +27,37 @@ class TestTimmBackbone:
             backbone.feature_dim("decoder")
 
 
+class TestConvHead:
+    def test_preserves_spatial_dims_maps_channels(self) -> None:
+        head = head_builders.create("conv", in_features=16, out_features=4)
+        features = torch.randn(2, 16, 24, 24)  # [B, D, H, W]
+        logits = head(features)
+        assert logits.shape == (2, 4, 24, 24)  # [B, C, H, W]
+
+
+class TestSmpBackbone:
+    def test_exposes_decoder_and_pooled_streams(self) -> None:
+        backbone = SmpBackbone(name="unet", encoder_name="resnet18", pretrained=False)
+        features = backbone(_images(2))  # 32x32 input (divisible by 32)
+        assert features[DECODER].shape[0] == 2
+        assert features[DECODER].shape[2:] == (32, 32)  # full input resolution
+        assert features[POOLED].shape == (2, backbone.feature_dim(POOLED))
+        assert features[DECODER].shape[1] == backbone.feature_dim(DECODER)
+
+    def test_segmentation_model_produces_per_pixel_logits(self) -> None:
+        backbone = SmpBackbone(encoder_name="resnet18", pretrained=False)
+        specs = {"mask": HeadSpec(kind="conv", out_features=4, feature_key=DECODER)}
+        model = build_composite_model(backbone, specs)
+        output = model(_images(2))
+        assert output.task_logits["mask"].shape == (2, 4, 32, 32)  # [B, C, H, W]
+
+
 class TestRegistries:
     def test_builtins_registered(self) -> None:
         assert "timm" in backbones
+        assert "smp" in backbones
         assert "linear" in head_builders
+        assert "conv" in head_builders
 
 
 class TestCompositeModel:

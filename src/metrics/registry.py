@@ -21,5 +21,6 @@ metric_factories.register("f1")(tm.F1Score)
 metric_factories.register("auroc")(tm.AUROC)
 metric_factories.register("average_precision")(tm.AveragePrecision)
 metric_factories.register("confusion_matrix")(tm.ConfusionMatrix)
+metric_factories.register("jaccard")(tm.JaccardIndex)  # IoU / mIoU for segmentation
 metric_factories.register("mse")(tm.MeanSquaredError)
 metric_factories.register("mae")(tm.MeanAbsoluteError)

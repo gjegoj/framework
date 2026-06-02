@@ -1,0 +1,36 @@
+# @package _global_
+# DENSE segmentation smoke: smp Unet backbone + per-pixel mask task on CPU.
+# Run: uv run python main.py +experiment=segmentation_smoke
+
+defaults:
+  - override /backbone: smp_unet
+
+project: smoke-segmentation
+seed: 0
+epochs: 2
+batch_size: 4
+image_size: [64, 64]
+
+data:
+  sources: data/smoke/data.csv
+  inputs: image_path
+  split:
+    train: 0.7
+    val: 0.15
+    test: 0.15
+
+tasks:
+  mask:
+    preset: segmentation
+    target: mask_path
+    num_classes: 3            # segmentation requires explicit class count
+    # opt-in to composite CE+Dice (default is cross-entropy):
+    loss: {name: composite, terms: {cross_entropy: 1.0, dice: 1.0}}
+
+trainer:
+  accelerator: cpu
+  devices: 1
+  precision: 32-true
+  log_every_n_steps: 1
+  enable_checkpointing: false
+  logger: false

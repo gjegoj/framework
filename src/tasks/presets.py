@@ -32,10 +32,18 @@ class TaskPreset:
         topology (Topology): Output-structure axis this preset fixes.
         default_objective (Objective): Label-semantics axis used when the task
             config omits ``objective:``.
+        default_codec (str | None): ``target_codecs`` key overriding the objective's
+            default (e.g. segmentation needs ``"mask"`` though the objective is
+            multiclass). ``None`` -> fall back to the objective's ``default_codec``.
+        default_metrics (MetricsSpec | None): Metric spec used when the user gives
+            no ``metrics:`` (e.g. segmentation defaults to mIoU). ``None`` -> the
+            objective's default (accuracy / regression metrics).
     """
 
     topology: Topology
     default_objective: Objective
+    default_codec: str | None = None
+    default_metrics: MetricsSpec | None = None
 
     def resolve_objective(self, override: str | None) -> Objective:
         """Return the effective objective: the ``override`` if given, else the default."""
@@ -72,7 +80,7 @@ class TaskPreset:
             num_classes=num_classes,
             weight=weight,
             loss_spec=loss,
-            metrics_spec=metrics,
+            metrics_spec=metrics if metrics is not None else self.default_metrics,
         )
 
 
@@ -80,6 +88,15 @@ task_presets: Registry[TaskPreset] = Registry("task_preset")
 
 task_presets.register_instance("classification", TaskPreset(Topology.GLOBAL, Objective.MULTICLASS))
 task_presets.register_instance("regression", TaskPreset(Topology.GLOBAL, Objective.CONTINUOUS))
+task_presets.register_instance(
+    "segmentation",
+    TaskPreset(
+        topology=Topology.DENSE,
+        default_objective=Objective.MULTICLASS,
+        default_codec="mask",
+        default_metrics={"miou": {"name": "jaccard"}},
+    ),
+)
 
 
 def classification(
@@ -107,3 +124,19 @@ def regression(
     ``num_classes`` carries the output dimension (1 for a scalar target).
     """
     return task_presets.create("regression").build(name, num_classes, objective, weight, loss, metrics)
+
+
+def segmentation(
+    name: str,
+    num_classes: int,
+    objective: str | None = None,
+    weight: float = 1.0,
+    loss: BrickSpec | None = None,
+    metrics: MetricsSpec | None = None,
+) -> Task:
+    """Build a dense (per-pixel) segmentation task — facade over the preset.
+
+    Defaults to multiclass on the decoder stream with mIoU metrics;
+    ``objective="multilabel"`` reuses the same dense bricks without new code.
+    """
+    return task_presets.create("segmentation").build(name, num_classes, objective, weight, loss, metrics)

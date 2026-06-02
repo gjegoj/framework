@@ -20,16 +20,15 @@ from omegaconf import DictConfig, OmegaConf
 import src.models  # noqa: F401 — registers TimmBackbone and LinearHead
 import src.tasks  # noqa: F401 — registers topology/objective strategies and presets
 from src.composition.wiring import (
+    build_backbone,
     build_bindings,
+    build_data_module,
     build_optimizer_builder,
     build_tasks,
-    build_transforms,
 )
 from src.config import load_config
 from src.core.runtime import RuntimeContext
-from src.data import CsvDataSource, DataModule
 from src.models.assembly import build_composite_model
-from src.models.registry import backbones
 from src.training import LitDataModule, LitModule
 
 log = logging.getLogger(__name__)
@@ -38,7 +37,7 @@ log = logging.getLogger(__name__)
 @hydra.main(version_base=None, config_path="configs", config_name="config")
 def main(cfg: DictConfig) -> None:
     raw = OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True)
-    config = load_config(raw)  # type: ignore[arg-type]
+    config = load_config(raw)
 
     L.seed_everything(config.seed, workers=True)
     log.info(
@@ -52,19 +51,8 @@ def main(cfg: DictConfig) -> None:
     runtime = RuntimeContext(epochs=config.epochs)
 
     # 2. Data: read → fit codecs (infers num_classes) → split → datasets
-    sources = config.data.source if isinstance(config.data.source, list) else [config.data.source]
     bindings = build_bindings(config)
-    plain_dm = DataModule(
-        source=CsvDataSource(sources),
-        bindings=bindings,
-        image_column=config.data.image_column,
-        transforms=build_transforms(config),
-        split=config.data.split,
-        runtime=runtime,
-        batch_size=config.batch_size,
-        seed=config.seed,
-        root_path=config.data.root_path,
-    )
+    plain_dm = build_data_module(config, bindings, runtime)
     plain_dm.setup()
     log.info("Dataset sizes: %s", dict(runtime.dataset_sizes))
     log.info("Inferred num_classes: %s", dict(runtime.num_classes))
@@ -74,11 +62,7 @@ def main(cfg: DictConfig) -> None:
     log.info("Tasks: %s", [t.name for t in tasks])
 
     # 4. Model — heads sized from backbone.feature_dim, derived from tasks
-    backbone = backbones.create(
-        config.backbone.kind,
-        name=config.backbone.name,
-        pretrained=config.backbone.pretrained,
-    )
+    backbone = build_backbone(config.backbone)
     model = build_composite_model(backbone, {t.name: t.head_spec for t in tasks})
 
     # 5. Optimizer (class resolved from optimizer.name) with optional per-head LR overrides

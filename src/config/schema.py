@@ -27,18 +27,86 @@ _IMAGENET_STD = [0.229, 0.224, 0.225]
 
 
 class DataConfig(BaseModel):
-    """Where data comes from and how it is split."""
+    """Where data comes from and how it is divided into stages.
 
-    source: str | list[str] = Field(..., description="Path(s) to a CSV/JSON annotation file.")
-    image_column: str = Field(..., description="Column holding image paths.")
-    split: dict[Stage, float] = Field(..., description="Train/val/test ratios; must sum to 1.0.")
-    root_path: str | None = Field(None, description="Optional prefix prepended to image paths.")
+    The ``sources`` field drives both modes — its type determines which:
+
+    **Split mode** — string or list of strings, ratios decide the split::
+
+        data:
+          sources: data/annotations.csv
+          split: {train: 0.8, val: 0.1, test: 0.1}
+          inputs: image_path                        # shorthand: one image input
+
+    **Pre-split mode** — dict keyed by stage::
+
+        data:
+          sources:
+            train: [data/train_a.csv, data/train_b.csv]
+            val: data/val.csv
+          inputs: image_path
+
+    **Multiple inputs** (multi-view / multimodal)::
+
+        data:
+          inputs:
+            left_image: left_path          # loader auto-detected from extension
+            right_image: right_path
+          # explicit loader:
+          # inputs:
+          #   image: image_path
+          #   caption: {column: text_col, loader: text}
+
+    ``source_type`` (csv/json) is inferred from the file extension when omitted.
+    """
+
+    sources: str | list[str] | dict[str, str | list[str]] = Field(
+        ...,
+        description=(
+            "Annotation path(s) or per-stage dict. "
+            "str/list[str] → split mode (requires 'split'). "
+            "dict[stage, paths] → pre-split mode ('train'/'val'/'test' keys)."
+        ),
+    )
+    split: dict[Stage, float] | None = Field(None, description="Train/val/test ratios summing to 1.0 (split mode).")
+    split_stratify: str | None = Field(
+        None,
+        description=(
+            "Column to stratify by when splitting (split mode only). "
+            "Auto-detected strategy: categorical strings → classification, "
+            "numeric → quantile-binned, comma-separated strings → multilabel "
+            "(IterativeStratification)."
+        ),
+    )
+    max_samples: int | float | None = Field(
+        None,
+        gt=0,
+        description=(
+            "Cap dataset size for fast iteration or debugging. "
+            "int → keep exactly N rows; float in (0, 1] → keep this fraction. "
+            "In split mode applied before splitting (caps total). "
+            "In pre-split mode applied per stage."
+        ),
+    )
+    inputs: str | dict[str, str | dict[str, str]] = Field(
+        ...,
+        description=(
+            "Input column(s) and their loaders. "
+            "str shorthand → single image input named 'image'. "
+            "dict[alias, column] → multiple inputs, loader auto-detected from values. "
+            "dict[alias, {column, loader}] → explicit loader key."
+        ),
+    )
+    source_type: str | None = Field(None, description="data_sources key (csv/json); None -> inferred from extension.")
+    root_path: str | None = Field(None, description="Optional prefix prepended to file-based input paths.")
 
     model_config = ConfigDict(extra="allow")
 
     @field_validator("split")
     @classmethod
-    def _validate_split(cls, value: dict[Stage, float]) -> dict[Stage, float]:
+    def _validate_split(cls, value: dict[Stage, float] | None) -> dict[Stage, float] | None:
+        if value is None:
+            return value
         if Stage.PREDICT in value:
             raise ValueError("split may only contain train/val/test, not predict.")
         if Stage.TRAIN not in value:
@@ -49,6 +117,31 @@ class DataConfig(BaseModel):
         if not math.isclose(total, 1.0, abs_tol=1e-6):
             raise ValueError(f"split ratios must sum to 1.0, got {total}.")
         return value
+
+    @field_validator("max_samples")
+    @classmethod
+    def _validate_max_samples(cls, value: int | float | None) -> int | float | None:
+        if isinstance(value, float) and not (0.0 < value <= 1.0):
+            raise ValueError(f"max_samples as a fraction must be in (0, 1], got {value}.")
+        return value
+
+    @model_validator(mode="after")
+    def _validate_mode(self) -> DataConfig:
+        is_presplit = isinstance(self.sources, dict)
+        if is_presplit:
+            assert isinstance(self.sources, dict)
+            valid = {"train", "val", "test"}
+            invalid = set(self.sources) - valid
+            if invalid:
+                raise ValueError(f"sources keys must be in {{train, val, test}}, got: {sorted(invalid)}.")
+            if "train" not in self.sources:
+                raise ValueError("sources dict must include 'train'.")
+            if self.split is not None:
+                raise ValueError("'split' cannot be used when sources is a dict (pre-split mode).")
+        else:
+            if self.split is None:
+                raise ValueError("'split' is required when sources is a path (split mode).")
+        return self
 
 
 class BackboneConfig(BaseModel):
@@ -131,6 +224,14 @@ class ExperimentConfig(BaseModel):
     backbone: BackboneConfig
     optimizer: OptimizerConfig
     tasks: dict[str, TaskConfig] = Field(..., min_length=1, description="Tasks by name.")
+    transforms: dict[str, Any] | None = Field(
+        None,
+        description=(
+            "Per-stage Albumentations pipeline specs (train/val/test). "
+            "Each value is a _target_-keyed dict instantiated via instantiate_nested. "
+            "None → default resize + normalize + ToTensorV2 built from image_size/mean/std."
+        ),
+    )
     trainer: TrainerConfig = Field(default_factory=TrainerConfig)
 
     model_config = ConfigDict(extra="forbid")

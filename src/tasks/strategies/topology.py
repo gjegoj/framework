@@ -10,7 +10,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 
 from src.core.entities import HeadSpec
-from src.core.keys import POOLED
+from src.core.keys import DECODER, POOLED
 from src.core.registry import Registry
 from src.tasks.taxonomy import Topology
 
@@ -36,3 +36,13 @@ class GlobalTopology(TopologyStrategy):
 
     def head_spec(self, out_features: int) -> HeadSpec:
         return HeadSpec(kind="linear", out_features=out_features, feature_key=POOLED)
+
+
+@topology_strategies.register(Topology.DENSE)
+class DenseTopology(TopologyStrategy):
+    """One prediction per pixel: a conv head on the decoder feature map."""
+
+    kind = Topology.DENSE
+
+    def head_spec(self, out_features: int) -> HeadSpec:
+        return HeadSpec(kind="conv", out_features=out_features, feature_key=DECODER)

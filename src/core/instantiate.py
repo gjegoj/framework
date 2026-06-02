@@ -1,18 +1,22 @@
 """Generic spec resolver: turn a YAML config fragment into a concrete object.
 
-This is the single mechanism that restores the prototype's YAML mobility while
-keeping the validated-boundary discipline. A *brick spec* selects a component in
-one of three forms, in increasing order of power:
+A *brick spec* selects a component in one of three forms, in increasing order
+of power:
 
 - **string** — a registry key with default args: ``cross_entropy``.
 - **mapping with** ``name`` — a registry key plus keyword arguments:
   ``{name: cross_entropy, label_smoothing: 0.1}``.
-- **mapping with** ``_target_`` — a fully-qualified import path for a custom
-  class the framework has never heard of: ``{_target_: my_pkg.MyLoss, alpha: 0.3}``.
+- **mapping with** ``_target_`` — a fully-qualified import path that bypasses
+  the registry: ``{_target_: my_pkg.MyLoss, alpha: 0.3}``.
 
-``injected`` arguments are runtime-derived values the caller forces (e.g. a
-metric's ``num_classes``); user-supplied params take precedence so a config can
-still override them when it makes sense.
+``instantiate`` is also recursive: when a spec has a ``_target_`` key, every
+value inside it is resolved the same way before the factory is called.  Lists
+are walked element-by-element.  This makes the same function work for both
+flat brick selection (losses, metrics, codecs) and deeply nested object graphs
+(e.g. an Albumentations ``Compose`` pipeline with ``OneOf`` sub-groups).
+
+Pass a ``registry`` for the string / ``name`` forms; omit it (``None``) for
+pure ``_target_``-only specs where no registry exists (third-party libraries).
 """
 
 from __future__ import annotations
@@ -24,6 +28,9 @@ from typing import Any
 from src.core.registry import Registry
 
 BrickSpec = str | Mapping[str, Any]
+
+# Hydra meta-keys that carry no meaning outside Hydra — silently dropped.
+_HYDRA_META = frozenset({"_convert_", "_recursive_", "_partial_"})
 
 
 def resolve_target(path: str) -> Any:
@@ -45,32 +52,63 @@ def resolve_target(path: str) -> Any:
     return getattr(module, attr)
 
 
-def instantiate[T](spec: BrickSpec, registry: Registry[T], **injected: Any) -> T:
-    """Build a component from a brick spec via ``registry`` or a ``_target_`` import.
+def instantiate[T](
+    spec: Any,
+    registry: Registry[T] | None = None,
+    **injected: Any,
+) -> T | Any:
+    """Build a component from a spec — flat (registry) or recursive (``_target_``).
+
+    Three resolution paths:
+
+    1. **string** — ``registry.create(key, **injected)``; requires ``registry``.
+    2. **mapping with** ``name`` — ``registry.create(name, **params)``;
+       requires ``registry``.
+    3. **mapping with** ``_target_`` — import the class, recursively resolve all
+       values in the mapping, then call the class.  Works with or without a
+       registry.
+    4. **list** — recursively resolve every element.
+    5. **scalar** — returned as-is.
+
+    Hydra meta-keys (``_convert_``, ``_recursive_``, ``_partial_``) are dropped
+    silently so configs written for Hydra's ``instantiate`` work unchanged.
 
     Parameters:
-        spec (BrickSpec): String key, or mapping with ``name``/``_target_`` + kwargs.
-        registry (Registry[T]): Registry consulted for the string/``name`` forms.
-        **injected (Any): Caller-forced defaults (overridable by spec params).
+        spec (Any): A brick spec (str, mapping, list) or a plain scalar.
+        registry (Registry | None): Registry for string / ``name`` forms.
+            ``None`` is valid when using only ``_target_`` or plain values.
+        **injected (Any): Caller-forced defaults for the top-level object
+            (overridable by explicit params in the spec).
 
     Returns:
-        T: The constructed component.
+        T | Any: The constructed component, or ``spec`` unchanged for scalars.
 
     Raises:
-        ValueError: If a mapping spec has neither ``name`` nor ``_target_``.
-        TypeError: If ``spec`` is neither a string nor a mapping.
+        ValueError: If a mapping spec has no ``name`` or ``_target_`` key, or if
+            a ``name`` spec is used without a registry.
     """
     if isinstance(spec, str):
-        return registry.create(spec, **injected)
+        if registry is not None:
+            return registry.create(spec, **injected)
+        return spec  # plain string value inside a nested _target_ spec
+
     if isinstance(spec, Mapping):
-        params = dict(spec)
+        params = {k: v for k, v in spec.items() if k not in _HYDRA_META}
         target = params.pop("_target_", None)
+
         if target is not None:
             factory = resolve_target(str(target))
-            built: T = factory(**{**injected, **params})
-            return built
+            resolved = {k: instantiate(v) for k, v in params.items()}
+            return factory(**{**injected, **resolved})
+
         name = params.pop("name", None)
         if name is None:
-            raise ValueError(f"Brick spec mapping needs a 'name' or '_target_' key: {spec!r}.")
+            raise ValueError(f"Brick spec mapping needs a 'name' or '_target_' key: {dict(spec)!r}.")
+        if registry is None:
+            raise ValueError(f"A registry is required to resolve the name spec {name!r}.")
         return registry.create(str(name), **{**injected, **params})
-    raise TypeError(f"Brick spec must be a string or mapping, got {type(spec).__name__}.")
+
+    if isinstance(spec, list):
+        return [instantiate(item) for item in spec]
+
+    return spec

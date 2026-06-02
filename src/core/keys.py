@@ -10,4 +10,4 @@ IMAGE = "image"
 
 # Backbone feature streams — keys in ``FeatureBundle.streams``.
 POOLED = "pooled"  # global per-sample vector, shape [B, D]
-DECODER = "decoder"  # dense per-pixel map, shape [B, C, H, W]
+DECODER = "decoder"  # dense per-pixel feature map, shape [B, D, H, W]
