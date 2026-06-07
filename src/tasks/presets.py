@@ -1,18 +1,23 @@
 """Task presets: the familiar, user-facing facade over ``TaskBuilder``.
 
-A preset is one cohesive object: it fixes the *topology* and a *default
-objective*, and knows how to ``build`` a task from them. The simple case is a
-single call (``classification(name, num_classes)``); ``objective`` stays
-overridable for variants like multilabel.
+A preset is a registered singleton that fixes a *topology* and a *default
+objective*.  It can be used two ways from the same object:
 
-Presets are registered as singletons in ``task_presets`` so the wiring layer can
-both build a task (``preset.build(...)``) and read its ``default_objective``
-(to resolve the data-codec) from the *same* object — no parallel metadata table.
+- **YAML path** — ``task_presets.create("classification")`` returns the
+  instance; wiring calls ``.build(...)`` on it with runtime parameters.
+- **Python path** — the module-level names (``classification``, ``segmentation``,
+  ``regression``) *are* the preset instances.  Because ``TaskPreset`` is
+  callable (``__call__`` delegates to ``build``), you can write:
+  ``classification("label", num_classes=3)`` directly in tests or scripts.
+
+Adding a new preset is one ``register_instance`` call — no wrapper function
+needed.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 from src.core.entities import Task
 from src.core.instantiate import BrickSpec
@@ -32,12 +37,11 @@ class TaskPreset:
         topology (Topology): Output-structure axis this preset fixes.
         default_objective (Objective): Label-semantics axis used when the task
             config omits ``objective:``.
-        default_codec (str | None): ``target_codecs`` key overriding the objective's
-            default (e.g. segmentation needs ``"mask"`` though the objective is
-            multiclass). ``None`` -> fall back to the objective's ``default_codec``.
-        default_metrics (MetricsSpec | None): Metric spec used when the user gives
-            no ``metrics:`` (e.g. segmentation defaults to mIoU). ``None`` -> the
-            objective's default (accuracy / regression metrics).
+        default_codec (str | None): ``target_codecs`` key overriding the
+            objective's default (e.g. segmentation needs ``"mask"``).
+            ``None`` → fall back to the objective's ``default_codec``.
+        default_metrics (MetricsSpec | None): Metric spec used when the user
+            gives no ``metrics:``.  ``None`` → the objective's default.
     """
 
     topology: Topology
@@ -46,7 +50,7 @@ class TaskPreset:
     default_metrics: MetricsSpec | None = None
 
     def resolve_objective(self, override: str | None) -> Objective:
-        """Return the effective objective: the ``override`` if given, else the default."""
+        """Return the effective objective: ``override`` if given, else the default."""
         return Objective(override) if override is not None else self.default_objective
 
     def build(
@@ -57,6 +61,8 @@ class TaskPreset:
         weight: float = 1.0,
         loss: BrickSpec | None = None,
         metrics: MetricsSpec | None = None,
+        head: str | dict[str, Any] | None = None,
+        feature_key: str | None = None,
     ) -> Task:
         """Assemble the task from this preset's topology and the resolved objective.
 
@@ -65,8 +71,12 @@ class TaskPreset:
             num_classes (int): Class count (or output dim for regression).
             objective (str | None): Overrides the preset's default objective.
             weight (float): Weight in the aggregated loss.
-            loss (BrickSpec | None): Optional YAML ``loss:`` override.
-            metrics (MetricsSpec | None): Optional YAML ``metrics:`` override.
+            loss (BrickSpec | None): Optional loss override.
+            metrics (MetricsSpec | None): Optional metrics override.
+            head: Optional head override. ``None`` → backbone native.
+                ``str`` → registry key. ``dict`` → ``{kind?, _target_?, ...}``.
+            feature_key (str | None): Override the backbone stream this head reads.
+                ``None`` → topology default (``pooled`` / ``decoder``).
 
         Returns:
             Task: The assembled task.
@@ -81,62 +91,61 @@ class TaskPreset:
             weight=weight,
             loss_spec=loss,
             metrics_spec=metrics if metrics is not None else self.default_metrics,
+            head_override=head,
+            feature_key_override=feature_key,
         )
+
+    def __call__(
+        self,
+        name: str,
+        num_classes: int,
+        objective: str | None = None,
+        weight: float = 1.0,
+        loss: BrickSpec | None = None,
+        metrics: MetricsSpec | None = None,
+        head: str | dict[str, Any] | None = None,
+        feature_key: str | None = None,
+    ) -> Task:
+        """Shorthand for ``build`` — lets preset instances be used as functions."""
+        return self.build(name, num_classes, objective, weight, loss, metrics, head, feature_key)
 
 
 task_presets: Registry[TaskPreset] = Registry("task_preset")
 
-task_presets.register_instance("classification", TaskPreset(Topology.GLOBAL, Objective.MULTICLASS))
-task_presets.register_instance("regression", TaskPreset(Topology.GLOBAL, Objective.CONTINUOUS))
-task_presets.register_instance(
-    "segmentation",
-    TaskPreset(
-        topology=Topology.DENSE,
-        default_objective=Objective.MULTICLASS,
-        default_codec="mask",
-        default_metrics={"miou": {"name": "jaccard"}},
-    ),
+# Per-class metrics (average="none"): torchmetrics returns a [C] tensor.
+# _log_metric in LitModule logs the mean as the primary key and per-class
+# values as {key}_class{i} — full per-class logging lands in M4 (typed metrics).
+_PER_CLASS: dict[str, str] = {"average": "none"}
+
+classification = TaskPreset(
+    topology=Topology.GLOBAL,
+    default_objective=Objective.MULTICLASS,
+    default_metrics={
+        "precision": _PER_CLASS,
+        "recall": _PER_CLASS,
+        "f1": _PER_CLASS,
+        "confusion_matrix": {"normalize": "true"},
+    },
 )
+task_presets.register_instance("classification", classification)
 
+regression = TaskPreset(
+    topology=Topology.GLOBAL,
+    default_objective=Objective.CONTINUOUS,
+    default_metrics={"mae": None},
+)
+task_presets.register_instance("regression", regression)
 
-def classification(
-    name: str,
-    num_classes: int,
-    objective: str | None = None,
-    weight: float = 1.0,
-    loss: BrickSpec | None = None,
-    metrics: MetricsSpec | None = None,
-) -> Task:
-    """Build a global (per-image) classification task — facade over the preset."""
-    return task_presets.create("classification").build(name, num_classes, objective, weight, loss, metrics)
-
-
-def regression(
-    name: str,
-    num_classes: int = 1,
-    objective: str | None = None,
-    weight: float = 1.0,
-    loss: BrickSpec | None = None,
-    metrics: MetricsSpec | None = None,
-) -> Task:
-    """Build a global (per-image) regression task — facade over the preset.
-
-    ``num_classes`` carries the output dimension (1 for a scalar target).
-    """
-    return task_presets.create("regression").build(name, num_classes, objective, weight, loss, metrics)
-
-
-def segmentation(
-    name: str,
-    num_classes: int,
-    objective: str | None = None,
-    weight: float = 1.0,
-    loss: BrickSpec | None = None,
-    metrics: MetricsSpec | None = None,
-) -> Task:
-    """Build a dense (per-pixel) segmentation task — facade over the preset.
-
-    Defaults to multiclass on the decoder stream with mIoU metrics;
-    ``objective="multilabel"`` reuses the same dense bricks without new code.
-    """
-    return task_presets.create("segmentation").build(name, num_classes, objective, weight, loss, metrics)
+segmentation = TaskPreset(
+    topology=Topology.DENSE,
+    default_objective=Objective.MULTICLASS,
+    default_codec="mask",
+    default_metrics={
+        "iou": _PER_CLASS,
+        "f1": _PER_CLASS,
+        "precision": _PER_CLASS,
+        "recall": _PER_CLASS,
+        "confusion_matrix": {"normalize": "true"},
+    },
+)
+task_presets.register_instance("segmentation", segmentation)

@@ -2,6 +2,9 @@
 # M2 smoke: 4-task run (multiclass + binary + multilabel + regression) on CPU.
 # Validates that all new objective axes wire end-to-end without code changes.
 
+defaults:
+  - override /trainer: cpu_smoke
+
 project: smoke-m2
 seed: 0
 epochs: 2
@@ -20,26 +23,21 @@ tasks:
   label:
     preset: classification          # GLOBAL × multiclass (M1 baseline)
     target: label
+    class_mapping: {0: cat, 1: cow, 2: dog}
 
   is_cat:
     preset: classification          # GLOBAL × binary
     target: binary_label
     objective: binary
+    class_mapping: {0: "0", 1: "1"}
 
   tags:
     preset: classification          # GLOBAL × multilabel
     target: tags
     objective: multilabel
+    class_mapping: {0: fluffy, 1: indoor, 2: large, 3: outdoor, 4: small}
 
   score:
     preset: regression              # GLOBAL × continuous (scalar)
     target: value
     dim: 1
-
-trainer:
-  accelerator: cpu
-  devices: 1
-  precision: 32-true
-  log_every_n_steps: 1
-  enable_checkpointing: false
-  logger: false

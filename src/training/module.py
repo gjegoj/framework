@@ -105,8 +105,25 @@ class LitModule(L.LightningModule):
         for task in self.tasks:
             metrics = task.metrics[stage].compute()
             for metric_name, value in metrics.items():
-                self.log(f"{task.name}/{metric_name}/{stage}", value, prog_bar=True)
+                self._log_metric(f"{task.name}/{metric_name}/{stage}", value)
             task.metrics[stage].reset()
+
+    def _log_metric(self, key: str, value: Any) -> None:
+        """Log a metric value, handling per-class tensors gracefully.
+
+        - Scalar (0-D tensor or number) → logged directly.
+        - 1-D tensor (per-class, ``average="none"``) → mean logged at ``key``;
+          per-class values at ``{key}_class{i}`` (no prog_bar).
+        - 2-D+ (e.g. confusion matrix) → skipped until typed metrics (M4).
+        """
+        if not isinstance(value, torch.Tensor) or value.ndim == 0:
+            self.log(key, value, prog_bar=True)
+            return
+        if value.ndim == 1:
+            self.log(key, value.float().mean(), prog_bar=True)
+            for i, v in enumerate(value):
+                self.log(f"{key}_class{i}", v.float(), prog_bar=False)
+        # 2-D+ tensors (confusion matrix, etc.) are skipped here; M4 adds typed logging.
 
     def on_train_epoch_start(self) -> None:
         for task in self.tasks:

@@ -11,9 +11,10 @@ and torchmetrics. It is a clean-architecture rewrite of the prototype in `old/`
 milestone breakdown live in the approved plan at
 `~/.claude/plans/clean-code-refactoring-patterns-softwar-merry-sunbeam.md`.
 
-Status: M1–M3 complete (classification, all Objective variants, DENSE segmentation).
-Currently in a data-pipeline refactoring phase; each substep is implemented,
-type-checked, tested, then validated before the next.
+Status: M1–M3 complete (classification, all Objective variants, DENSE segmentation) +
+M4-prep complete (multi-stream `SmpBackbone` with `ENCODER_LAST`/`DECODER`, `feature_key`
+override in `TaskConfig`, `DataLoaderConfig`, DPT support, multitask smp smoke tests).
+Next: M4 (per-head LR, typed metrics, loggers), then M5–M7.
 
 ## Commands
 
@@ -61,9 +62,9 @@ orthogonal axes**:
 - **Modality** (input side): image / text / embedding / multimodal — lives in
   `data` + `backbone`. The task does not know the modality; it consumes a feature
   stream.
-- **Topology** (`tasks/taxonomy.py`, internal): output structure — GLOBAL (per-sample),
+- **Topology** (`tasks/strategies/topology.py`, internal): output structure — GLOBAL (per-sample),
   DENSE (per-pixel), SET, SEQUENCE, EMBEDDING. Picks the head + which `FeatureBundle`
-  stream it consumes (`feature_key`).
+  stream it consumes (`feature_key`). `feature_key` can be overridden per task via YAML.
 - **Objective** (internal): label semantics — binary / multiclass / multilabel /
   continuous. Picks the target codec, criterion, activation, metric mode, out-features.
 
@@ -96,8 +97,12 @@ class in a registry (OCP).
   `data_sources`, `target_codecs`, `input_loaders`, `topology_strategies`, `objective_strategies`,
   `task_presets`). Register with the `@registry.register("key")` decorator; importing a
   package's `__init__` populates its registries.
-- Canonical input/feature keys (`IMAGE`, `POOLED`, `DECODER`) live in `core/keys.py` —
-  use them instead of literal strings to keep the data↔model contract in one place.
+- Canonical input/feature keys (`IMAGE`, `POOLED`, `DECODER`, `ENCODER_LAST`) live in
+  `core/keys.py` — use them instead of literal strings. Other backbone-specific streams
+  (e.g. future FPN levels `p3`/`p4`) are documented in each backbone's docstring.
+- **DataLoader knobs** live in `config.dataloader` (`DataLoaderConfig`): `num_workers`,
+  `pin_memory`, `persistent_workers`, `drop_last`, `prefetch_factor`. `persistent_workers`
+  and `prefetch_factor` are auto-disabled when `num_workers=0`.
 - Dataclasses for domain/application objects; Pydantic only at I/O boundaries
   (config). Google-style docstrings with a `Parameters:` block.
 
@@ -118,11 +123,17 @@ class in a registry (OCP).
 - The package root is `src/` (import as `from src.core import ...`); run from repo root.
 - `albumentationsx` (2.3.1) imports and works. If it crashes, `uv run python -c "import albumentations"` is the canary.
   Augmentation pipelines live in `configs/transforms/` as `_target_`-keyed YAML (`default`/`augmented`);
-  `build_albumentations_transform` was removed — transforms always come from config.
+  transforms always come from config.
 - Data sources: subclass `FileDataSource` and implement `_read_file`; `CsvDataSource`/`JsonDataSource`
   registered in `data_sources`. Two data modes: `data.sources: str/list` + `data.split` (random or
   stratified via `data.split_stratify`), or `data.sources: {train: ..., val: ...}` (pre-split files).
   `data.max_samples: int | float` caps dataset size for fast iteration.
+- `SmpBackbone` exposes two streams: `ENCODER_LAST [B, D, H, W]` (raw spatial encoder output,
+  use with smp's `ClassificationHead` via `prefer_native=True`) and `DECODER [B, D, H, W]`
+  (full decoder output for segmentation heads). `POOLED` is not exposed — pooling is the head's job.
+  DPT architecture is supported via the `_dpt_style` flag (detected from `name.lower() == "dpt"`).
+  ASPP-based architectures (deeplabv3, pan, upernet) require `batch_size ≥ 2` in train mode
+  (BatchNorm after global-avg-pool). See `configs/backbone/smp_dpt.yaml` for DPT config example.
 - The reference dataset `old/data/classification.csv` points at remote URLs with empty
   local placeholder images; tests use synthetic images generated in a tmp dir, and the
   offline smoke should use a synthetic local dataset.

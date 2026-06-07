@@ -7,11 +7,14 @@ objective strategies — and users — can select them by key.
 
 from __future__ import annotations
 
+from typing import Any
+
 import segmentation_models_pytorch as smp
 import torch
 from torch import Tensor, nn
 
 from src.core.entities import LossResult
+from src.core.instantiate import instantiate
 from src.core.ports import Criterion
 from src.core.registry import Registry
 
@@ -127,27 +130,56 @@ class DiceCriterion(Criterion):
         return LossResult(total=value, components={"dice": value})
 
 
-@criteria.register("composite")
-class CompositeCriterion(Criterion):
+@criteria.register("weighted_sum")
+class WeightedSumCriterion(Criterion):
     """Weighted sum of several criteria sharing the same (logits, target).
 
-    Lets a YAML ``loss:`` combine bricks, e.g. ``CE + Dice`` for segmentation::
+    Two term formats are supported (and can be mixed)::
 
-        loss: {name: composite, terms: {cross_entropy: 1.0, dice: 1.0}}
+        # Simple: key is the criteria registry key, value is the weight.
+        loss: {name: weighted_sum, losses: {cross_entropy: 1.0, dice: 2.0}}
+
+        # Parameterised: dict with ``weight`` plus any criterion kwargs.
+        # Use ``_target_`` to bypass the registry and instantiate any class.
+        loss:
+          name: weighted_sum
+          losses:
+            cross_entropy: 1.0
+            dice:
+              weight: 2.0
+              smooth: 1.0e-5
+              mode: multiclass
+            focal:
+              weight: 10.0
+              _target_: segmentation_models_pytorch.losses.FocalLoss
+              gamma: 2.0
 
     Each sub-criterion's components are forwarded for logging; the total is the
     weighted sum of the sub-totals.
 
     Parameters:
-        terms (dict[str, float]): ``{criterion_key: weight}`` from the ``criteria`` registry.
+        losses (dict[str, float | dict]): Term specs keyed by label.
     """
 
-    def __init__(self, terms: dict[str, float]) -> None:
+    def __init__(self, losses: dict[str, float | dict[str, Any]]) -> None:
         super().__init__()
-        if not terms:
-            raise ValueError("CompositeCriterion needs at least one term.")
-        self._weights = list(terms.values())
-        self._criteria = nn.ModuleList(criteria.create(key) for key in terms)
+        if not losses:
+            raise ValueError("CompositeCriterion needs at least one loss.")
+        weights: list[float] = []
+        criterion_list: list[Criterion] = []
+        for key, spec in losses.items():
+            if isinstance(spec, (int, float)):
+                weights.append(float(spec))
+                criterion_list.append(criteria.create(key))
+            else:
+                params = dict(spec)
+                weights.append(float(params.pop("weight", 1.0)))
+                if "_target_" in params:
+                    criterion_list.append(instantiate({"_target_": params.pop("_target_"), **params}))
+                else:
+                    criterion_list.append(criteria.create(key, **params))
+        self._weights = weights
+        self._criteria = nn.ModuleList(criterion_list)
 
     def forward(self, logits: Tensor, target: Tensor) -> LossResult:
         total = logits.new_zeros(())

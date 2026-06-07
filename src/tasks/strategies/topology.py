@@ -35,7 +35,7 @@ class GlobalTopology(TopologyStrategy):
     kind = Topology.GLOBAL
 
     def head_spec(self, out_features: int) -> HeadSpec:
-        return HeadSpec(kind="linear", out_features=out_features, feature_key=POOLED)
+        return HeadSpec(kind="linear", out_features=out_features, feature_key=POOLED, prefer_native=True)
 
 
 @topology_strategies.register(Topology.DENSE)
@@ -45,4 +45,4 @@ class DenseTopology(TopologyStrategy):
     kind = Topology.DENSE
 
     def head_spec(self, out_features: int) -> HeadSpec:
-        return HeadSpec(kind="conv", out_features=out_features, feature_key=DECODER)
+        return HeadSpec(kind="conv", out_features=out_features, feature_key=DECODER, prefer_native=True)

@@ -41,6 +41,15 @@ class Backbone(nn.Module, ABC):
     def feature_dim(self, key: str) -> int:
         """Return the channel/feature dimension of stream ``key`` (sizes heads)."""
 
+    def native_head(self, feature_key: str, in_features: int, out_features: int) -> nn.Module | None:
+        """Return a backbone-native head for ``feature_key``, or ``None``.
+
+        Override in concrete backbones to expose the architecture's own head
+        (e.g. smp's ``SegmentationHead``, timm's ``create_classifier``).
+        Returning ``None`` falls back to the head registry.
+        """
+        return None
+
 
 class Head(nn.Module, ABC):
     """Maps one selected feature stream to task logits."""

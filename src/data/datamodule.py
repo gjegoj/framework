@@ -56,7 +56,11 @@ class DataModule:
         split_stratify (str | None): Column to stratify by (split mode only).
         max_samples (int | float | None): Cap dataset size.
         staged_sources (dict[Stage, DataSource] | None): Per-stage sources (pre-split mode).
-        num_workers (int): DataLoader worker processes.
+        num_workers (int): DataLoader worker processes (0 → main process).
+        pin_memory (bool): Pin host memory for faster CPU→GPU transfers.
+        persistent_workers (bool): Keep workers alive between epochs (requires num_workers > 0).
+        drop_last (bool): Drop the last incomplete batch during training.
+        prefetch_factor (int | None): Batches prefetched per worker (None → PyTorch default).
         root_path (str | None): Optional prefix prepended to file-based input paths.
     """
 
@@ -75,6 +79,10 @@ class DataModule:
         max_samples: int | float | None = None,
         staged_sources: dict[Stage, DataSource] | None = None,
         num_workers: int = 0,
+        pin_memory: bool = False,
+        persistent_workers: bool = False,
+        drop_last: bool = False,
+        prefetch_factor: int | None = None,
         root_path: str | None = None,
     ) -> None:
         if (source is None) == (staged_sources is None):
@@ -93,6 +101,10 @@ class DataModule:
         self._batch_size = batch_size
         self._seed = seed
         self._num_workers = num_workers
+        self._pin_memory = pin_memory
+        self._persistent_workers = persistent_workers
+        self._drop_last = drop_last
+        self._prefetch_factor = prefetch_factor
         self._root_path = root_path
         self._datasets: dict[Stage, Dataset] = {}
         self._input_bindings: list[InputBinding] = []
@@ -142,17 +154,21 @@ class DataModule:
         self._runtime.dataset_sizes[stage] = len(self._datasets[stage])
 
     def _dataloader(self, stage: Stage, *, shuffle: bool, drop_last: bool = False) -> DataLoader:
-        return DataLoader(
-            self._datasets[stage],
+        kwargs: dict = dict(
             batch_size=self._batch_size,
             shuffle=shuffle,
             num_workers=self._num_workers,
             collate_fn=collate_samples,
+            pin_memory=self._pin_memory,
             drop_last=drop_last,
+            persistent_workers=self._persistent_workers and self._num_workers > 0,
         )
+        if self._prefetch_factor is not None and self._num_workers > 0:
+            kwargs["prefetch_factor"] = self._prefetch_factor
+        return DataLoader(self._datasets[stage], **kwargs)
 
     def train_dataloader(self) -> DataLoader:
-        return self._dataloader(Stage.TRAIN, shuffle=True, drop_last=True)
+        return self._dataloader(Stage.TRAIN, shuffle=True, drop_last=self._drop_last)
 
     def val_dataloader(self) -> DataLoader:
         return self._dataloader(Stage.VAL, shuffle=False)

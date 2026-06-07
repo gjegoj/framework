@@ -13,6 +13,7 @@ def _raw(**overrides: Any) -> dict[str, Any]:
         "project": "demo",
         "epochs": 5,
         "batch_size": 8,
+        "lr": 1e-3,
         "image_size": [224, 224],
         "data": {
             "sources": "data/classification.csv",
@@ -21,7 +22,9 @@ def _raw(**overrides: Any) -> dict[str, Any]:
         },
         "backbone": {"name": "resnet18"},
         "optimizer": {"lr": 1e-3},
-        "tasks": {"label": {"preset": "classification", "target": "label"}},
+        "tasks": {
+            "label": {"preset": "classification", "target": "label", "class_mapping": {0: "cat", 1: "cow", 2: "dog"}}
+        },
     }
     base.update(overrides)
     return base
@@ -37,9 +40,10 @@ class TestValidConfig:
         assert cfg.mean == [0.485, 0.456, 0.406]  # ImageNet default
         assert cfg.backbone.kind == "timm"  # default
 
-    def test_num_classes_inferred_by_default(self) -> None:
+    def test_num_classes_derived_from_class_mapping(self) -> None:
         cfg = load_config(_raw())
-        assert cfg.tasks["label"].num_classes is None  # => infer from data
+        assert cfg.tasks["label"].class_mapping == {0: "cat", 1: "cow", 2: "dog"}
+        assert cfg.tasks["label"].num_classes is None  # derived at runtime from class_mapping size
 
     def test_per_head_optimizer_override(self) -> None:
         raw = _raw()
@@ -52,9 +56,10 @@ class TestValidConfig:
         raw = _raw()
         raw["tasks"]["label"]["head"] = {"_target_": "my.Head", "hidden": 256}
         cfg = load_config(raw)
-        extra = cfg.tasks["label"].model_extra
-        assert extra is not None
-        assert extra["head"]["hidden"] == 256
+        head = cfg.tasks["label"].head
+        assert isinstance(head, dict)
+        assert head["hidden"] == 256
+        assert head["_target_"] == "my.Head"
 
     def test_loss_and_metrics_specs_parse(self) -> None:
         raw = _raw()

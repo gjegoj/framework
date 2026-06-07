@@ -57,77 +57,88 @@ def csv_path(tmp_path: Path) -> Path:
     return csv
 
 
+_LABEL_MAPPING: dict[int, str] = {0: "cat", 1: "cow", 2: "dog"}
+_TAGS_MAPPING: dict[int, str] = {0: "indoor", 1: "large", 2: "outdoor", 3: "small"}
+
+
 def _binding() -> TargetBinding:
-    return TargetBinding(name="label", column="label", codec=LabelIndexCodec())
+    return TargetBinding(name="label", column="label", codec=LabelIndexCodec(class_mapping=_LABEL_MAPPING))
 
 
 class TestLabelIndexCodec:
-    def test_fit_infers_sorted_classes(self) -> None:
-        codec = LabelIndexCodec()
-        codec.fit(["dog", "cat", "cow", "cat"])
+    def test_class_mapping_sets_vocab(self) -> None:
+        codec = LabelIndexCodec(class_mapping={0: "cat", 1: "cow", 2: "dog"})
         assert codec.num_classes == 3
         assert codec.class_mapping == {0: "cat", 1: "cow", 2: "dog"}
 
     def test_to_tensor_returns_long_index(self) -> None:
-        codec = LabelIndexCodec()
-        codec.fit(["cat", "dog"])
+        codec = LabelIndexCodec(class_mapping={0: "cat", 1: "dog"})
         tensor = codec.to_tensor(codec.load("dog"))
         assert tensor.item() == 1
         assert tensor.dtype.is_floating_point is False
 
     def test_load_is_identity(self) -> None:
-        codec = LabelIndexCodec()
-        codec.fit(["cat", "dog"])
+        codec = LabelIndexCodec(class_mapping={0: "cat", 1: "dog"})
         assert codec.load("cat") == "cat"
 
-    def test_unknown_label_raises(self) -> None:
-        codec = LabelIndexCodec()
-        codec.fit(["cat", "dog"])
+    def test_to_tensor_unknown_label_raises(self) -> None:
+        codec = LabelIndexCodec(class_mapping={0: "cat", 1: "dog"})
         with pytest.raises(KeyError, match="Unknown label"):
             codec.to_tensor("cow")
 
-    def test_fixed_mapping_skips_fit(self) -> None:
-        codec = LabelIndexCodec(class_mapping={0: "a", 1: "b"})
-        codec.fit(["a", "a", "a"])  # no-op
-        assert codec.num_classes == 2
+    def test_fit_validates_known_labels(self) -> None:
+        codec = LabelIndexCodec(class_mapping={0: "cat", 1: "dog"})
+        codec.fit(["cat", "dog", "cat"])  # all known — no error
+
+    def test_fit_raises_on_unknown_label(self) -> None:
+        codec = LabelIndexCodec(class_mapping={0: "cat", 1: "dog"})
+        with pytest.raises(ValueError, match="not in class_mapping"):
+            codec.fit(["cat", "dog", "cow"])
+
+    def test_fit_raises_without_class_mapping(self) -> None:
+        codec = LabelIndexCodec()
+        with pytest.raises(ValueError, match="class_mapping"):
+            codec.fit(["cat", "dog"])
 
 
 class TestMultiLabelBinarizeCodec:
-    def test_fit_builds_sorted_vocab(self) -> None:
-        codec = MultiLabelBinarizeCodec()
-        codec.fit(["cat,dog", "dog,cow", "cat"])
+    def test_class_mapping_sets_vocab(self) -> None:
+        codec = MultiLabelBinarizeCodec(class_mapping={0: "cat", 1: "cow", 2: "dog"})
         assert codec.num_classes == 3
-        assert codec.class_mapping == {0: "cat", 1: "cow", 2: "dog"}
 
     def test_to_tensor_multihot(self) -> None:
-        codec = MultiLabelBinarizeCodec()
-        codec.fit(["cat,dog", "cow"])
+        codec = MultiLabelBinarizeCodec(class_mapping={0: "cat", 1: "cow", 2: "dog"})
         vec = codec.to_tensor(codec.load("cat,cow"))
         assert vec.dtype == torch.float
         assert vec.shape == (3,)
 
     def test_to_tensor_correct_positions(self) -> None:
-        codec = MultiLabelBinarizeCodec()
-        codec.fit(["a,b,c"])
-        # sorted vocab: a=0, b=1, c=2
+        codec = MultiLabelBinarizeCodec(class_mapping={0: "a", 1: "b", 2: "c"})
         vec = codec.to_tensor("a,c")
         assert vec.tolist() == [1.0, 0.0, 1.0]
 
     def test_separator_param(self) -> None:
-        codec = MultiLabelBinarizeCodec(separator="|")
-        codec.fit(["x|y", "z"])
+        codec = MultiLabelBinarizeCodec(separator="|", class_mapping={0: "x", 1: "y", 2: "z"})
         assert codec.num_classes == 3
 
-    def test_unknown_label_raises(self) -> None:
-        codec = MultiLabelBinarizeCodec()
-        codec.fit(["cat,dog"])
+    def test_to_tensor_unknown_label_raises(self) -> None:
+        codec = MultiLabelBinarizeCodec(class_mapping={0: "cat", 1: "dog"})
         with pytest.raises(KeyError, match="Unknown label"):
             codec.to_tensor("cat,fish")
 
-    def test_fixed_mapping_skips_fit(self) -> None:
-        codec = MultiLabelBinarizeCodec(class_mapping={0: "a", 1: "b"})
-        codec.fit(["a,b,c"])  # no-op — c would be a new class but mapping is fixed
-        assert codec.num_classes == 2
+    def test_fit_validates_known_labels(self) -> None:
+        codec = MultiLabelBinarizeCodec(class_mapping={0: "cat", 1: "cow", 2: "dog"})
+        codec.fit(["cat,dog", "cow,dog", "cat"])  # all known — no error
+
+    def test_fit_raises_on_unknown_label(self) -> None:
+        codec = MultiLabelBinarizeCodec(class_mapping={0: "cat", 1: "dog"})
+        with pytest.raises(ValueError, match="not in class_mapping"):
+            codec.fit(["cat,dog", "cat,fish"])
+
+    def test_fit_raises_without_class_mapping(self) -> None:
+        codec = MultiLabelBinarizeCodec()
+        with pytest.raises(ValueError, match="class_mapping"):
+            codec.fit(["cat,dog"])
 
 
 class TestFloatCodec:

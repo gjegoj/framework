@@ -86,9 +86,17 @@ class LabelIndexCodec(TargetCodec):
         self._label_to_index = {label: idx for idx, label in self._index_to_label.items()}
 
     def fit(self, values: Iterable[Any]) -> None:
-        if self._label_to_index:
-            return
-        self._set_mapping(sorted({str(v) for v in values}))
+        if not self._label_to_index:
+            raise ValueError(
+                "LabelIndexCodec requires 'class_mapping' to be provided explicitly. "
+                "Set 'class_mapping' in TaskConfig or pass it to the codec constructor."
+            )
+        unknown = {str(v) for v in values} - set(self._label_to_index)
+        if unknown:
+            raise ValueError(
+                f"Column contains labels not in class_mapping: {sorted(unknown)}. "
+                f"Known: {sorted(self._label_to_index)}."
+            )
 
     def load(self, value: Any) -> Any:
         return value  # identity — raw label string passes through the transform
@@ -134,12 +142,19 @@ class MultiLabelBinarizeCodec(TargetCodec):
         return [part.strip() for part in str(value).split(self._separator) if part.strip()]
 
     def fit(self, values: Iterable[Any]) -> None:
-        if self._label_to_index:
-            return
-        all_labels: set[str] = set()
+        if not self._label_to_index:
+            raise ValueError(
+                "MultiLabelBinarizeCodec requires 'class_mapping' to be provided explicitly. "
+                "Set 'class_mapping' in TaskConfig or pass it to the codec constructor."
+            )
+        unknown: set[str] = set()
         for v in values:
-            all_labels.update(self._split(v))
-        self._set_mapping(sorted(all_labels))
+            unknown.update(set(self._split(v)) - set(self._label_to_index))
+        if unknown:
+            raise ValueError(
+                f"Column contains labels not in class_mapping: {sorted(unknown)}. "
+                f"Known: {sorted(self._label_to_index)}."
+            )
 
     def load(self, value: Any) -> Any:
         return value  # identity

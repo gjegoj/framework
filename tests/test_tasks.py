@@ -7,11 +7,11 @@ from src.core.entities import HeadSpec, Task
 from src.core.enums import Stage
 from src.losses.criterion import (
     BCEWithLogitsCriterion,
-    CompositeCriterion,
     CrossEntropyCriterion,
     DiceCriterion,
     L1Criterion,
     MSECriterion,
+    WeightedSumCriterion,
 )
 from src.metrics.builders import build_metric_set
 from src.tasks import (
@@ -38,7 +38,8 @@ from src.tasks.strategies.topology import TopologyStrategy
 class TestTaxonomyAndStrategies:
     def test_global_topology_head_spec(self) -> None:
         spec = GlobalTopology().head_spec(out_features=7)
-        assert spec == HeadSpec(kind="linear", out_features=7, feature_key="pooled")
+        assert spec.kind == "linear" and spec.out_features == 7 and spec.feature_key == "pooled"
+        assert spec.prefer_native is True
 
     def test_multiclass_objective_bricks(self) -> None:
         objective = MulticlassObjective()
@@ -69,7 +70,8 @@ class TestTaxonomyAndStrategies:
         from src.tasks import DenseTopology
 
         spec = DenseTopology().head_spec(out_features=4)
-        assert spec == HeadSpec(kind="conv", out_features=4, feature_key="decoder")
+        assert spec.kind == "conv" and spec.out_features == 4 and spec.feature_key == "decoder"
+        assert spec.prefer_native is True
 
     def test_strategies_registered(self) -> None:
         assert Topology.GLOBAL in topology_strategies
@@ -138,18 +140,18 @@ class TestBricks:
         result.total.backward()
         assert logits.grad is not None
 
-    def test_composite_ce_dice_combines_and_backprops(self) -> None:
+    def test_weighted_sum_ce_dice_combines_and_backprops(self) -> None:
         logits = torch.randn(2, 4, 8, 8, requires_grad=True)
         target = torch.randint(0, 4, (2, 8, 8))
-        crit = CompositeCriterion(terms={"cross_entropy": 1.0, "dice": 0.5})
+        crit = WeightedSumCriterion(losses={"cross_entropy": 1.0, "dice": 0.5})
         result = crit(logits, target)
         assert {"cross_entropy", "dice"} <= set(result.components)
         result.total.backward()
         assert logits.grad is not None
 
-    def test_composite_empty_terms_raises(self) -> None:
-        with pytest.raises(ValueError, match="at least one term"):
-            CompositeCriterion(terms={})
+    def test_weighted_sum_empty_losses_raises(self) -> None:
+        with pytest.raises(ValueError, match="at least one loss"):
+            WeightedSumCriterion(losses={})
 
     def test_metric_set_update_compute_reset(self) -> None:
         metrics = build_metric_set(None, base_kwargs={"task": "multiclass", "num_classes": 3})
@@ -228,14 +230,14 @@ class TestRegressionPreset:
         assert task.head_spec.out_features == 1
         assert isinstance(task.codec, ContinuousTaskCodec)
 
-    def test_regression_default_metrics_are_mse_mae(self) -> None:
+    def test_regression_default_metric_is_mae(self) -> None:
         from src.tasks import regression
 
         task = regression("price", num_classes=1)
         preds = torch.randn(4, 1)
         targets = torch.randn(4, 1)
         task.metrics[Stage.TRAIN].update(preds, targets)
-        assert {"mse", "mae"} <= set(task.metrics[Stage.TRAIN].compute())
+        assert {"mae"} <= set(task.metrics[Stage.TRAIN].compute())
 
     def test_preset_carries_topology_and_default_objective(self) -> None:
         from src.tasks.taxonomy import Objective, Topology
@@ -262,14 +264,15 @@ class TestSegmentationPreset:
         assert task.head_spec.out_features == 4
         assert isinstance(task.codec, MulticlassTaskCodec)
 
-    def test_default_metric_is_miou(self) -> None:
+    def test_segmentation_default_metrics(self) -> None:
         from src.tasks import segmentation
 
         task = segmentation("mask", num_classes=3)
         preds = torch.randn(2, 3, 8, 8).softmax(dim=1)  # [B,C,H,W]
         target = torch.randint(0, 3, (2, 8, 8))  # [B,H,W]
         task.metrics[Stage.TRAIN].update(preds, target)
-        assert "miou" in task.metrics[Stage.TRAIN].compute()
+        keys = set(task.metrics[Stage.TRAIN].compute())
+        assert {"iou", "f1", "precision", "recall"} <= keys
 
     def test_preset_carries_mask_codec_default(self) -> None:
         preset = task_presets.create("segmentation")
@@ -317,8 +320,51 @@ class TestConfigDrivenBricks:
         computed = task.metrics[Stage.TRAIN].compute()
         assert {"accuracy", "macro_f1"} <= set(computed)
 
-    def test_metrics_default_is_accuracy_only(self) -> None:
+    def test_classification_default_metrics(self) -> None:
         task = classification("label", num_classes=3)
         preds = torch.randn(8, 3).softmax(dim=1)
         task.metrics[Stage.TRAIN].update(preds, torch.randint(0, 3, (8,)))
-        assert set(task.metrics[Stage.TRAIN].compute()) == {"accuracy"}
+        keys = set(task.metrics[Stage.TRAIN].compute())
+        assert {"precision", "recall", "f1", "confusion_matrix"} <= keys
+
+
+class TestFeatureKeyOverride:
+    def test_builder_feature_key_override_changes_head_spec(self) -> None:
+        task = TaskBuilder(GlobalTopology(), MulticlassObjective()).build(
+            "label", num_classes=3, feature_key_override="encoder_last"
+        )
+        assert task.head_spec.feature_key == "encoder_last"
+
+    def test_preset_feature_key_overrides_topology_default(self) -> None:
+        task = classification("label", num_classes=5, feature_key="encoder_last")
+        assert task.head_spec.feature_key == "encoder_last"
+        # prefer_native stays on: native_head("encoder_last") → ClassificationHead
+        assert task.head_spec.prefer_native is True
+
+    def test_feature_key_none_keeps_topology_default(self) -> None:
+        task = classification("label", num_classes=3, feature_key=None)
+        assert task.head_spec.feature_key == "pooled"
+
+    def test_segmentation_feature_key_override(self) -> None:
+        from src.tasks import segmentation
+
+        task = segmentation("mask", num_classes=4, feature_key="decoder")
+        assert task.head_spec.feature_key == "decoder"  # same as default, just explicit
+
+    def test_feature_key_override_does_not_disable_native_head(self) -> None:
+        # feature_key_override changes the key but leaves prefer_native untouched.
+        task = TaskBuilder(GlobalTopology(), MulticlassObjective()).build(
+            "label", num_classes=3, feature_key_override="encoder_last"
+        )
+        assert task.head_spec.prefer_native is True
+
+    def test_feature_key_override_before_head_override(self) -> None:
+        # Both supplied: feature_key is in place when head_override runs.
+        task = TaskBuilder(GlobalTopology(), MulticlassObjective()).build(
+            "label",
+            num_classes=3,
+            feature_key_override="encoder_last",
+            head_override="linear",
+        )
+        assert task.head_spec.feature_key == "encoder_last"
+        assert task.head_spec.prefer_native is False

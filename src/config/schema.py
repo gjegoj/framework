@@ -144,6 +144,33 @@ class DataConfig(BaseModel):
         return self
 
 
+class DataLoaderConfig(BaseModel):
+    """DataLoader knobs shared across all stages.
+
+    ``shuffle`` and ``drop_last`` for the train stage are conventions, not config:
+    train always shuffles and optionally drops the last incomplete batch;
+    val/test never shuffle and never drop.  Only ``drop_last`` is exposed here
+    because it occasionally needs to be disabled (e.g. when dataset size is
+    exactly divisible and the last batch matters for metrics).
+    """
+
+    num_workers: int = Field(0, ge=0, description="Worker processes per DataLoader. 0 → main process (debug-friendly).")
+    pin_memory: bool = Field(
+        False, description="Pin host memory for faster CPU→GPU transfers. Enable when training on GPU."
+    )
+    persistent_workers: bool = Field(
+        False, description="Keep worker processes alive between epochs. Requires num_workers > 0."
+    )
+    drop_last: bool = Field(
+        False, description="Drop the last incomplete batch during training (val/test are never dropped)."
+    )
+    prefetch_factor: int | None = Field(
+        None, ge=1, description="Batches prefetched per worker. None → PyTorch default (2). Requires num_workers > 0."
+    )
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class BackboneConfig(BaseModel):
     """Backbone selection; ``kind`` picks the registry adapter."""
 
@@ -175,7 +202,35 @@ class TaskConfig(BaseModel):
     preset: str = Field(..., description="Task preset, e.g. 'classification'.")
     target: str = Field(..., description="Target column in the data source.")
     objective: str | None = Field(None, description="Override: binary/multiclass/multilabel/continuous.")
-    num_classes: int | None = Field(None, gt=0, description="Class count; inferred from data if omitted.")
+    head: str | dict[str, Any] | None = Field(
+        None,
+        description=(
+            "Head override. ``None`` → backbone-native head (default). "
+            "``str`` → registry key (e.g. 'conv'). "
+            "``dict`` → ``{kind, ...options}`` or ``{_target_: my.Head, ...}``."
+        ),
+    )
+    feature_key: str | None = Field(
+        None,
+        description=(
+            "Which backbone stream this task's head consumes. "
+            "``None`` → topology default (``pooled`` for classification, ``decoder`` for segmentation). "
+            "Set explicitly for multitask on an encoder-decoder backbone, e.g.: "
+            "``feature_key: encoder_last`` to use smp's ClassificationHead (has adaptive-avg-pool inside). "
+            "Available streams are backbone-specific — see the backbone's docstring for the ``Streams`` table. "
+            "An unknown key raises a ``KeyError`` listing what the backbone actually exposes."
+        ),
+    )
+    class_mapping: dict[int, str] | None = Field(
+        None,
+        description=(
+            "Explicit index→label mapping for categorical targets. "
+            "Required for 'classification' and 'multilabel' presets; "
+            "determines class count and index ordering. "
+            "Example: {0: 'cat', 1: 'dog', 2: 'cow'}."
+        ),
+    )
+    num_classes: int | None = Field(None, gt=0, description="Class count; inferred from class_mapping when omitted.")
     dim: int | None = Field(
         None,
         gt=0,
@@ -220,7 +275,13 @@ class ExperimentConfig(BaseModel):
     image_size: tuple[int, int] = Field(..., description="Image (height, width) in pixels.")
     mean: list[float] = Field(default_factory=lambda: list(_IMAGENET_MEAN), description="Normalization mean.")
     std: list[float] = Field(default_factory=lambda: list(_IMAGENET_STD), description="Normalization std.")
+    lr: float = Field(
+        ...,
+        gt=0,
+        description="Global learning rate — referenced by optimizer.lr via ${lr}. Override per experiment or per task via tasks.<name>.optimizer.lr.",
+    )
     data: DataConfig
+    dataloader: DataLoaderConfig = Field(default_factory=DataLoaderConfig)
     backbone: BackboneConfig
     optimizer: OptimizerConfig
     tasks: dict[str, TaskConfig] = Field(..., min_length=1, description="Tasks by name.")

@@ -21,9 +21,11 @@ from src.data.codecs import TargetCodec, target_codecs
 from src.data.datamodule import DataModule
 from src.data.sources import DataSource, data_sources
 from src.data.transforms import AlbumentationsTransform, Transform
+from src.models.assembly import CompositeModel
 from src.models.registry import backbones
 from src.tasks.presets import task_presets
 from src.tasks.strategies.objective import objective_strategies
+from src.training.module import LitModule
 from src.training.optimizer import OptimizerBuilder
 
 _BACKBONE_CORE_FIELDS = frozenset({"kind", "name", "pretrained"})
@@ -177,6 +179,7 @@ def build_data_module(
         DataModule: Ready to call ``.setup()`` on.
     """
     staged = build_staged_sources(config.data)
+    dl = config.dataloader
     return DataModule(
         target_bindings=bindings,
         inputs_config=config.data.inputs,
@@ -189,6 +192,11 @@ def build_data_module(
         split_stratify=config.data.split_stratify if staged is None else None,
         max_samples=config.data.max_samples,
         staged_sources=staged,
+        num_workers=dl.num_workers,
+        pin_memory=dl.pin_memory,
+        persistent_workers=dl.persistent_workers,
+        drop_last=dl.drop_last,
+        prefetch_factor=dl.prefetch_factor,
         root_path=config.data.root_path,
     )
 
@@ -228,7 +236,11 @@ def _resolve_codec(task_cfg: TaskConfig) -> TargetCodec:
     else:
         objective = preset.resolve_objective(task_cfg.objective)
         codec_key = objective_strategies.create(objective).default_codec
-    return instantiate(codec_key, target_codecs)
+
+    injected: dict[str, Any] = {}
+    if task_cfg.class_mapping is not None:
+        injected["class_mapping"] = task_cfg.class_mapping
+    return instantiate(codec_key, target_codecs, **injected)
 
 
 def build_bindings(config: ExperimentConfig) -> list[TargetBinding]:
@@ -292,9 +304,55 @@ def build_tasks(config: ExperimentConfig, runtime: RuntimeContext) -> list[Task]
             weight=task_cfg.weight,
             loss=task_cfg.loss,
             metrics=task_cfg.metrics,
+            head=task_cfg.head,
+            feature_key=task_cfg.feature_key,
         )
         tasks.append(task)
     return tasks
+
+
+def build_task_lr_overrides(config: ExperimentConfig) -> dict[str, float]:
+    """Extract per-task learning-rate overrides from task configs.
+
+    Tasks that declare their own ``optimizer:`` block get a dedicated param-group
+    in the optimizer; the rest share the backbone's base LR.
+
+    Parameters:
+        config (ExperimentConfig): Validated experiment config.
+
+    Returns:
+        dict[str, float]: ``{task_name: lr}`` for tasks with an optimizer override.
+    """
+    return {name: task_cfg.optimizer.lr for name, task_cfg in config.tasks.items() if task_cfg.optimizer is not None}
+
+
+def build_lit_module(
+    config: ExperimentConfig,
+    model: CompositeModel,
+    tasks: list[Task],
+    optimizer_builder: OptimizerBuilder,
+) -> LitModule:
+    """Build a ``LitModule`` wired with per-task LR overrides from config.
+
+    This is the single authoritative place that reads ``task.optimizer.lr`` and
+    passes it to ``LitModule``, so the per-head param-group split in
+    ``OptimizerBuilder`` is driven entirely from YAML.
+
+    Parameters:
+        config (ExperimentConfig): Validated experiment config.
+        model (CompositeModel): Backbone + heads.
+        tasks (list[Task]): Assembled task bundles.
+        optimizer_builder (OptimizerBuilder): Bound to the global optimizer config.
+
+    Returns:
+        LitModule: Ready for ``L.Trainer.fit``.
+    """
+    return LitModule(
+        model=model,
+        tasks=tasks,
+        optimizer_builder=optimizer_builder,
+        task_lr_overrides=build_task_lr_overrides(config),
+    )
 
 
 _OPTIMIZER_CORE_FIELDS = frozenset({"name", "lr", "weight_decay"})

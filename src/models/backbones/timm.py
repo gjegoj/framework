@@ -41,3 +41,11 @@ class TimmBackbone(Backbone):
         if key != POOLED:
             raise KeyError(f"TimmBackbone exposes only {POOLED!r}, requested {key!r}.")
         return self._num_features
+
+    def native_head(self, feature_key: str, in_features: int, out_features: int) -> Any:
+        if feature_key != POOLED:
+            return None
+        from timm.layers import create_classifier
+
+        _, classifier = create_classifier(in_features, out_features)
+        return classifier

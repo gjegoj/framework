@@ -1,0 +1,33 @@
+# DPT (Dense Prediction Transformer) backbone via segmentation-models-pytorch.
+#
+# Encoder: ViT-Small/16 (timm universal, prefix "tu-").
+# Decoder: DPT — reassembles patch tokens into a dense [B, D, H, W] feature map.
+#
+# Streams exposed by SmpBackbone:
+#   encoder_last: [B, 384, H/16, W/16]  last patch-token map (spatial, no pooling)
+#   decoder:      [B, 256, H/2,  W/2]   DPT reassembled features  (for seg heads)
+#
+# IMPORTANT: ViT-S/16 uses fixed positional encoding trained at 224×224.
+# Set image_size: [224, 224] in your experiment config (or a multiple of 16 if
+# the model was fine-tuned with flexible PE).
+#
+# To use native smp segmentation head (prefer_native: true on DenseTopology default):
+#   tasks:
+#     mask:
+#       preset: segmentation
+#       target: mask_path
+#       num_classes: N
+#       # feature_key: decoder  ← default for segmentation, no need to specify
+#
+# To add a classification head on top of the encoder (shared backbone):
+#   tasks:
+#     label:
+#       preset: classification
+#       target: label
+#       num_classes: N
+#       feature_key: encoder_last   # smp ClassificationHead pools [B,D,H,W] → [B,D]
+
+kind: smp
+name: dpt
+encoder_name: tu-vit_small_patch16_224
+pretrained: true

@@ -7,9 +7,11 @@ own accumulating state).
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Sequence
+from typing import Any
 
-from src.core.entities import Task
+from src.core.entities import HeadSpec, Task
 from src.core.enums import Stage
 from src.core.instantiate import BrickSpec
 from src.metrics.builders import MetricsSpec
@@ -39,6 +41,8 @@ class TaskBuilder:
         stages: Sequence[Stage] = DEFAULT_STAGES,
         loss_spec: BrickSpec | None = None,
         metrics_spec: MetricsSpec | None = None,
+        head_override: str | dict[str, Any] | None = None,
+        feature_key_override: str | None = None,
     ) -> Task:
         """Build a task; raise if the topology/objective combination is invalid.
 
@@ -49,6 +53,13 @@ class TaskBuilder:
             stages (Sequence[Stage]): Stages to build metric sets for.
             loss_spec (BrickSpec | None): YAML ``loss:`` override; ``None`` -> objective default.
             metrics_spec (MetricsSpec | None): YAML ``metrics:`` override; ``None`` -> default.
+            head_override: Optional head spec from task config.
+                ``None`` → backbone native (prefer_native=True).
+                ``str`` → registry key override (prefer_native=False).
+                ``dict`` → ``{kind?, _target_?, ...options}`` override.
+            feature_key_override (str | None): Override the topology-default
+                stream key (e.g. ``"encoder_last"`` for smp classification).
+                Applied before ``head_override`` so the key is visible to it.
 
         Returns:
             Task: The assembled task bundle.
@@ -63,6 +74,10 @@ class TaskBuilder:
 
         out_features = self._objective.out_features(num_classes)
         head_spec = self._topology.head_spec(out_features)
+        if feature_key_override is not None:
+            head_spec = dataclasses.replace(head_spec, feature_key=feature_key_override)
+        if head_override is not None:
+            head_spec = _apply_head_override(head_spec, head_override)
         metrics = {stage: self._objective.build_metrics(num_classes, metrics_spec) for stage in stages}
         return Task(
             name=name,
@@ -73,3 +88,25 @@ class TaskBuilder:
             metrics=metrics,
             weight=weight,
         )
+
+
+def _apply_head_override(base: HeadSpec, override: str | dict[str, Any]) -> HeadSpec:
+    """Merge an explicit head override from task config into the topology's default spec."""
+    if isinstance(override, str):
+        return HeadSpec(
+            kind=override,
+            out_features=base.out_features,
+            feature_key=base.feature_key,
+            prefer_native=False,
+        )
+    params = dict(override)
+    target = params.pop("_target_", None)
+    kind = str(params.pop("kind", base.kind))
+    return HeadSpec(
+        kind=kind,
+        out_features=base.out_features,
+        feature_key=base.feature_key,
+        options=params,
+        prefer_native=False,
+        target=target,
+    )

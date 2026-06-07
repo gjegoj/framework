@@ -4,7 +4,7 @@ import pytest
 import torch
 
 from src.core.entities import HeadSpec
-from src.core.keys import DECODER, IMAGE, POOLED
+from src.core.keys import DECODER, ENCODER_LAST, IMAGE, POOLED
 from src.models import CompositeModel, build_composite_model
 from src.models.backbones import SmpBackbone, TimmBackbone
 from src.models.registry import backbones, head_builders
@@ -36,13 +36,35 @@ class TestConvHead:
 
 
 class TestSmpBackbone:
-    def test_exposes_decoder_and_pooled_streams(self) -> None:
+    def test_exposes_encoder_last_and_decoder_streams(self) -> None:
         backbone = SmpBackbone(name="unet", encoder_name="resnet18", pretrained=False)
         features = backbone(_images(2))  # 32x32 input (divisible by 32)
+        assert set(features.streams) == {ENCODER_LAST, DECODER}
         assert features[DECODER].shape[0] == 2
         assert features[DECODER].shape[2:] == (32, 32)  # full input resolution
-        assert features[POOLED].shape == (2, backbone.feature_dim(POOLED))
         assert features[DECODER].shape[1] == backbone.feature_dim(DECODER)
+        enc = features[ENCODER_LAST]
+        assert enc.ndim == 4, "encoder_last must be [B, D, H, W]"
+        assert enc.shape[0] == 2
+        assert enc.shape[1] == backbone.feature_dim(ENCODER_LAST)
+
+    def test_unknown_stream_raises_with_listing(self) -> None:
+        backbone = SmpBackbone(encoder_name="resnet18", pretrained=False)
+        with pytest.raises(KeyError, match="encoder_last"):
+            backbone.feature_dim("tokens")
+
+    def test_native_head_encoder_last_returns_classification_head(self) -> None:
+        backbone = SmpBackbone(encoder_name="resnet18", pretrained=False)
+        in_features = backbone.feature_dim(ENCODER_LAST)
+        head = backbone.native_head(ENCODER_LAST, in_features, out_features=5)
+        assert head is not None
+        x = torch.randn(2, in_features, 4, 4)
+        out = head(x)
+        assert out.shape == (2, 5)
+
+    def test_native_head_unknown_key_returns_none(self) -> None:
+        backbone = SmpBackbone(encoder_name="resnet18", pretrained=False)
+        assert backbone.native_head("pooled", 512, 3) is None
 
     def test_segmentation_model_produces_per_pixel_logits(self) -> None:
         backbone = SmpBackbone(encoder_name="resnet18", pretrained=False)
@@ -50,6 +72,17 @@ class TestSmpBackbone:
         model = build_composite_model(backbone, specs)
         output = model(_images(2))
         assert output.task_logits["mask"].shape == (2, 4, 32, 32)  # [B, C, H, W]
+
+    def test_multitask_segmentation_and_classification(self) -> None:
+        backbone = SmpBackbone(encoder_name="resnet18", pretrained=False)
+        specs = {
+            "mask": HeadSpec(kind="conv", out_features=3, feature_key=DECODER, prefer_native=True),
+            "label": HeadSpec(kind="linear", out_features=5, feature_key=ENCODER_LAST, prefer_native=True),
+        }
+        model = build_composite_model(backbone, specs)
+        output = model(_images(2))
+        assert output.task_logits["mask"].shape == (2, 3, 32, 32)
+        assert output.task_logits["label"].shape == (2, 5)
 
 
 class TestRegistries:

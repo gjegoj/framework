@@ -2,17 +2,17 @@
 
 from src.losses.criterion import (
     BCEWithLogitsCriterion,
-    CompositeCriterion,
     CrossEntropyCriterion,
     DiceCriterion,
     L1Criterion,
     MSECriterion,
+    WeightedSumCriterion,
     criteria,
 )
 
 __all__ = [
     "BCEWithLogitsCriterion",
-    "CompositeCriterion",
+    "WeightedSumCriterion",
     "CrossEntropyCriterion",
     "DiceCriterion",
     "L1Criterion",

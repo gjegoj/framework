@@ -10,7 +10,14 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.composition.wiring import build_bindings, build_data_source, build_tasks, build_transforms
+from src.composition.wiring import (
+    build_bindings,
+    build_data_source,
+    build_lit_module,
+    build_task_lr_overrides,
+    build_tasks,
+    build_transforms,
+)
 from src.config import load_config
 from src.core.enums import Stage
 from src.core.runtime import RuntimeContext
@@ -34,6 +41,7 @@ def _minimal_config(**overrides: Any) -> dict[str, Any]:
         "project": "test",
         "epochs": 1,
         "batch_size": 4,
+        "lr": 1e-3,
         "image_size": [64, 64],
         "data": {
             "sources": "data.csv",
@@ -42,7 +50,9 @@ def _minimal_config(**overrides: Any) -> dict[str, Any]:
         },
         "backbone": {"name": "resnet18"},
         "optimizer": {"lr": 1e-3},
-        "tasks": {"label": {"preset": "classification", "target": "label"}},
+        "tasks": {
+            "label": {"preset": "classification", "target": "label", "class_mapping": {0: "cat", 1: "cow", 2: "dog"}}
+        },
         "transforms": _MINIMAL_TRANSFORMS,
     }
     base.update(overrides)
@@ -407,6 +417,84 @@ class TestBuildDataSource:
         assert [t.name for t in tasks] == ["species", "age"]
         assert tasks[0].head_spec.out_features == 3
         assert tasks[1].head_spec.out_features == 4
+
+
+class TestBuildTaskLrOverrides:
+    def test_no_overrides_returns_empty(self) -> None:
+        config = load_config(_minimal_config())
+        assert build_task_lr_overrides(config) == {}
+
+    def test_single_task_override(self) -> None:
+        raw = _minimal_config()
+        raw["tasks"]["label"]["optimizer"] = {"lr": 1e-4}
+        config = load_config(raw)
+        overrides = build_task_lr_overrides(config)
+        assert overrides == {"label": pytest.approx(1e-4)}
+
+    def test_partial_override_only_includes_declared_tasks(self) -> None:
+        raw = _minimal_config()
+        raw["tasks"]["species"] = {"preset": "classification", "target": "species", "optimizer": {"lr": 5e-5}}
+        raw["tasks"]["age"] = {"preset": "classification", "target": "age"}
+        config = load_config(raw)
+        overrides = build_task_lr_overrides(config)
+        assert set(overrides.keys()) == {"species"}
+        assert overrides["species"] == pytest.approx(5e-5)
+
+
+class TestBuildLitModule:
+    def test_creates_lit_module_without_overrides(self) -> None:
+        from src.models import build_composite_model
+        from src.models.registry import backbones
+        from src.training import LitModule, OptimizerBuilder
+
+        config = load_config(_minimal_config())
+        runtime = RuntimeContext(num_classes={"label": 3})
+        tasks = build_tasks(config, runtime)
+        backbone = backbones.create("timm", name="resnet18", pretrained=False)
+        model = build_composite_model(backbone, {t.name: t.head_spec for t in tasks})
+        opt_builder = OptimizerBuilder(base_lr=1e-3)
+
+        lit = build_lit_module(config, model, tasks, opt_builder)
+        assert isinstance(lit, LitModule)
+        assert lit._task_lr_overrides == {}
+
+    def test_creates_lit_module_with_per_task_lr(self) -> None:
+        from src.models import build_composite_model
+        from src.models.registry import backbones
+        from src.training import LitModule, OptimizerBuilder
+
+        raw = _minimal_config()
+        raw["tasks"]["label"]["optimizer"] = {"lr": 1e-4}
+        config = load_config(raw)
+        runtime = RuntimeContext(num_classes={"label": 3})
+        tasks = build_tasks(config, runtime)
+        backbone = backbones.create("timm", name="resnet18", pretrained=False)
+        model = build_composite_model(backbone, {t.name: t.head_spec for t in tasks})
+        opt_builder = OptimizerBuilder(base_lr=1e-3)
+
+        lit = build_lit_module(config, model, tasks, opt_builder)
+        assert isinstance(lit, LitModule)
+        assert lit._task_lr_overrides == {"label": pytest.approx(1e-4)}
+
+    def test_param_groups_reflect_per_task_lr(self) -> None:
+        from src.models import build_composite_model
+        from src.models.registry import backbones
+        from src.training import OptimizerBuilder
+
+        raw = _minimal_config()
+        raw["tasks"]["label"]["optimizer"] = {"lr": 1e-4}
+        config = load_config(raw)
+        runtime = RuntimeContext(num_classes={"label": 3})
+        tasks = build_tasks(config, runtime)
+        backbone = backbones.create("timm", name="resnet18", pretrained=False)
+        model = build_composite_model(backbone, {t.name: t.head_spec for t in tasks})
+        opt_builder = OptimizerBuilder(base_lr=1e-3)
+
+        lit = build_lit_module(config, model, tasks, opt_builder)
+        opt = lit.configure_optimizers()
+        lrs = {g["name"]: g["lr"] for g in opt.param_groups}
+        assert lrs["backbone"] == pytest.approx(1e-3)
+        assert lrs["head/label"] == pytest.approx(1e-4)
 
 
 class TestFullWiringSmoke:

@@ -4,6 +4,7 @@
 
 defaults:
   - override /backbone: smp_unet
+  - override /trainer: cpu_smoke
 
 project: smoke-segmentation
 seed: 0
@@ -25,12 +26,4 @@ tasks:
     target: mask_path
     num_classes: 3            # segmentation requires explicit class count
     # opt-in to composite CE+Dice (default is cross-entropy):
-    loss: {name: composite, terms: {cross_entropy: 1.0, dice: 1.0}}
-
-trainer:
-  accelerator: cpu
-  devices: 1
-  precision: 32-true
-  log_every_n_steps: 1
-  enable_checkpointing: false
-  logger: false
+    loss: {name: weighted_sum, losses: {cross_entropy: 1.0, dice: 1.0}}

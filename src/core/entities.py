@@ -132,21 +132,35 @@ class ModelOutput:
 class HeadSpec:
     """Declarative instruction for building a task head.
 
-    Produced by the task layer (from a topology + resolved class count) and
+    Produced by the task layer (from topology + resolved class count) and
     consumed by model assembly, which sizes the head from the backbone's feature
     dimension and constructs it via the head registry.
 
+    Three build modes (evaluated in order in ``build_composite_model``):
+
+    1. **``target`` set** — full custom via ``_target_``.  ``in_features`` and
+       ``in_channels`` are injected as defaults; ``options`` can override.
+    2. **``prefer_native=True``** — ask the backbone for its native head (e.g.
+       smp's ``SegmentationHead``, timm's ``create_classifier``).  Falls back to
+       the registry if the backbone returns ``None``.
+    3. **Registry** — ``head_builders.create(kind, in_features=…, **options)``.
+
     Parameters:
-        kind (str): Head registry key (e.g. ``"linear"``).
+        kind (str): Head registry key used in fallback / explicit override.
         out_features (int): Output dimension (class count / regression dim).
         feature_key (str): Which ``FeatureBundle`` stream the head consumes.
         options (dict[str, Any]): Extra constructor kwargs for the head builder.
+        prefer_native (bool): Try the backbone's native head before the registry.
+        target (str | None): Fully-qualified ``_target_`` import path for a
+            completely custom head class.
     """
 
     kind: str
     out_features: int
     feature_key: str = POOLED
     options: dict[str, Any] = field(default_factory=dict)
+    prefer_native: bool = False
+    target: str | None = None
 
 
 @dataclass

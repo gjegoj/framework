@@ -156,7 +156,9 @@ class TestLitModuleSmoke:
         runtime = RuntimeContext()
         transforms = {s: _make_transform((32, 32)) for s in Stage}
         plain_dm = DataModule(
-            target_bindings=[TargetBinding("label", "label", LabelIndexCodec())],
+            target_bindings=[
+                TargetBinding("label", "label", LabelIndexCodec(class_mapping={0: "cat", 1: "cow", 2: "dog"}))
+            ],
             inputs_config="image_path",
             transforms=transforms,
             runtime=runtime,
@@ -164,6 +166,7 @@ class TestLitModuleSmoke:
             seed=0,
             source=CsvDataSource(str(csv_path)),
             split={Stage.TRAIN: 0.6, Stage.VAL: 0.2, Stage.TEST: 0.2},
+            drop_last=True,  # 15 samples × 0.6 = 9 train → last batch of 1 breaks BN
         )
         plain_dm.setup()
 
@@ -189,7 +192,7 @@ class TestLitModuleSmoke:
         trainer.fit(lit_module, lit_dm)
 
         # val accuracy should be logged
-        assert "label/accuracy/val" in trainer.logged_metrics
+        assert "label/f1/val" in trainer.logged_metrics
 
 
 class TestSegmentationSmoke:
@@ -245,4 +248,4 @@ class TestSegmentationSmoke:
         )
         trainer.fit(lit_module, LitDataModule(plain_dm))
 
-        assert "mask/miou/val" in trainer.logged_metrics
+        assert "mask/iou/val" in trainer.logged_metrics

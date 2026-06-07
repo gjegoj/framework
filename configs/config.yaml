@@ -1,6 +1,7 @@
 defaults:
   - backbone: resnet18
   - optimizer: adamw
+  - trainer: default
   - experiment: m2_smoke
   - transforms: default      # swap to augmented or your own transforms config
   - _self_
@@ -9,6 +10,7 @@ project: my-project
 seed: 42
 epochs: 10
 batch_size: 16
+lr: 1.0e-3
 image_size: [224, 224]
 mean: [0.485, 0.456, 0.406]
 std: [0.229, 0.224, 0.225]
@@ -21,10 +23,5 @@ data:
     val: 0.1
     test: 0.1
 
-tasks: {}              # override in experiment config
 
-trainer:
-  accelerator: auto
-  devices: auto
-  precision: 32-true
-  log_every_n_steps: 10
+tasks: {}              # override in experiment config
