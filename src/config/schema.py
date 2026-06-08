@@ -254,6 +254,27 @@ class TaskConfig(BaseModel):
     model_config = ConfigDict(extra="allow")
 
 
+class LoggerConfig(BaseModel):
+    """Logger backend selection.
+
+    ``kind`` selects the backend (none/clearml); extras survive validation so
+    per-backend YAML keys (``tags``, ``output_uri``, ...) can be forwarded.
+
+    Example (clearml)::
+
+        logger:
+          kind: clearml
+          project: my-ml-project   # defaults to experiment project when omitted
+          task: run-001            # optional ClearML task name
+    """
+
+    kind: str = Field("none", description="Logger backend key (none/clearml).")
+    project: str | None = Field(None, description="Project name for the logger. Defaults to experiment project.")
+    task: str | None = Field(None, description="Run/task name. Logger backend default when omitted.")
+
+    model_config = ConfigDict(extra="allow")
+
+
 class TrainerConfig(BaseModel):
     """Subset of Lightning Trainer knobs we expose; extras pass through."""
 
@@ -291,6 +312,19 @@ class ExperimentConfig(BaseModel):
             "Per-stage Albumentations pipeline specs (train/val/test). "
             "Each value is a _target_-keyed dict instantiated via instantiate_nested. "
             "None → default resize + normalize + ToTensorV2 built from image_size/mean/std."
+        ),
+    )
+    logger: LoggerConfig = Field(default_factory=LoggerConfig, description="Logger backend config.")
+    callbacks: dict[str, dict[str, Any] | None] | None = Field(
+        None,
+        description=(
+            "Callbacks by registry key (or ``_target_``). "
+            "Keys are looked up in ``callback_registry``; values are constructor kwargs. "
+            "``null`` value → callback with all defaults. "
+            "``_target_`` key → full import path bypass (no registry needed). "
+            "YAML order controls registration order — put ``ema`` before ``checkpoint``. "
+            "Remove a key (or set to ``~``) to disable that callback. "
+            "Example: ``{lr_monitor: {logging_interval: epoch}, ema: {decay: 0.999}, checkpoint: null}``."
         ),
     )
     trainer: TrainerConfig = Field(default_factory=TrainerConfig)

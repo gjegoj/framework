@@ -53,14 +53,15 @@ repos:
         stages: [commit-msg]
         args: [--verbose]
 
--   repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v2.1.0
-    hooks:
-    -   id: mypy
-        additional_dependencies: ["pydantic>=2.11.9"]
-
 -   repo: local
     hooks:
+    -   id: mypy
+        name: mypy
+        entry: uv run mypy src tests
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
+        verbose: true
     -   id: test-unit
         name: test-unit
         entry: make test-unit

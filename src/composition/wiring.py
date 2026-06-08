@@ -7,6 +7,7 @@ order is enforced by the function signatures: ``build_tasks`` requires a
 
 from __future__ import annotations
 
+import dataclasses
 from pathlib import Path
 from typing import Any
 
@@ -307,6 +308,9 @@ def build_tasks(config: ExperimentConfig, runtime: RuntimeContext) -> list[Task]
             head=task_cfg.head,
             feature_key=task_cfg.feature_key,
         )
+        if task_cfg.class_mapping is not None:
+            class_names = [task_cfg.class_mapping[i] for i in sorted(task_cfg.class_mapping)]
+            task = dataclasses.replace(task, class_names=class_names)
         tasks.append(task)
     return tasks
 
@@ -332,11 +336,11 @@ def build_lit_module(
     tasks: list[Task],
     optimizer_builder: OptimizerBuilder,
 ) -> LitModule:
-    """Build a ``LitModule`` wired with per-task LR overrides from config.
+    """Build a ``LitModule`` wired with per-task LR overrides and hyperparams from config.
 
-    This is the single authoritative place that reads ``task.optimizer.lr`` and
-    passes it to ``LitModule``, so the per-head param-group split in
-    ``OptimizerBuilder`` is driven entirely from YAML.
+    The single authoritative place that reads ``task.optimizer.lr`` for the
+    per-head param-group split in ``OptimizerBuilder``, and serialises the full
+    config as hyperparams so the logger can record them in ``on_fit_start``.
 
     Parameters:
         config (ExperimentConfig): Validated experiment config.
@@ -352,10 +356,63 @@ def build_lit_module(
         tasks=tasks,
         optimizer_builder=optimizer_builder,
         task_lr_overrides=build_task_lr_overrides(config),
+        hparams=config.model_dump(mode="json"),
     )
 
 
+def build_callbacks(config: ExperimentConfig) -> list[Any]:
+    """Build the ordered callback list from config.
+
+    Each key in ``config.callbacks`` is looked up in ``callback_registry``
+    (or resolved via ``_target_``); its value dict is forwarded as kwargs.
+    YAML declaration order controls callback registration order — put ``ema``
+    before ``checkpoint`` so EMA weights are active when the checkpoint fires.
+
+    Parameters:
+        config (ExperimentConfig): Validated experiment config.
+
+    Returns:
+        list: Lightning callbacks, ready for ``Trainer(callbacks=...)``.
+    """
+    if config.callbacks is None:
+        return []
+
+    import importlib
+
+    from src.callbacks.registry import callback_registry
+
+    callbacks: list[Any] = []
+    for name, raw_params in config.callbacks.items():
+        params = dict(raw_params or {})
+        target = params.pop("_target_", None)
+        if target is not None:
+            mod_path, attr = str(target).rsplit(".", 1)
+            cls = getattr(importlib.import_module(mod_path), attr)
+            callbacks.append(cls(**params))
+            continue
+        registry_key = str(params.pop("name", name))
+        callbacks.append(callback_registry.create(registry_key, **params))
+    return callbacks
+
+
 _OPTIMIZER_CORE_FIELDS = frozenset({"name", "lr", "weight_decay"})
+
+
+def build_logger(config: ExperimentConfig) -> Any:
+    """Build the experiment logger from config.
+
+    Returns ``False`` (Lightning's "disable logging" sentinel) for ``kind: none``;
+    returns a concrete ``Logger`` for any named backend.
+
+    Parameters:
+        config (ExperimentConfig): Validated experiment config.
+
+    Returns:
+        Logger | bool: Configured logger, or ``False`` to disable.
+    """
+    from src.loggers.registry import build_logger as _build_logger
+
+    return _build_logger(config)
 
 
 def build_optimizer_builder(optimizer_cfg: OptimizerConfig) -> OptimizerBuilder:

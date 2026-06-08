@@ -125,6 +125,7 @@ classification = TaskPreset(
         "recall": _PER_CLASS,
         "f1": _PER_CLASS,
         "confusion_matrix": {"normalize": "true"},
+        "precision_recall_curve": None,
     },
 )
 task_presets.register_instance("classification", classification)

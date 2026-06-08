@@ -22,14 +22,17 @@ import src.tasks  # noqa: F401 — registers topology/objective strategies and p
 from src.composition.wiring import (
     build_backbone,
     build_bindings,
+    build_callbacks,
     build_data_module,
+    build_lit_module,
+    build_logger,
     build_optimizer_builder,
     build_tasks,
 )
 from src.config import load_config
 from src.core.runtime import RuntimeContext
 from src.models.assembly import build_composite_model
-from src.training import LitDataModule, LitModule
+from src.training import LitDataModule
 
 log = logging.getLogger(__name__)
 
@@ -65,24 +68,19 @@ def main(cfg: DictConfig) -> None:
     backbone = build_backbone(config.backbone)
     model = build_composite_model(backbone, {t.name: t.head_spec for t in tasks})
 
-    # 5. Optimizer (class resolved from optimizer.name) with optional per-head LR overrides
-    task_lr_overrides = {
-        name: task_cfg.optimizer.lr for name, task_cfg in config.tasks.items() if task_cfg.optimizer is not None
-    }
+    # 5. Optimizer
     optimizer_builder = build_optimizer_builder(config.optimizer)
 
     # 6. Lightning wrappers (humble objects delegating to domain logic)
-    lit_module = LitModule(
-        model=model,
-        tasks=tasks,
-        optimizer_builder=optimizer_builder,
-        task_lr_overrides=task_lr_overrides or None,
-    )
+    lit_module = build_lit_module(config, model, tasks, optimizer_builder)
     lit_dm = LitDataModule(plain_dm)
 
     # 7. Fit
+    logger = build_logger(config)
+    callbacks = build_callbacks(config)
     trainer_kwargs = config.trainer.model_dump(mode="python")
-    trainer = L.Trainer(max_epochs=config.epochs, **trainer_kwargs)
+    trainer_kwargs.pop("logger", None)  # logger is owned by LoggerConfig, not TrainerConfig
+    trainer = L.Trainer(max_epochs=config.epochs, logger=logger, callbacks=callbacks, **trainer_kwargs)
     trainer.fit(lit_module, lit_dm)
     log.info("Training complete.")
 

@@ -196,9 +196,9 @@ def _clone_with_new_out_channels(
         return nn.Conv2d(
             layer.in_channels,
             out_channels,
-            kernel_size=layer.kernel_size,
-            stride=layer.stride,
-            padding=layer.padding,
+            kernel_size=layer.kernel_size,  # type: ignore[arg-type]
+            stride=layer.stride,  # type: ignore[arg-type]
+            padding=layer.padding,  # type: ignore[arg-type]
             bias=layer.bias is not None,
         )
     return nn.Linear(

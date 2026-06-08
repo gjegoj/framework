@@ -1,0 +1,64 @@
+# @package _global_
+# Debug config: multitask SMP backbone — segmentation + classification.
+#
+# What this exercises:
+#   - SmpBackbone with two streams: DECODER (segmentation) + ENCODER_LAST (classification)
+#   - VectorMetricHandler: f1 with average=none → named per-class keys (f1/cat, f1/dog, f1/cow)
+#   - MatrixMetricHandler: confusion_matrix → log_matrix (no-op with logger=none, fires with clearml)
+#   - class_names threading: class_mapping → Task.class_names → MetricLogContext
+#   - Per-task LR override: classification head gets its own optimizer.lr
+#   - Composite loss on segmentation: CE + Dice
+#
+# Run:
+#   uv run python main.py +experiment=debug
+#
+# To enable ClearML logging, replace logger default:
+#   uv run python main.py +experiment=debug 'defaults=[{override /logger: clearml}]'
+#   or set in this file: - override /logger: clearml
+
+defaults:
+  - override /backbone: smp_unet
+  # - override /trainer: cpu_smoke
+  - override /logger: clearml
+  - override /callbacks: minimal
+
+project: debug-multitask
+seed: 0
+epochs: 2
+batch_size: 4
+image_size: [64, 64]
+
+data:
+  sources: data/smoke/data.csv
+  inputs: image_path
+  split:
+    train: 0.7
+    val: 0.15
+    test: 0.15
+
+tasks:
+  # --- Classification head on encoder_last (raw spatial features; smp ClassificationHead pools internally)
+  label:
+    preset: classification
+    target: label
+    feature_key: encoder_last          # overrides GlobalTopology default (pooled) → enables multitask with smp
+    class_mapping: {0: cat, 1: cow, 2: dog}
+    loss: {name: cross_entropy, label_smoothing: 0.05}
+    metrics:
+      accuracy: null                   # 0-D scalar → ScalarMetricHandler
+      per_class_f1:
+        name: f1
+        average: none                  # 1-D vector [C] → VectorMetricHandler → logs f1/cat, f1/cow, f1/dog
+      confusion_matrix: null           # 2-D [C×C] → MatrixMetricHandler → log_matrix (no-op without PlotLogger)
+      precision_recall_curve: null     # 3-tuple → CurveMetricHandler → log_curve per class (requires PlotLogger)
+    optimizer:
+      lr: 5.0e-4                       # per-head LR override (backbone uses global lr: 1e-3)
+
+  # --- Segmentation head on decoder (full decoder output)
+  mask:
+    preset: segmentation
+    target: mask_path
+    num_classes: 3                     # segmentation requires explicit class count (no class_mapping infer)
+    loss: {name: weighted_sum, losses: {cross_entropy: 1.0, dice: 1.0}}
+    metrics:
+      iou: null                        # 0-D scalar (macro-averaged mIoU) → ScalarMetricHandler

@@ -2,6 +2,8 @@
 # Augmented: train uses colour + geometry augmentations; val/test are deterministic.
 train:
   _target_: albumentations.Compose
+  seed: ${seed}
+  telemetry: false
   transforms:
     - _target_: albumentations.Resize
       height: ${image_size[0]}
@@ -37,6 +39,8 @@ train:
 
 val:
   _target_: albumentations.Compose
+  seed: ${seed}
+  telemetry: false
   transforms:
     - _target_: albumentations.Resize
       height: ${image_size[0]}

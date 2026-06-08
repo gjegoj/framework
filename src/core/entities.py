@@ -195,6 +195,9 @@ class Task:
         activation (Activation): Maps logits to predictions for metrics.
         metrics (dict[Stage, MetricSet]): Per-stage metric collections.
         weight (float): Weight of this task in the aggregated loss.
+        class_names (list[str] | None): Ordered class names (index → name) for
+            per-class metric logging and confusion-matrix axis labels.
+            ``None`` for tasks without a class vocabulary (regression, etc.).
     """
 
     name: str
@@ -204,6 +207,7 @@ class Task:
     activation: Activation
     metrics: dict[Stage, MetricSet]
     weight: float = 1.0
+    class_names: list[str] | None = None
 
     @property
     def feature_key(self) -> str:

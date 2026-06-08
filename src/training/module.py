@@ -17,14 +17,21 @@ The step loop from the plan:
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Sequence
 
 import lightning as L
 import torch
+from lightning.pytorch.loggers import Logger as LightningLogger
 
 from src.core.entities import Batch, LossResult, Task
 from src.core.enums import Stage
 from src.core.ports import LossAggregator
+from src.metrics.handlers import (
+    DEFAULT_METRIC_HANDLERS,
+    MetricHandler,
+    MetricLogContext,
+    dispatch,
+)
 from src.models.assembly import CompositeModel
 from src.training.aggregator import WeightedSumAggregator
 from src.training.optimizer import OptimizerBuilder
@@ -48,6 +55,8 @@ class LitModule(L.LightningModule):
         optimizer_builder: OptimizerBuilder,
         aggregator: LossAggregator | None = None,
         task_lr_overrides: dict[str, float] | None = None,
+        metric_handlers: Sequence[MetricHandler] = DEFAULT_METRIC_HANDLERS,
+        hparams: dict[str, Any] | None = None,
     ) -> None:
         super().__init__()
         self.model = model
@@ -56,6 +65,8 @@ class LitModule(L.LightningModule):
         self._optimizer_builder = optimizer_builder
         self._aggregator: LossAggregator = aggregator or WeightedSumAggregator()
         self._task_lr_overrides = task_lr_overrides or {}
+        self._metric_handlers: tuple[MetricHandler, ...] = tuple(metric_handlers)
+        self._hparams_to_log = hparams
 
     # ------------------------------------------------------------------ steps
 
@@ -95,6 +106,8 @@ class LitModule(L.LightningModule):
 
     def on_fit_start(self) -> None:
         self._move_metrics_to_device()
+        if self._hparams_to_log is not None and isinstance(self.logger, LightningLogger) and self.global_rank == 0:
+            self.logger.log_hyperparams(self._hparams_to_log)
 
     def on_test_start(self) -> None:
         self._move_metrics_to_device()
@@ -105,25 +118,15 @@ class LitModule(L.LightningModule):
         for task in self.tasks:
             metrics = task.metrics[stage].compute()
             for metric_name, value in metrics.items():
-                self._log_metric(f"{task.name}/{metric_name}/{stage}", value)
+                ctx = MetricLogContext(
+                    log_scalar=lambda key, val: self.log(key, val, prog_bar=True),
+                    logger=self.logger,
+                    step=self.current_epoch,
+                    class_names=task.class_names,
+                    metric_name=metric_name,
+                )
+                dispatch(f"{task.name}/{metric_name}/{stage}", value, ctx, self._metric_handlers)
             task.metrics[stage].reset()
-
-    def _log_metric(self, key: str, value: Any) -> None:
-        """Log a metric value, handling per-class tensors gracefully.
-
-        - Scalar (0-D tensor or number) → logged directly.
-        - 1-D tensor (per-class, ``average="none"``) → mean logged at ``key``;
-          per-class values at ``{key}_class{i}`` (no prog_bar).
-        - 2-D+ (e.g. confusion matrix) → skipped until typed metrics (M4).
-        """
-        if not isinstance(value, torch.Tensor) or value.ndim == 0:
-            self.log(key, value, prog_bar=True)
-            return
-        if value.ndim == 1:
-            self.log(key, value.float().mean(), prog_bar=True)
-            for i, v in enumerate(value):
-                self.log(f"{key}_class{i}", v.float(), prog_bar=False)
-        # 2-D+ tensors (confusion matrix, etc.) are skipped here; M4 adds typed logging.
 
     def on_train_epoch_start(self) -> None:
         for task in self.tasks:
@@ -158,8 +161,9 @@ class LitModule(L.LightningModule):
             f"loss/{stage}/total",
             combined.total,
             prog_bar=True,
-            on_step=True,
+            on_step=False,
             on_epoch=True,
+            sync_dist=True,
         )
         for name, value in combined.components.items():
-            self.log(f"loss/{stage}/{name}", value, on_step=False, on_epoch=True)
+            self.log(f"loss/{stage}/{name}", value, on_step=False, on_epoch=True, sync_dist=True)

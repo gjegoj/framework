@@ -121,3 +121,57 @@ class LossAggregator(ABC):
         Returns:
             LossResult: Combined total plus per-task components for logging.
         """
+
+
+class PlotLogger(ABC):
+    """A logger backend that can render non-scalar plots (matrices, curves).
+
+    Scalars already reach the backend via Lightning's ``self.log`` →
+    ``Logger.log_metrics``; this port adds the verbs that the scalar path cannot
+    express. A concrete logger (e.g. ``ClearMLLogger``) implements both
+    Lightning's ``Logger`` and this port — one object, one backend Task.
+    """
+
+    @abstractmethod
+    def log_matrix(
+        self,
+        title: str,
+        matrix: "Tensor",
+        iteration: int,
+        labels: list[str] | None = None,
+        xaxis: str | None = None,
+        yaxis: str | None = None,
+    ) -> None:
+        """Log a 2-D matrix (e.g. confusion matrix) to the backend.
+
+        Parameters:
+            title (str): Display title / metric key.
+            matrix (Tensor): 2-D float tensor on any device.
+            iteration (int): Current training step (epoch or global step).
+            labels (list[str] | None): Optional class label strings for both axes.
+            xaxis (str | None): X-axis label (e.g. ``"Predicted"``).
+            yaxis (str | None): Y-axis label (e.g. ``"True"``).
+        """
+
+    @abstractmethod
+    def log_curve(
+        self,
+        title: str,
+        x: "Tensor",
+        y: "Tensor",
+        iteration: int,
+        series: str = "curve",
+        xaxis: str | None = None,
+        yaxis: str | None = None,
+    ) -> None:
+        """Log a 2-D curve (e.g. PR curve, ROC) as a scatter/line plot.
+
+        Parameters:
+            title (str): Display title / metric key.
+            x (Tensor): 1-D tensor of X-axis values (e.g. recall, FPR).
+            y (Tensor): 1-D tensor of Y-axis values (e.g. precision, TPR).
+            iteration (int): Current training step (epoch or global step).
+            series (str): Series name within the plot (e.g. class name).
+            xaxis (str | None): X-axis label.
+            yaxis (str | None): Y-axis label.
+        """

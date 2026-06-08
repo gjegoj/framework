@@ -14,6 +14,7 @@ from src.composition.wiring import (
     build_bindings,
     build_data_source,
     build_lit_module,
+    build_logger,
     build_task_lr_overrides,
     build_tasks,
     build_transforms,
@@ -549,3 +550,69 @@ class TestFullWiringSmoke:
         loss = lit.training_step(batch, 0)
         assert isinstance(loss, torch.Tensor)
         assert loss.ndim == 0
+
+
+class TestBuildLogger:
+    def test_none_kind_returns_false(self) -> None:
+        config = load_config(_minimal_config())
+        assert config.logger.kind == "none"
+        assert build_logger(config) is False
+
+    def test_default_logger_config_is_none(self) -> None:
+        from src.config.schema import LoggerConfig
+
+        cfg = LoggerConfig()
+        assert cfg.kind == "none"
+        assert cfg.project is None
+        assert cfg.task is None
+
+    def test_unknown_kind_raises(self) -> None:
+        raw = _minimal_config()
+        raw["logger"] = {"kind": "wandb"}
+        config = load_config(raw)
+        with pytest.raises(ValueError, match="Unknown logger kind"):
+            build_logger(config)
+
+    def test_logger_config_parses_clearml_kind(self) -> None:
+        raw = _minimal_config()
+        raw["logger"] = {"kind": "clearml", "project": "ml-tests"}
+        config = load_config(raw)
+        assert config.logger.kind == "clearml"
+        assert config.logger.project == "ml-tests"
+
+    def test_clearml_logger_is_both_instances(self) -> None:
+        """ClearMLLogger must satisfy both Lightning Logger and PlotLogger."""
+        pytest.importorskip("clearml")
+        from unittest.mock import MagicMock, patch
+
+        import lightning as L
+
+        from src.core.ports import PlotLogger
+        from src.loggers.clearml import ClearMLLogger
+
+        mock_task = MagicMock()
+        mock_task.name = "test-task"
+        mock_task.id = "abc-123"
+        mock_task.get_logger.return_value = MagicMock()
+
+        with patch("clearml.Task.init", return_value=mock_task):
+            logger = ClearMLLogger(project_name="test-proj", task_name="test-task")
+
+        assert isinstance(logger, PlotLogger)
+        assert isinstance(logger, L.pytorch.loggers.Logger)
+
+    def test_clearml_split_metric_name_multipart(self) -> None:
+        pytest.importorskip("clearml")
+        from src.loggers.clearml import ClearMLLogger
+
+        title, series = ClearMLLogger._split_metric_name("label/f1/val")
+        assert title == "label/f1"
+        assert series == "val"
+
+    def test_clearml_split_metric_name_single(self) -> None:
+        pytest.importorskip("clearml")
+        from src.loggers.clearml import ClearMLLogger
+
+        title, series = ClearMLLogger._split_metric_name("loss")
+        assert title == "loss"
+        assert series == "value"

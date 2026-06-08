@@ -1,0 +1,4 @@
+kind: clearml
+# project defaults to experiment project (config.project) when omitted
+# project: my-project
+# task: run-name   # optional ClearML task/run name

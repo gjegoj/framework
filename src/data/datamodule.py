@@ -108,13 +108,22 @@ class DataModule:
         self._root_path = root_path
         self._datasets: dict[Stage, Dataset] = {}
         self._input_bindings: list[InputBinding] = []
+        self._setup_done = False
 
     def setup(self) -> None:
-        """Read data, fit codecs, resolve input bindings, and build per-stage datasets."""
+        """Read data, fit codecs, resolve input bindings, and build per-stage datasets.
+
+        Idempotent: subsequent calls are no-ops. Lightning calls this on every rank
+        during ``trainer.fit()``; the first call (from ``main.py``) is the one that
+        populates ``RuntimeContext`` before tasks are built.
+        """
+        if self._setup_done:
+            return
         if self._staged_sources is not None:
             self._setup_from_staged_sources()
         else:
             self._setup_from_source()
+        self._setup_done = True
 
     def _setup_from_source(self) -> None:
         """Split mode: read the single source, fit codecs on all data, split by ratio."""

@@ -200,11 +200,23 @@ class MaskCodec(TargetCodec):
     Albumentations can resize/flip it together with the image. ``to_tensor``
     casts the result to a ``[H, W]`` long tensor for the criterion.
 
-    ``num_classes`` is ``None`` — segmentation tasks declare the class count in
-    config; scanning every mask file would be needlessly expensive.
+    When ``class_mapping`` is provided, ``num_classes`` is inferred from it —
+    consistent with classification codecs. Otherwise ``num_classes`` stays ``None``
+    and the task config must supply an explicit ``num_classes``.
+
+    Parameters:
+        class_mapping (dict[int, str] | None): Index → label map, e.g.
+            ``{0: "background", 1: "defect"}``. Determines class count.
     """
 
     spatial = True
+
+    def __init__(self, class_mapping: dict[int, str] | None = None) -> None:
+        self._num_classes: int | None = len(class_mapping) if class_mapping is not None else None
+
+    @property
+    def num_classes(self) -> int | None:
+        return self._num_classes
 
     def fit(self, values: Iterable[Any]) -> None:
         pass

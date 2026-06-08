@@ -192,7 +192,7 @@ class TestLitModuleSmoke:
         trainer.fit(lit_module, lit_dm)
 
         # val accuracy should be logged
-        assert "label/f1/val" in trainer.logged_metrics
+        assert "label/f1/val/mean" in trainer.logged_metrics
 
 
 class TestSegmentationSmoke:
@@ -248,4 +248,4 @@ class TestSegmentationSmoke:
         )
         trainer.fit(lit_module, LitDataModule(plain_dm))
 
-        assert "mask/iou/val" in trainer.logged_metrics
+        assert "mask/iou/val/mean" in trainer.logged_metrics

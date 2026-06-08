@@ -1,0 +1,17 @@
+# Default callback stack for a full training run.
+# Disable any callback via CLI: callbacks.ema=~
+# Enable freeze via CLI: +callbacks.freeze.targets=[model.backbone] +callbacks.freeze.unfreeze_at=0.3
+
+lr_monitor:
+  logging_interval: epoch
+
+ema:
+  decay: 0.999
+  warmup_fraction: 0.1   # start EMA after 10% of steps (avoids noisy early average)
+  use_buffers: true       # include BatchNorm running stats
+
+checkpoint:
+  monitor: loss/val/total
+  mode: min
+  save_top_k: 1
+  save_weights_only: true

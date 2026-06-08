@@ -2,9 +2,11 @@ defaults:
   - backbone: resnet18
   - optimizer: adamw
   - trainer: default
-  - experiment: m2_smoke
+  - logger: none             # swap to clearml (or other) to enable experiment tracking
+  - callbacks: none          # swap to default (lr_monitor + ema + checkpoint) or minimal
   - transforms: default      # swap to augmented or your own transforms config
   - _self_
+  - experiment: debug        # experiment overrides go last → highest priority
 
 project: my-project
 seed: 42

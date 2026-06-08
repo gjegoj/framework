@@ -1,0 +1,12 @@
+# Minimal callbacks: checkpoint only.
+# Useful when EMA/LR overhead is not desired (e.g. fast experimentation).
+
+
+lr_monitor:
+  logging_interval: epoch
+
+checkpoint:
+  monitor: loss/val/total
+  mode: min
+  save_top_k: 1
+  save_weights_only: true
