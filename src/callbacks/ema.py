@@ -11,10 +11,13 @@ absolute ``update_starting_at_step`` once the step count is known at ``setup``.
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import lightning as L
 from lightning.pytorch.callbacks import EMAWeightAveraging
+
+log = logging.getLogger(__name__)
 
 
 class EmaCallback(EMAWeightAveraging):
@@ -41,6 +44,7 @@ class EmaCallback(EMAWeightAveraging):
         if not (0.0 <= warmup_fraction < 1.0):
             raise ValueError(f"EmaCallback: warmup_fraction must be in [0, 1), got {warmup_fraction}.")
         super().__init__(decay=decay, use_buffers=use_buffers, **kwargs)
+        self._decay = decay  # parent discards it into avg_fn; keep for logging
         self._warmup_fraction = warmup_fraction
 
     def setup(self, trainer: L.Trainer, pl_module: L.LightningModule, stage: str) -> None:
@@ -48,3 +52,8 @@ class EmaCallback(EMAWeightAveraging):
         super().setup(trainer, pl_module, stage)
         if stage == "fit":
             self.update_starting_at_step = int(self._warmup_fraction * trainer.estimated_stepping_batches)
+            log.info(
+                "EMA initialized: decay=%s, updates start at step %d.",
+                self._decay,
+                self.update_starting_at_step,
+            )

@@ -53,11 +53,18 @@ def _build_transforms_from_config(
     transforms_cfg: dict[str, Any],
     spatial_targets: list[str],
 ) -> dict[Stage, Transform]:
-    """Instantiate per-stage ``AlbumentationsTransform`` from ``_target_`` specs."""
+    """Instantiate one ``Transform`` per stage from its spec.
+
+    A spec may instantiate directly to a ``Transform`` (e.g. ``IdentityTransform``
+    for the embedding modality) — used as-is — or to an Albumentations ``Compose``,
+    which is wrapped in an ``AlbumentationsTransform``.
+    """
     result: dict[Stage, Transform] = {}
     for stage_str, spec in transforms_cfg.items():
-        compose = instantiate(spec)
-        result[Stage(stage_str)] = AlbumentationsTransform(compose, spatial_targets=spatial_targets)
+        built = instantiate(spec)
+        if not isinstance(built, Transform):
+            built = AlbumentationsTransform(built, spatial_targets=spatial_targets)
+        result[Stage(stage_str)] = built
 
     # Derive missing stages from the nearest eval transform.
     eval_t = result.get(Stage.VAL) or result.get(Stage.TEST)

@@ -1,4 +1,4 @@
-.PHONY: help install pre-commit clean test test-unit typecheck check generate-smoke smoke
+.PHONY: help install pre-commit clean test test-unit typecheck check generate-smoke smoke smoke-embeddings
 
 
 help: ## Show help
@@ -37,3 +37,6 @@ generate-smoke: ## Generate synthetic smoke dataset in data/smoke/
 
 smoke: generate-smoke ## Run 2-epoch offline smoke training (CPU, no pretrained weights)
 	uv run python main.py
+
+smoke-embeddings: generate-smoke ## Run 2-epoch offline embeddings smoke (CPU, M6 modality)
+	uv run python main.py experiment=embeddings_smoke

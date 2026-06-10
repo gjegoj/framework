@@ -6,7 +6,7 @@ import torch
 from src.core.entities import HeadSpec
 from src.core.keys import DECODER, ENCODER_LAST, IMAGE, POOLED
 from src.models import CompositeModel, build_composite_model
-from src.models.backbones import SmpBackbone, TimmBackbone
+from src.models.backbones import EmbeddingBackbone, SmpBackbone, TimmBackbone
 from src.models.registry import backbones, head_builders
 
 
@@ -25,6 +25,34 @@ class TestTimmBackbone:
         backbone = TimmBackbone("resnet18", pretrained=False)
         with pytest.raises(KeyError, match="exposes only 'pooled'"):
             backbone.feature_dim("decoder")
+
+
+class TestEmbeddingBackbone:
+    def test_passthrough_stream_and_dim(self) -> None:
+        backbone = EmbeddingBackbone(embedding_dim=16)
+        vectors = {IMAGE: torch.randn(2, 16)}
+        features = backbone(vectors)
+        assert features[POOLED].shape == (2, 16)
+        assert backbone.feature_dim(POOLED) == 16
+
+    def test_reads_configured_input_key(self) -> None:
+        backbone = EmbeddingBackbone(embedding_dim=8, input_key="embedding")
+        features = backbone({"embedding": torch.randn(3, 8)})
+        assert features[POOLED].shape == (3, 8)
+
+    def test_unknown_stream_raises(self) -> None:
+        backbone = EmbeddingBackbone(embedding_dim=16)
+        with pytest.raises(KeyError, match="exposes only 'pooled'"):
+            backbone.feature_dim("decoder")
+
+    def test_builds_from_config_ignoring_name_and_pretrained(self) -> None:
+        from src.composition.wiring import build_backbone
+        from src.config.schema import BackboneConfig
+
+        cfg = BackboneConfig(kind="embedding", name="identity", embedding_dim=8, input_key="embedding")
+        backbone = build_backbone(cfg)
+        assert isinstance(backbone, EmbeddingBackbone)
+        assert backbone.feature_dim(POOLED) == 8
 
 
 class TestConvHead:

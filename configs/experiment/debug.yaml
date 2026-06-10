@@ -19,8 +19,8 @@
 defaults:
   - override /backbone: smp_unet
   # - override /trainer: cpu_smoke
-  # - override /logger: clearml
-  - override /callbacks: minimal
+  - override /logger: clearml
+  - override /callbacks: default
 
 project: debug-multitask
 

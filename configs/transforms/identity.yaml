@@ -1,0 +1,10 @@
+# @package transforms
+# Identity: pass precomputed vectors through as float tensors (no augmentation).
+# Used for the embedding input modality, where each input is a precomputed [D]
+# vector rather than an image — the Albumentations image pipeline does not apply.
+# Val/test/predict are derived from val automatically.
+train:
+  _target_: src.transforms.input.IdentityTransform
+
+val:
+  _target_: src.transforms.input.IdentityTransform

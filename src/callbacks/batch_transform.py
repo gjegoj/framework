@@ -9,10 +9,14 @@ training.
 
 from __future__ import annotations
 
+import logging
+
 import lightning as L
 
 from src.core.entities import Batch
 from src.core.ports import BatchTransform
+
+log = logging.getLogger(__name__)
 
 
 class BatchTransformCallback(L.Callback):
@@ -35,10 +39,13 @@ class BatchTransformCallback(L.Callback):
         self._transform = transform
         self._disable_after_fraction = disable_after_fraction
         self._disable_epoch: int | None = None
+        self._disabled_logged = False
 
     def on_fit_start(self, trainer: L.Trainer, pl_module: L.LightningModule) -> None:
         max_epochs = trainer.max_epochs or 0
         self._disable_epoch = int(self._disable_after_fraction * max_epochs) if max_epochs > 0 else None
+        until = "all epochs" if self._disable_epoch is None else f"epoch {self._disable_epoch}"
+        log.info("Batch transform %s active until %s.", type(self._transform).__name__, until)
 
     def on_train_batch_start(
         self,
@@ -47,7 +54,16 @@ class BatchTransformCallback(L.Callback):
         batch: object,
         batch_idx: int,
     ) -> None:
-        if not self._is_active(trainer.current_epoch) or not isinstance(batch, Batch):
+        if not self._is_active(trainer.current_epoch):
+            if not self._disabled_logged:
+                self._disabled_logged = True
+                log.info(
+                    "Batch transform %s disabled after epoch %s.",
+                    type(self._transform).__name__,
+                    self._disable_epoch,
+                )
+            return
+        if not isinstance(batch, Batch):
             return
         result = self._transform(batch)
         batch.inputs.update(result.inputs)

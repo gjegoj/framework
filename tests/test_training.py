@@ -195,6 +195,64 @@ class TestLitModuleSmoke:
         assert "label/f1/val/mean" in trainer.logged_metrics
 
 
+class TestEmbeddingSmoke:
+    """End-to-end classification on precomputed .npy embeddings (modality axis)."""
+
+    @pytest.fixture
+    def emb_csv(self, tmp_path: Path) -> Path:
+        """15 synthetic 16-dim embedding vectors as .npy files, 3 classes."""
+        emb_dir = tmp_path / "emb"
+        emb_dir.mkdir()
+        rng = np.random.default_rng(2)
+        labels = ["cat", "dog", "cow"]
+        rows = []
+        for i in range(15):
+            path = emb_dir / f"{i}.npy"
+            np.save(path, rng.standard_normal(16).astype(np.float32))
+            rows.append({"emb_path": str(path), "label": labels[i % 3]})
+        csv = tmp_path / "emb.csv"
+        pd.DataFrame(rows).to_csv(csv, index=False)
+        return csv
+
+    def test_fit_one_epoch_embeddings(self, emb_csv: Path) -> None:
+        from src.models.backbones import EmbeddingBackbone
+        from src.transforms.input import IdentityTransform
+
+        runtime = RuntimeContext()
+        transforms = {s: IdentityTransform() for s in Stage}
+        plain_dm = DataModule(
+            target_bindings=[
+                TargetBinding("label", "label", LabelIndexCodec(class_mapping={0: "cat", 1: "cow", 2: "dog"}))
+            ],
+            inputs_config={"embedding": "emb_path"},  # .npy paths → "embedding" loader auto-detected
+            transforms=transforms,
+            runtime=runtime,
+            batch_size=4,
+            seed=0,
+            source=CsvDataSource(str(emb_csv)),
+            split={Stage.TRAIN: 0.6, Stage.VAL: 0.2, Stage.TEST: 0.2},
+            drop_last=True,
+        )
+        plain_dm.setup()
+
+        task = classification("label", num_classes=runtime.num_classes["label"])
+        backbone = EmbeddingBackbone(embedding_dim=16, input_key="embedding")
+        model = build_composite_model(backbone, {"label": task.head_spec})
+
+        lit_module = LitModule(model=model, tasks=[task], optimizer_builder=OptimizerBuilder(base_lr=1e-3))
+        trainer = L.Trainer(
+            max_epochs=1,
+            accelerator="cpu",
+            logger=False,
+            enable_checkpointing=False,
+            enable_progress_bar=False,
+            enable_model_summary=False,
+        )
+        trainer.fit(lit_module, LitDataModule(plain_dm))
+
+        assert "label/f1/val/mean" in trainer.logged_metrics
+
+
 class TestSegmentationSmoke:
     """End-to-end DENSE segmentation: smp backbone + mask pipeline + trainer.fit."""
 

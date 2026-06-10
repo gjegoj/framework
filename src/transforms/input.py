@@ -15,6 +15,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 
 import albumentations as A
+import torch
 
 from src.core.entities import Sample
 
@@ -52,4 +53,19 @@ class AlbumentationsTransform(Transform):
         result = self._compose(**sample.inputs, **sample.targets)
         sample.inputs = {k: result[k] for k in sample.inputs}
         sample.targets = {k: result[k] for k in sample.targets}
+        return sample
+
+
+class IdentityTransform(Transform):
+    """Pass-through transform for inputs that are already model-ready vectors.
+
+    Converts each input array to a float ``torch.Tensor`` (so collation can stack
+    it into ``[B, D]``) and leaves targets untouched.  Used for the embedding
+    modality, where the input is a precomputed ``[D]`` vector and the Albumentations
+    image pipeline does not apply; targets are tensorised by their ``TargetCodec``,
+    exactly as in the image flow.
+    """
+
+    def apply(self, sample: Sample) -> Sample:
+        sample.inputs = {key: torch.as_tensor(value, dtype=torch.float32) for key, value in sample.inputs.items()}
         return sample

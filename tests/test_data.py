@@ -10,12 +10,14 @@ import pytest
 import torch
 from albumentations.pytorch import ToTensorV2
 
+from src.core.entities import Sample
 from src.core.enums import Stage
 from src.core.runtime import RuntimeContext
 from src.data import (
     AlbumentationsTransform,
     CsvDataSource,
     DataModule,
+    EmbeddingLoader,
     FloatCodec,
     JsonDataSource,
     LabelIndexCodec,
@@ -63,6 +65,57 @@ _TAGS_MAPPING: dict[int, str] = {0: "indoor", 1: "large", 2: "outdoor", 3: "smal
 
 def _binding() -> TargetBinding:
     return TargetBinding(name="label", column="label", codec=LabelIndexCodec(class_mapping=_LABEL_MAPPING))
+
+
+class TestEmbeddingLoader:
+    def test_load_reads_vector_as_float32(self, tmp_path: Path) -> None:
+        path = tmp_path / "vec.npy"
+        np.save(path, np.arange(8, dtype=np.float64))
+        vector = EmbeddingLoader().load(str(path))
+        assert vector.shape == (8,)
+        assert vector.dtype == np.float32
+
+    def test_load_non_1d_raises(self, tmp_path: Path) -> None:
+        path = tmp_path / "matrix.npy"
+        np.save(path, np.zeros((4, 8), dtype=np.float32))
+        with pytest.raises(ValueError, match="1-D"):
+            EmbeddingLoader().load(str(path))
+
+    def test_is_file_based(self) -> None:
+        assert EmbeddingLoader().file_based is True
+
+
+class TestInferLoaderKey:
+    def test_npy_paths_infer_embedding(self) -> None:
+        from src.data.loaders import _infer_loader_key
+
+        series = pd.Series(["emb/a.npy", "emb/b.npy"])
+        assert _infer_loader_key(series) == "embedding"
+
+    def test_image_paths_still_infer_image(self) -> None:
+        from src.data.loaders import _infer_loader_key
+
+        series = pd.Series(["img/a.jpg", "img/b.png"])
+        assert _infer_loader_key(series) == "image"
+
+
+class TestIdentityTransform:
+    def test_tensorizes_input_vector(self) -> None:
+        from src.transforms.input import IdentityTransform
+
+        sample = Sample(inputs={"embedding": np.arange(4, dtype=np.float32)})
+        result = IdentityTransform().apply(sample)
+        assert isinstance(result.inputs["embedding"], torch.Tensor)
+        assert result.inputs["embedding"].dtype == torch.float32
+        assert result.inputs["embedding"].shape == (4,)
+
+    def test_passes_targets_through_unchanged(self) -> None:
+        from src.transforms.input import IdentityTransform
+
+        target = torch.tensor(2)
+        sample = Sample(inputs={"embedding": np.zeros(4, dtype=np.float32)}, targets={"label": target})
+        result = IdentityTransform().apply(sample)
+        assert result.targets["label"] is target
 
 
 class TestLabelIndexCodec:

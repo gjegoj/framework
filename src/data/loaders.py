@@ -25,6 +25,7 @@ from src.core.registry import Registry
 input_loaders: Registry[InputLoader] = Registry("input_loader")
 
 _IMAGE_EXTENSIONS = frozenset({".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif", ".webp", ".gif"})
+_EMBEDDING_EXTENSIONS = frozenset({".npy"})
 
 
 class InputLoader(ABC):
@@ -81,21 +82,54 @@ class TextLoader(InputLoader):
         return str(value)
 
 
+@input_loaders.register("embedding")
+class EmbeddingLoader(InputLoader):
+    """Loads a precomputed embedding vector from a ``.npy`` file as ``[D]`` float32.
+
+    One vector per file — the simplest precomputed-embedding layout. A future
+    "matrix + index" loader (all vectors in a single ``[N, D]`` file, addressed by
+    row index, ``file_based=False``) would be a separate registered loader holding a
+    shared handle to the matrix; it is intentionally not built here.
+    """
+
+    file_based = True
+
+    def load(self, path: str) -> np.ndarray:
+        """Read ``path`` into a 1-D float32 array.
+
+        Parameters:
+            path (str): Filesystem path to a ``.npy`` file holding one vector.
+
+        Returns:
+            np.ndarray: The embedding vector ``[D]`` as float32.
+
+        Raises:
+            ValueError: If the file does not contain a 1-D array.
+        """
+        vector: np.ndarray = np.load(path)
+        if vector.ndim != 1:
+            raise ValueError(f"EmbeddingLoader expects a 1-D vector, got shape {vector.shape} from {path}.")
+        return vector.astype(np.float32)
+
+
 def _infer_loader_key(series: pd.Series) -> str:
     """Infer the ``input_loaders`` key for ``series`` from its values.
 
-    Samples up to five non-null values and checks whether they look like image
-    file paths (known extension).  Falls back to ``"text"`` for anything else.
+    Samples up to five non-null values and inspects their file extension: image
+    extensions → ``"image"``, ``.npy`` → ``"embedding"``.  Falls back to ``"text"``
+    for anything else.
 
     Parameters:
         series (pd.Series): A column from the annotation DataFrame.
 
     Returns:
-        str: Registry key — ``"image"`` or ``"text"``.
+        str: Registry key — ``"image"``, ``"embedding"`` or ``"text"``.
     """
-    sample = series.dropna().astype(str).head(5)
-    if sample.apply(lambda v: Path(v).suffix.lower() in _IMAGE_EXTENSIONS).any():
+    suffixes = series.dropna().astype(str).head(5).apply(lambda v: Path(v).suffix.lower())
+    if suffixes.isin(_IMAGE_EXTENSIONS).any():
         return "image"
+    if suffixes.isin(_EMBEDDING_EXTENSIONS).any():
+        return "embedding"
     return "text"
 
 

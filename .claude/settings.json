@@ -5,7 +5,8 @@
       "Bash(make test *)",
       "Bash(uv run *)",
       "Bash(make typecheck *)",
-      "Bash(make check *)"
+      "Bash(make check *)",
+      "mcp__plugin_context-mode_context-mode__ctx_search"
     ]
   },
   "enabledPlugins": {

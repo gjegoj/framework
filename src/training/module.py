@@ -17,7 +17,8 @@ The step loop from the plan:
 
 from __future__ import annotations
 
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 import lightning as L
 import torch
@@ -129,23 +130,15 @@ class LitModule(L.LightningModule):
                 dispatch(f"{task.name}/{metric_name}/{stage}", value, ctx, self._metric_handlers)
             task.metrics[stage].reset()
 
-    def on_train_epoch_start(self) -> None:
-        for task in self.tasks:
-            task.metrics[Stage.TRAIN].reset()
+    # Metrics are reset in ``_shared_epoch_end`` right after ``compute()`` (the
+    # standard torchmetrics idiom), so each epoch starts from a clean state —
+    # no ``on_*_epoch_start`` reset is needed.
 
     def on_train_epoch_end(self) -> None:
         self._shared_epoch_end(Stage.TRAIN)
 
-    def on_validation_epoch_start(self) -> None:
-        for task in self.tasks:
-            task.metrics[Stage.VAL].reset()
-
     def on_validation_epoch_end(self) -> None:
         self._shared_epoch_end(Stage.VAL)
-
-    def on_test_epoch_start(self) -> None:
-        for task in self.tasks:
-            task.metrics[Stage.TEST].reset()
 
     def on_test_epoch_end(self) -> None:
         self._shared_epoch_end(Stage.TEST)

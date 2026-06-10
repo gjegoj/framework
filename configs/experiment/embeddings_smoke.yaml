@@ -1,0 +1,33 @@
+# @package _global_
+# Minimal offline smoke for the embedding modality (M6): classification on
+# precomputed 32-dim .npy vectors, 2 epochs, CPU.
+# Run: make smoke-embeddings   (generates data then trains)
+#   or: uv run python main.py experiment=embeddings_smoke
+
+defaults:
+  - override /trainer: cpu_smoke
+  - override /backbone: embedding     # kind: embedding, embedding_dim: 32, input_key: embedding
+  - override /transforms: identity    # pass vectors through as tensors (no image augmentation)
+
+project: smoke-embeddings
+seed: 0
+epochs: 2
+batch_size: 4
+
+data:
+  sources: data/smoke/data.csv
+  inputs: {embedding: emb_path}        # column of .npy paths → "embedding" loader auto-detected
+  split:
+    train: 0.7
+    val: 0.15
+    test: 0.15
+
+tasks:
+  label:
+    preset: classification
+    target: label
+    class_mapping: {0: cat, 1: cow, 2: dog}
+    loss: {name: cross_entropy, label_smoothing: 0.05}
+    metrics:
+      accuracy: {top_k: 1}
+      macro_f1: {name: f1, average: macro}

@@ -114,6 +114,18 @@ class TestBuildTransforms:
         transforms = build_transforms(config)
         assert set(transforms) == {Stage.TRAIN, Stage.VAL, Stage.TEST, Stage.PREDICT}
 
+    def test_non_albumentations_transform_used_directly(self) -> None:
+        from src.transforms.input import IdentityTransform
+
+        raw = _minimal_config()
+        raw["transforms"] = {
+            "train": {"_target_": "src.transforms.input.IdentityTransform"},
+            "val": {"_target_": "src.transforms.input.IdentityTransform"},
+        }
+        config = load_config(raw)
+        transforms = build_transforms(config)
+        assert isinstance(transforms[Stage.TRAIN], IdentityTransform)
+
     def test_transforms_produce_correct_shape(self) -> None:
         import torch
 

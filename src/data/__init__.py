@@ -16,7 +16,7 @@ from src.data.codecs import (
 from src.data.collate import collate_samples
 from src.data.datamodule import DataModule
 from src.data.dataset import Dataset
-from src.data.loaders import ImageLoader, InputLoader, TextLoader, input_loaders
+from src.data.loaders import EmbeddingLoader, ImageLoader, InputLoader, TextLoader, input_loaders
 from src.data.sources import CsvDataSource, DataSource, FileDataSource, JsonDataSource, data_sources
 from src.data.split import split_dataframe
 from src.transforms.input import AlbumentationsTransform, Transform
@@ -27,6 +27,7 @@ __all__ = [
     "DataModule",
     "DataSource",
     "Dataset",
+    "EmbeddingLoader",
     "FileDataSource",
     "FloatCodec",
     "ImageLoader",

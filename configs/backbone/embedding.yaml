@@ -1,0 +1,4 @@
+kind: embedding
+name: identity        # no model to name — accepted and ignored
+embedding_dim: 32     # must match the precomputed vectors (scripts/generate_smoke_data.py EMB_DIM)
+input_key: embedding  # reads the "embedding" input alias produced by data.inputs
