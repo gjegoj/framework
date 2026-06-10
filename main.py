@@ -33,6 +33,7 @@ from src.config import load_config
 from src.core.runtime import RuntimeContext
 from src.models.assembly import build_composite_model
 from src.training import LitDataModule
+from src.utils.rich_utils import print_config
 
 log = logging.getLogger(__name__)
 
@@ -40,15 +41,10 @@ log = logging.getLogger(__name__)
 @hydra.main(version_base=None, config_path="configs", config_name="config")
 def main(cfg: DictConfig) -> None:
     raw = OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True)
+    print_config(raw)
     config = load_config(raw)
 
-    L.seed_everything(config.seed, workers=True)
-    log.info(
-        "Project: %s | seed: %d | epochs: %d",
-        config.project,
-        config.seed,
-        config.epochs,
-    )
+    L.seed_everything(config.seed, workers=True, verbose=False)
 
     # 1. Runtime context — populated incrementally as setup steps run
     runtime = RuntimeContext(epochs=config.epochs)
@@ -57,12 +53,9 @@ def main(cfg: DictConfig) -> None:
     bindings = build_bindings(config)
     plain_dm = build_data_module(config, bindings, runtime)
     plain_dm.setup()
-    log.info("Dataset sizes: %s", dict(runtime.dataset_sizes))
-    log.info("Inferred num_classes: %s", dict(runtime.num_classes))
 
     # 3. Tasks — built after setup so num_classes is a concrete int
     tasks = build_tasks(config, runtime)
-    log.info("Tasks: %s", [t.name for t in tasks])
 
     # 4. Model — heads sized from backbone.feature_dim, derived from tasks
     backbone = build_backbone(config.backbone)
@@ -77,9 +70,9 @@ def main(cfg: DictConfig) -> None:
 
     # 7. Fit
     logger = build_logger(config)
-    callbacks = build_callbacks(config)
+    callbacks = build_callbacks(config, runtime)
     trainer_kwargs = config.trainer.model_dump(mode="python")
-    trainer_kwargs.pop("logger", None)  # logger is owned by LoggerConfig, not TrainerConfig
+    trainer_kwargs.pop("logger", None)
     trainer = L.Trainer(max_epochs=config.epochs, logger=logger, callbacks=callbacks, **trainer_kwargs)
     trainer.fit(lit_module, lit_dm)
     log.info("Training complete.")

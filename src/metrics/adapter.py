@@ -32,3 +32,6 @@ class TorchMetricsAdapter(MetricSet):
 
     def reset(self) -> None:
         self.collection.reset()
+
+    def directions(self) -> dict[str, bool | None]:
+        return {name: metric.higher_is_better for name, metric in self.collection.items()}

@@ -19,7 +19,7 @@ from src.data.dataset import Dataset
 from src.data.loaders import ImageLoader, InputLoader, TextLoader, input_loaders
 from src.data.sources import CsvDataSource, DataSource, FileDataSource, JsonDataSource, data_sources
 from src.data.split import split_dataframe
-from src.data.transforms import AlbumentationsTransform, Transform
+from src.transforms.input import AlbumentationsTransform, Transform
 
 __all__ = [
     "AlbumentationsTransform",

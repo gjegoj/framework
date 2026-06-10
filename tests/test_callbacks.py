@@ -1,0 +1,117 @@
+"""Unit tests for training callbacks."""
+
+from __future__ import annotations
+
+from unittest.mock import MagicMock
+
+import lightning as L
+import pytest
+import torch
+import torch.nn as nn
+
+from src.callbacks.ema import EmaCallback
+from src.callbacks.freeze import FreezeCallback
+
+# ---------------------------------------------------------------- helpers
+
+
+class _TinyModule(L.LightningModule):
+    def __init__(self) -> None:
+        super().__init__()
+        self.linear = nn.Linear(2, 2, bias=False)
+        nn.init.ones_(self.linear.weight)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.linear(x)  # type: ignore[no-any-return]
+
+    def training_step(self, batch: object, batch_idx: int) -> torch.Tensor:
+        return torch.tensor(0.0)
+
+    def configure_optimizers(self) -> torch.optim.Optimizer:
+        return torch.optim.SGD(self.parameters(), lr=0.01)
+
+
+def _trainer(global_step: int = 1, estimated_stepping_batches: int = 100) -> MagicMock:
+    t = MagicMock()
+    t.global_step = global_step
+    t.estimated_stepping_batches = estimated_stepping_batches
+    t.max_epochs = 10
+    return t
+
+
+# ---------------------------------------------------------------- EmaCallback: init
+
+
+class TestEmaCallbackInit:
+    def test_valid_params(self) -> None:
+        cb = EmaCallback(decay=0.999, warmup_fraction=0.1, use_buffers=False)
+        assert cb._warmup_fraction == 0.1
+        assert cb._use_buffers is False
+
+    def test_decay_must_be_strictly_between_0_and_1(self) -> None:
+        for bad in (0.0, 1.0, 1.5, -0.1):
+            with pytest.raises(ValueError, match="decay"):
+                EmaCallback(decay=bad)
+
+    def test_warmup_fraction_must_be_in_0_1_exclusive_right(self) -> None:
+        for bad in (-0.1, 1.0, 2.0):
+            with pytest.raises(ValueError, match="warmup_fraction"):
+                EmaCallback(warmup_fraction=bad)
+
+    def test_warmup_fraction_zero_is_valid(self) -> None:
+        EmaCallback(warmup_fraction=0.0)  # should not raise
+
+
+# ---------------------------------------------------------------- EmaCallback: setup
+#
+# The EMA mechanics (averaging, validation swap, checkpoint persistence) are
+# Lightning's ``EMAWeightAveraging`` and tested upstream. Here we only cover the
+# thin facade: the averaged model is created on fit, and fractional warmup is
+# resolved to Lightning's absolute ``update_starting_at_step``.
+
+
+class TestEmaCallbackSetup:
+    def test_average_model_created_on_fit(self) -> None:
+        cb = EmaCallback(decay=0.999)
+        cb.setup(_trainer(), _TinyModule(), stage="fit")
+        assert cb._average_model is not None
+
+    def test_no_average_model_outside_fit(self) -> None:
+        cb = EmaCallback(decay=0.999)
+        cb.setup(_trainer(), _TinyModule(), stage="validate")
+        assert cb._average_model is None
+
+    def test_warmup_fraction_resolves_to_start_step(self) -> None:
+        cb = EmaCallback(decay=0.999, warmup_fraction=0.5)
+        cb.setup(_trainer(estimated_stepping_batches=200), _TinyModule(), stage="fit")
+        assert cb.update_starting_at_step == 100
+
+    def test_zero_warmup_starts_at_step_zero(self) -> None:
+        cb = EmaCallback(decay=0.999, warmup_fraction=0.0)
+        cb.setup(_trainer(estimated_stepping_batches=200), _TinyModule(), stage="fit")
+        assert cb.update_starting_at_step == 0
+
+
+# ---------------------------------------------------------------- FreezeCallback: init
+
+
+class TestFreezeCallbackInit:
+    def test_valid_params(self) -> None:
+        cb = FreezeCallback(targets=["model.backbone"])
+        assert cb._targets == ["model.backbone"]
+
+    def test_empty_targets_rejected(self) -> None:
+        with pytest.raises(ValueError, match="targets"):
+            FreezeCallback(targets=[])
+
+    def test_float_unfreeze_at_must_be_in_0_1(self) -> None:
+        for bad in (0.0, 1.5, -0.1):
+            with pytest.raises(ValueError, match="unfreeze_at"):
+                FreezeCallback(targets=["model.backbone"], unfreeze_at=bad)
+
+    def test_float_unfreeze_at_1_0_is_valid(self) -> None:
+        FreezeCallback(targets=["model.backbone"], unfreeze_at=1.0)
+
+    def test_minus_one_means_never_unfreeze(self) -> None:
+        cb = FreezeCallback(targets=["model.backbone"], unfreeze_at=-1)
+        assert cb._resolve_epoch(max_epochs=10) is None

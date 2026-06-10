@@ -4,7 +4,8 @@
       "Bash(uv add *)",
       "Bash(make test *)",
       "Bash(uv run *)",
-      "Bash(make typecheck *)"
+      "Bash(make typecheck *)",
+      "Bash(make check *)"
     ]
   },
   "enabledPlugins": {

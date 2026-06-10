@@ -13,14 +13,14 @@ ABCs.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 import torch.nn as nn
 
 if TYPE_CHECKING:
     from torch import Tensor
 
-    from src.core.entities import FeatureBundle, LossResult, TargetView
+    from src.core.entities import Batch, FeatureBundle, LossResult, TargetView
 
 
 class Backbone(nn.Module, ABC):
@@ -106,6 +106,38 @@ class MetricSet(nn.Module, ABC):
     def reset(self) -> None:
         """Clear accumulated state at the start of an epoch."""
 
+    @abstractmethod
+    def directions(self) -> dict[str, bool | None]:
+        """Return each metric's optimization direction, keyed by metric name.
+
+        The value is the metric's intrinsic ``higher_is_better`` flag:
+        ``True`` when a larger value is better (accuracy, IoU), ``False`` when
+        smaller is better (error, MSE), and ``None`` when the metric has no
+        direction (confusion matrix, curves). Keys match those returned by
+        ``compute``, letting callers (e.g. a progress bar) bind direction to a
+        metric without re-deriving it from the metric's name.
+        """
+
+
+class BatchTransform(ABC):
+    """A cross-sample transform applied to a collated training ``Batch``.
+
+    Unlike a per-sample (Albumentations) transform that runs in the data layer, a
+    batch transform mixes/combines whole samples (MixUp, CutMix, Mosaic) and so
+    needs the collated batch. Because it changes the *shared* image, it must
+    rewrite **every** task's target coherently; concrete transforms are injected
+    with the tasks' ``TargetSpec`` list and declare a class attribute
+    ``supported_topologies: frozenset[Topology]`` (the topologies whose target
+    they can re-derive). The composition root guards incompatible combinations
+    (e.g. MixUp + a DENSE head) at build time. Label-mixing transforms return soft
+    targets; the task codec turns those into a ``TargetView`` (soft for loss,
+    hard for metrics).
+    """
+
+    @abstractmethod
+    def __call__(self, batch: Batch) -> Batch:
+        """Return the transformed batch (a new ``Batch``; inputs not mutated)."""
+
 
 class LossAggregator(ABC):
     """Combines per-task losses into a single optimization objective."""
@@ -175,3 +207,19 @@ class PlotLogger(ABC):
             xaxis (str | None): X-axis label.
             yaxis (str | None): Y-axis label.
         """
+
+
+@runtime_checkable
+class MetricDirectionProvider(Protocol):
+    """A training module that can report its metrics' optimization directions.
+
+    A structural (not inherited) capability: any module exposing
+    ``metric_directions`` satisfies it, so consumers (e.g. a progress bar) can
+    colour directional deltas without reaching into the module's task graph, and
+    a module lacking it degrades gracefully. Keys match those the module logs
+    (``task/metric/stage``); values are each metric's ``higher_is_better`` flag.
+    """
+
+    def metric_directions(self) -> dict[str, bool | None]:
+        """Return each logged metric's ``higher_is_better`` flag, by metric key."""
+        ...

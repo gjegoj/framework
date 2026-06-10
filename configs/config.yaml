@@ -1,4 +1,5 @@
 defaults:
+  - hydra: default           # rich logging to terminal + file
   - backbone: resnet18
   - optimizer: adamw
   - trainer: default
@@ -9,6 +10,9 @@ defaults:
   - experiment: debug        # experiment overrides go last → highest priority
 
 project: my-project
+run_name: ${now:%Y-%m-%d}/${now:%H-%M-%S}
+save_dir: ${hydra:run.dir}
+
 seed: 42
 epochs: 10
 batch_size: 16

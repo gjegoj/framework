@@ -8,7 +8,9 @@ from unittest.mock import MagicMock
 import pytest
 import torch
 
+from src.core.enums import Stage
 from src.core.ports import PlotLogger
+from src.metrics.directions import task_metric_directions
 from src.metrics.handlers import (
     DEFAULT_METRIC_HANDLERS,
     CurveMetricHandler,
@@ -20,6 +22,7 @@ from src.metrics.handlers import (
     dispatch,
 )
 from src.metrics.registry import curve_specs, matrix_axes
+from src.tasks.presets import classification, regression
 
 # ------------------------------------------------------------------ fixtures
 
@@ -386,6 +389,41 @@ class TestDispatch:
 
 
 # ------------------------------------------------------------------ registry specs
+
+
+class TestTaskMetricDirections:
+    def test_keys_use_task_metric_stage_convention(self) -> None:
+        task = classification("label", num_classes=3)
+        directions = task_metric_directions([task])
+        assert "label/f1/train" in directions
+        assert "label/f1/val" in directions
+
+    def test_higher_is_better_metrics_map_to_true(self) -> None:
+        task = classification("label", num_classes=3)
+        directions = task_metric_directions([task])
+        assert directions["label/f1/train"] is True
+        assert directions["label/precision/val"] is True
+
+    def test_directionless_metrics_map_to_none(self) -> None:
+        task = classification("label", num_classes=3)
+        directions = task_metric_directions([task])
+        assert directions["label/confusion_matrix/train"] is None
+
+    def test_lower_is_better_metric_maps_to_false(self) -> None:
+        task = regression("depth", num_classes=1)
+        directions = task_metric_directions([task])
+        assert directions["depth/mae/train"] is False
+
+    def test_covers_every_stage(self) -> None:
+        task = classification("label", num_classes=3)
+        directions = task_metric_directions([task])
+        stages = {key.rsplit("/", 1)[-1] for key in directions}
+        assert stages == {str(Stage.TRAIN), str(Stage.VAL), str(Stage.TEST)}
+
+    def test_multiple_tasks_namespaced_separately(self) -> None:
+        directions = task_metric_directions([classification("a", num_classes=2), classification("b", num_classes=2)])
+        assert "a/f1/train" in directions
+        assert "b/f1/train" in directions
 
 
 class TestRegistrySpecs:

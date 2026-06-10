@@ -19,12 +19,13 @@
 defaults:
   - override /backbone: smp_unet
   # - override /trainer: cpu_smoke
-  - override /logger: clearml
+  # - override /logger: clearml
   - override /callbacks: minimal
 
 project: debug-multitask
+
 seed: 0
-epochs: 2
+epochs: 10
 batch_size: 4
 image_size: [64, 64]
 

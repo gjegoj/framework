@@ -26,6 +26,7 @@ from lightning.pytorch.loggers import Logger as LightningLogger
 from src.core.entities import Batch, LossResult, Task
 from src.core.enums import Stage
 from src.core.ports import LossAggregator
+from src.metrics.directions import task_metric_directions
 from src.metrics.handlers import (
     DEFAULT_METRIC_HANDLERS,
     MetricHandler,
@@ -155,6 +156,10 @@ class LitModule(L.LightningModule):
         return self._optimizer_builder.build(self.model, task_lr_overrides=self._task_lr_overrides)
 
     # ---------------------------------------------------------------- utils
+
+    def metric_directions(self) -> dict[str, bool | None]:
+        """Per-metric ``higher_is_better`` keyed as this module logs (``MetricDirectionProvider``)."""
+        return task_metric_directions(self.tasks)
 
     def _log_losses(self, combined: LossResult, stage: Stage) -> None:
         self.log(

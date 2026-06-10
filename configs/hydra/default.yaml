@@ -1,0 +1,6 @@
+defaults:
+  - override hydra_logging: rich
+  - override job_logging: rich
+
+run:
+  dir: ${hydra.runtime.cwd}/runs/${project}/${run_name}

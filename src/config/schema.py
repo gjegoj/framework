@@ -290,6 +290,23 @@ class ExperimentConfig(BaseModel):
     """Root experiment contract assembled from the YAML config."""
 
     project: str = Field(..., description="Project name for tracking.")
+    run_name: str | None = Field(
+        None,
+        description=(
+            "Human-readable name for this run. "
+            "Flows to the logger as the task/run name. "
+            "Tip: set to '${now:%Y-%m-%d_%H-%M-%S}' for an auto-timestamp."
+        ),
+    )
+    save_dir: str | None = Field(
+        None,
+        description=(
+            "Root directory for run outputs (checkpoints, logs). "
+            "When set, checkpoint.dirpath defaults to '{save_dir}/checkpoints' "
+            "and Trainer.default_root_dir is set to this path. "
+            "Tip: set to '${hydra:run.dir}' to use Hydra's run directory."
+        ),
+    )
     seed: int = Field(42, description="Global random seed.")
     epochs: int = Field(..., gt=0, description="Number of training epochs.")
     batch_size: int = Field(..., gt=0, description="Batch size.")

@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from src.callbacks.batch_transform import BatchTransformCallback
 from src.composition.wiring import (
     build_bindings,
     build_data_source,
@@ -616,3 +617,62 @@ class TestBuildLogger:
         title, series = ClearMLLogger._split_metric_name("loss")
         assert title == "loss"
         assert series == "value"
+
+
+class TestBuildBatchTransform:
+    def test_mixup_built_with_global_targets(self) -> None:
+        from src.composition.wiring import WiringContext
+        from src.composition.wiring.callbacks import _build_batch_transform
+        from src.transforms.batch import MixUp
+
+        config = load_config(_minimal_config())  # 'label' = classification (GLOBAL)
+        runtime = RuntimeContext(epochs=1)
+        runtime.num_classes["label"] = 3
+        ctx = WiringContext(config=config, runtime=runtime)
+
+        transform = _build_batch_transform({"name": "mixup", "alpha": 0.2}, ctx)
+
+        assert isinstance(transform, MixUp)
+        assert transform._targets[0].num_classes == 3  # injected from the task
+
+    def test_mosaic_built_with_dense_targets(self) -> None:
+        from src.composition.wiring import WiringContext
+        from src.composition.wiring.callbacks import _build_batch_transform
+        from src.transforms.batch import Mosaic
+
+        raw = _minimal_config()
+        raw["tasks"] = {"mask": {"preset": "segmentation", "target": "mask_path", "num_classes": 4}}
+        config = load_config(raw)
+        ctx = WiringContext(config=config, runtime=RuntimeContext(epochs=1))
+
+        transform = _build_batch_transform({"name": "mosaic"}, ctx)
+
+        assert isinstance(transform, Mosaic)
+
+    def test_guard_rejects_mixup_with_dense_head(self) -> None:
+        from src.composition.wiring import WiringContext
+        from src.composition.wiring.callbacks import _build_batch_transform
+
+        raw = _minimal_config()
+        raw["tasks"] = {"mask": {"preset": "segmentation", "target": "mask_path", "num_classes": 4}}
+        config = load_config(raw)
+        ctx = WiringContext(config=config, runtime=RuntimeContext(epochs=1))
+
+        with pytest.raises(ValueError, match="coherent target"):
+            _build_batch_transform({"name": "mixup"}, ctx)
+
+    def test_build_callbacks_wires_batch_transform(self) -> None:
+        from src.composition.wiring import build_callbacks
+
+        raw = _minimal_config()
+        raw["callbacks"] = {
+            "mixup": {"name": "batch_transform", "disable_after_fraction": 0.5, "transform": {"name": "mixup"}}
+        }
+        config = load_config(raw)
+        runtime = RuntimeContext(epochs=1)
+        runtime.num_classes["label"] = 3
+
+        callbacks = build_callbacks(config, runtime)
+
+        assert len(callbacks) == 1
+        assert isinstance(callbacks[0], BatchTransformCallback)

@@ -1,0 +1,30 @@
+# Callback stack with batch-level augmentation (MixUp).
+# A batch_transform callback wraps a registered BatchTransform. The transform
+# rewrites EVERY head's target (the image is shared), so no target_key is needed;
+# runtime values (num_classes per head) are injected from data — no ${...}.
+# The build-time guard rejects incompatible combos (e.g. mixup + a segmentation
+# head), so a transform is only accepted when it can re-derive every head's target.
+#
+# Swap mixup → cutmix by changing transform.name. For (all-DENSE) segmentation:
+#   mosaic:
+#     name: batch_transform
+#     disable_after_fraction: 0.4
+#     transform:
+#       name: mosaic
+#       center_ratio: [0.3, 0.7]
+
+mixup:
+  name: batch_transform
+  disable_after_fraction: 0.5   # clean data for the second half of training
+  transform:
+    name: mixup                 # or: cutmix — both GLOBAL-only (classification heads)
+    alpha: 1.0
+
+lr_monitor:
+  logging_interval: epoch
+
+checkpoint:
+  monitor: loss/val/total
+  mode: min
+  save_top_k: 1
+  save_weights_only: true

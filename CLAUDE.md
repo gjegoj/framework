@@ -11,10 +11,12 @@ and torchmetrics. It is a clean-architecture rewrite of the prototype in `old/`
 milestone breakdown live in the approved plan at
 `~/.claude/plans/clean-code-refactoring-patterns-softwar-merry-sunbeam.md`.
 
-Status: M1–M3 complete (classification, all Objective variants, DENSE segmentation) +
-M4-prep complete (multi-stream `SmpBackbone` with `ENCODER_LAST`/`DECODER`, `feature_key`
-override in `TaskConfig`, `DataLoaderConfig`, DPT support, multitask smp smoke tests).
-Next: M4 (per-head LR, typed metrics, loggers), then M5–M7.
+Status: M1–M5 substantially complete — classification + all Objective variants, DENSE
+segmentation, multi-stream `SmpBackbone` (`ENCODER_LAST`/`DECODER`, per-task `feature_key`),
+M4 (per-head LR via param-groups; typed metric handlers scalar/vector/matrix/curve;
+`PlotLogger` + ClearML logger), and M5 callbacks — EMA (a thin subclass of Lightning's
+`EMAWeightAveraging`), freeze, checkpoint, a rich `MetricsProgressBar`, and batch transforms
+(MixUp/CutMix/Mosaic). Next: M6–M7 (embeddings, ranking/multimodal, LoRA).
 
 ## Commands
 
@@ -46,9 +48,13 @@ albumentations are details** kept behind ABC ports. Layers:
   Hydra → plain dict → `load_config()` → typed DTOs. Nothing downstream re-parses raw
   config. Component sections allow `extra` keys so per-brick overrides / `_target_`
   escape hatch survive validation.
-- `data/`, `models/`, `tasks/`, `losses/`, `metrics/`, `training/` — adapters/use
-  cases implementing the core ports.
-- composition root (Hydra entry) wires concrete instances in dependency order.
+- `data/`, `models/`, `tasks/`, `losses/`, `metrics/`, `training/`, `transforms/` —
+  adapters/use cases implementing the core ports. `transforms/input.py` holds the
+  per-sample `Transform`/`AlbumentationsTransform`; `transforms/batch/` holds batch
+  transforms (MixUp/CutMix/Mosaic).
+- composition root: `composition/wiring/` (split by layer: `data`/`model`/`tasks`/
+  `training`/`callbacks`/`common`, re-exported from its `__init__`) + `main.py`. Wires
+  concrete instances in dependency order.
 
 Concrete adapters wrap third-party libs (e.g. `TimmBackbone`, `TorchMetricsAdapter`,
 `AlbumentationsTransform`). Parametric components that live in the autograd graph
@@ -95,8 +101,25 @@ class in a registry (OCP).
   inference), so losses stay numerically stable.
 - **Extension points are registries** (`backbones`, `head_builders`, `criteria`,
   `data_sources`, `target_codecs`, `input_loaders`, `topology_strategies`, `objective_strategies`,
-  `task_presets`). Register with the `@registry.register("key")` decorator; importing a
-  package's `__init__` populates its registries.
+  `task_presets`, `batch_transforms`, `callback_builders`). Register with the
+  `@registry.register("key")` decorator; importing a package's `__init__` populates its registries.
+- **Two construction families** (see README "How components are built"). *Typed config
+  sections* (backbone/optimizer/data/dataloader/logger) have dedicated builders selecting an
+  adapter by `kind`/`name`. *Brick-specs* (loss/metrics/codec/head/callbacks/batch transforms)
+  all go through `instantiate` — one grammar (`str` / `{name,…}` / `{_target_,…}`, recursive),
+  one home for `_target_`. Callbacks needing runtime/config context are built by a
+  `callback_builders` Strategy registry (`checkpoint` dirpath, `batch_transform`), keyed by
+  registry name — the wiring dispatch loop stays closed for modification (OCP).
+- **Batch transforms** (`transforms/batch/`, registry `batch_transforms`) run via
+  `BatchTransformCallback` (a thin scheduler). Because the image is *shared* across heads, a
+  transform must rewrite *every* task's target: it is injected the tasks' `TargetSpec` list and
+  declares `supported_topologies`; the wiring guard rejects incoherent combos (e.g. MixUp + a
+  DENSE head) at build time. MixUp/CutMix subclass torchvision `v2` for multi-head label mixing
+  (one shared `lam`, per-head one-hot); the multiclass `TaskCodec` is soft-target aware
+  (`[B,C]` float → soft loss target + argmax metric target). Mosaic is DENSE-only.
+- **Metric direction** is read from `torchmetrics`' declared `higher_is_better`, not guessed:
+  `MetricSet.directions()` → `LitModule.metric_directions()` (the `MetricDirectionProvider`
+  Protocol) lets consumers (the progress bar) bind direction without parsing metric names.
 - Canonical input/feature keys (`IMAGE`, `POOLED`, `DECODER`, `ENCODER_LAST`) live in
   `core/keys.py` — use them instead of literal strings. Other backbone-specific streams
   (e.g. future FPN levels `p3`/`p4`) are documented in each backbone's docstring.

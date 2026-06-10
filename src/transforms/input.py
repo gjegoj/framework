@@ -1,4 +1,4 @@
-"""Transforms: adapt raw numpy images into model-ready tensors.
+"""Per-sample input transforms: adapt raw numpy images into model-ready tensors.
 
 ``Transform`` is the framework-agnostic port. ``AlbumentationsTransform`` wraps an
 Albumentations ``Compose``. Spatial targets (segmentation masks) are registered via

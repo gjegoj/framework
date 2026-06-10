@@ -20,7 +20,7 @@ from torch.utils.data import Dataset as TorchDataset
 
 from src.core.entities import Sample
 from src.data.bindings import InputBinding, TargetBinding
-from src.data.transforms import Transform
+from src.transforms.input import Transform
 
 
 class Dataset(TorchDataset[Sample]):

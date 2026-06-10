@@ -36,5 +36,6 @@ def build_logger(config: "ExperimentConfig") -> Union[L.pytorch.loggers.Logger, 
         from src.loggers.clearml import ClearMLLogger
 
         project = config.logger.project or config.project
-        return ClearMLLogger(project_name=project, task_name=config.logger.task)
+        task = config.logger.task or config.run_name
+        return ClearMLLogger(project_name=project, task_name=task)
     raise ValueError(f"Unknown logger kind: {kind!r}. Known kinds: none, clearml.")

@@ -23,7 +23,7 @@ from src.data.dataset import Dataset
 from src.data.loaders import _infer_loader_key, _normalize_inputs, input_loaders
 from src.data.sources import DataSource
 from src.data.split import split_dataframe
-from src.data.transforms import Transform
+from src.transforms.input import Transform
 
 
 class DataModule:
