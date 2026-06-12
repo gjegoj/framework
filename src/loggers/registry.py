@@ -35,7 +35,7 @@ def _build_clearml(config: ExperimentConfig) -> L.pytorch.loggers.Logger | bool:
 
     project = config.logger.project or config.project
     task = config.logger.task or config.run_name
-    return ClearMLLogger(project_name=project, task_name=task)
+    return ClearMLLogger(project_name=project, task_name=task, tags=config.logger.tags)
 
 
 def build_logger(config: ExperimentConfig) -> L.pytorch.loggers.Logger | bool:

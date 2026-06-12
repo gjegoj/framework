@@ -2,3 +2,15 @@ kind: clearml
 # project defaults to experiment project (config.project) when omitted
 # project: my-project
 # task: run-name   # optional ClearML task/run name
+
+# Task tags for filtering/grouping in the ClearML experiments list.
+# Values are resolved from the live config via ${...} interpolation.
+# A tag resolving to null (e.g. ${backbone.name} on a composite backbone) is dropped.
+tags:
+  - "${backbone.kind}"                       # timm / smp / multi
+  - "${backbone.name}"                       # e.g. resnet18
+  - "${optimizer.name}"                      # adamw / sgd
+  - "lr=${lr}"
+  - "bs=${batch_size}"
+  - "epochs=${epochs}"
+  - "imgsz=${image_size.0}x${image_size.1}"  # e.g. 224x224

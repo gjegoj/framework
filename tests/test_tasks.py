@@ -368,3 +368,13 @@ class TestFeatureKeyOverride:
         )
         assert task.head_spec.feature_key == "encoder_last"
         assert task.head_spec.prefer_native is False
+
+
+class TestTaskCarriesAxes:
+    def test_classification_task_has_global_multiclass_axes(self) -> None:
+        from src.tasks.presets import classification
+        from src.tasks.taxonomy import Objective, Topology
+
+        task = classification("label", num_classes=3)
+        assert task.topology == Topology.GLOBAL
+        assert task.objective == Objective.MULTICLASS

@@ -208,6 +208,16 @@ class PlotLogger(ABC):
             yaxis (str | None): Y-axis label.
         """
 
+    @abstractmethod
+    def log_html(self, title: str, html: str, iteration: int) -> None:
+        """Log a self-contained HTML document (e.g. an interactive Plotly grid).
+
+        Parameters:
+            title (str): Display title / metric key.
+            html (str): Full HTML string to ship to the backend.
+            iteration (int): Current training step (epoch or global step).
+        """
+
 
 @runtime_checkable
 class MetricDirectionProvider(Protocol):

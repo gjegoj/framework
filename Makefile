@@ -1,4 +1,4 @@
-.PHONY: help install pre-commit clean test test-unit typecheck check generate-smoke smoke smoke-embeddings smoke-ranking smoke-contrastive smoke-arcface
+.PHONY: help install pre-commit clean test test-unit typecheck check generate-smoke smoke smoke-embeddings smoke-ranking smoke-contrastive smoke-arcface smoke-sample-log
 
 
 help: ## Show help
@@ -49,3 +49,6 @@ smoke-contrastive: generate-smoke ## Run 2-epoch offline contrastive smoke (CPU,
 
 smoke-arcface: generate-smoke ## Run 2-epoch offline ArcFace smoke (CPU, cosine head + angular margin)
 	uv run python main.py experiment=arcface_smoke
+
+smoke-sample-log: generate-smoke ## Run 3-task sample-log smoke (multiclass + binary + multilabel, ClearML HTML grids)
+	uv run python main.py experiment=sample_log_smoke

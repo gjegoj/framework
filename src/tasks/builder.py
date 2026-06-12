@@ -86,6 +86,8 @@ class TaskBuilder:
             criterion=self._objective.build_criterion(loss_spec),
             activation=self._objective.build_activation(),
             metrics=metrics,
+            topology=self._topology.kind,
+            objective=self._objective.kind,
             weight=weight,
         )
 

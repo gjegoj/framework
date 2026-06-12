@@ -3,13 +3,13 @@
 Plain dataclasses with no framework dependency beyond ``torch`` as the numerical
 "language". They are the stable contract every layer reads/writes: the data
 layer produces ``Sample``/``Batch``; the model produces ``FeatureBundle`` and a
-``ModelOutput``; criteria produce ``LossResult``.
+``ModelOutput``; criteria produce ``LossResult``; steps produce ``StepOutput``.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypedDict, TypeGuard
 
 from src.core.keys import POOLED
 
@@ -21,6 +21,7 @@ if TYPE_CHECKING:
 
     from src.core.enums import Stage
     from src.core.ports import Activation, Criterion, MetricSet, TaskCodec
+    from src.tasks.taxonomy import Objective, Topology
 
 
 @dataclass
@@ -189,6 +190,43 @@ class TargetView:
 
 
 @dataclass
+class TaskStepView:
+    """Per-task view after a step — shared by metrics and visualization.
+
+    Parameters:
+        preds (Tensor): Post-activation predictions (same tensor passed to ``MetricSet.update``).
+        metric_target (Tensor): The metric target from ``TaskCodec.adapt`` (``TargetView.metric``).
+    """
+
+    preds: Tensor
+    metric_target: Tensor
+
+
+class StepOutput(TypedDict):
+    """Lightning step return type — dict contract for train/val/test steps and callbacks.
+
+    Lightning extracts ``loss`` for backprop; the whole dict flows to
+    ``on_*_batch_end(outputs, ...)``. ``task_views`` carries everything a
+    visualization callback needs (post-activation preds + metric targets per
+    task) — the raw ``ModelOutput`` is intentionally not returned, so no autograd
+    graph is held past the step.
+    """
+
+    loss: Tensor
+    task_views: dict[str, TaskStepView]
+
+
+def is_training_step_output(outputs: object) -> TypeGuard[StepOutput]:
+    """Return whether ``outputs`` matches the :class:`StepOutput` contract."""
+    return (
+        isinstance(outputs, dict)
+        and "loss" in outputs
+        and "task_views" in outputs
+        and isinstance(outputs["task_views"], dict)
+    )
+
+
+@dataclass
 class Task:
     """A unit of learning: the bundle of bricks for one head.
 
@@ -203,6 +241,8 @@ class Task:
         criterion (Criterion): Loss computed on logits.
         activation (Activation): Maps logits to predictions for metrics.
         metrics (dict[Stage, MetricSet]): Per-stage metric collections.
+        topology (Topology): Output-structure axis (GLOBAL/DENSE/...) this task composes.
+        objective (Objective): Label-semantics axis (multiclass/.../metric) this task composes.
         weight (float): Weight of this task in the aggregated loss.
         class_names (list[str] | None): Ordered class names (index → name) for
             per-class metric logging and confusion-matrix axis labels.
@@ -215,6 +255,8 @@ class Task:
     criterion: Criterion
     activation: Activation
     metrics: dict[Stage, MetricSet]
+    topology: Topology
+    objective: Objective
     weight: float = 1.0
     class_names: list[str] | None = None
 

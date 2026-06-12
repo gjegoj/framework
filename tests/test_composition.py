@@ -560,9 +560,9 @@ class TestFullWiringSmoke:
         import torch
 
         batch = next(iter(plain_dm.train_dataloader()))
-        loss = lit.training_step(batch, 0)
-        assert isinstance(loss, torch.Tensor)
-        assert loss.ndim == 0
+        result = lit.training_step(batch, 0)
+        assert isinstance(result["loss"], torch.Tensor)
+        assert result["loss"].ndim == 0
 
 
 class TestBuildLogger:
@@ -614,6 +614,28 @@ class TestBuildLogger:
         assert isinstance(logger, PlotLogger)
         assert isinstance(logger, L.pytorch.loggers.Logger)
 
+    def test_clearml_log_html_reports_media(self) -> None:
+        pytest.importorskip("clearml")
+        from unittest.mock import MagicMock, patch
+
+        from src.loggers.clearml import ClearMLLogger
+
+        mock_task = MagicMock()
+        mock_backend = MagicMock()
+        mock_task.name = "t"
+        mock_task.id = "i"
+        mock_task.get_logger.return_value = mock_backend
+        with patch("clearml.Task.init", return_value=mock_task):
+            logger = ClearMLLogger(project_name="p", task_name="t")
+
+        logger.log_html("samples/val", "<html><body>hello</body></html>", iteration=2)
+        mock_backend.report_media.assert_called_once()
+        kwargs = mock_backend.report_media.call_args.kwargs
+        assert kwargs["title"] == "samples/val"
+        assert kwargs["iteration"] == 2
+        assert kwargs["file_extension"] == "html"
+        assert "hello" in kwargs["stream"].getvalue()
+
     def test_clearml_split_metric_name_multipart(self) -> None:
         pytest.importorskip("clearml")
         from src.loggers.clearml import ClearMLLogger
@@ -629,6 +651,35 @@ class TestBuildLogger:
         title, series = ClearMLLogger._split_metric_name("loss")
         assert title == "loss"
         assert series == "value"
+
+    def test_logger_config_parses_tags(self) -> None:
+        raw = _minimal_config()
+        raw["logger"] = {"kind": "clearml", "tags": ["timm", "resnet18", "lr=0.001"]}
+        config = load_config(raw)
+        assert config.logger.tags == ["timm", "resnet18", "lr=0.001"]
+
+    def test_logger_config_drops_empty_tags(self) -> None:
+        """A None tag (e.g. ${backbone.name} on a multi backbone) or empty string is dropped."""
+        raw = _minimal_config()
+        raw["logger"] = {"kind": "clearml", "tags": ["timm", None, "", "lr=0.001"]}
+        config = load_config(raw)
+        assert config.logger.tags == ["timm", "lr=0.001"]
+
+    def test_clearml_builder_forwards_tags(self) -> None:
+        pytest.importorskip("clearml")
+        from unittest.mock import MagicMock, patch
+
+        raw = _minimal_config()
+        raw["logger"] = {"kind": "clearml", "tags": ["timm", "lr=0.001"]}
+        config = load_config(raw)
+
+        mock_task = MagicMock()
+        mock_task.name = "t"
+        mock_task.id = "i"
+        mock_task.get_logger.return_value = MagicMock()
+        with patch("clearml.Task.init", return_value=mock_task) as init:
+            build_logger(config)
+        assert init.call_args.kwargs["tags"] == ["timm", "lr=0.001"]
 
 
 class TestBuildBatchTransform:

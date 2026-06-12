@@ -1,0 +1,72 @@
+# @package _global_
+# Three-task smoke: multiclass + binary + multilabel with SampleLogCallback.
+#
+# Exercises the visualization pipeline on one shared image batch — each task
+# contributes {task}_gt / {task}_pred fields on the same SampleView grid.
+#
+# Prerequisites:
+#   make generate-smoke    # synthetic data/smoke/data.csv + images
+#
+# Run (offline CPU, ClearML for interactive HTML grids):
+#   uv run python main.py experiment=sample_log_smoke
+#
+# Without ClearML (training only; sample_log is a no-op without PlotLogger):
+#   uv run python main.py experiment=sample_log_smoke 'defaults=[{override /logger: none}]'
+#
+# Disable visualization only:
+#   uv run python main.py experiment=sample_log_smoke callbacks.sample_log=~
+
+defaults:
+  # - override /trainer: cpu_smoke
+  - override /logger: clearml
+  - override /callbacks: minimal
+
+project: smoke-sample-log
+seed: 0
+epochs: 10
+batch_size: 4
+image_size: [64, 64]
+
+data:
+  sources: data/smoke/data.csv
+  inputs: image_path
+  split:
+    train: 0.7
+    val: 0.15
+    test: 0.15
+
+callbacks:
+  sample_log:
+    num_images: 4
+    every_n_epochs: 3          # log on every epoch (short smoke run)
+    mean: ${mean}
+    std: ${std}
+
+tasks:
+  # GLOBAL × multiclass — species label (cat / cow / dog)
+  species:
+    preset: classification
+    target: label
+    class_mapping: {0: cat, 1: cow, 2: dog}
+    metrics:
+      accuracy: null
+
+  # GLOBAL × binary — is this image a cat?
+  is_cat:
+    preset: classification
+    target: binary_label
+    objective: binary
+    class_mapping:  {0: "0", 1: "1"}
+    metrics:
+      accuracy: null
+
+  # GLOBAL × multilabel — comma-separated tags from the smoke CSV
+  tags:
+    preset: classification
+    target: tags
+    objective: multilabel
+    class_mapping: {0: fluffy, 1: indoor, 2: large, 3: outdoor, 4: small}
+    metrics:
+      f1:
+        name: f1
+        average: macro

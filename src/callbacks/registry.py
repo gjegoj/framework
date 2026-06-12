@@ -13,6 +13,7 @@ from src.callbacks.batch_transform import BatchTransformCallback
 from src.callbacks.ema import EmaCallback
 from src.callbacks.freeze import FreezeCallback
 from src.callbacks.progress_bar import MetricsProgressBar
+from src.callbacks.sample_log import SampleLogCallback
 from src.core.registry import Registry
 
 callback_registry: Registry = Registry("callback")
@@ -23,3 +24,4 @@ callback_registry.register("checkpoint")(ModelCheckpoint)
 callback_registry.register("freeze")(FreezeCallback)
 callback_registry.register("progress_bar")(MetricsProgressBar)
 callback_registry.register("batch_transform")(BatchTransformCallback)
+callback_registry.register("sample_log")(SampleLogCallback)

@@ -22,11 +22,21 @@ defaults:
   - override /logger: clearml
   - override /callbacks: default
 
+# Opt-in sample visualization (requires PlotLogger backend, e.g. clearml).
+# Disable via CLI: callbacks.sample_log=~
+callbacks:
+  sample_log:
+    num_images: 8
+    every_n_epochs: 5
+    batch_index: 0
+    mean: ${mean}
+    std: ${std}
+
 project: debug-multitask
 
 seed: 0
 epochs: 10
-batch_size: 4
+batch_size: 8
 image_size: [64, 64]
 
 data:

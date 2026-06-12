@@ -19,11 +19,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from src.core.constants import IMAGENET_MEAN, IMAGENET_STD
 from src.core.enums import Stage
-
-# ImageNet normalization — sensible defaults so simple configs omit them.
-_IMAGENET_MEAN = [0.485, 0.456, 0.406]
-_IMAGENET_STD = [0.229, 0.224, 0.225]
 
 
 class DataConfig(BaseModel):
@@ -274,8 +271,24 @@ class LoggerConfig(BaseModel):
     kind: str = Field("none", description="Logger backend key (none/clearml).")
     project: str | None = Field(None, description="Project name for the logger. Defaults to experiment project.")
     task: str | None = Field(None, description="Run/task name. Logger backend default when omitted.")
+    tags: list[str] | None = Field(
+        None,
+        description=(
+            "Backend task tags (ClearML). Supports ${...} interpolation, e.g. "
+            "'lr=${lr}' or '${optimizer.name}'. A tag that resolves to null (e.g. "
+            "${backbone.name} on a composite backbone) or empty is dropped."
+        ),
+    )
 
     model_config = ConfigDict(extra="allow")
+
+    @field_validator("tags", mode="before")
+    @classmethod
+    def _drop_empty_tags(cls, value: list[Any] | None) -> list[str] | None:
+        """Drop null / empty tags (e.g. an unresolved ${backbone.name}) and stringify the rest."""
+        if value is None:
+            return None
+        return [str(tag) for tag in value if tag is not None and str(tag) != ""]
 
 
 class TrainerConfig(BaseModel):
@@ -314,8 +327,8 @@ class ExperimentConfig(BaseModel):
     epochs: int = Field(..., gt=0, description="Number of training epochs.")
     batch_size: int = Field(..., gt=0, description="Batch size.")
     image_size: tuple[int, int] = Field(..., description="Image (height, width) in pixels.")
-    mean: list[float] = Field(default_factory=lambda: list(_IMAGENET_MEAN), description="Normalization mean.")
-    std: list[float] = Field(default_factory=lambda: list(_IMAGENET_STD), description="Normalization std.")
+    mean: list[float] = Field(default_factory=lambda: list(IMAGENET_MEAN), description="Normalization mean.")
+    std: list[float] = Field(default_factory=lambda: list(IMAGENET_STD), description="Normalization std.")
     lr: float = Field(
         ...,
         gt=0,

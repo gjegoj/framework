@@ -28,11 +28,12 @@ from src.tasks.presets import classification, regression
 
 
 class FakePlotLogger(PlotLogger):
-    """Test double that records ``log_matrix`` and ``log_curve`` calls."""
+    """Test double that records ``log_matrix``, ``log_curve``, and ``log_html`` calls."""
 
     def __init__(self) -> None:
         self.matrix_calls: list[dict[str, Any]] = []
         self.curve_calls: list[dict[str, Any]] = []
+        self.html_calls: list[dict[str, Any]] = []
 
     def log_matrix(
         self,
@@ -60,6 +61,9 @@ class FakePlotLogger(PlotLogger):
         self.curve_calls.append(
             {"title": title, "x": x, "y": y, "iteration": iteration, "series": series, "xaxis": xaxis, "yaxis": yaxis}
         )
+
+    def log_html(self, title: str, html: str, iteration: int) -> None:
+        self.html_calls.append({"title": title, "html": html, "iteration": iteration})
 
 
 def _ctx(

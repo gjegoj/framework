@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from argparse import Namespace
 from collections.abc import Mapping
+from io import StringIO
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -151,6 +152,16 @@ class ClearMLLogger(Logger, PlotLogger):
             mode="lines",
             xaxis=xaxis,
             yaxis=yaxis,
+        )
+
+    @rank_zero_only
+    def log_html(self, title: str, html: str, iteration: int) -> None:
+        self._clearml_logger.report_media(
+            title=title,
+            series="grid",
+            iteration=iteration,
+            stream=StringIO(html),
+            file_extension="html",
         )
 
     # ---------------------------------------------------------------- utils

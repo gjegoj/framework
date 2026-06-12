@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import albumentations as A
 import cv2
@@ -193,6 +194,52 @@ class TestLitModuleSmoke:
 
         # val accuracy should be logged
         assert "label/f1/val/mean" in trainer.logged_metrics
+
+
+class TestStepOutputContract:
+    """The step returns StepOutput fields via on_*_batch_end."""
+
+    def _lit(self) -> LitModule:
+        from src.models.assembly import build_composite_model
+        from src.models.backbones import EmbeddingBackbone
+        from src.tasks import classification
+
+        task = classification("label", num_classes=3)
+        model = build_composite_model(EmbeddingBackbone(embedding_dim=8), {"label": task.head_spec})
+        return LitModule(model=model, tasks=[task], optimizer_builder=OptimizerBuilder(base_lr=1e-3))
+
+    def _batch(self) -> Any:
+        import torch
+
+        from src.core.entities import Batch
+        from src.core.keys import IMAGE
+
+        return Batch(inputs={IMAGE: torch.randn(4, 8)}, targets={"label": torch.tensor([0, 1, 2, 0])})
+
+    def test_shared_step_returns_loss_and_task_views(self) -> None:
+        import torch
+
+        from src.core.entities import TaskStepView, is_training_step_output
+
+        result = self._lit()._shared_step(self._batch(), Stage.TRAIN)
+        assert is_training_step_output(result)
+        assert isinstance(result["loss"], torch.Tensor) and result["loss"].ndim == 0
+        assert "output" not in result  # vestigial raw ModelOutput dropped — task_views covers viz
+        view = result["task_views"]["label"]
+        assert isinstance(view, TaskStepView)
+        assert view.preds.shape == (4, 3)
+        assert view.metric_target.shape == (4,)
+
+    def test_task_view_preds_are_detached(self) -> None:
+        """preds feed metrics + visualization only (never backprop), so they carry no graph."""
+        result = self._lit()._shared_step(self._batch(), Stage.TRAIN)
+        assert result["task_views"]["label"].preds.requires_grad is False
+
+    def test_validation_step_returns_task_views_for_callbacks(self) -> None:
+        """validation_step must return outputs (was None) so on_validation_batch_end gets them."""
+        result = self._lit().validation_step(self._batch(), 0)
+        assert result is not None
+        assert "label" in result["task_views"]
 
 
 class TestEmbeddingSmoke:
