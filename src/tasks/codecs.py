@@ -65,3 +65,17 @@ class ContinuousTaskCodec(TaskCodec):
             target = target.unsqueeze(-1)
         target = target.float()
         return TargetView(loss=target, metric=target)
+
+
+class MetricTaskCodec(TaskCodec):
+    """Pass-through codec for metric-learning tasks (ranking + contrastive).
+
+    Supervision is implicit in the data structure, not a per-sample label, so the
+    ``target`` is passed through as a ``[B]`` float for both loss and metrics
+    (kept ``[B]`` — the margin loss needs that shape; unsqueezing would break it).
+    It is one of: a dummy ones vector (triplet / InfoNCE / SigLIP — ignored by the
+    criterion) or a ``[B]`` ±1 label (pair — consumed by ``MarginRankingCriterion``).
+    """
+
+    def adapt(self, target: Tensor) -> TargetView:
+        return TargetView(loss=target.float(), metric=target.float())

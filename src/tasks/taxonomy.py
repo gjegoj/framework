@@ -8,13 +8,15 @@ from enum import StrEnum
 
 
 class Topology(StrEnum):
-    """Spatial structure of the prediction (which head + feature stream)."""
+    """Structural shape of the feature→head path: which head, which feature stream,
+    and how N items reach the head. New topologies (detection/OCR) are added here
+    only together with their registered strategy — not declared speculatively.
+    """
 
-    GLOBAL = "global"  # one prediction per sample (classification/regression)
+    GLOBAL = "global"  # one prediction per sample (classification / regression / arcface)
     DENSE = "dense"  # one prediction per pixel (segmentation)
-    SET = "set"  # one prediction per object/region (detection)
-    SEQUENCE = "sequence"  # one prediction per token (OCR)
-    EMBEDDING = "embedding"  # a vector (retrieval / contrastive)
+    RANKING = "ranking"  # N views through ONE shared backbone → [B, N, D] (Siamese / triplet)
+    MULTISTREAM = "multistream"  # N streams from N SEPARATE encoders → [B, N, D] (CLIP / SIGLIP)
 
 
 class Objective(StrEnum):
@@ -24,3 +26,4 @@ class Objective(StrEnum):
     MULTICLASS = "multiclass"
     MULTILABEL = "multilabel"
     CONTINUOUS = "continuous"
+    METRIC = "metric"  # implicit target: supervision from pair/triplet/batch structure

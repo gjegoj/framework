@@ -153,6 +153,13 @@ class HeadSpec:
         prefer_native (bool): Try the backbone's native head before the registry.
         target (str | None): Fully-qualified ``_target_`` import path for a
             completely custom head class.
+        view_keys (tuple[str, ...] | None): For RANKING topology — the ordered
+            input alias names that form the N views (e.g. ``("anchor",
+            "positive", "negative")``).  ``None`` for all non-ranking tasks.
+        stream_keys (tuple[str, ...] | None): For MULTISTREAM topology — the
+            ordered ``FeatureBundle`` stream names (one per encoder, e.g.
+            ``("image", "text")``) the extractor stacks into ``[B, N, D]``.
+            ``None`` for all non-multistream tasks.
     """
 
     kind: str
@@ -161,6 +168,8 @@ class HeadSpec:
     options: dict[str, Any] = field(default_factory=dict)
     prefer_native: bool = False
     target: str | None = None
+    view_keys: tuple[str, ...] | None = None
+    stream_keys: tuple[str, ...] | None = None
 
 
 @dataclass

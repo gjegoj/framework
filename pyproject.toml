@@ -44,6 +44,7 @@ line-length = 120
 # ML abbreviations that typos misidentifies as misspellings
 fpr = "fpr"
 FPR = "FPR"
+NCE = "NCE"
 
 [tool.black]
 line-length = 120

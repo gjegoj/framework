@@ -1,8 +1,7 @@
 """Generate a small synthetic dataset for offline smoke testing.
 
-Creates 30 synthetic 64×64 JPEG images (in data/smoke/images/) and an annotation
-CSV in data/smoke/ with target columns covering all three M2 objectives plus the
-M6 embedding modality:
+Creates 30 synthetic 64×64 JPEG images (in data/smoke/images/) and annotation
+CSVs in data/smoke/ covering all milestones:
 
 - ``label``        — multiclass (cat / dog / cow)
 - ``binary_label`` — binary (0 / 1, e.g. is_cat)
@@ -10,6 +9,7 @@ M6 embedding modality:
 - ``value``        — regression scalar (float)
 - ``emb_path``     — path to a precomputed [D] embedding ``.npy`` (M6 modality);
                      vectors are class-shifted so the embeddings smoke can learn
+- ``triplets.csv`` — anchor/positive/negative triplets for M7a ranking smoke
 
 Safe to re-run — overwrites existing files deterministically.
 """
@@ -77,4 +77,48 @@ with open(csv_path, "w", newline="") as f:
     writer.writeheader()
     writer.writerows(rows)
 
+# --- M7a: triplets (anchor / positive / negative image paths) ---
+# Build per-class index lists then generate NUM_IMAGES triplets by cycling.
+by_class: dict[str, list[str]] = {lbl: [] for lbl in LABELS}
+for row in rows:
+    by_class[row["label"]].append(row["image_path"])
+
+triplet_rows = []
+for i, row in enumerate(rows):
+    anchor_path = row["image_path"]
+    anchor_label = row["label"]
+    # positive: same class, offset by 1 (wraps)
+    same = by_class[anchor_label]
+    pos_idx = (same.index(anchor_path) + 1) % len(same)
+    positive_path = same[pos_idx]
+    # negative: first image of a different class
+    neg_label = LABELS[(LABELS.index(anchor_label) + 1) % len(LABELS)]
+    negative_path = by_class[neg_label][i % len(by_class[neg_label])]
+    triplet_rows.append(
+        {
+            "anchor_path": anchor_path,
+            "positive_path": positive_path,
+            "negative_path": negative_path,
+            "triplet_target": 1.0,  # dummy — ignored by TripletMarginCriterion
+        }
+    )
+
+triplets_csv = OUT / "triplets.csv"
+with open(triplets_csv, "w", newline="") as f:
+    writer = csv.DictWriter(f, fieldnames=["anchor_path", "positive_path", "negative_path", "triplet_target"])
+    writer.writeheader()
+    writer.writerows(triplet_rows)
+
+# --- M7b-A: pairs (left / right image paths) for multi-encoder contrastive ---
+# Each row pairs an image with itself; two separate encoders learn to align them
+# (positive = the diagonal). The dummy target is ignored by InfoNCE.
+pair_rows = [{"left_path": row["image_path"], "right_path": row["image_path"], "pair_target": 1.0} for row in rows]
+pairs_csv = OUT / "pairs.csv"
+with open(pairs_csv, "w", newline="") as f:
+    writer = csv.DictWriter(f, fieldnames=["left_path", "right_path", "pair_target"])
+    writer.writeheader()
+    writer.writerows(pair_rows)
+
 print(f"Generated {NUM_IMAGES} images + {EMB_DIM}-dim embeddings → {csv_path}")
+print(f"Generated {len(triplet_rows)} triplets → {triplets_csv}")
+print(f"Generated {len(pair_rows)} pairs → {pairs_csv}")

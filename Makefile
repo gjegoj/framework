@@ -1,4 +1,4 @@
-.PHONY: help install pre-commit clean test test-unit typecheck check generate-smoke smoke smoke-embeddings
+.PHONY: help install pre-commit clean test test-unit typecheck check generate-smoke smoke smoke-embeddings smoke-ranking smoke-contrastive smoke-arcface
 
 
 help: ## Show help
@@ -40,3 +40,12 @@ smoke: generate-smoke ## Run 2-epoch offline smoke training (CPU, no pretrained 
 
 smoke-embeddings: generate-smoke ## Run 2-epoch offline embeddings smoke (CPU, M6 modality)
 	uv run python main.py experiment=embeddings_smoke
+
+smoke-ranking: generate-smoke ## Run 2-epoch offline ranking smoke (CPU, M7a triplet)
+	uv run python main.py experiment=ranking_smoke
+
+smoke-contrastive: generate-smoke ## Run 2-epoch offline contrastive smoke (CPU, M7b dual-encoder)
+	uv run python main.py experiment=contrastive_smoke
+
+smoke-arcface: generate-smoke ## Run 2-epoch offline ArcFace smoke (CPU, cosine head + angular margin)
+	uv run python main.py experiment=arcface_smoke

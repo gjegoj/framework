@@ -45,7 +45,7 @@ class TestTaxonomyAndStrategies:
         objective = MulticlassObjective()
         assert objective.out_features(5) == 5
         assert objective.supports(Topology.GLOBAL)
-        assert not objective.supports(Topology.EMBEDDING)
+        assert not objective.supports(Topology.RANKING)
         assert isinstance(objective.build_task_codec(), MulticlassTaskCodec)
 
     def test_binary_objective_bricks(self) -> None:
@@ -212,14 +212,14 @@ class TestTaskBuilder:
         assert isinstance(task.codec, MulticlassTaskCodec)  # objective bricks unchanged
 
     def test_invalid_combination_raises(self) -> None:
-        class _EmbeddingTopology(TopologyStrategy):
-            kind = Topology.EMBEDDING
+        class _RankingTopology(TopologyStrategy):
+            kind = Topology.RANKING
 
             def head_spec(self, out_features: int) -> HeadSpec:
                 return HeadSpec(kind="linear", out_features=out_features)
 
-        with pytest.raises(ValueError, match="not supported on topology 'embedding'"):
-            TaskBuilder(_EmbeddingTopology(), MulticlassObjective()).build("x", num_classes=2)
+        with pytest.raises(ValueError, match="not supported on topology 'ranking'"):
+            TaskBuilder(_RankingTopology(), MulticlassObjective()).build("x", num_classes=2)
 
 
 class TestRegressionPreset:

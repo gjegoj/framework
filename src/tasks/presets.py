@@ -16,7 +16,7 @@ needed.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from src.core.entities import Task
@@ -42,12 +42,21 @@ class TaskPreset:
             ``None`` → fall back to the objective's ``default_codec``.
         default_metrics (MetricsSpec | None): Metric spec used when the user
             gives no ``metrics:``.  ``None`` → the objective's default.
+        default_loss (str | None): ``criteria`` key used when the task config omits
+            ``loss:``, overriding the objective's default.  This is where the
+            *method* is pinned for objectives whose loss varies (metric learning:
+            triplet vs margin-ranking vs InfoNCE).  ``None`` → objective default.
+        topology_kwargs (dict[str, Any]): Extra constructor kwargs forwarded to
+            ``topology_strategies.create(topology, **topology_kwargs)`` for
+            parameterised topologies.  Empty dict for all fixed topologies.
     """
 
     topology: Topology
     default_objective: Objective
     default_codec: str | None = None
     default_metrics: MetricsSpec | None = None
+    default_loss: str | None = None
+    topology_kwargs: dict[str, Any] = field(default_factory=dict)
 
     def resolve_objective(self, override: str | None) -> Objective:
         """Return the effective objective: ``override`` if given, else the default."""
@@ -82,14 +91,14 @@ class TaskPreset:
             Task: The assembled task.
         """
         builder = TaskBuilder(
-            topology=topology_strategies.create(self.topology),
+            topology=topology_strategies.create(self.topology, **self.topology_kwargs),
             objective=objective_strategies.create(self.resolve_objective(objective)),
         )
         return builder.build(
             name=name,
             num_classes=num_classes,
             weight=weight,
-            loss_spec=loss,
+            loss_spec=loss if loss is not None else self.default_loss,
             metrics_spec=metrics if metrics is not None else self.default_metrics,
             head_override=head,
             feature_key_override=feature_key,
@@ -150,3 +159,24 @@ segmentation = TaskPreset(
     },
 )
 task_presets.register_instance("segmentation", segmentation)
+
+triplet = TaskPreset(
+    topology=Topology.RANKING,
+    default_objective=Objective.METRIC,
+    default_loss="triplet_margin",  # 3 views: anchor / positive / negative
+)
+task_presets.register_instance("triplet", triplet)
+
+pairwise_ranking = TaskPreset(
+    topology=Topology.RANKING,
+    default_objective=Objective.METRIC,
+    default_loss="margin_ranking",  # 2 views ranked against each other
+)
+task_presets.register_instance("pairwise_ranking", pairwise_ranking)
+
+contrastive = TaskPreset(
+    topology=Topology.MULTISTREAM,
+    default_objective=Objective.METRIC,
+    default_loss="info_nce",  # N separate encoders aligned (InfoNCE / SigLIP)
+)
+task_presets.register_instance("contrastive", contrastive)

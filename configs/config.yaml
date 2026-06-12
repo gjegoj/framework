@@ -7,7 +7,7 @@ defaults:
   - callbacks: none          # swap to default (lr_monitor + ema + checkpoint) or minimal
   - transforms: default      # swap to augmented or your own transforms config
   - _self_
-  - experiment: debug        # experiment overrides go last → highest priority
+  - experiment: ranking_smoke        # experiment overrides go last → highest priority
 
 project: my-project
 run_name: ${now:%Y-%m-%d}/${now:%H-%M-%S}

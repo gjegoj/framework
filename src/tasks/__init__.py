@@ -4,22 +4,26 @@ Importing this package registers the built-in topology/objective strategies and
 task presets so they are resolvable by key.
 """
 
-from src.tasks.activations import (
-    IdentityActivation,
-    SigmoidActivation,
-    SoftmaxActivation,
-)
+import src.losses.angular  # noqa: F401 — registers arcface criterion
+import src.losses.contrastive  # noqa: F401 — registers info_nce criterion
+import src.losses.ranking  # noqa: F401 — registers triplet_margin / margin_ranking criteria
+from src.tasks.activations import IdentityActivation, SigmoidActivation, SoftmaxActivation
 from src.tasks.builder import DEFAULT_STAGES, TaskBuilder
-from src.tasks.codecs import (
-    BinaryTaskCodec,
-    ContinuousTaskCodec,
-    MulticlassTaskCodec,
-    MultilabelTaskCodec,
+from src.tasks.codecs import BinaryTaskCodec, ContinuousTaskCodec, MulticlassTaskCodec, MultilabelTaskCodec
+from src.tasks.presets import (
+    TaskPreset,
+    classification,
+    contrastive,
+    pairwise_ranking,
+    regression,
+    segmentation,
+    task_presets,
+    triplet,
 )
-from src.tasks.presets import TaskPreset, classification, regression, segmentation, task_presets
 from src.tasks.strategies.objective import (
     BinaryObjective,
     ContinuousObjective,
+    MetricObjective,
     MulticlassObjective,
     MultilabelObjective,
     ObjectiveStrategy,
@@ -28,6 +32,8 @@ from src.tasks.strategies.objective import (
 from src.tasks.strategies.topology import (
     DenseTopology,
     GlobalTopology,
+    MultistreamTopology,
+    RankingTopology,
     TopologyStrategy,
     topology_strategies,
 )
@@ -42,22 +48,28 @@ __all__ = [
     "DenseTopology",
     "GlobalTopology",
     "IdentityActivation",
+    "MetricObjective",
+    "MultistreamTopology",
     "MulticlassObjective",
     "MulticlassTaskCodec",
     "MultilabelObjective",
     "MultilabelTaskCodec",
     "Objective",
     "ObjectiveStrategy",
+    "RankingTopology",
     "SigmoidActivation",
     "SoftmaxActivation",
     "TaskBuilder",
     "Topology",
     "TopologyStrategy",
     "classification",
+    "contrastive",
     "objective_strategies",
+    "pairwise_ranking",
     "regression",
     "segmentation",
     "TaskPreset",
     "task_presets",
     "topology_strategies",
+    "triplet",
 ]

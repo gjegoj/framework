@@ -174,8 +174,11 @@ class DataLoaderConfig(BaseModel):
 class BackboneConfig(BaseModel):
     """Backbone selection; ``kind`` picks the registry adapter."""
 
-    kind: str = Field("timm", description="Backbone registry key (timm/smp/hf/embedding/...).")
-    name: str = Field(..., description="Model name within the chosen backbone library.")
+    kind: str = Field("timm", description="Backbone registry key (timm/smp/hf/embedding/multi/...).")
+    name: str | None = Field(
+        None,
+        description="Model name within the chosen backbone library. None for composite backbones (kind=multi).",
+    )
     pretrained: bool = Field(True, description="Load pretrained weights when supported.")
 
     model_config = ConfigDict(extra="allow")

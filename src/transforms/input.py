@@ -69,3 +69,29 @@ class IdentityTransform(Transform):
     def apply(self, sample: Sample) -> Sample:
         sample.inputs = {key: torch.as_tensor(value, dtype=torch.float32) for key, value in sample.inputs.items()}
         return sample
+
+
+class MultiViewTransform(Transform):
+    """Applies an Albumentations pipeline to each image input independently.
+
+    Single-view experiments have one ``"image"`` key and ``AlbumentationsTransform``
+    handles them directly. Multi-view experiments (ranking: anchor / positive /
+    negative) have several image keys; this wrapper applies the same pipeline to
+    each independently, collecting results back under their original keys.
+
+    Spatial targets (masks) are not supported here — ranking tasks carry no dense
+    targets so the simpler ``image=`` call suffices.
+
+    Parameters:
+        compose (A.Compose): Albumentations pipeline ending in ``ToTensorV2``.
+
+    Streams:
+        Inputs (any keys) → tensors of shape ``[C, H, W]`` after ``ToTensorV2``.
+    """
+
+    def __init__(self, compose: A.Compose) -> None:
+        self._compose = compose
+
+    def apply(self, sample: Sample) -> Sample:
+        sample.inputs = {key: self._compose(image=value)["image"] for key, value in sample.inputs.items()}
+        return sample

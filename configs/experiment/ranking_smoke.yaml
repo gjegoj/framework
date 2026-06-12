@@ -1,0 +1,33 @@
+# @package _global_
+# Minimal offline smoke for M7a ranking (Siamese triplet): classification on
+# 64×64 synthetic images grouped into anchor/positive/negative triplets.
+# Run: make smoke-ranking   (generates data then trains)
+#   or: uv run python main.py experiment=ranking_smoke
+
+defaults:
+  - override /trainer: cpu_smoke
+  - override /backbone: resnet18   # pretrained: false — no download needed
+  - override /transforms: multiview   # process anchor/positive/negative views independently
+
+project: smoke-ranking
+seed: 0
+epochs: 2
+batch_size: 4
+
+data:
+  sources: data/smoke/triplets.csv
+  inputs:
+    anchor:   anchor_path     # → image loader, auto-detected from .jpg extension
+    positive: positive_path
+    negative: negative_path
+  split:
+    train: 0.7
+    val:   0.15
+    test:  0.15
+
+tasks:
+  sim:
+    preset: triplet
+    target: triplet_target    # dummy float 1.0 column; TripletMarginCriterion ignores it
+    num_classes: 64           # embedding_dim: backbone D=512 projected → 64
+    loss: {name: triplet_margin, margin: 1.0}

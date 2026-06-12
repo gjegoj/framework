@@ -1,0 +1,34 @@
+# @package _global_
+# Minimal offline smoke for ArcFace metric learning: ordinary classification on
+# 64×64 synthetic images, but with a cosine head + additive angular-margin loss.
+# Demonstrates that ArcFace is just two brick swaps on the classification preset —
+# no new topology or objective.
+# Run: make smoke-arcface   (generates data then trains)
+#   or: uv run python main.py experiment=arcface_smoke
+
+defaults:
+  - override /trainer: cpu_smoke
+
+project: smoke-arcface
+seed: 0
+epochs: 2
+batch_size: 4
+image_size: [64, 64]
+
+data:
+  sources: data/smoke/data.csv
+  inputs: image_path
+  split:
+    train: 0.7
+    val: 0.15
+    test: 0.15
+
+tasks:
+  identity:
+    preset: classification                       # GLOBAL × multiclass — unchanged
+    target: label
+    class_mapping: {0: cat, 1: cow, 2: dog}
+    head: {kind: cosine, embedding_dim: 64}      # normalized class prototypes
+    loss: {name: arcface, margin: 0.5, scale: 32}
+    metrics:
+      accuracy: {top_k: 1}

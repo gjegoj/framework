@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import torch
+import torch.nn.functional as F
 from torch import Tensor, nn
 
 from src.core.ports import Head
@@ -57,6 +59,62 @@ class ConvHead(Head):
     def forward(self, features: Tensor) -> Tensor:
         logits: Tensor = self.conv(features)
         return logits
+
+
+@head_builders.register("cosine")
+class CosineHead(Head):
+    """Cosine classifier for angular-margin metric learning (ArcFace/CosFace/...).
+
+    Produces the cosine similarity between an L2-normalized sample embedding and
+    L2-normalized class prototypes — ``cos(θ)`` in ``[-1, 1]`` per class.  The
+    angular margin is applied by the *loss* (e.g. ``arcface``), not here, so this
+    single head serves every angular-margin method; swapping ArcFace for CosFace
+    is purely a loss change.
+
+    The prototype matrix is a learnable parameter living in the head (hence in
+    ``model.heads``), so it trains and moves to device like any other head
+    weight — no special wiring needed.
+
+    Parameters:
+        in_features (int): Backbone feature dimension.
+        out_features (int): Number of classes (prototypes).
+        embedding_dim (int | None): If set, project features to this dimension
+            (bias-free) before the cosine classifier — the metric-learning
+            embedding size.  ``None`` → classify directly on backbone features.
+    """
+
+    def __init__(self, in_features: int, out_features: int, embedding_dim: int | None = None) -> None:
+        super().__init__()
+        self.projection = nn.Linear(in_features, embedding_dim, bias=False) if embedding_dim is not None else None
+        prototype_dim = embedding_dim if embedding_dim is not None else in_features
+        self.weight = nn.Parameter(torch.empty(prototype_dim, out_features))
+        nn.init.xavier_uniform_(self.weight)
+
+    def forward(self, features: Tensor) -> Tensor:
+        embedding = self.projection(features) if self.projection is not None else features
+        cosine: Tensor = F.normalize(embedding, dim=1) @ F.normalize(self.weight, dim=0)
+        return cosine
+
+
+@head_builders.register("identity")
+class IdentityHead(Head):
+    """A pass-through head that returns its input unchanged.
+
+    Used by the MULTISTREAM topology: the per-encoder projection into the shared
+    embedding space already lives in ``MultiEncoderBackbone``, so the task head
+    has no work to do.  ``in_features``/``out_features`` are accepted (the head
+    registry always injects them) but ignored.
+
+    Parameters:
+        in_features (int): Ignored — accepted for a uniform builder signature.
+        out_features (int): Ignored — accepted for a uniform builder signature.
+    """
+
+    def __init__(self, in_features: int, out_features: int) -> None:
+        super().__init__()
+
+    def forward(self, features: Tensor) -> Tensor:
+        return features
 
 
 class _AsHead(Head):

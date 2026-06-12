@@ -14,14 +14,11 @@ from src.core.ports import Activation, Criterion, MetricSet, TaskCodec
 from src.core.registry import Registry
 from src.losses.criterion import criteria
 from src.metrics.builders import MetricsSpec, build_metric_set
-from src.tasks.activations import (
-    IdentityActivation,
-    SigmoidActivation,
-    SoftmaxActivation,
-)
+from src.tasks.activations import IdentityActivation, SigmoidActivation, SoftmaxActivation
 from src.tasks.codecs import (
     BinaryTaskCodec,
     ContinuousTaskCodec,
+    MetricTaskCodec,
     MulticlassTaskCodec,
     MultilabelTaskCodec,
 )
@@ -179,3 +176,42 @@ class ContinuousObjective(ObjectiveStrategy):
 
     def default_metrics_spec(self) -> MetricsSpec | None:
         return _REGRESSION_METRICS
+
+
+@objective_strategies.register(Objective.METRIC)
+class MetricObjective(ObjectiveStrategy):
+    """Metric learning: the target is implicit, supervision comes from structure.
+
+    Covers both embedding topologies — RANKING (triplet/pair views through one
+    shared backbone) and MULTISTREAM (InfoNCE/SigLIP over N separate encoders).
+    There is no per-sample class label: positives come from the pair/triplet
+    grouping or the batch diagonal, so the codec is pass-through and the
+    activation is identity.  ``num_classes`` is reinterpreted as ``embedding_dim``
+    (the head projection size).  Metrics are empty by default; add retrieval
+    metrics via the YAML ``metrics:`` block.
+
+    The *loss* is what varies across metric-learning methods (triplet /
+    margin-ranking / InfoNCE / SigLIP), so the default loss lives on the **preset**
+    (``triplet``/``pairwise_ranking``/``contrastive``), not here — the objective's
+    ``default_loss`` is only a last-resort fallback.
+    """
+
+    kind = Objective.METRIC
+    supported_topologies = frozenset({Topology.RANKING, Topology.MULTISTREAM})
+    default_loss = "triplet_margin"  # fallback only; presets set the real default
+    default_codec = "float"  # dummy/structural target; the loss ignores its values
+
+    def out_features(self, num_classes: int) -> int:
+        return num_classes  # num_classes = embedding_dim for metric tasks
+
+    def build_task_codec(self) -> TaskCodec:
+        return MetricTaskCodec()  # pass-through (no labels to adapt)
+
+    def build_activation(self) -> Activation:
+        return IdentityActivation()
+
+    def metric_base_kwargs(self, num_classes: int) -> dict[str, object]:
+        return {}  # no torchmetrics task/num_classes needed for metric learning
+
+    def default_metrics_spec(self) -> MetricsSpec | None:
+        return {}  # no default metrics; add via YAML

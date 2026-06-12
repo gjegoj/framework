@@ -1,0 +1,39 @@
+# @package _global_
+# Minimal offline smoke for M7b-A (multi-encoder contrastive): two separate
+# resnet18 encoders (separate weights) embed an image pair and InfoNCE aligns
+# them. Positive = the diagonal of the batch similarity matrix.
+# Run: make smoke-contrastive   (generates data then trains)
+#   or: uv run python main.py experiment=contrastive_smoke
+
+defaults:
+  - override /trainer: cpu_smoke
+  - override /transforms: multiview   # per-view image pipeline (reused from M7a)
+
+project: smoke-contrastive
+seed: 0
+epochs: 2
+batch_size: 4
+
+backbone:
+  kind: multi
+  embed_dim: 64                # shared projection dim D; matches task num_classes
+  encoders:
+    left:  {kind: timm, name: resnet18, pretrained: false}   # separate weights…
+    right: {kind: timm, name: resnet18, pretrained: false}   # …despite same arch
+
+data:
+  sources: data/smoke/pairs.csv
+  inputs:
+    left:  left_path           # encoder name == input alias == stream name
+    right: right_path
+  split:
+    train: 0.7
+    val:   0.15
+    test:  0.15
+
+tasks:
+  align:
+    preset: contrastive
+    target: pair_target        # dummy float column; InfoNCE ignores it
+    num_classes: 64            # embedding_dim D (= backbone embed_dim)
+    loss: {name: info_nce}

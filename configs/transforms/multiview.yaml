@@ -1,0 +1,34 @@
+# @package transforms
+# Multi-view: applies the same Albumentations pipeline to every image input key
+# independently (anchor / positive / negative for ranking experiments).
+# Uses MultiViewTransform instead of AlbumentationsTransform so each view is
+# processed through compose(image=view)["image"] without requiring an "image" key.
+train:
+  _target_: src.transforms.input.MultiViewTransform
+  compose:
+    _target_: albumentations.Compose
+    seed: ${seed}
+    telemetry: false
+    transforms:
+      - _target_: albumentations.Resize
+        height: ${image_size[0]}
+        width: ${image_size[1]}
+      - _target_: albumentations.Normalize
+        mean: ${mean}
+        std: ${std}
+      - _target_: albumentations.pytorch.ToTensorV2
+
+val:
+  _target_: src.transforms.input.MultiViewTransform
+  compose:
+    _target_: albumentations.Compose
+    seed: ${seed}
+    telemetry: false
+    transforms:
+      - _target_: albumentations.Resize
+        height: ${image_size[0]}
+        width: ${image_size[1]}
+      - _target_: albumentations.Normalize
+        mean: ${mean}
+        std: ${std}
+      - _target_: albumentations.pytorch.ToTensorV2
