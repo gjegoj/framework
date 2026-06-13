@@ -125,6 +125,11 @@ class CompositeModel(nn.Module):
         self.heads = nn.ModuleDict(heads)
         self._extractors = extractors
 
+    @property
+    def extractors(self) -> dict[str, _FeatureExtractor]:
+        """Per-task feature extractors (read-only; used by export and introspection)."""
+        return self._extractors
+
     def forward(self, inputs: dict[str, Tensor]) -> ModelOutput:
         shared_features: FeatureBundle | None = None
         task_logits: dict[str, Tensor] = {}

@@ -19,6 +19,9 @@ class Topology(StrEnum):
     MULTISTREAM = "multistream"  # N streams from N SEPARATE encoders → [B, N, D] (CLIP / SIGLIP)
 
 
+EXPORTABLE_TOPOLOGIES: frozenset[Topology] = frozenset({Topology.GLOBAL, Topology.DENSE})
+
+
 class Objective(StrEnum):
     """Label semantics (which codec + criterion + activation + metric mode)."""
 

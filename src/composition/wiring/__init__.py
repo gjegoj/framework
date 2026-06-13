@@ -16,6 +16,12 @@ Two construction families coexist by design:
 """
 
 from src.composition.wiring.callbacks import build_callbacks, callback_builders
+from src.composition.wiring.checkpointing import (
+    extract_model_state_dict,
+    load_init_weights,
+    resolve_ckpt_file,
+    resolve_test_ckpt_path,
+)
 from src.composition.wiring.common import WiringContext, forward_extras
 from src.composition.wiring.data import (
     build_data_module,
@@ -23,6 +29,7 @@ from src.composition.wiring.data import (
     build_staged_sources,
     build_transforms,
 )
+from src.composition.wiring.export import run_export
 from src.composition.wiring.model import build_backbone
 from src.composition.wiring.tasks import build_bindings, build_tasks
 from src.composition.wiring.training import (
@@ -30,6 +37,7 @@ from src.composition.wiring.training import (
     build_logger,
     build_optimizer_builder,
     build_task_lr_overrides,
+    run_fit_and_test,
 )
 
 __all__ = [
@@ -47,5 +55,11 @@ __all__ = [
     "build_tasks",
     "build_transforms",
     "callback_builders",
+    "extract_model_state_dict",
     "forward_extras",
+    "load_init_weights",
+    "resolve_ckpt_file",
+    "resolve_test_ckpt_path",
+    "run_export",
+    "run_fit_and_test",
 ]

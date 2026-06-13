@@ -37,7 +37,57 @@ class Classifications:
     items: list[Classification] = field(default_factory=list)
 
 
-Label = Classification | Classifications
+@dataclass(frozen=True)
+class RegressionComponent:
+    """One regressed quantity (a scalar output = a single component, ``name=""``).
+
+    Parameters:
+        name (str): Component name (``""`` for a scalar; e.g. ``"height"`` for a vector).
+        value (float): The regressed value (ground truth or prediction).
+        error (float | None): Signed ``pred - gt``; set by the annotator on the pred side.
+    """
+
+    name: str
+    value: float
+    error: float | None = None
+
+
+@dataclass
+class Regression:
+    """A regression prediction or ground truth: one or more named components.
+
+    Parameters:
+        components (list[RegressionComponent]): The regressed quantities.
+    """
+
+    components: list[RegressionComponent] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class SegmentationClass:
+    """One class's binary mask within a sample (at display resolution).
+
+    Parameters:
+        name (str): Class name.
+        mask (np.ndarray): Boolean ``[H, W]`` mask for this class.
+    """
+
+    name: str
+    mask: np.ndarray
+
+
+@dataclass
+class Segmentation:
+    """A segmentation prediction or ground truth: the per-class masks present.
+
+    Parameters:
+        classes (list[SegmentationClass]): One entry per class present in the sample.
+    """
+
+    classes: list[SegmentationClass] = field(default_factory=list)
+
+
+Label = Classification | Classifications | Regression | Segmentation
 
 
 @dataclass

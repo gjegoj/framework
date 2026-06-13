@@ -37,8 +37,15 @@ class TestValidConfig:
         assert cfg.project == "demo"
         assert cfg.image_size == (224, 224)  # list coerced to tuple
         assert cfg.seed == 42  # default
+        assert cfg.run_test is True  # default
+        assert cfg.run_train is True  # default
+        assert cfg.run_export is True  # default
         assert cfg.mean == [0.485, 0.456, 0.406]  # ImageNet default
         assert cfg.backbone.kind == "timm"  # default
+
+    def test_run_test_can_be_disabled(self) -> None:
+        cfg = load_config(_raw(run_test=False))
+        assert cfg.run_test is False
 
     def test_num_classes_derived_from_class_mapping(self) -> None:
         cfg = load_config(_raw())

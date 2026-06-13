@@ -9,7 +9,11 @@ layer produces ``Sample``/``Batch``; the model produces ``FeatureBundle`` and a
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypedDict, TypeGuard
+
+import torch.nn as nn
+from torch import Tensor
 
 from src.core.keys import POOLED
 
@@ -17,7 +21,6 @@ if TYPE_CHECKING:
     from collections.abc import KeysView
 
     import torch
-    from torch import Tensor
 
     from src.core.enums import Stage
     from src.core.ports import Activation, Criterion, MetricSet, TaskCodec
@@ -264,3 +267,26 @@ class Task:
     def feature_key(self) -> str:
         """The feature stream this task's head consumes."""
         return self.head_spec.feature_key
+
+
+@dataclass(frozen=True)
+class ExportRequest:
+    """Format-neutral export invocation — adapters own format-specific details.
+
+    Parameters:
+        module (nn.Module): Traceable export wrapper (eval + cpu applied by pipeline).
+        example_inputs (tuple[Tensor, ...]): Dummy tensors for tracing.
+        path (Path): Destination file path (suffix set by the exporter).
+        input_names (list[str]): Logical input tensor names for the serialized graph.
+        output_names (list[str]): Logical output tensor names.
+        dynamic_batch (bool): Whether batch dimension should be treated as dynamic.
+        options (dict[str, Any]): Format-specific options (e.g. ``opset_version`` for ONNX).
+    """
+
+    module: nn.Module
+    example_inputs: tuple[Tensor, ...]
+    path: Path
+    input_names: list[str]
+    output_names: list[str]
+    dynamic_batch: bool
+    options: dict[str, Any] = field(default_factory=dict)

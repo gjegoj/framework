@@ -133,6 +133,7 @@ class CurveMetricHandler(MetricHandler):
             return
         spec = self._specs.get(ctx.metric_name or "", CurveSpec(xaxis="x", yaxis="y"))
         first_output, second_output, _ = value
+        is_binary = not isinstance(first_output, list)  # binary metrics emit single tensors
         x_per_class = _to_per_class_list(first_output if spec.x_idx == 0 else second_output)
         y_per_class = _to_per_class_list(first_output if spec.y_idx == 0 else second_output)
         for i, (x_vals, y_vals) in enumerate(zip(x_per_class, y_per_class)):
@@ -141,7 +142,7 @@ class CurveMetricHandler(MetricHandler):
                 x=x_vals,
                 y=y_vals,
                 iteration=ctx.step,
-                series=_class_label(i, ctx.class_names),
+                series=_curve_series(i, ctx.class_names, is_binary),
                 xaxis=spec.xaxis,
                 yaxis=spec.yaxis,
             )
@@ -155,6 +156,14 @@ def _class_label(index: int, class_names: list[str] | None) -> str:
     if class_names and index < len(class_names):
         return class_names[index]
     return f"class{index}"
+
+
+def _curve_series(index: int, class_names: list[str] | None, is_binary: bool) -> str:
+    """Series label for one curve. A binary metric has one curve for the *positive*
+    class (index 1), so labelling it with index 0 would mislabel it as the negative class."""
+    if is_binary:
+        return class_names[1] if class_names and len(class_names) >= 2 else "positive"
+    return _class_label(index, class_names)
 
 
 DEFAULT_METRIC_HANDLERS: tuple[MetricHandler, ...] = (

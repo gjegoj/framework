@@ -124,7 +124,7 @@ class ClearMLLogger(Logger, PlotLogger):
         self._clearml_logger.report_confusion_matrix(
             title=title,
             series="matrix",
-            matrix=matrix.cpu().float().numpy(),
+            matrix=_round_matrix(matrix),
             iteration=iteration,
             xlabels=labels,
             ylabels=labels,
@@ -173,3 +173,14 @@ class ClearMLLogger(Logger, PlotLogger):
         if len(parts) == 1:
             return name, "value"
         return "/".join(parts[:-1]), parts[-1]
+
+
+def _round_matrix(matrix: Any) -> np.ndarray:
+    """Round a matrix to 3 decimals for display.
+
+    A normalized confusion matrix is full of long floats (e.g. ``0.333333…``); 3
+    decimals (``0.001`` precision) is plenty and keeps the ClearML cells readable.
+    Integer (count) matrices are unaffected by rounding.
+    """
+    rounded: np.ndarray = np.round(matrix.cpu().float().numpy(), 3)
+    return rounded

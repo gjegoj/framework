@@ -11,13 +11,22 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
+import numpy as np
 import torch
 from torch import Tensor
 
 from src.core.entities import Task, TaskStepView
 from src.core.registry import Registry
 from src.tasks.taxonomy import Objective, Topology
-from src.visualization.entities import Classification, Classifications, SampleView
+from src.visualization.entities import (
+    Classification,
+    Classifications,
+    Regression,
+    RegressionComponent,
+    SampleView,
+    Segmentation,
+    SegmentationClass,
+)
 
 annotators: Registry[Annotator] = Registry("annotator")
 
@@ -45,15 +54,40 @@ def _class_name(names: list[str], index: int) -> str:
 
 
 @annotators.register(axes_key(Topology.GLOBAL, Objective.MULTICLASS))
-@annotators.register(axes_key(Topology.GLOBAL, Objective.BINARY))
 class ClassificationAnnotator(Annotator):
-    """Single-label: argmax prediction with its probability vs the target index."""
+    """Multiclass single-label: argmax prediction with its probability vs the target index."""
 
     def annotate(self, sample: SampleView, task: Task, view: TaskStepView, index: int) -> None:
         names = task.class_names or []
         probs: Tensor = view.preds[index].detach().cpu().reshape(-1).float()
         pred_index = int(torch.argmax(probs).item())
         confidence = float(probs[pred_index].item())
+        gt_index = int(view.metric_target[index].detach().cpu().reshape(-1)[0].item())
+
+        sample.fields[f"{task.name}_gt"] = Classification(label=_class_name(names, gt_index))
+        sample.fields[f"{task.name}_pred"] = Classification(label=_class_name(names, pred_index), confidence=confidence)
+        sample.tags.append(f"{task.name}:{'correct' if pred_index == gt_index else 'wrong'}")
+
+
+@annotators.register(axes_key(Topology.GLOBAL, Objective.BINARY))
+class BinaryClassificationAnnotator(Annotator):
+    """Binary single-label: threshold the single positive-class probability.
+
+    A binary head emits one sigmoid value = P(positive class, index 1), so argmax
+    (used for multiclass) would always pick index 0. Threshold it instead.
+
+    Parameters:
+        threshold (float): Decision threshold on P(positive) for the predicted class.
+    """
+
+    def __init__(self, threshold: float = 0.5) -> None:
+        self._threshold = threshold
+
+    def annotate(self, sample: SampleView, task: Task, view: TaskStepView, index: int) -> None:
+        names = task.class_names or []
+        positive_prob = float(view.preds[index].detach().cpu().reshape(-1)[0].item())
+        pred_index = 1 if positive_prob >= self._threshold else 0
+        confidence = positive_prob if pred_index == 1 else 1.0 - positive_prob
         gt_index = int(view.metric_target[index].detach().cpu().reshape(-1)[0].item())
 
         sample.fields[f"{task.name}_gt"] = Classification(label=_class_name(names, gt_index))
@@ -88,3 +122,113 @@ class MultilabelAnnotator(Annotator):
         )
         correct = set(gt_indices) == set(pred_indices)
         sample.tags.append(f"{task.name}:{'correct' if correct else 'wrong'}")
+
+
+def _component_names(class_names: list[str] | None, dim: int) -> list[str]:
+    """Per-dimension names: from ``class_names`` when they fit, else scalar/index fallback."""
+    if class_names is not None and len(class_names) == dim:
+        return class_names
+    return [""] if dim == 1 else [f"dim{i}" for i in range(dim)]
+
+
+@annotators.register(axes_key(Topology.GLOBAL, Objective.CONTINUOUS))
+class RegressionAnnotator(Annotator):
+    """Continuous: per-dimension value chips; pred carries the signed ``pred - gt`` error."""
+
+    def annotate(self, sample: SampleView, task: Task, view: TaskStepView, index: int) -> None:
+        preds: Tensor = view.preds[index].detach().cpu().reshape(-1).float()
+        target: Tensor = view.metric_target[index].detach().cpu().reshape(-1).float()
+        names = _component_names(task.class_names, preds.numel())
+
+        sample.fields[f"{task.name}_gt"] = Regression(
+            components=[RegressionComponent(names[i], float(target[i].item())) for i in range(preds.numel())]
+        )
+        sample.fields[f"{task.name}_pred"] = Regression(
+            components=[
+                RegressionComponent(names[i], float(preds[i].item()), error=float((preds[i] - target[i]).item()))
+                for i in range(preds.numel())
+            ]
+        )
+        mae = float((preds - target).abs().mean().item())
+        sample.tags.append(f"{task.name}:mae={mae:.2f}")
+
+
+ClassMask = tuple[int, np.ndarray]
+
+
+def _iou(a: np.ndarray, b: np.ndarray) -> float | None:
+    """Intersection-over-union of two boolean masks; ``None`` when their union is empty."""
+    union = int((a | b).sum())
+    return int((a & b).sum()) / union if union else None
+
+
+def _segmentation_from_masks(
+    class_masks: list[ClassMask], names: list[str] | None, ignore_index: int | None
+) -> Segmentation:
+    """Assemble a ``Segmentation`` from ``(class index, boolean mask)`` pairs.
+
+    Skips ``ignore_index`` and empty masks; names classes via the ``class_names`` fallback.
+    """
+    classes: list[SegmentationClass] = []
+    for value, mask in class_masks:
+        if value == ignore_index or not mask.any():
+            continue
+        classes.append(SegmentationClass(_class_name(names or [], value), mask))
+    return Segmentation(classes)
+
+
+def _mean_iou(ious: list[float | None]) -> float:
+    present = [iou for iou in ious if iou is not None]
+    return float(np.mean(present)) if present else 0.0
+
+
+@annotators.register(axes_key(Topology.DENSE, Objective.MULTICLASS))
+class SegmentationAnnotator(Annotator):
+    """Dense semantic segmentation (mutually-exclusive classes): per-class masks from the
+    argmax of the prediction and the ground-truth label map.
+
+    Parameters:
+        ignore_index (int | None): A class index to skip (e.g. background); ``None`` renders
+            every present class.
+    """
+
+    def __init__(self, ignore_index: int | None = None) -> None:
+        self._ignore_index = ignore_index
+
+    def annotate(self, sample: SampleView, task: Task, view: TaskStepView, index: int) -> None:
+        pred_map = view.preds[index].detach().cpu().argmax(dim=0).numpy()  # [H, W] class indices
+        gt_map = view.metric_target[index].detach().cpu().long().numpy()  # [H, W] class indices
+        names = task.class_names
+        gt_masks: list[ClassMask] = [(v, gt_map == v) for v in sorted(int(v) for v in np.unique(gt_map))]
+        pred_masks: list[ClassMask] = [(v, pred_map == v) for v in sorted(int(v) for v in np.unique(pred_map))]
+        sample.fields[f"{task.name}_gt"] = _segmentation_from_masks(gt_masks, names, self._ignore_index)
+        sample.fields[f"{task.name}_pred"] = _segmentation_from_masks(pred_masks, names, self._ignore_index)
+        values = ({v for v, _ in gt_masks} | {v for v, _ in pred_masks}) - {self._ignore_index}
+        ious = [_iou(gt_map == v, pred_map == v) for v in values]
+        sample.tags.append(f"{task.name}:miou={_mean_iou(ious):.2f}")
+
+
+@annotators.register(axes_key(Topology.DENSE, Objective.MULTILABEL))
+class MultilabelSegmentationAnnotator(Annotator):
+    """Dense multilabel segmentation (independent classes): per-class masks from sigmoid
+    scores thresholded per channel — classes may overlap spatially.
+
+    Parameters:
+        threshold (float): Minimum sigmoid score for a pixel to belong to a class.
+        ignore_index (int | None): A class index to skip; ``None`` renders every class.
+    """
+
+    def __init__(self, threshold: float = 0.5, ignore_index: int | None = None) -> None:
+        self._threshold = threshold
+        self._ignore_index = ignore_index
+
+    def annotate(self, sample: SampleView, task: Task, view: TaskStepView, index: int) -> None:
+        probs = view.preds[index].detach().cpu().numpy()  # [C, H, W] sigmoid scores
+        gt = view.metric_target[index].detach().cpu().numpy()  # [C, H, W] multi-hot
+        names = task.class_names
+        gt_masks: list[ClassMask] = [(c, gt[c] > 0.5) for c in range(gt.shape[0])]
+        pred_masks: list[ClassMask] = [(c, probs[c] >= self._threshold) for c in range(probs.shape[0])]
+        sample.fields[f"{task.name}_gt"] = _segmentation_from_masks(gt_masks, names, self._ignore_index)
+        sample.fields[f"{task.name}_pred"] = _segmentation_from_masks(pred_masks, names, self._ignore_index)
+        ious = [_iou(gm, pm) for (c, gm), (_, pm) in zip(gt_masks, pred_masks) if c != self._ignore_index]
+        sample.tags.append(f"{task.name}:miou={_mean_iou(ious):.2f}")

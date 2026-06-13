@@ -20,7 +20,7 @@ import torch.nn as nn
 if TYPE_CHECKING:
     from torch import Tensor
 
-    from src.core.entities import Batch, FeatureBundle, LossResult, TargetView
+    from src.core.entities import Batch, ExportRequest, FeatureBundle, LossResult, TargetView
 
 
 class Backbone(nn.Module, ABC):
@@ -217,6 +217,19 @@ class PlotLogger(ABC):
             html (str): Full HTML string to ship to the backend.
             iteration (int): Current training step (epoch or global step).
         """
+
+
+class ModelExporter(ABC):
+    """Export a traceable ``nn.Module`` to a deployment file format."""
+
+    @property
+    @abstractmethod
+    def extension(self) -> str:
+        """File extension for this format (e.g. ``.onnx``)."""
+
+    @abstractmethod
+    def export(self, request: ExportRequest) -> None:
+        """Serialize ``request.module`` to ``request.path``."""
 
 
 @runtime_checkable

@@ -302,6 +302,48 @@ class TrainerConfig(BaseModel):
     model_config = ConfigDict(extra="allow")
 
 
+class ExportConfig(BaseModel):
+    """Model export settings (ONNX / TorchScript / future TensorRT)."""
+
+    formats: list[str] = Field(
+        default_factory=lambda: ["onnx"],
+        description="Export formats to emit. Empty list disables export even when run_export is true.",
+    )
+    opset_version: int = Field(17, ge=9, description="ONNX opset version.")
+    combined: bool = Field(True, description="Export one combined graph: image → all task logits.")
+    split_components: bool = Field(
+        False,
+        description="Also export backbone and each head as separate files.",
+    )
+    output_dir: str | None = Field(
+        None,
+        description="Directory for exported artifacts. Defaults to '{save_dir}/export' when unset.",
+    )
+    dynamic_batch: bool = Field(True, description="Mark batch dimension as dynamic in ONNX.")
+    generic_io_names: bool = Field(
+        True,
+        description=(
+            "Name exported tensors ``input`` / ``output`` (or ``input_0``, ``output_1``, … when "
+            "there are multiple). When false, keep semantic names (task names, stream keys)."
+        ),
+    )
+    input_key: str | None = Field(
+        None,
+        description="Model input alias for export (defaults to the sole image input from data.inputs).",
+    )
+
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("formats")
+    @classmethod
+    def _validate_formats(cls, value: list[str]) -> list[str]:
+        allowed = {"onnx", "torchscript"}
+        unknown = set(value) - allowed
+        if unknown:
+            raise ValueError(f"export.formats: unknown format(s) {sorted(unknown)}. Allowed: {sorted(allowed)}.")
+        return value
+
+
 class ExperimentConfig(BaseModel):
     """Root experiment contract assembled from the YAML config."""
 
@@ -324,6 +366,41 @@ class ExperimentConfig(BaseModel):
         ),
     )
     seed: int = Field(42, description="Global random seed.")
+    run_train: bool = Field(
+        True,
+        description="Run ``trainer.fit()``. Set ``false`` for checkpoint-only evaluation.",
+    )
+    run_test: bool = Field(
+        True,
+        description=(
+            "Run ``trainer.test()`` on the test split. After training, uses the best "
+            "saved checkpoint when available; otherwise in-memory weights. Requires "
+            "``ckpt_path`` when ``run_train`` is ``false``."
+        ),
+    )
+    ckpt_path: str | None = Field(
+        None,
+        description=(
+            "Checkpoint for ``trainer.test()`` — absolute/relative ``.ckpt`` path, or "
+            "Lightning aliases ``best`` / ``last``. Required for eval-only "
+            "(``run_train: false``). When omitted after training, ``best`` is used if "
+            "``ModelCheckpoint`` saved one. Not used to initialize training — see "
+            "``init_ckpt_path``."
+        ),
+    )
+    init_ckpt_path: str | None = Field(
+        None,
+        description=(
+            "Pretrain / fine-tune: load model weights from this ``.ckpt`` into the "
+            "module before ``fit``. Optimizer, schedulers, and epoch counter start "
+            "fresh (not resume). Uses the checkpoint ``state_dict`` (EMA weights when "
+            "the file was saved with EMA). Requires ``run_train: true``."
+        ),
+    )
+    run_export: bool = Field(
+        True,
+        description="Export the model after train/test using ``export`` settings.",
+    )
     epochs: int = Field(..., gt=0, description="Number of training epochs.")
     batch_size: int = Field(..., gt=0, description="Batch size.")
     image_size: tuple[int, int] = Field(..., description="Image (height, width) in pixels.")
@@ -361,6 +438,7 @@ class ExperimentConfig(BaseModel):
         ),
     )
     trainer: TrainerConfig = Field(default_factory=TrainerConfig)
+    export: ExportConfig = Field(default_factory=ExportConfig, description="Model export settings.")
 
     model_config = ConfigDict(extra="forbid")
 
@@ -375,4 +453,15 @@ class ExperimentConfig(BaseModel):
     def _validate_normalization(self) -> ExperimentConfig:
         if len(self.mean) != len(self.std):
             raise ValueError(f"mean ({len(self.mean)}) and std ({len(self.std)}) must have equal length.")
+        return self
+
+    @model_validator(mode="after")
+    def _validate_run_modes(self) -> ExperimentConfig:
+        if not self.run_train and not self.run_test and not self.run_export:
+            raise ValueError("At least one of run_train, run_test, or run_export must be True.")
+        needs_ckpt = not self.run_train and (self.run_test or self.run_export)
+        if needs_ckpt and self.ckpt_path is None:
+            raise ValueError("ckpt_path is required when run_train=false and run_test or run_export is true.")
+        if not self.run_train and self.init_ckpt_path is not None:
+            raise ValueError("init_ckpt_path requires run_train=true; use ckpt_path for eval-only runs.")
         return self

@@ -4,6 +4,10 @@ Usage:
     python main.py                          # uses defaults (experiment: classification_smoke)
     python main.py +experiment=my_exp       # load a specific experiment override
     python main.py epochs=5 batch_size=32   # ad-hoc CLI overrides
+    python main.py run_test=false           # train only, skip test
+    python main.py run_train=false run_test=true \\
+        ckpt_path=runs/.../checkpoints/epoch=11.ckpt   # eval-only on a checkpoint
+    python main.py init_ckpt_path=runs/.../epoch=3.ckpt  # fine-tune from pretrained weights
 
 Hydra writes run outputs to outputs/<date>/<time>/. Override with
 hydra.run.dir=<path> or add hydra/output: null to suppress.
@@ -28,6 +32,7 @@ from src.composition.wiring import (
     build_logger,
     build_optimizer_builder,
     build_tasks,
+    run_fit_and_test,
 )
 from src.config import load_config
 from src.core.runtime import RuntimeContext
@@ -68,14 +73,15 @@ def main(cfg: DictConfig) -> None:
     lit_module = build_lit_module(config, model, tasks, optimizer_builder)
     lit_dm = LitDataModule(plain_dm)
 
-    # 7. Fit
+    # 7. Train and/or test
     logger = build_logger(config)
     callbacks = build_callbacks(config, runtime)
     trainer_kwargs = config.trainer.model_dump(mode="python")
     trainer_kwargs.pop("logger", None)
+    if config.save_dir is not None:
+        trainer_kwargs.setdefault("default_root_dir", config.save_dir)
     trainer = L.Trainer(max_epochs=config.epochs, logger=logger, callbacks=callbacks, **trainer_kwargs)
-    trainer.fit(lit_module, lit_dm)
-    log.info("Training complete.")
+    run_fit_and_test(trainer, lit_module, lit_dm, config, tasks)
 
 
 if __name__ == "__main__":

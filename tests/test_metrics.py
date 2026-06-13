@@ -324,6 +324,20 @@ class TestCurveMetricHandler:
         CurveMetricHandler(curve_specs).handle("pr", (prec, rec, the), ctx)
         assert len(fake.curve_calls) == 1
 
+    def test_binary_curve_labeled_positive_class_not_index_zero(self) -> None:
+        fake = FakePlotLogger()
+        ctx, _ = _ctx(plot_logger=fake, class_names=["cat", "dog"], metric_name="precision_recall_curve")
+        prec, rec, the = torch.rand(10), torch.rand(10), torch.rand(9)  # binary: tensors, not lists
+        CurveMetricHandler(curve_specs).handle("pr", (prec, rec, the), ctx)
+        assert fake.curve_calls[0]["series"] == "dog"  # positive class (index 1), not "cat"
+
+    def test_binary_curve_without_names_labeled_positive(self) -> None:
+        fake = FakePlotLogger()
+        ctx, _ = _ctx(plot_logger=fake, metric_name="precision_recall_curve")
+        t = torch.rand(5)
+        CurveMetricHandler(curve_specs).handle("pr", (t, t, t), ctx)
+        assert fake.curve_calls[0]["series"] == "positive"
+
     def test_generic_axes_when_metric_not_in_registry(self) -> None:
         fake = FakePlotLogger()
         ctx, _ = _ctx(plot_logger=fake, metric_name="unknown_curve")
@@ -428,6 +442,23 @@ class TestTaskMetricDirections:
         directions = task_metric_directions([classification("a", num_classes=2), classification("b", num_classes=2)])
         assert "a/f1/train" in directions
         assert "b/f1/train" in directions
+
+
+class TestMatrixRounding:
+    def test_round_matrix_to_three_decimals(self) -> None:
+        import numpy as np
+
+        from src.loggers.clearml import _round_matrix  # module import is clearml-free
+
+        matrix = torch.tensor([[0.3333333, 0.6666667], [0.1, 0.9]])
+        rounded = _round_matrix(matrix)
+        assert np.allclose(rounded, [[0.333, 0.667], [0.1, 0.9]], atol=1e-6)  # 3-decimal precision
+
+    def test_integer_counts_unchanged(self) -> None:
+        from src.loggers.clearml import _round_matrix
+
+        matrix = torch.tensor([[5.0, 0.0], [2.0, 8.0]])
+        assert _round_matrix(matrix).tolist() == [[5.0, 0.0], [2.0, 8.0]]
 
 
 class TestRegistrySpecs:

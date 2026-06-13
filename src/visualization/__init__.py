@@ -9,13 +9,13 @@ ships it. Both axes of variation are registries (``annotators`` by task axes,
 
 from src.visualization.entities import Classification, Classifications, Label, SampleView
 from src.visualization.pipeline import build_sample_views
-from src.visualization.renderer import PlotlyRenderer, Renderer
+from src.visualization.renderer import HtmlRenderer, Renderer
 
 __all__ = [
     "Classification",
     "Classifications",
+    "HtmlRenderer",
     "Label",
-    "PlotlyRenderer",
     "Renderer",
     "SampleView",
     "build_sample_views",

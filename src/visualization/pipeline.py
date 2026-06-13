@@ -31,8 +31,6 @@ def build_sample_views(
     for index in range(images.shape[0]):
         sample = SampleView(image=images[index])
         for task in tasks:
-            if task.class_names is None:
-                continue
             view = task_views.get(task.name)
             if view is None:
                 continue

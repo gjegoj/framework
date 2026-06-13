@@ -2,14 +2,24 @@
 
 from __future__ import annotations
 
-from typing import Any
+import logging
+from typing import TYPE_CHECKING, Any
 
+import lightning as L
+
+from src.composition.wiring.checkpointing import load_init_weights, resolve_test_ckpt_path
 from src.composition.wiring.common import forward_extras
+from src.composition.wiring.export import run_export
 from src.config.schema import ExperimentConfig, OptimizerConfig
 from src.core.entities import Task
 from src.models.assembly import CompositeModel
 from src.training.module import LitModule
 from src.training.optimizer import OptimizerBuilder
+
+if TYPE_CHECKING:
+    from src.training.datamodule import LitDataModule
+
+log = logging.getLogger(__name__)
 
 _OPTIMIZER_CORE_FIELDS = frozenset({"name", "lr", "weight_decay"})
 
@@ -96,3 +106,43 @@ def build_logger(config: ExperimentConfig) -> Any:
     from src.loggers.registry import build_logger as _build_logger
 
     return _build_logger(config)
+
+
+def run_fit_and_test(
+    trainer: L.Trainer,
+    lit_module: LitModule,
+    lit_dm: LitDataModule,
+    config: ExperimentConfig,
+    tasks: list[Task],
+) -> None:
+    """Run training and/or testing according to ``run_train`` / ``run_test`` flags.
+
+    Parameters:
+        trainer (L.Trainer): Configured Lightning trainer.
+        lit_module (LitModule): Model module.
+        lit_dm (LitDataModule): Data module.
+        config (ExperimentConfig): Validated experiment config.
+        tasks (list[Task]): Active tasks (for export planning).
+    """
+    trained = False
+    tested = False
+
+    if config.run_train:
+        if config.init_ckpt_path is not None:
+            load_init_weights(lit_module, config.init_ckpt_path)
+        trainer.fit(lit_module, lit_dm)
+        trained = True
+        log.info("Training complete.")
+
+    if config.run_test:
+        ckpt_path = resolve_test_ckpt_path(trainer, config, trained=trained)
+        if ckpt_path is not None:
+            log.info("Running test with checkpoint: %s", ckpt_path)
+            trainer.test(lit_module, lit_dm, ckpt_path=ckpt_path)
+        else:
+            log.info("Running test with in-memory weights.")
+            trainer.test(lit_module, lit_dm)
+        tested = True
+        log.info("Test complete.")
+
+    run_export(trainer, lit_module, tasks, config, trained=trained, tested=tested)

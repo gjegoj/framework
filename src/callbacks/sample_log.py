@@ -3,7 +3,7 @@
 The producer of the visualization pipeline: it gates by epoch/batch index,
 denormalizes the input image, builds one ``SampleView`` per batch element by
 delegating to per-task ``Annotator`` strategies, hands them to an injected
-``Renderer`` (Plotly by default), and ships the HTML through ``PlotLogger.log_html``.
+``Renderer`` (HTML by default), and ships the HTML through ``PlotLogger.log_html``.
 Knows nothing about ClearML or Plotly — both live behind boundaries.
 
 Replaces the MVP ``ImageGridLogCallback``.
@@ -25,7 +25,7 @@ from src.core.enums import Stage
 from src.core.ports import PlotLogger
 from src.training.module import LitModule
 from src.visualization.pipeline import build_sample_views
-from src.visualization.renderer import PlotlyRenderer, Renderer
+from src.visualization.renderer import HtmlRenderer, Renderer
 
 log = logging.getLogger(__name__)
 
@@ -40,7 +40,7 @@ class SampleLogCallback(L.Callback):
         mean (list[float] | None): Denormalization mean (default ImageNet).
         std (list[float] | None): Denormalization std (default ImageNet).
         title_prefix (str): Prefix for the logged grid title.
-        renderer (Renderer | None): IR → HTML renderer (default ``PlotlyRenderer``).
+        renderer (Renderer | None): IR → HTML renderer (default ``HtmlRenderer``).
     """
 
     def __init__(
@@ -48,8 +48,8 @@ class SampleLogCallback(L.Callback):
         num_images: int = 8,
         every_n_epochs: int = 5,
         batch_index: int = 0,
-        mean: tuple[float, float, float] | None = IMAGENET_MEAN,
-        std: tuple[float, float, float] | None = IMAGENET_STD,
+        mean: tuple[float, float, float] = IMAGENET_MEAN,
+        std: tuple[float, float, float] = IMAGENET_STD,
         title_prefix: str = "samples",
         renderer: Renderer | None = None,
     ) -> None:
@@ -66,7 +66,7 @@ class SampleLogCallback(L.Callback):
         self._mean = torch.tensor(mean, dtype=torch.float32)
         self._std = torch.tensor(std, dtype=torch.float32)
         self._title_prefix = title_prefix
-        self._renderer: Renderer = renderer if renderer is not None else PlotlyRenderer()
+        self._renderer: Renderer = renderer if renderer is not None else HtmlRenderer()
 
     def on_train_batch_end(
         self,

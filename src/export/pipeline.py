@@ -1,0 +1,188 @@
+"""Model export pipeline: plan → wrappers → registered exporters."""
+
+from __future__ import annotations
+
+import logging
+from pathlib import Path
+from typing import cast
+
+import torch.nn as nn
+
+from src.config.schema import ExperimentConfig
+from src.core.entities import ExportRequest, Task
+from src.core.ports import Head
+from src.export.entities import ExportArtifact, ExportArtifactKind, ExportFormat
+from src.export.registry import exporters
+from src.export.spec import build_export_plan
+from src.export.wrapper import BackboneExportModel, CombinedExportModel, HeadExportModel
+from src.models.assembly import CompositeModel
+
+log = logging.getLogger(__name__)
+
+
+def resolve_export_io_names(semantic_names: list[str], *, prefix: str, generic: bool) -> list[str]:
+    """Map semantic tensor names to deployment-facing I/O names.
+
+    Parameters:
+        semantic_names (list[str]): Internal names (task names, stream keys, …).
+        prefix (str): ``input`` or ``output``.
+        generic (bool): When true, use ``prefix`` / ``prefix_N``; else keep ``semantic_names``.
+
+    Returns:
+        list[str]: Names passed to the exporter.
+    """
+    if not generic:
+        return list(semantic_names)
+    if len(semantic_names) == 1:
+        return [prefix]
+    return [f"{prefix}_{index}" for index in range(len(semantic_names))]
+
+
+def _prepare_module(module: nn.Module) -> nn.Module:
+    module.eval()
+    return module.cpu()
+
+
+def _export_module(
+    wrapper: nn.Module,
+    args: tuple,
+    path: Path,
+    *,
+    format_name: str,
+    input_names: list[str],
+    output_names: list[str],
+    dynamic_batch: bool,
+    options: dict[str, object],
+) -> None:
+    module = _prepare_module(wrapper)
+    request = ExportRequest(
+        module=module,
+        example_inputs=args,
+        path=path,
+        input_names=input_names,
+        output_names=output_names,
+        dynamic_batch=dynamic_batch,
+        options=options,
+    )
+    exporters.create(format_name).export(request)
+
+
+def _emit(
+    wrapper: nn.Module,
+    args: tuple,
+    *,
+    basename: Path,
+    input_names: list[str],
+    output_names: list[str],
+    formats: list[str],
+    kind: ExportArtifactKind,
+    config: ExperimentConfig,
+    task_name: str | None = None,
+) -> list[ExportArtifact]:
+    artifacts: list[ExportArtifact] = []
+    options: dict[str, object] = {"opset_version": config.export.opset_version}
+    for format_name in formats:
+        exporter = exporters.create(format_name)
+        path = basename.with_suffix(exporter.extension)
+        _export_module(
+            wrapper,
+            args,
+            path,
+            format_name=format_name,
+            input_names=input_names,
+            output_names=output_names,
+            dynamic_batch=config.export.dynamic_batch,
+            options=options,
+        )
+        export_format = cast(ExportFormat, format_name)
+        artifacts.append(ExportArtifact(path=path, format=export_format, kind=kind, name=task_name))
+        if task_name is not None:
+            log.info("Exported head '%s' %s → %s", task_name, format_name, path)
+        elif kind == "backbone":
+            log.info("Exported backbone %s → %s", format_name, path)
+        else:
+            log.info("Exported combined %s → %s", format_name, path)
+    return artifacts
+
+
+def export_model(
+    model: CompositeModel,
+    tasks: list[Task],
+    config: ExperimentConfig,
+    output_dir: Path,
+) -> list[ExportArtifact]:
+    """Export ``model`` according to ``config.export``.
+
+    Parameters:
+        model (CompositeModel): Assembled model with final weights for deployment.
+        tasks (list[Task]): Active tasks.
+        config (ExperimentConfig): Validated experiment config.
+        output_dir (Path): Directory for artifact files.
+
+    Returns:
+        list[ExportArtifact]: Written files.
+    """
+    if not config.export.formats:
+        return []
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    plan = build_export_plan(model, tasks, config)
+    model = model.cpu()
+    model.eval()
+    task_by_name = {task.name: task for task in tasks}
+    artifacts: list[ExportArtifact] = []
+    generic_io = config.export.generic_io_names
+    image_arg = (plan.dummy_image.clone(),)
+
+    if config.export.combined:
+        activations = {name: task_by_name[name].activation for name in plan.task_names}
+        wrapper = CombinedExportModel(model, plan.task_names, activations, input_key=plan.input_key)
+        artifacts.extend(
+            _emit(
+                wrapper,
+                image_arg,
+                basename=output_dir / "model_combined",
+                input_names=resolve_export_io_names([plan.input_key], prefix="input", generic=generic_io),
+                output_names=resolve_export_io_names(list(plan.task_names), prefix="output", generic=generic_io),
+                formats=config.export.formats,
+                kind="combined",
+                config=config,
+            )
+        )
+
+    if config.export.split_components:
+        backbone_wrapper = BackboneExportModel(model.backbone, plan.stream_keys, input_key=plan.input_key)
+        artifacts.extend(
+            _emit(
+                backbone_wrapper,
+                image_arg,
+                basename=output_dir / "backbone",
+                input_names=resolve_export_io_names([plan.input_key], prefix="input", generic=generic_io),
+                output_names=resolve_export_io_names(list(plan.stream_keys), prefix="output", generic=generic_io),
+                formats=config.export.formats,
+                kind="backbone",
+                config=config,
+            )
+        )
+
+        for task_name in plan.task_names:
+            head_wrapper = HeadExportModel(
+                cast(Head, model.heads[task_name]),
+                activation=task_by_name[task_name].activation,
+            )
+            spec = plan.head_specs[task_name]
+            artifacts.extend(
+                _emit(
+                    head_wrapper,
+                    (spec.dummy_features.clone(),),
+                    basename=output_dir / f"head_{task_name}",
+                    input_names=resolve_export_io_names([spec.feature_key], prefix="input", generic=generic_io),
+                    output_names=resolve_export_io_names([task_name], prefix="output", generic=generic_io),
+                    formats=config.export.formats,
+                    kind="head",
+                    config=config,
+                    task_name=task_name,
+                )
+            )
+
+    return artifacts

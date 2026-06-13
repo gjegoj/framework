@@ -1,0 +1,2 @@
+formats: [torchscript]
+opset_version: 17

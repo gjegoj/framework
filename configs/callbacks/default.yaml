@@ -5,10 +5,10 @@
 lr_monitor:
   logging_interval: epoch
 
-ema:
-  decay: 0.999
-  warmup_fraction: 0.1   # start EMA after 10% of steps (avoids noisy early average)
-  use_buffers: true      # include BatchNorm running stats
+# ema:
+#   decay: 0.999
+#   warmup_fraction: 0.1   # start EMA after 10% of steps (avoids noisy early average)
+#   use_buffers: true      # include BatchNorm running stats
 
 checkpoint:
   monitor: loss/val/total

@@ -1,0 +1,2 @@
+formats: [onnx, torchscript, tensorrt]
+opset_version: 17
