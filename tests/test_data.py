@@ -247,7 +247,7 @@ class TestMaxSamples:
             max_samples=6,
         )
         dm.setup()
-        total = sum(dm._runtime.dataset_sizes.values())
+        total = sum(len(dm._datasets[s]) for s in dm._datasets)
         assert total == 6
 
     def test_float_caps_fraction(self, csv_path: Path) -> None:
@@ -263,7 +263,7 @@ class TestMaxSamples:
             max_samples=0.5,
         )
         dm.setup()
-        total = sum(dm._runtime.dataset_sizes.values())
+        total = sum(len(dm._datasets[s]) for s in dm._datasets)
         assert total == 8  # 50% of 15 rows = 7.5 → 8 (pandas rounds up)
 
     def test_none_keeps_all_rows(self, csv_path: Path) -> None:
@@ -278,7 +278,7 @@ class TestMaxSamples:
             split={Stage.TRAIN: 0.8, Stage.VAL: 0.2},
         )
         dm.setup()
-        assert sum(dm._runtime.dataset_sizes.values()) == 15
+        assert sum(len(dm._datasets[s]) for s in dm._datasets) == 15
 
 
 class TestSplitDataframe:
@@ -476,7 +476,7 @@ class TestDataModule:
         datamodule.setup()
 
         assert runtime.num_classes == {"label": 3}
-        assert sum(runtime.dataset_sizes.values()) == 15
+        assert sum(len(datamodule._datasets[s]) for s in datamodule._datasets) == 15
 
         batch = next(iter(datamodule.train_dataloader()))
         assert batch.inputs["image"].shape[1:] == (3, 16, 16)
@@ -508,8 +508,8 @@ class TestDataModule:
         datamodule.setup()
 
         assert runtime.num_classes == {"label": 3}
-        assert runtime.dataset_sizes[Stage.TRAIN] == 10
-        assert runtime.dataset_sizes[Stage.VAL] == 5
+        assert len(datamodule._datasets[Stage.TRAIN]) == 10
+        assert len(datamodule._datasets[Stage.VAL]) == 5
 
         batch = next(iter(datamodule.train_dataloader()))
         assert batch.inputs["image"].shape[1:] == (3, 16, 16)

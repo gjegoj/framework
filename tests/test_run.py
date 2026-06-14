@@ -159,5 +159,5 @@ class TestRunModeValidation:
         assert config.run_train is True
         assert config.run_test is True
         assert config.run_export is True
-        assert config.export.formats == ["onnx"]
+        assert [t.format for t in config.export.targets] == ["onnx"]
         assert config.ckpt_path is None

@@ -9,6 +9,7 @@ import cv2
 import numpy as np
 import pandas as pd
 import pytest
+import torch
 
 from src.callbacks.batch_transform import BatchTransformCallback
 from src.composition.wiring import (
@@ -505,8 +506,9 @@ class TestBuildLitModule:
         opt_builder = OptimizerBuilder(base_lr=1e-3)
 
         lit = build_lit_module(config, model, tasks, opt_builder)
-        opt = lit.configure_optimizers()
-        lrs = {g["name"]: g["lr"] for g in opt.param_groups}
+        result = lit.configure_optimizers()
+        assert isinstance(result, torch.optim.Optimizer)
+        lrs = {g["name"]: g["lr"] for g in result.param_groups}
         assert lrs["backbone"] == pytest.approx(1e-3)
         assert lrs["head/label"] == pytest.approx(1e-4)
 
@@ -539,7 +541,7 @@ class TestFullWiringSmoke:
         raw["data"]["sources"] = str(csv_path)
         config = load_config(raw)
 
-        runtime = RuntimeContext(epochs=config.epochs)
+        runtime = RuntimeContext()
         plain_dm = DataModule(
             target_bindings=build_bindings(config),
             inputs_config="image_path",
@@ -689,7 +691,7 @@ class TestBuildBatchTransform:
         from src.transforms.batch import MixUp
 
         config = load_config(_minimal_config())  # 'label' = classification (GLOBAL)
-        runtime = RuntimeContext(epochs=1)
+        runtime = RuntimeContext()
         runtime.num_classes["label"] = 3
         ctx = WiringContext(config=config, runtime=runtime)
 
@@ -706,7 +708,7 @@ class TestBuildBatchTransform:
         raw = _minimal_config()
         raw["tasks"] = {"mask": {"preset": "segmentation", "target": "mask_path", "num_classes": 4}}
         config = load_config(raw)
-        ctx = WiringContext(config=config, runtime=RuntimeContext(epochs=1))
+        ctx = WiringContext(config=config, runtime=RuntimeContext())
 
         transform = _build_batch_transform({"name": "mosaic"}, ctx)
 
@@ -719,7 +721,7 @@ class TestBuildBatchTransform:
         raw = _minimal_config()
         raw["tasks"] = {"mask": {"preset": "segmentation", "target": "mask_path", "num_classes": 4}}
         config = load_config(raw)
-        ctx = WiringContext(config=config, runtime=RuntimeContext(epochs=1))
+        ctx = WiringContext(config=config, runtime=RuntimeContext())
 
         with pytest.raises(ValueError, match="coherent target"):
             _build_batch_transform({"name": "mixup"}, ctx)
@@ -732,7 +734,7 @@ class TestBuildBatchTransform:
             "mixup": {"name": "batch_transform", "disable_after_fraction": 0.5, "transform": {"name": "mixup"}}
         }
         config = load_config(raw)
-        runtime = RuntimeContext(epochs=1)
+        runtime = RuntimeContext()
         runtime.num_classes["label"] = 3
 
         callbacks = build_callbacks(config, runtime)

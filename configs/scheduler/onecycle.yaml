@@ -1,0 +1,7 @@
+name: onecycle
+interval: step
+max_lr: ${lr}
+pct_start: 0.05
+final_div_factor: 2
+runtime_kwargs:
+  total_steps: total_steps

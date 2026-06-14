@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import albumentations as A
 import cv2
@@ -354,3 +354,103 @@ class TestSegmentationSmoke:
         trainer.fit(lit_module, LitDataModule(plain_dm))
 
         assert "mask/iou/val/mean" in trainer.logged_metrics
+
+
+class TestSchedulerRegistry:
+    def test_builtin_schedulers_resolve(self) -> None:
+        import torch.optim.lr_scheduler as sched
+
+        from src.training.registry import schedulers
+
+        assert schedulers.get("cosine") is sched.CosineAnnealingLR
+        assert schedulers.get("onecycle") is sched.OneCycleLR
+        assert schedulers.get("plateau") is sched.ReduceLROnPlateau
+        assert schedulers.get("step") is sched.StepLR
+
+
+class TestSchedulerBuilder:
+    @staticmethod
+    def _optimizer() -> torch.optim.Optimizer:
+        return torch.optim.SGD([torch.nn.Parameter(torch.zeros(1))], lr=0.1)
+
+    def test_cosine_builds_epoch_config_without_monitor(self) -> None:
+        from src.training.scheduler import SchedulerBuilder
+
+        builder = SchedulerBuilder.from_name("cosine", interval="epoch", extra_kwargs={"T_max": 5})
+        config = builder.build(self._optimizer(), trainer_facts={})
+        assert isinstance(config["scheduler"], torch.optim.lr_scheduler.CosineAnnealingLR)
+        assert config["interval"] == "epoch"
+        assert "monitor" not in config
+
+    def test_plateau_includes_monitor(self) -> None:
+        from src.training.scheduler import SchedulerBuilder
+
+        builder = SchedulerBuilder.from_name("plateau", monitor="loss/val", extra_kwargs={"mode": "min"})
+        config = builder.build(self._optimizer(), trainer_facts={})
+        assert config["monitor"] == "loss/val"
+
+    def test_runtime_kwargs_routes_trainer_fact(self) -> None:
+        from src.training.scheduler import SchedulerBuilder
+
+        builder = SchedulerBuilder.from_name(
+            "onecycle",
+            interval="step",
+            runtime_kwargs={"total_steps": "total_steps"},
+            extra_kwargs={"max_lr": 0.1},
+        )
+        config = builder.build(
+            self._optimizer(), trainer_facts={"total_steps": 100, "steps_per_epoch": 10, "epochs": 5}
+        )
+        scheduler = config["scheduler"]
+        assert isinstance(scheduler, torch.optim.lr_scheduler.OneCycleLR)
+        assert scheduler.total_steps == 100  # routed from trainer_facts["total_steps"]
+
+
+class TestSchedulerWiring:
+    def test_build_scheduler_builder_none(self) -> None:
+        from src.composition.wiring.training import build_scheduler_builder
+
+        assert build_scheduler_builder(None) is None
+
+    def test_build_scheduler_builder_rejects_unknown_fact(self) -> None:
+        from src.composition.wiring.training import build_scheduler_builder
+        from src.config.schema import SchedulerConfig
+
+        cfg = SchedulerConfig.model_validate(
+            {"name": "onecycle", "interval": "step", "runtime_kwargs": {"total_steps": "bogus"}}
+        )
+        with pytest.raises(ValueError, match="trainer fact"):
+            build_scheduler_builder(cfg)
+
+    def test_configure_optimizers_returns_scheduler_dict(self) -> None:
+        from types import SimpleNamespace
+
+        from src.training.scheduler import SchedulerBuilder
+
+        task = classification("label", num_classes=3)
+        model = build_composite_model(TimmBackbone("resnet18", pretrained=False), {"label": task.head_spec})
+        builder = SchedulerBuilder.from_name(
+            "onecycle",
+            interval="step",
+            runtime_kwargs={"total_steps": "total_steps"},
+            extra_kwargs={"max_lr": 0.1},
+        )
+        lit = LitModule(
+            model=model,
+            tasks=[task],
+            optimizer_builder=OptimizerBuilder(base_lr=1e-3),
+            scheduler_builder=builder,
+        )
+        lit._trainer = SimpleNamespace(estimated_stepping_batches=50, num_training_batches=10, max_epochs=5)  # type: ignore[assignment]
+        result = lit.configure_optimizers()
+        assert isinstance(result, dict)
+        lr_scheduler = cast(dict[str, Any], result)["lr_scheduler"]
+        assert isinstance(lr_scheduler, dict)
+        assert lr_scheduler["interval"] == "step"
+        assert lr_scheduler["scheduler"].total_steps == 50
+
+    def test_configure_optimizers_without_scheduler_returns_optimizer(self) -> None:
+        task = classification("label", num_classes=3)
+        model = build_composite_model(TimmBackbone("resnet18", pretrained=False), {"label": task.head_spec})
+        lit = LitModule(model=model, tasks=[task], optimizer_builder=OptimizerBuilder(base_lr=1e-3))
+        assert isinstance(lit.configure_optimizers(), torch.optim.Optimizer)

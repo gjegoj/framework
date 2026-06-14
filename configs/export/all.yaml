@@ -1,2 +1,3 @@
-formats: [onnx, torchscript, tensorrt]
-opset_version: 17
+targets:
+  - {format: onnx, opset_version: 17, simplify: true}
+  - {format: torchscript, method: trace}

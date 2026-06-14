@@ -15,10 +15,11 @@ Design notes:
 from __future__ import annotations
 
 import math
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from src.config.export import ExportConfig
 from src.core.constants import IMAGENET_MEAN, IMAGENET_STD
 from src.core.enums import Stage
 
@@ -191,6 +192,29 @@ class OptimizerConfig(BaseModel):
     model_config = ConfigDict(extra="allow")
 
 
+class SchedulerConfig(BaseModel):
+    """LR scheduler selection, Lightning scheduling policy, and scheduler kwargs.
+
+    Mirrors ``OptimizerConfig``: ``name`` selects a class from the ``schedulers``
+    registry; the policy fields map to Lightning's ``lr_scheduler`` config; all
+    other fields (``T_max``, ``max_lr``, ``factor``, …) forward verbatim to the
+    constructor. ``runtime_kwargs`` maps a constructor parameter to a trainer
+    fact (``total_steps`` / ``steps_per_epoch`` / ``epochs``) filled at fit time.
+    """
+
+    name: str = Field(..., description="Scheduler registry key (cosine / onecycle / plateau / step).")
+    interval: Literal["epoch", "step"] = Field("epoch", description="When Lightning steps the scheduler.")
+    frequency: int = Field(1, ge=1, description="Step the scheduler every N intervals.")
+    monitor: str | None = Field(None, description="Metric to monitor (required for ReduceLROnPlateau).")
+    strict: bool = Field(True, description="Error if the monitored metric is missing.")
+    runtime_kwargs: dict[str, str] = Field(
+        default_factory=dict,
+        description="Constructor param → trainer fact (total_steps / steps_per_epoch / epochs).",
+    )
+
+    model_config = ConfigDict(extra="allow")
+
+
 class TaskConfig(BaseModel):
     """One task declared under ``tasks`` (keyed by task name).
 
@@ -302,48 +326,6 @@ class TrainerConfig(BaseModel):
     model_config = ConfigDict(extra="allow")
 
 
-class ExportConfig(BaseModel):
-    """Model export settings (ONNX / TorchScript / future TensorRT)."""
-
-    formats: list[str] = Field(
-        default_factory=lambda: ["onnx"],
-        description="Export formats to emit. Empty list disables export even when run_export is true.",
-    )
-    opset_version: int = Field(17, ge=9, description="ONNX opset version.")
-    combined: bool = Field(True, description="Export one combined graph: image → all task logits.")
-    split_components: bool = Field(
-        False,
-        description="Also export backbone and each head as separate files.",
-    )
-    output_dir: str | None = Field(
-        None,
-        description="Directory for exported artifacts. Defaults to '{save_dir}/export' when unset.",
-    )
-    dynamic_batch: bool = Field(True, description="Mark batch dimension as dynamic in ONNX.")
-    generic_io_names: bool = Field(
-        True,
-        description=(
-            "Name exported tensors ``input`` / ``output`` (or ``input_0``, ``output_1``, … when "
-            "there are multiple). When false, keep semantic names (task names, stream keys)."
-        ),
-    )
-    input_key: str | None = Field(
-        None,
-        description="Model input alias for export (defaults to the sole image input from data.inputs).",
-    )
-
-    model_config = ConfigDict(extra="forbid")
-
-    @field_validator("formats")
-    @classmethod
-    def _validate_formats(cls, value: list[str]) -> list[str]:
-        allowed = {"onnx", "torchscript"}
-        unknown = set(value) - allowed
-        if unknown:
-            raise ValueError(f"export.formats: unknown format(s) {sorted(unknown)}. Allowed: {sorted(allowed)}.")
-        return value
-
-
 class ExperimentConfig(BaseModel):
     """Root experiment contract assembled from the YAML config."""
 
@@ -378,6 +360,10 @@ class ExperimentConfig(BaseModel):
             "``ckpt_path`` when ``run_train`` is ``false``."
         ),
     )
+    run_export: bool = Field(
+        True,
+        description="Export the model after train/test using ``export`` settings.",
+    )
     ckpt_path: str | None = Field(
         None,
         description=(
@@ -397,10 +383,6 @@ class ExperimentConfig(BaseModel):
             "the file was saved with EMA). Requires ``run_train: true``."
         ),
     )
-    run_export: bool = Field(
-        True,
-        description="Export the model after train/test using ``export`` settings.",
-    )
     epochs: int = Field(..., gt=0, description="Number of training epochs.")
     batch_size: int = Field(..., gt=0, description="Batch size.")
     image_size: tuple[int, int] = Field(..., description="Image (height, width) in pixels.")
@@ -415,6 +397,7 @@ class ExperimentConfig(BaseModel):
     dataloader: DataLoaderConfig = Field(default_factory=DataLoaderConfig)
     backbone: BackboneConfig
     optimizer: OptimizerConfig
+    scheduler: SchedulerConfig | None = Field(None, description="LR scheduler config; None = constant LR.")
     tasks: dict[str, TaskConfig] = Field(..., min_length=1, description="Tasks by name.")
     transforms: dict[str, Any] | None = Field(
         None,

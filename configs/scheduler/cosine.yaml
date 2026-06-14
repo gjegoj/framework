@@ -1,0 +1,4 @@
+name: cosine
+interval: epoch
+T_max: ${epochs}
+eta_min: 1.0e-6

@@ -1,0 +1,3 @@
+# @package _global_
+# No LR scheduler — constant learning rate.
+scheduler: null

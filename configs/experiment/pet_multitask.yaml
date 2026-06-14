@@ -1,9 +1,9 @@
 # @package _global_
-
 defaults:
   - override /backbone: smp_unet
   - override /logger: clearml
   - override /callbacks: default
+  - override /scheduler: onecycle
 
 project: pet-multitask
 seed: 0
@@ -11,9 +11,10 @@ epochs: 6
 batch_size: 8
 image_size: [128, 128]
 
-run_train: true
-run_test: true
+run_train: false
+run_test: false
 run_export: true
+ckpt_path: runs/pet-multitask/2026-06-14/20-51-17/checkpoints/epoch=5-step=264.ckpt
 
 callbacks:
   sample_log:
@@ -48,47 +49,44 @@ tasks:
     target: breed
     feature_key: encoder_last
     class_mapping:
-      0: "Abyssinian"
-      1: "Bengal"
-      2: "Birman"
-      3: "Bombay"
-      4: "British_Shorthair"
-      5: "Egyptian_Mau"
-      6: "Maine_Coon"
-      7: "Persian"
-      8: "Ragdoll"
-      9: "Russian_Blue"
-      10: "Siamese"
-      11: "Sphynx"
-      12: "american_bulldog"
-      13: "american_pit_bull_terrier"
-      14: "basset_hound"
-      15: "beagle"
-      16: "boxer"
-      17: "chihuahua"
-      18: "english_cocker_spaniel"
-      19: "english_setter"
-      20: "german_shorthaired"
-      21: "great_pyrenees"
-      22: "havanese"
-      23: "japanese_chin"
-      24: "keeshond"
-      25: "leonberger"
-      26: "miniature_pinscher"
-      27: "newfoundland"
-      28: "pomeranian"
-      29: "pug"
-      30: "saint_bernard"
-      31: "samoyed"
-      32: "scottish_terrier"
-      33: "shiba_inu"
-      34: "staffordshire_bull_terrier"
-      35: "wheaten_terrier"
-      36: "yorkshire_terrier"
+      0: Abyssinian
+      1: Bengal
+      2: Birman
+      3: Bombay
+      4: British_Shorthair
+      5: Egyptian_Mau
+      6: Maine_Coon
+      7: Persian
+      8: Ragdoll
+      9: Russian_Blue
+      10: Siamese
+      11: Sphynx
+      12: american_bulldog
+      13: american_pit_bull_terrier
+      14: basset_hound
+      15: beagle
+      16: boxer
+      17: chihuahua
+      18: english_cocker_spaniel
+      19: english_setter
+      20: german_shorthaired
+      21: great_pyrenees
+      22: havanese
+      23: japanese_chin
+      24: keeshond
+      25: leonberger
+      26: miniature_pinscher
+      27: newfoundland
+      28: pomeranian
+      29: pug
+      30: saint_bernard
+      31: samoyed
+      32: scottish_terrier
+      33: shiba_inu
+      34: staffordshire_bull_terrier
+      35: wheaten_terrier
+      36: yorkshire_terrier
 
-  # DENSE × multiclass — trimap segmentation. class_mapping (like classification)
-  # both sizes the head (num_classes inferred) AND names the classes, so the
-  # SampleLogCallback masks show "pet"/"background"/"boundary" instead of 0/1/2.
   mask:
     preset: segmentation
     target: mask_path

@@ -1,10 +1,13 @@
 """Unit tests for the experiment config schema and loader."""
 
+from pathlib import Path
 from typing import Any
 
 import pytest
+from pydantic import ValidationError
 
 from src.config import ConfigError, ExperimentConfig, load_config
+from src.config.export import ExportConfig, OnnxOptions, TorchScriptOptions
 
 
 def _raw(**overrides: Any) -> dict[str, Any]:
@@ -130,3 +133,117 @@ class TestInvalidConfig:
     def test_non_positive_lr_rejected(self) -> None:
         with pytest.raises(ConfigError):
             load_config(_raw(optimizer={"lr": 0.0}))
+
+
+class TestExportConfigSchema:
+    def test_default_target_is_onnx(self) -> None:
+        cfg = ExportConfig()
+        assert len(cfg.targets) == 1
+        assert isinstance(cfg.targets[0], OnnxOptions)
+        assert cfg.targets[0].opset_version == 17
+        assert cfg.targets[0].dynamic_batch is True
+
+    def test_onnx_options_round_trip(self) -> None:
+        cfg = ExportConfig.model_validate({"targets": [{"format": "onnx", "opset_version": 13}]})
+        assert isinstance(cfg.targets[0], OnnxOptions)
+        assert cfg.targets[0].opset_version == 13
+
+    def test_torchscript_target_parsed(self) -> None:
+        cfg = ExportConfig.model_validate({"targets": [{"format": "torchscript"}]})
+        assert isinstance(cfg.targets[0], TorchScriptOptions)
+
+    def test_onnx_option_under_torchscript_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            ExportConfig.model_validate({"targets": [{"format": "torchscript", "opset_version": 17}]})
+
+    def test_unknown_format_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            ExportConfig.model_validate({"targets": [{"format": "coreml"}]})
+
+    def test_empty_targets_allowed(self) -> None:
+        cfg = ExportConfig.model_validate({"targets": []})
+        assert cfg.targets == []
+
+    def test_onnx_simplify_default_false(self) -> None:
+        assert OnnxOptions().simplify is False
+
+    def test_simplify_under_torchscript_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            ExportConfig.model_validate({"targets": [{"format": "torchscript", "simplify": True}]})
+
+    def test_torchscript_method_default_trace(self) -> None:
+        assert TorchScriptOptions().method == "trace"
+
+    def test_torchscript_method_script_accepted(self) -> None:
+        cfg = ExportConfig.model_validate({"targets": [{"format": "torchscript", "method": "script"}]})
+        target = cfg.targets[0]
+        assert isinstance(target, TorchScriptOptions)
+        assert target.method == "script"
+
+    def test_torchscript_method_invalid_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            ExportConfig.model_validate({"targets": [{"format": "torchscript", "method": "bogus"}]})
+
+    def test_verification_defaults_on_onnx(self) -> None:
+        opt = OnnxOptions()
+        assert opt.verify_outputs is True
+        assert opt.atol == 1e-4
+        assert opt.rtol == 1e-3
+        assert opt.check_model is True
+        assert opt.infer_shapes is False
+
+    def test_torchscript_inherits_verification_fields(self) -> None:
+        opt = TorchScriptOptions(atol=1e-2)
+        assert opt.verify_outputs is True
+        assert opt.atol == 1e-2
+
+    def test_check_model_under_torchscript_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            ExportConfig.model_validate({"targets": [{"format": "torchscript", "check_model": True}]})
+
+    def test_negative_atol_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            ExportConfig.model_validate({"targets": [{"format": "onnx", "atol": -1.0}]})
+
+
+class TestSchedulerConfig:
+    def test_scheduler_defaults_none(self) -> None:
+        assert load_config(_raw()).scheduler is None
+
+    def test_scheduler_parsed_with_extras_and_runtime_kwargs(self) -> None:
+        cfg = load_config(
+            _raw(
+                scheduler={
+                    "name": "onecycle",
+                    "interval": "step",
+                    "max_lr": 0.1,
+                    "runtime_kwargs": {"total_steps": "total_steps"},
+                }
+            )
+        )
+        assert cfg.scheduler is not None
+        assert cfg.scheduler.name == "onecycle"
+        assert cfg.scheduler.runtime_kwargs == {"total_steps": "total_steps"}
+        assert cfg.scheduler.model_dump()["max_lr"] == 0.1
+
+    def test_scheduler_name_required(self) -> None:
+        with pytest.raises(ConfigError):
+            load_config(_raw(scheduler={"interval": "step"}))
+
+    def test_scheduler_interval_validated(self) -> None:
+        with pytest.raises(ConfigError):
+            load_config(_raw(scheduler={"name": "cosine", "interval": "minute"}))
+
+
+class TestSchedulerYamlConfigs:
+    def test_active_scheduler_group_files_validate(self) -> None:
+        import yaml
+
+        from src.config.schema import SchedulerConfig
+
+        for name in ("cosine", "onecycle", "plateau"):
+            raw = yaml.safe_load(Path(f"configs/scheduler/{name}.yaml").read_text())
+            for key, value in list(raw.items()):
+                if isinstance(value, str) and value.startswith("${"):
+                    raw[key] = 1
+            SchedulerConfig.model_validate(raw)

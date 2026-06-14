@@ -279,8 +279,8 @@ class ExportRequest:
         path (Path): Destination file path (suffix set by the exporter).
         input_names (list[str]): Logical input tensor names for the serialized graph.
         output_names (list[str]): Logical output tensor names.
-        dynamic_batch (bool): Whether batch dimension should be treated as dynamic.
-        options (dict[str, Any]): Format-specific options (e.g. ``opset_version`` for ONNX).
+        options (dict[str, Any]): Format-specific options (e.g. ``opset_version``,
+            ``dynamic_batch`` for ONNX). The sole carrier of per-format settings.
     """
 
     module: nn.Module
@@ -288,5 +288,4 @@ class ExportRequest:
     path: Path
     input_names: list[str]
     output_names: list[str]
-    dynamic_batch: bool
     options: dict[str, Any] = field(default_factory=dict)

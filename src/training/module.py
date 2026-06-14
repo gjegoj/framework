@@ -21,8 +21,8 @@ from collections.abc import Sequence
 from typing import Any
 
 import lightning as L
-import torch
 from lightning.pytorch.loggers import Logger as LightningLogger
+from lightning.pytorch.utilities.types import OptimizerLRScheduler, OptimizerLRSchedulerConfig
 
 from src.core.entities import Batch, LossResult, StepOutput, Task, TaskStepView
 from src.core.enums import Stage
@@ -37,6 +37,7 @@ from src.metrics.handlers import (
 from src.models.assembly import CompositeModel
 from src.training.aggregator import WeightedSumAggregator
 from src.training.optimizer import OptimizerBuilder
+from src.training.scheduler import TRAINER_FACTS, SchedulerBuilder
 
 
 class LitModule(L.LightningModule):
@@ -46,6 +47,7 @@ class LitModule(L.LightningModule):
         model (CompositeModel): Shared backbone + heads.
         tasks (list[Task]): Task bundles (codec/criterion/activation/metrics).
         optimizer_builder (OptimizerBuilder): Builds the optimizer on configure.
+        scheduler_builder (SchedulerBuilder | None): Optional LR scheduler builder.
         aggregator (LossAggregator | None): Loss combiner; defaults to weighted sum.
         task_lr_overrides (dict[str, float] | None): Per-head LR for the optimizer.
     """
@@ -55,6 +57,7 @@ class LitModule(L.LightningModule):
         model: CompositeModel,
         tasks: list[Task],
         optimizer_builder: OptimizerBuilder,
+        scheduler_builder: SchedulerBuilder | None = None,
         aggregator: LossAggregator | None = None,
         task_lr_overrides: dict[str, float] | None = None,
         metric_handlers: Sequence[MetricHandler] = DEFAULT_METRIC_HANDLERS,
@@ -65,6 +68,7 @@ class LitModule(L.LightningModule):
         self.tasks = tasks
         self._task_map: dict[str, Task] = {t.name: t for t in tasks}
         self._optimizer_builder = optimizer_builder
+        self._scheduler_builder = scheduler_builder
         self._aggregator: LossAggregator = aggregator or WeightedSumAggregator()
         self._task_lr_overrides = task_lr_overrides or {}
         self._metric_handlers: tuple[MetricHandler, ...] = tuple(metric_handlers)
@@ -141,10 +145,6 @@ class LitModule(L.LightningModule):
                 dispatch(f"{task.name}/{metric_name}/{stage}", value, ctx, self._metric_handlers)
             task.metrics[stage].reset()
 
-    # Metrics are reset in ``_shared_epoch_end`` right after ``compute()`` (the
-    # standard torchmetrics idiom), so each epoch starts from a clean state —
-    # no ``on_*_epoch_start`` reset is needed.
-
     def on_train_epoch_end(self) -> None:
         self._shared_epoch_end(Stage.TRAIN)
 
@@ -156,8 +156,16 @@ class LitModule(L.LightningModule):
 
     # ----------------------------------------------------------- optimizer
 
-    def configure_optimizers(self) -> torch.optim.Optimizer:
-        return self._optimizer_builder.build(self.model, task_lr_overrides=self._task_lr_overrides)
+    def configure_optimizers(self) -> OptimizerLRScheduler:
+        optimizer = self._optimizer_builder.build(self.model, task_lr_overrides=self._task_lr_overrides)
+        if self._scheduler_builder is None:
+            return optimizer
+        trainer_facts = {name: getattr(self.trainer, attr) for name, attr in TRAINER_FACTS.items()}
+        config: OptimizerLRSchedulerConfig = {
+            "optimizer": optimizer,
+            "lr_scheduler": self._scheduler_builder.build(optimizer, trainer_facts),
+        }
+        return config
 
     # ---------------------------------------------------------------- utils
 

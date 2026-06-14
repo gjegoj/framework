@@ -31,8 +31,10 @@ from src.composition.wiring import (
     build_lit_module,
     build_logger,
     build_optimizer_builder,
+    build_scheduler_builder,
     build_tasks,
     run_fit_and_test,
+    validate_export_preconditions,
 )
 from src.config import load_config
 from src.core.runtime import RuntimeContext
@@ -52,7 +54,7 @@ def main(cfg: DictConfig) -> None:
     L.seed_everything(config.seed, workers=True, verbose=False)
 
     # 1. Runtime context — populated incrementally as setup steps run
-    runtime = RuntimeContext(epochs=config.epochs)
+    runtime = RuntimeContext()
 
     # 2. Data: read → fit codecs (infers num_classes) → split → datasets
     bindings = build_bindings(config)
@@ -61,6 +63,7 @@ def main(cfg: DictConfig) -> None:
 
     # 3. Tasks — built after setup so num_classes is a concrete int
     tasks = build_tasks(config, runtime)
+    validate_export_preconditions(config, tasks)  # fail before training if export is impossible
 
     # 4. Model — heads sized from backbone.feature_dim, derived from tasks
     backbone = build_backbone(config.backbone)
@@ -68,9 +71,10 @@ def main(cfg: DictConfig) -> None:
 
     # 5. Optimizer
     optimizer_builder = build_optimizer_builder(config.optimizer)
+    scheduler_builder = build_scheduler_builder(config.scheduler)
 
     # 6. Lightning wrappers (humble objects delegating to domain logic)
-    lit_module = build_lit_module(config, model, tasks, optimizer_builder)
+    lit_module = build_lit_module(config, model, tasks, optimizer_builder, scheduler_builder)
     lit_dm = LitDataModule(plain_dm)
 
     # 7. Train and/or test

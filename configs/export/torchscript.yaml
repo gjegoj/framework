@@ -1,2 +1,2 @@
-formats: [torchscript]
-opset_version: 17
+targets:
+  - {format: torchscript, method: trace}

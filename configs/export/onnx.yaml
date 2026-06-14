@@ -1,2 +1,2 @@
-formats: [onnx]
-opset_version: 17
+targets:
+  - {format: onnx, opset_version: 17, simplify: true}

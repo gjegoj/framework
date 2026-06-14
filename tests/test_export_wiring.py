@@ -75,7 +75,7 @@ class TestEnsureModuleWeightsForExport:
 
 class TestRunExport:
     def test_resolves_save_dir_export_subfolder(self, tmp_path: Path) -> None:
-        config = load_config(_raw(save_dir=str(tmp_path), run_export=True, export={"formats": []}))
+        config = load_config(_raw(save_dir=str(tmp_path), run_export=True, export={"targets": []}))
         trainer = MagicMock()
         lit_module = MagicMock()
 
@@ -94,7 +94,7 @@ class TestRunExport:
             _raw(
                 save_dir=str(tmp_path),
                 run_export=True,
-                export={"formats": ["onnx"], "combined": True},
+                export={"targets": [{"format": "onnx"}], "combined": True},
                 image_size=[32, 32],
             )
         )

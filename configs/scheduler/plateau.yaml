@@ -1,0 +1,6 @@
+name: plateau
+interval: epoch
+monitor: loss/val/total
+mode: min
+factor: 0.1
+patience: 10

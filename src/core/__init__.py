@@ -26,7 +26,7 @@ from src.core.ports import (
     TaskCodec,
 )
 from src.core.registry import Registry
-from src.core.runtime import RuntimeContext, RuntimeValue, resolve_runtime
+from src.core.runtime import RuntimeContext
 
 __all__ = [
     "Activation",
@@ -42,11 +42,9 @@ __all__ = [
     "ModelOutput",
     "Registry",
     "RuntimeContext",
-    "RuntimeValue",
     "Sample",
     "Stage",
     "TargetView",
     "Task",
     "TaskCodec",
-    "resolve_runtime",
 ]

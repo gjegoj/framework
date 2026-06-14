@@ -11,6 +11,7 @@ from src.composition.wiring.checkpointing import load_init_weights, resolve_ckpt
 from src.config.schema import ExperimentConfig
 from src.core.entities import Task
 from src.export.pipeline import export_model
+from src.export.spec import guard_exportable_topologies
 from src.training.module import LitModule
 
 log = logging.getLogger(__name__)
@@ -41,6 +42,24 @@ def ensure_module_weights_for_export(
     load_init_weights(lit_module, resolve_ckpt_file(trainer, ckpt_path))
 
 
+def validate_export_preconditions(config: ExperimentConfig, tasks: list[Task]) -> None:
+    """Fail-fast export checks that need only config + tasks (run before training).
+
+    Per-format option validation already happens in ``load_config`` (the
+    ``ExportConfig`` discriminated union). This adds the model-independent
+    topology guard so an unexportable task is caught before a training run is
+    spent. Heavy, weight-dependent checks (the dummy backbone forward) stay in
+    ``build_export_plan`` at export time.
+
+    Parameters:
+        config (ExperimentConfig): Validated experiment config.
+        tasks (list[Task]): Active tasks in declaration order.
+    """
+    if not config.run_export:
+        return
+    guard_exportable_topologies(tasks)
+
+
 def run_export(
     trainer: L.Trainer,
     lit_module: LitModule,
@@ -60,7 +79,7 @@ def run_export(
         trained (bool): Whether training ran.
         tested (bool): Whether testing ran.
     """
-    if not config.run_export or not config.export.formats:
+    if not config.run_export or not config.export.targets:
         return
 
     ensure_module_weights_for_export(trainer, lit_module, config, trained=trained, tested=tested)

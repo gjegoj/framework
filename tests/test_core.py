@@ -2,7 +2,7 @@
 
 import pytest
 
-from src.core import Registry, RuntimeContext, RuntimeValue, Stage, resolve_runtime
+from src.core import Registry, RuntimeContext, Stage
 
 
 class TestRegistry:
@@ -31,44 +31,12 @@ class TestRegistry:
 
 
 class TestRuntimeContext:
-    def test_resolve_per_task_num_classes(self) -> None:
+    def test_num_classes_round_trips(self) -> None:
         ctx = RuntimeContext(num_classes={"species": 3})
-        assert ctx.resolve(RuntimeValue("num_classes", task="species")) == 3
+        assert ctx.num_classes["species"] == 3
 
-    def test_resolve_scalar_field(self) -> None:
-        ctx = RuntimeContext(total_steps=1000)
-        assert ctx.resolve(RuntimeValue("total_steps")) == 1000
-
-    def test_num_classes_requires_task(self) -> None:
-        ctx = RuntimeContext(num_classes={"species": 3})
-        with pytest.raises(ValueError, match="requires a task name"):
-            ctx.resolve(RuntimeValue("num_classes"))
-
-    def test_unpopulated_value_raises(self) -> None:
-        ctx = RuntimeContext()
-        with pytest.raises(ValueError, match="not populated yet"):
-            ctx.resolve(RuntimeValue("total_steps"))
-
-    def test_unknown_task_raises(self) -> None:
-        ctx = RuntimeContext(num_classes={"species": 3})
-        with pytest.raises(KeyError, match="not inferred for task 'color'"):
-            ctx.resolve(RuntimeValue("num_classes", task="color"))
-
-
-class TestResolveRuntime:
-    def test_nested_structure_resolved(self) -> None:
-        ctx = RuntimeContext(num_classes={"a": 5}, total_steps=200)
-        spec = {
-            "out_features": RuntimeValue("num_classes", task="a"),
-            "schedule": [RuntimeValue("total_steps"), 0.1],
-            "static": "keep",
-        }
-        resolved = resolve_runtime(spec, ctx)
-        assert resolved == {"out_features": 5, "schedule": [200, 0.1], "static": "keep"}
-
-    def test_plain_value_untouched(self) -> None:
-        ctx = RuntimeContext()
-        assert resolve_runtime(42, ctx) == 42
+    def test_defaults_empty(self) -> None:
+        assert RuntimeContext().num_classes == {}
 
 
 def test_stage_is_str() -> None:

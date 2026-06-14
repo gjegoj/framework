@@ -10,11 +10,11 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from src.config.export import ExportConfig, ExportTarget, OnnxOptions, TorchScriptOptions
 from src.config.schema import (
     BackboneConfig,
     DataConfig,
     ExperimentConfig,
-    ExportConfig,
     OptimizerConfig,
     TaskConfig,
     TrainerConfig,
@@ -49,8 +49,11 @@ __all__ = [
     "DataConfig",
     "ExperimentConfig",
     "ExportConfig",
+    "ExportTarget",
+    "OnnxOptions",
     "OptimizerConfig",
     "TaskConfig",
+    "TorchScriptOptions",
     "TrainerConfig",
     "load_config",
 ]

@@ -2,11 +2,12 @@ defaults:
   - hydra: default           # rich logging to terminal + file
   - backbone: resnet18
   - optimizer: adamw
+  - scheduler: none          # swap to cosine, onecycle, or plateau to enable
   - trainer: default
   - logger: none             # swap to clearml (or other) to enable experiment tracking
   - callbacks: none          # swap to default (lr_monitor + ema + checkpoint) or minimal
   - transforms: default      # swap to augmented or your own transforms config
-  - export: onnx             # swap to torchscript, tensorrt, or all
+  - export: torchscript             # swap to torchscript, tensorrt, or all
   - _self_
   - experiment: pet_multitask        # experiment overrides go last → highest priority
 

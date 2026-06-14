@@ -83,6 +83,27 @@ def resolve_export_input_key(config: ExperimentConfig) -> str:
     return aliases[0]
 
 
+def guard_exportable_topologies(tasks: list[Task]) -> None:
+    """Raise if any task's topology is not exportable in Phase 1 (pure check).
+
+    Needs only ``tasks`` + ``EXPORTABLE_TOPOLOGIES`` — no model, weights, or
+    dummy forward — so it can run before training as a fail-fast guard.
+
+    Parameters:
+        tasks (list[Task]): Active tasks.
+
+    Raises:
+        ValueError: If a task topology is not in ``EXPORTABLE_TOPOLOGIES``.
+    """
+    for task in tasks:
+        if task.topology not in EXPORTABLE_TOPOLOGIES:
+            raise ValueError(
+                f"Export does not yet support task '{task.name}' with topology "
+                f"{task.topology.value}. Phase 1 supports "
+                f"{sorted(t.value for t in EXPORTABLE_TOPOLOGIES)} only."
+            )
+
+
 def build_export_plan(model: CompositeModel, tasks: list[Task], config: ExperimentConfig) -> ExportPlan:
     """Build export metadata and validate Phase-1 (single-image) constraints.
 
@@ -97,12 +118,7 @@ def build_export_plan(model: CompositeModel, tasks: list[Task], config: Experime
     Raises:
         ValueError: If any task topology is not exportable in Phase 1 (ranking / multistream).
     """
-    for task in tasks:
-        if task.topology not in EXPORTABLE_TOPOLOGIES:
-            raise ValueError(
-                f"Export does not yet support task '{task.name}' with topology "
-                f"{task.topology.value}. Phase 1 supports {sorted(t.value for t in EXPORTABLE_TOPOLOGIES)} only."
-            )
+    guard_exportable_topologies(tasks)
 
     input_key = resolve_export_input_key(config)
     task_names = tuple(task.name for task in tasks)

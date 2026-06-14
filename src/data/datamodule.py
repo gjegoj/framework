@@ -160,7 +160,6 @@ class DataModule:
             transform=self._transforms[stage],
             root_path=self._root_path,
         )
-        self._runtime.dataset_sizes[stage] = len(self._datasets[stage])
 
     def _dataloader(self, stage: Stage, *, shuffle: bool, drop_last: bool = False) -> DataLoader:
         kwargs: dict = dict(

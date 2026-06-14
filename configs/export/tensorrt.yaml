@@ -1,2 +1,4 @@
-# Reserved for Phase 2 — not selectable via schema validation until implemented.
-# formats: [tensorrt]
+# Reserved for Phase 2 — not selectable until the tensorrt exporter is registered
+# and a TensorRtOptions member is added to the ExportTarget union.
+# targets:
+#   - {format: tensorrt, fp16: true}

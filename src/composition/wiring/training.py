@@ -10,11 +10,12 @@ import lightning as L
 from src.composition.wiring.checkpointing import load_init_weights, resolve_test_ckpt_path
 from src.composition.wiring.common import forward_extras
 from src.composition.wiring.export import run_export
-from src.config.schema import ExperimentConfig, OptimizerConfig
+from src.config.schema import ExperimentConfig, OptimizerConfig, SchedulerConfig
 from src.core.entities import Task
 from src.models.assembly import CompositeModel
 from src.training.module import LitModule
 from src.training.optimizer import OptimizerBuilder
+from src.training.scheduler import TRAINER_FACTS, SchedulerBuilder
 
 if TYPE_CHECKING:
     from src.training.datamodule import LitDataModule
@@ -22,6 +23,7 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 _OPTIMIZER_CORE_FIELDS = frozenset({"name", "lr", "weight_decay"})
+_SCHEDULER_CORE_FIELDS = frozenset({"name", "interval", "frequency", "monitor", "strict", "runtime_kwargs"})
 
 
 def build_optimizer_builder(optimizer_cfg: OptimizerConfig) -> OptimizerBuilder:
@@ -46,6 +48,39 @@ def build_optimizer_builder(optimizer_cfg: OptimizerConfig) -> OptimizerBuilder:
     )
 
 
+def build_scheduler_builder(scheduler_cfg: SchedulerConfig | None) -> SchedulerBuilder | None:
+    """Build a ``SchedulerBuilder`` from the optional scheduler config.
+
+    ``None`` config → ``None`` builder (constant LR). Validates that every
+    ``runtime_kwargs`` value names a known trainer fact (fail-fast, at startup).
+    Scheduler-specific extras forward verbatim, exactly like the optimizer.
+
+    Parameters:
+        scheduler_cfg (SchedulerConfig | None): Validated scheduler config (extras allowed).
+
+    Returns:
+        SchedulerBuilder | None: Builder bound to the named scheduler, or None.
+    """
+    if scheduler_cfg is None:
+        return None
+    unknown = set(scheduler_cfg.runtime_kwargs.values()) - set(TRAINER_FACTS)
+    if unknown:
+        raise ValueError(
+            f"scheduler.runtime_kwargs references unknown trainer fact(s) {sorted(unknown)}. "
+            f"Available: {sorted(TRAINER_FACTS)}."
+        )
+    extra = forward_extras(scheduler_cfg, _SCHEDULER_CORE_FIELDS)
+    return SchedulerBuilder.from_name(
+        scheduler_cfg.name,
+        interval=scheduler_cfg.interval,
+        frequency=scheduler_cfg.frequency,
+        monitor=scheduler_cfg.monitor,
+        strict=scheduler_cfg.strict,
+        runtime_kwargs=scheduler_cfg.runtime_kwargs,
+        extra_kwargs=extra,
+    )
+
+
 def build_task_lr_overrides(config: ExperimentConfig) -> dict[str, float]:
     """Extract per-task learning-rate overrides from task configs.
 
@@ -66,6 +101,7 @@ def build_lit_module(
     model: CompositeModel,
     tasks: list[Task],
     optimizer_builder: OptimizerBuilder,
+    scheduler_builder: SchedulerBuilder | None = None,
 ) -> LitModule:
     """Build a ``LitModule`` wired with per-task LR overrides and hyperparams from config.
 
@@ -86,6 +122,7 @@ def build_lit_module(
         model=model,
         tasks=tasks,
         optimizer_builder=optimizer_builder,
+        scheduler_builder=scheduler_builder,
         task_lr_overrides=build_task_lr_overrides(config),
         hparams=config.model_dump(mode="json"),
     )
