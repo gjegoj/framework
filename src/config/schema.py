@@ -24,6 +24,20 @@ from src.core.constants import IMAGENET_MEAN, IMAGENET_STD
 from src.core.enums import Stage
 
 
+class CacheConfig(BaseModel):
+    """In-RAM cache of decoded images/masks, warmed in the parent before training.
+
+    Budget is ``min(ram_fraction * available_RAM, max_gb)``. Caching is read-only
+    after warm-up, so cached buffers stay shared across DataLoader fork workers.
+    """
+
+    ram_fraction: float = Field(0.5, ge=0.0, le=1.0, description="Cap as a fraction of available RAM (0 disables).")
+    max_gb: float | None = Field(None, gt=0, description="Absolute cap in GiB; budget = min(fraction·RAM, max_gb).")
+    workers: int = Field(8, ge=1, description="Threads used to warm the cache.")
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class DataConfig(BaseModel):
     """Where data comes from and how it is divided into stages.
 
@@ -97,6 +111,7 @@ class DataConfig(BaseModel):
     )
     source_type: str | None = Field(None, description="data_sources key (csv/json); None -> inferred from extension.")
     root_path: str | None = Field(None, description="Optional prefix prepended to file-based input paths.")
+    cache: CacheConfig | None = Field(None, description="In-RAM image/mask cache; None disables.")
 
     model_config = ConfigDict(extra="allow")
 

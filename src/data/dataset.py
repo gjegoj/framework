@@ -23,6 +23,12 @@ from src.data.bindings import InputBinding, TargetBinding
 from src.transforms.input import Transform
 
 
+def resolve_path(root: Path | None, raw: object) -> str:
+    """Resolve a raw column value to a filesystem path, prefixing ``root`` if set."""
+    text = str(raw)
+    return str(root / text) if root is not None else text
+
+
 class Dataset(TorchDataset[Sample]):
     """Map-style dataset assembling one ``Sample`` per row.
 
@@ -52,8 +58,7 @@ class Dataset(TorchDataset[Sample]):
         return len(self._frame)
 
     def _resolve(self, raw: object) -> str:
-        text = str(raw)
-        return str(self._root / text) if self._root is not None else text
+        return resolve_path(self._root, raw)
 
     def __getitem__(self, index: int) -> Sample:
         row = self._frame.iloc[index]

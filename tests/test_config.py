@@ -247,3 +247,23 @@ class TestSchedulerYamlConfigs:
                 if isinstance(value, str) and value.startswith("${"):
                     raw[key] = 1
             SchedulerConfig.model_validate(raw)
+
+
+class TestCacheConfig:
+    def test_cache_defaults_none(self) -> None:
+        assert load_config(_raw()).data.cache is None
+
+    def test_cache_parsed(self) -> None:
+        cfg = load_config(_raw(data={**_raw()["data"], "cache": {"ram_fraction": 0.5, "max_gb": 16}}))
+        assert cfg.data.cache is not None
+        assert cfg.data.cache.ram_fraction == 0.5
+        assert cfg.data.cache.max_gb == 16
+        assert cfg.data.cache.workers == 8  # default
+
+    def test_cache_fraction_out_of_range_rejected(self) -> None:
+        with pytest.raises(ConfigError):
+            load_config(_raw(data={**_raw()["data"], "cache": {"ram_fraction": 1.5}}))
+
+    def test_cache_unknown_key_rejected(self) -> None:
+        with pytest.raises(ConfigError):
+            load_config(_raw(data={**_raw()["data"], "cache": {"ram_fraction": 0.5, "bogus": 1}}))

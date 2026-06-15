@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
 
-from src.config.schema import DataConfig, ExperimentConfig
+from src.config.schema import CacheConfig, DataConfig, ExperimentConfig
 from src.core.enums import Stage
 from src.core.instantiate import instantiate
 from src.core.runtime import RuntimeContext
@@ -14,8 +15,37 @@ from src.data.datamodule import DataModule
 from src.data.sources import DataSource, data_sources
 from src.transforms.input import AlbumentationsTransform, Transform
 
+log = logging.getLogger(__name__)
+
 # File extension → data_sources registry key, for inferring the source format.
 _EXTENSION_TO_SOURCE: dict[str, str] = {".csv": "csv", ".json": "json"}
+
+_BYTES_PER_GB = 1024**3
+
+
+def _resolve_cache_bytes(cache: CacheConfig | None) -> int | None:
+    """Compute the cache byte budget = min(ram_fraction · available RAM, max_gb), and log it.
+
+    Logs which term bound the budget — so it's obvious when the effective budget
+    is the RAM fraction rather than the ``max_gb`` ceiling (a common surprise).
+    """
+    if cache is None or cache.ram_fraction <= 0:
+        return None
+    import psutil
+
+    available = psutil.virtual_memory().available
+    fraction_bytes = int(cache.ram_fraction * available)
+    cap_bytes = int(cache.max_gb * _BYTES_PER_GB) if cache.max_gb is not None else fraction_bytes
+    budget = min(fraction_bytes, cap_bytes)
+    limiter = "max_gb cap" if cap_bytes < fraction_bytes else f"{cache.ram_fraction:.0%} of available RAM"
+    log.info(
+        "Data cache budget: %.2f GiB (limited by %s; available RAM %.2f GiB, max_gb %s).",
+        budget / _BYTES_PER_GB,
+        limiter,
+        available / _BYTES_PER_GB,
+        f"{cache.max_gb:.2f} GiB" if cache.max_gb is not None else "none",
+    )
+    return budget
 
 
 def build_transforms(
@@ -169,6 +199,8 @@ def build_data_module(
         drop_last=dl.drop_last,
         prefetch_factor=dl.prefetch_factor,
         root_path=config.data.root_path,
+        cache_bytes=_resolve_cache_bytes(config.data.cache),
+        cache_workers=config.data.cache.workers if config.data.cache is not None else 8,
     )
 
 

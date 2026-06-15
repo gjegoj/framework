@@ -10,7 +10,10 @@ splits into per-stage datasets, and records dataset sizes.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
+from dataclasses import replace
+from pathlib import Path
 
 import pandas as pd
 from torch.utils.data import DataLoader
@@ -18,12 +21,15 @@ from torch.utils.data import DataLoader
 from src.core.enums import Stage
 from src.core.runtime import RuntimeContext
 from src.data.bindings import InputBinding, TargetBinding
+from src.data.cache import ArrayCache, CachingCodec, CachingLoader
 from src.data.collate import collate_samples
-from src.data.dataset import Dataset
+from src.data.dataset import Dataset, resolve_path
 from src.data.loaders import _infer_loader_key, _normalize_inputs, input_loaders
 from src.data.sources import DataSource
 from src.data.split import split_dataframe
 from src.transforms.input import Transform
+
+log = logging.getLogger(__name__)
 
 
 class DataModule:
@@ -84,6 +90,8 @@ class DataModule:
         drop_last: bool = False,
         prefetch_factor: int | None = None,
         root_path: str | None = None,
+        cache_bytes: int | None = None,
+        cache_workers: int = 8,
     ) -> None:
         if (source is None) == (staged_sources is None):
             raise ValueError("Provide exactly one of: source+split (split mode) or staged_sources (pre-split mode).")
@@ -106,6 +114,9 @@ class DataModule:
         self._drop_last = drop_last
         self._prefetch_factor = prefetch_factor
         self._root_path = root_path
+        self._cache_bytes = cache_bytes
+        self._cache_workers = cache_workers
+        self._cache: ArrayCache | None = None
         self._datasets: dict[Stage, Dataset] = {}
         self._input_bindings: list[InputBinding] = []
         self._setup_done = False
@@ -131,7 +142,9 @@ class DataModule:
         frame = _apply_max_samples(self._source.read(), self._max_samples, self._seed)
         self._input_bindings = _build_input_bindings(self._inputs_config, frame)
         self._fit_codecs(frame)
-        for stage, part in split_dataframe(frame, self._split, self._seed, self._split_stratify).items():
+        parts = split_dataframe(frame, self._split, self._seed, self._split_stratify)
+        self._setup_cache(parts)
+        for stage, part in parts.items():
             self._build_dataset(stage, part)
 
     def _setup_from_staged_sources(self) -> None:
@@ -140,10 +153,75 @@ class DataModule:
         train_frame = _apply_max_samples(self._staged_sources[Stage.TRAIN].read(), self._max_samples, self._seed)
         self._input_bindings = _build_input_bindings(self._inputs_config, train_frame)
         self._fit_codecs(train_frame)
-        self._build_dataset(Stage.TRAIN, train_frame)
+        frames: dict[Stage, pd.DataFrame] = {Stage.TRAIN: train_frame}
         for stage, source in self._staged_sources.items():
             if stage != Stage.TRAIN:
-                self._build_dataset(stage, _apply_max_samples(source.read(), self._max_samples, self._seed))
+                frames[stage] = _apply_max_samples(source.read(), self._max_samples, self._seed)
+        self._setup_cache(frames)
+        for stage, frame in frames.items():
+            self._build_dataset(stage, frame)
+
+    def _setup_cache(self, frames: dict[Stage, pd.DataFrame]) -> None:
+        """Warm the cache (parent process) and wrap cacheable loaders/codecs.
+
+        Called after codecs are fit and frames are known, before datasets are
+        built. Warms from train + val paths only; wrapping is what makes the
+        datasets read from the cache (``Dataset`` itself is unchanged).
+        """
+        if not self._cache_bytes or self._cache_bytes <= 0:
+            return
+        budget = self._cache_bytes
+        cache = ArrayCache(budget)
+        root = Path(self._root_path) if self._root_path else None
+        warm_frames = [frames[stage] for stage in (Stage.TRAIN, Stage.VAL) if stage in frames]
+        candidates: set[str] = set()
+
+        for ib in self._input_bindings:
+            if not ib.loader.file_based:
+                continue
+            keys = [resolve_path(root, value) for frame in warm_frames for value in frame[ib.column]]
+            candidates.update(keys)
+            cache.warm(keys, ib.loader.load, self._cache_workers)
+        for tb in self._target_bindings:
+            if not tb.codec.spatial:
+                continue
+            keys = [resolve_path(root, value) for frame in warm_frames for value in frame[tb.column]]
+            candidates.update(keys)
+            cache.warm(keys, tb.codec.load, self._cache_workers)
+
+        self._input_bindings = [
+            replace(ib, loader=CachingLoader(ib.loader, cache)) if ib.loader.file_based else ib
+            for ib in self._input_bindings
+        ]
+        self._target_bindings = [
+            replace(tb, codec=CachingCodec(tb.codec, cache)) if tb.codec.spatial else tb for tb in self._target_bindings
+        ]
+        self._cache = cache
+        self._log_cache_summary(cache, len(candidates), budget)
+
+    @staticmethod
+    def _log_cache_summary(cache: ArrayCache, total: int, budget: int) -> None:
+        """Report how much of the dataset is in RAM vs still read from disk."""
+        cached = len(cache)
+        from_disk = total - cached
+        gib = 1024**3
+        log.info(
+            "Data cache: %d/%d files in RAM (%.2f / %.2f GiB); %d read from disk each epoch.",
+            cached,
+            total,
+            cache.nbytes / gib,
+            budget / gib,
+            from_disk,
+        )
+        if from_disk > 0:
+            log.warning(
+                "Cache budget (%.2f GiB) reached — only %d of %d files fit, %d will be read from disk "
+                "every epoch. Raise data.cache.ram_fraction / max_gb (or free RAM) to cache more.",
+                budget / gib,
+                cached,
+                total,
+                from_disk,
+            )
 
     def _fit_codecs(self, frame: pd.DataFrame) -> None:
         for binding in self._target_bindings:
