@@ -4,6 +4,7 @@ defaults:
   - override /logger: clearml
   - override /callbacks: default
   - override /scheduler: onecycle
+  - override /dataloader: debug
 
 project: pet-multitask
 seed: 0
@@ -43,6 +44,8 @@ tasks:
     target: species
     class_mapping: {0: cat, 1: dog}
     feature_key: encoder_last
+    optimizer:
+      lr: 1.0e-4
 
   breed:
     preset: classification

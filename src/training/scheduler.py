@@ -30,6 +30,19 @@ TRAINER_FACTS: dict[str, str] = {
     "epochs": "max_epochs",
 }
 
+# Scheduler constructor params that name a *per-param-group learning rate* (OneCycle/Cyclic).
+# Passed as a scalar these broadcast to every group and overwrite the per-head learning rates
+# baked into the optimizer's param-groups; the builder instead expands such a scalar into one
+# value per group, scaled by the group's own lr, so per-head LR overrides survive (and an lr
+# *band* like Cyclic's base_lr/max_lr keeps its shape per group). Extend this map (one entry)
+# when registering a scheduler with per-group LR args — `build` stays generic. Only LR-like
+# params belong here: non-LR per-group params (e.g. OneCycle's momentum) should broadcast a
+# scalar as-is, since they do not collide with per-head LR.
+SCHEDULER_LR_PARAMS: dict[str, frozenset[str]] = {
+    "onecycle": frozenset({"max_lr"}),
+    "cyclic": frozenset({"base_lr", "max_lr"}),
+}
+
 
 class SchedulerBuilder:
     """Builds a torch LR scheduler and its Lightning scheduling policy.
@@ -93,6 +106,10 @@ class SchedulerBuilder:
     def build(self, optimizer: Optimizer, trainer_facts: dict[str, int]) -> LRSchedulerConfigType:
         """Construct the scheduler and return Lightning's typed ``lr_scheduler`` config.
 
+        A scalar per-group LR kwarg (OneCycle's ``max_lr`` / Cyclic's ``base_lr``+``max_lr``)
+        is expanded per param group so per-head LR overrides survive — see
+        :meth:`_scale_group_lr_params`.
+
         Parameters:
             optimizer (Optimizer): The already-built optimizer to schedule.
             trainer_facts (dict[str, int]): Trainer-derived values (see ``TRAINER_FACTS``)
@@ -105,6 +122,7 @@ class SchedulerBuilder:
         kwargs = dict(self._extra_kwargs)
         for param, fact in self._runtime_kwargs.items():
             kwargs[param] = trainer_facts[fact]
+        self._scale_group_lr_params(kwargs, optimizer)
         scheduler = self._scheduler_cls(optimizer, **kwargs)
         config: LRSchedulerConfigType = {
             "scheduler": scheduler,
@@ -116,3 +134,31 @@ class SchedulerBuilder:
         if self._monitor is not None:
             config["monitor"] = self._monitor
         return config
+
+    def _scale_group_lr_params(self, kwargs: dict[str, Any], optimizer: Optimizer) -> None:
+        """Expand a scalar per-group LR kwarg (``max_lr``/``base_lr``) across param groups.
+
+        OneCycle/Cyclic take an absolute *per-group* learning rate; a scalar broadcasts to
+        every group and overwrites the per-head learning rates baked into the optimizer's
+        groups. Each such scalar is expanded into one value per group, scaled by the group's
+        own lr relative to the backbone's, so per-head overrides survive (and an lr band like
+        Cyclic's ``base_lr``/``max_lr`` keeps its shape per group). No-op when the scheduler
+        has no per-group LR params or the optimizer has a single group; an explicit list is
+        left untouched (the user's choice wins).
+
+        Parameters:
+            kwargs (dict[str, Any]): Constructor kwargs, mutated in place.
+            optimizer (Optimizer): The optimizer whose param-group lrs drive the scaling.
+        """
+        lr_params = SCHEDULER_LR_PARAMS.get(self._name, frozenset())
+        groups = optimizer.param_groups
+        if not lr_params or len(groups) <= 1:
+            return
+        # Reference is the backbone group (OptimizerBuilder names it), else the first group.
+        base_lr = next((group["lr"] for group in groups if group.get("name") == "backbone"), groups[0]["lr"])
+        ratios = [group["lr"] / base_lr for group in groups]
+        for param in lr_params:
+            value = kwargs.get(param)
+            if value is None or isinstance(value, (list, tuple)):
+                continue
+            kwargs[param] = [value * ratio for ratio in ratios]

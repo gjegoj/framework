@@ -405,6 +405,58 @@ class TestSchedulerBuilder:
         assert isinstance(scheduler, torch.optim.lr_scheduler.OneCycleLR)
         assert scheduler.total_steps == 100  # routed from trainer_facts["total_steps"]
 
+    @staticmethod
+    def _two_group_optimizer(backbone_lr: float = 1e-3, head_lr: float = 1e-4) -> torch.optim.Optimizer:
+        """An optimizer with a per-head param group, mirroring OptimizerBuilder's output."""
+        return torch.optim.SGD(
+            [
+                {"name": "backbone", "params": [torch.nn.Parameter(torch.zeros(1))], "lr": backbone_lr},
+                {"name": "head/species", "params": [torch.nn.Parameter(torch.zeros(1))], "lr": head_lr},
+            ]
+        )
+
+    def _build_onecycle(self, optimizer: torch.optim.Optimizer, **extra: Any) -> torch.optim.lr_scheduler.OneCycleLR:
+        from src.training.scheduler import SchedulerBuilder
+
+        builder = SchedulerBuilder.from_name(
+            "onecycle",
+            interval="step",
+            runtime_kwargs={"total_steps": "total_steps"},
+            extra_kwargs={"max_lr": 1e-3, **extra},
+        )
+        scheduler = builder.build(optimizer, trainer_facts={"total_steps": 100})["scheduler"]
+        return cast(torch.optim.lr_scheduler.OneCycleLR, scheduler)
+
+    def test_onecycle_scales_scalar_max_lr_per_head_group(self) -> None:
+        """A scalar max_lr is expanded per group, scaled by each group's lr (per-head survives)."""
+        optimizer = self._two_group_optimizer(backbone_lr=1e-3, head_lr=1e-4)
+        self._build_onecycle(optimizer)  # max_lr=${lr}=1e-3 scalar
+        peaks = [group["max_lr"] for group in optimizer.param_groups]
+        assert peaks[0] == pytest.approx(1e-3)  # backbone keeps the configured peak
+        assert peaks[1] == pytest.approx(1e-4)  # head/species scaled to its own lr
+
+    def test_onecycle_explicit_list_max_lr_is_untouched(self) -> None:
+        """An explicit per-group list wins — the builder does not override the user's choice."""
+        optimizer = self._two_group_optimizer()
+        self._build_onecycle(optimizer, max_lr=[5e-3, 5e-4])
+        peaks = [group["max_lr"] for group in optimizer.param_groups]
+        assert peaks == pytest.approx([5e-3, 5e-4])
+
+    def test_onecycle_single_group_keeps_scalar(self) -> None:
+        """No per-head overrides (one group) → scalar max_lr is honoured as-is."""
+        optimizer = torch.optim.SGD([torch.nn.Parameter(torch.zeros(1))], lr=1e-3)
+        self._build_onecycle(optimizer)
+        assert optimizer.param_groups[0]["max_lr"] == pytest.approx(1e-3)
+
+    def test_cosine_is_unaffected_by_group_scaling(self) -> None:
+        """Schedulers without per-group LR params (cosine) keep each group's own base lr."""
+        from src.training.scheduler import SchedulerBuilder
+
+        optimizer = self._two_group_optimizer(backbone_lr=1e-3, head_lr=1e-4)
+        builder = SchedulerBuilder.from_name("cosine", interval="epoch", extra_kwargs={"T_max": 5})
+        builder.build(optimizer, trainer_facts={})
+        assert [group["lr"] for group in optimizer.param_groups] == pytest.approx([1e-3, 1e-4])
+
 
 class TestSchedulerWiring:
     def test_build_scheduler_builder_none(self) -> None:

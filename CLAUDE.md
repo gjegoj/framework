@@ -167,6 +167,10 @@ class in a registry (OCP).
   `runtime_kwargs` maps a constructor param to a trainer fact (`total_steps`/`steps_per_epoch`/
   `epochs`) resolved at fit time. `None` config → constant LR. It is a Hydra group
   (`configs/scheduler/`); `interval`/`frequency`/`monitor` map to Lightning's `lr_scheduler`.
+  Per-group LR params (`SCHEDULER_LR_PARAMS`: OneCycle `max_lr`, Cyclic `base_lr`/`max_lr`)
+  given as a scalar are expanded per param-group, scaled by each group's lr, so **per-head LR
+  overrides survive** (a scalar would otherwise broadcast and clobber them); add a scheduler
+  with per-group LR args = one map entry, `build` stays generic.
 - **Export** (`run_export`, gated by `run_export`). `ExportConfig` is a per-format Pydantic
   *discriminated union* keyed on `format` (`onnx`/`torchscript`; tensorrt reserved), each
   `extra="forbid"` so a misplaced option fails at `load_config`. Backends implement the

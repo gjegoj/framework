@@ -23,7 +23,13 @@ import numpy as np
 from lightning.pytorch.loggers import Logger
 from lightning.pytorch.utilities.rank_zero import rank_zero_only
 
+from src.core.enums import Stage
 from src.core.ports import PlotLogger
+
+# Stage tokens (train/val/test/predict) — pulled out of a *loss* key as the ClearML
+# *series* so the train/val/test curves of one loss share a single graph. Metrics are
+# left untouched (their stage already trails, so averaged metrics group by stage).
+_STAGE_TOKENS = frozenset(stage.value for stage in Stage)
 
 if TYPE_CHECKING:
     from clearml import Task
@@ -37,8 +43,12 @@ class ClearMLLogger(Logger, PlotLogger):
     ``PlotLogger`` port (for ``MatrixMetricHandler`` matrix path). A single
     ClearML ``Task`` handles both.
 
-    Metric name splitting: ``a/b/c`` → title ``a/b``, series ``c``.
-    Single-component names → title ``<name>``, series ``"value"``.
+    Metric name splitting: ``a/b/c`` → title ``a/b``, series ``c`` (last segment),
+    so averaged metrics group their stages on one graph and per-class metrics keep
+    their class series together. **Loss keys are the one exception**: ``loss/{stage}/…``
+    moves the stage into the series so a task's train/val/test losses share one graph
+    (``loss/train/total`` & ``loss/val/total`` → title ``loss/total``). A lone name →
+    series ``"value"``.
 
     Parameters:
         project_name (str | None): ClearML project name (default: ClearML default).
@@ -168,10 +178,22 @@ class ClearMLLogger(Logger, PlotLogger):
 
     @staticmethod
     def _split_metric_name(name: str) -> tuple[str, str]:
-        """Split ``a/b/c`` → ``("a/b", "c")``; single name → ``(name, "value")``."""
+        """Split a metric key into ``(title, series)`` for ClearML.
+
+        Default: the last segment is the series (``a/b/c`` → ``("a/b", "c")``), so an
+        averaged metric groups its stages (``species/f1/val``) and a per-class metric
+        keeps its class series on one graph (``breed/f1/train/Abyssinian``).
+
+        **Losses only** are regrouped: ``loss/{stage}/...`` pulls the stage out as the
+        series so a task's train/val/test losses share one graph
+        (``loss/train/total`` & ``loss/val/total`` → title ``loss/total``).
+        A single-segment name → ``(name, "value")``.
+        """
         parts = name.split("/")
         if len(parts) == 1:
             return name, "value"
+        if parts[0] == "loss" and len(parts) >= 3 and parts[1] in _STAGE_TOKENS:
+            return "loss/" + "/".join(parts[2:]), parts[1]
         return "/".join(parts[:-1]), parts[-1]
 
 

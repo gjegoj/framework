@@ -551,6 +551,12 @@ scheduler:
   patience: 3
 ```
 
+**Per-head LR + OneCycle/Cyclic.** A scalar `max_lr` (or Cyclic's `base_lr`/`max_lr`) is
+expanded per param-group, scaled by each group's lr — so a per-head `optimizer.lr` override
+carries into the schedule's peak instead of being overwritten. With `max_lr: ${lr}` and a head
+at `lr: 1.0e-4`, the head peaks at `1.0e-4` while the backbone peaks at `${lr}`. (`cosine` /
+`step` / `plateau` already scale each group's own lr, so they need nothing special.)
+
 </details>
 
 ### Callbacks
