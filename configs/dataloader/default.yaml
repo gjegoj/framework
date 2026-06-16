@@ -1,0 +1,11 @@
+# DataLoader knobs shared across all stages (maps to DataLoaderConfig).
+# Override per-run (`dataloader.num_workers=8`), swap a preset (`dataloader=performance`),
+# or add a `dataloader:` block in an experiment. persistent_workers / prefetch_factor
+# are auto-disabled when num_workers=0.
+# Extra keys (e.g. `timeout: 30`, `multiprocessing_context: spawn`) are forwarded verbatim
+# to torch's DataLoader; framework-owned keys (batch_size/shuffle/collate_fn/...) are rejected.
+num_workers: 7
+pin_memory: false
+persistent_workers: true
+drop_last: false
+prefetch_factor: 2

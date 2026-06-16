@@ -1,0 +1,8 @@
+# Debug preset: load data in the main process so __getitem__ tracebacks and
+# breakpoints work. persistent_workers / prefetch_factor are ignored at
+# num_workers=0. Select with `dataloader=debug`.
+num_workers: 0
+pin_memory: false
+persistent_workers: false
+drop_last: false
+prefetch_factor: null

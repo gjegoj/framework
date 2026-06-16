@@ -281,6 +281,32 @@ class TestMaxSamples:
         assert sum(len(dm._datasets[s]) for s in dm._datasets) == 15
 
 
+class TestDataLoaderKwargs:
+    def _dm(self, csv_path: Path, **extra: object) -> DataModule:
+        return DataModule(
+            target_bindings=[_binding()],
+            inputs_config="image_path",
+            transforms={s: _make_transform() for s in Stage},
+            runtime=RuntimeContext(),
+            batch_size=4,
+            seed=0,
+            source=CsvDataSource(str(csv_path)),
+            split={Stage.TRAIN: 0.8, Stage.VAL: 0.2},
+            dataloader_kwargs=dict(extra),
+        )
+
+    def test_extra_kwargs_reach_dataloader(self, csv_path: Path) -> None:
+        dm = self._dm(csv_path, timeout=5)
+        dm.setup()
+        assert dm.train_dataloader().timeout == 5
+
+    def test_framework_keys_win_over_extras(self, csv_path: Path) -> None:
+        # Defensive merge: even a framework-owned key in extras must not override the real value.
+        dm = self._dm(csv_path, batch_size=999)
+        dm.setup()
+        assert dm.train_dataloader().batch_size == 4
+
+
 class TestSplitDataframe:
     def _frame(self, n: int = 60) -> pd.DataFrame:
         rng = np.random.default_rng(0)

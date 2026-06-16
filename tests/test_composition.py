@@ -741,3 +741,71 @@ class TestBuildBatchTransform:
 
         assert len(callbacks) == 1
         assert isinstance(callbacks[0], BatchTransformCallback)
+
+
+class TestBuildTrainer:
+    """``build_trainer`` is the single home for Trainer construction (profiler seam)."""
+
+    @staticmethod
+    def _cpu_trainer(**trainer_extra: Any) -> dict[str, Any]:
+        return {"accelerator": "cpu", "devices": 1, **trainer_extra}
+
+    def test_profiler_target_dict_is_instantiated(self) -> None:
+        from lightning.pytorch.profilers import AdvancedProfiler
+
+        from src.composition.wiring import build_trainer
+
+        config = load_config(
+            _minimal_config(
+                trainer=self._cpu_trainer(
+                    profiler={
+                        "_target_": "lightning.pytorch.profilers.AdvancedProfiler",
+                        "dirpath": "/tmp/prof",
+                        "filename": "report",
+                    }
+                )
+            )
+        )
+        trainer = build_trainer(config, logger=False, callbacks=[])
+        assert isinstance(getattr(trainer, "profiler"), AdvancedProfiler)
+
+    def test_profiler_string_alias_passes_through(self) -> None:
+        from lightning.pytorch.profilers import SimpleProfiler
+
+        from src.composition.wiring import build_trainer
+
+        config = load_config(_minimal_config(trainer=self._cpu_trainer(profiler="simple")))
+        trainer = build_trainer(config, logger=False, callbacks=[])
+        assert isinstance(getattr(trainer, "profiler"), SimpleProfiler)
+
+    def test_profiler_none_disables_profiling(self) -> None:
+        from lightning.pytorch.profilers import PassThroughProfiler
+
+        from src.composition.wiring import build_trainer
+
+        config = load_config(_minimal_config(trainer=self._cpu_trainer()))
+        trainer = build_trainer(config, logger=False, callbacks=[])
+        assert isinstance(getattr(trainer, "profiler"), PassThroughProfiler)
+
+    def test_epochs_and_save_dir_forwarded(self) -> None:
+        from src.composition.wiring import build_trainer
+
+        config = load_config(_minimal_config(epochs=7, save_dir="/tmp/run", trainer=self._cpu_trainer()))
+        trainer = build_trainer(config, logger=False, callbacks=[])
+        assert trainer.max_epochs == 7
+        assert str(trainer.default_root_dir) == "/tmp/run"
+
+    def test_dataloader_block_maps_to_config(self) -> None:
+        config = load_config(_minimal_config(dataloader={"num_workers": 3, "pin_memory": True}))
+        assert config.dataloader.num_workers == 3
+        assert config.dataloader.pin_memory is True
+
+    def test_dataloader_extra_key_survives_validation(self) -> None:
+        config = load_config(_minimal_config(dataloader={"timeout": 5}))
+        assert config.dataloader.model_extra == {"timeout": 5}
+
+    def test_dataloader_reserved_key_is_rejected(self) -> None:
+        from src.config import ConfigError
+
+        with pytest.raises(ConfigError, match="managed by the framework"):
+            load_config(_minimal_config(dataloader={"shuffle": True}))

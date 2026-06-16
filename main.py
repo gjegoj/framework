@@ -28,18 +28,19 @@ from src.composition.wiring import (
     build_bindings,
     build_callbacks,
     build_data_module,
+    build_lit_data_module,
     build_lit_module,
     build_logger,
     build_optimizer_builder,
     build_scheduler_builder,
     build_tasks,
-    run_fit_and_test,
+    build_trainer,
+    run_experiment,
     validate_export_preconditions,
 )
 from src.config import load_config
 from src.core.runtime import RuntimeContext
 from src.models.assembly import build_composite_model
-from src.training import LitDataModule
 from src.utils.rich_utils import print_config
 
 log = logging.getLogger(__name__)
@@ -75,17 +76,13 @@ def main(cfg: DictConfig) -> None:
 
     # 6. Lightning wrappers (humble objects delegating to domain logic)
     lit_module = build_lit_module(config, model, tasks, optimizer_builder, scheduler_builder)
-    lit_dm = LitDataModule(plain_dm)
+    lit_dm = build_lit_data_module(plain_dm)
 
     # 7. Train and/or test
     logger = build_logger(config)
     callbacks = build_callbacks(config, runtime)
-    trainer_kwargs = config.trainer.model_dump(mode="python")
-    trainer_kwargs.pop("logger", None)
-    if config.save_dir is not None:
-        trainer_kwargs.setdefault("default_root_dir", config.save_dir)
-    trainer = L.Trainer(max_epochs=config.epochs, logger=logger, callbacks=callbacks, **trainer_kwargs)
-    run_fit_and_test(trainer, lit_module, lit_dm, config, tasks)
+    trainer = build_trainer(config, logger, callbacks)
+    run_experiment(trainer, lit_module, lit_dm, config, tasks)
 
 
 if __name__ == "__main__":

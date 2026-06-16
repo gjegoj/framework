@@ -1,0 +1,20 @@
+# Profiling run — Lightning's SimpleProfiler reports mean time per hook so the
+# bottleneck is obvious: data fetch (`[_TrainingEpochLoop].train_dataloader_next`)
+# vs forward (`training_step`) vs `backward` / `optimizer_step`.
+#
+# Run, e.g.:
+#   uv run python main.py trainer=profile epochs=1 run_test=false run_export=false logger=none
+#
+# `profiler` is a brick-spec: a string alias (`simple`/`advanced`/`pytorch`) prints
+# to the console, while a `{_target_: ...}` mapping is instantiated — use it to write
+# the report to a file via `dirpath`/`filename`. `${save_dir}` resolves to the run dir.
+# For per-op detail, target `lightning.pytorch.profilers.PyTorchProfiler` instead.
+accelerator: auto
+devices: auto
+precision: 32-true
+log_every_n_steps: 10
+num_sanity_val_steps: 0
+profiler:
+  _target_: lightning.pytorch.profilers.SimpleProfiler
+  dirpath: ${save_dir}
+  filename: profile

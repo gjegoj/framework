@@ -14,6 +14,7 @@ import logging
 from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 from torch.utils.data import DataLoader
@@ -67,6 +68,8 @@ class DataModule:
         persistent_workers (bool): Keep workers alive between epochs (requires num_workers > 0).
         drop_last (bool): Drop the last incomplete batch during training.
         prefetch_factor (int | None): Batches prefetched per worker (None → PyTorch default).
+        dataloader_kwargs (dict[str, Any] | None): Extra keyword args forwarded verbatim to every
+            ``DataLoader`` (e.g. ``timeout``). Framework-owned keys always win over these.
         root_path (str | None): Optional prefix prepended to file-based input paths.
     """
 
@@ -89,6 +92,7 @@ class DataModule:
         persistent_workers: bool = False,
         drop_last: bool = False,
         prefetch_factor: int | None = None,
+        dataloader_kwargs: dict[str, Any] | None = None,
         root_path: str | None = None,
         cache_bytes: int | None = None,
         cache_workers: int = 8,
@@ -113,6 +117,7 @@ class DataModule:
         self._persistent_workers = persistent_workers
         self._drop_last = drop_last
         self._prefetch_factor = prefetch_factor
+        self._dataloader_kwargs = dataloader_kwargs or {}
         self._root_path = root_path
         self._cache_bytes = cache_bytes
         self._cache_workers = cache_workers
@@ -251,7 +256,8 @@ class DataModule:
         )
         if self._prefetch_factor is not None and self._num_workers > 0:
             kwargs["prefetch_factor"] = self._prefetch_factor
-        return DataLoader(self._datasets[stage], **kwargs)
+        # User extras fill gaps; framework-owned keys (batch_size/shuffle/collate_fn/...) always win.
+        return DataLoader(self._datasets[stage], **{**self._dataloader_kwargs, **kwargs})
 
     def train_dataloader(self) -> DataLoader:
         return self._dataloader(Stage.TRAIN, shuffle=True, drop_last=self._drop_last)

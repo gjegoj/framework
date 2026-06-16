@@ -6,6 +6,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from src.composition.wiring.common import forward_extras
 from src.config.schema import CacheConfig, DataConfig, ExperimentConfig
 from src.core.enums import Stage
 from src.core.instantiate import instantiate
@@ -21,6 +22,10 @@ log = logging.getLogger(__name__)
 _EXTENSION_TO_SOURCE: dict[str, str] = {".csv": "csv", ".json": "json"}
 
 _BYTES_PER_GB = 1024**3
+
+# DataLoader knobs the builder passes explicitly; every other (extra) key is forwarded
+# verbatim to torch.utils.data.DataLoader (the reserved keys are rejected in the schema).
+_DATALOADER_CORE_FIELDS = frozenset({"num_workers", "pin_memory", "persistent_workers", "drop_last", "prefetch_factor"})
 
 
 def _resolve_cache_bytes(cache: CacheConfig | None) -> int | None:
@@ -198,6 +203,7 @@ def build_data_module(
         persistent_workers=dl.persistent_workers,
         drop_last=dl.drop_last,
         prefetch_factor=dl.prefetch_factor,
+        dataloader_kwargs=forward_extras(dl, _DATALOADER_CORE_FIELDS),
         root_path=config.data.root_path,
         cache_bytes=_resolve_cache_bytes(config.data.cache),
         cache_workers=config.data.cache.workers if config.data.cache is not None else 8,

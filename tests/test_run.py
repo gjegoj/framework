@@ -9,7 +9,7 @@ import pytest
 import torch
 
 from src.composition.wiring.checkpointing import load_init_weights, resolve_test_ckpt_path
-from src.composition.wiring.training import run_fit_and_test
+from src.composition.wiring.training import run_experiment
 from src.config import ExperimentConfig, load_config
 from src.models.assembly import build_composite_model
 from src.models.backbones import EmbeddingBackbone
@@ -62,7 +62,7 @@ class TestRunFitAndTest:
         lit_dm = MagicMock()
 
         with patch("src.composition.wiring.training.run_export"):
-            run_fit_and_test(trainer, lit_module, lit_dm, config, _tasks())
+            run_experiment(trainer, lit_module, lit_dm, config, _tasks())
 
         trainer.fit.assert_called_once_with(lit_module, lit_dm)
         trainer.test.assert_called_once_with(lit_module, lit_dm, ckpt_path="best")
@@ -74,7 +74,7 @@ class TestRunFitAndTest:
         lit_dm = MagicMock()
 
         with patch("src.composition.wiring.training.run_export"):
-            run_fit_and_test(trainer, lit_module, lit_dm, config, _tasks())
+            run_experiment(trainer, lit_module, lit_dm, config, _tasks())
 
         trainer.fit.assert_not_called()
         trainer.test.assert_called_once_with(lit_module, lit_dm, ckpt_path="/weights.ckpt")
@@ -86,7 +86,7 @@ class TestRunFitAndTest:
         lit_dm = MagicMock()
 
         with patch("src.composition.wiring.training.run_export"):
-            run_fit_and_test(trainer, lit_module, lit_dm, config, _tasks())
+            run_experiment(trainer, lit_module, lit_dm, config, _tasks())
 
         trainer.fit.assert_called_once()
         trainer.test.assert_not_called()
@@ -102,7 +102,7 @@ class TestRunFitAndTest:
             patch("src.composition.wiring.training.load_init_weights") as mock_load,
             patch("src.composition.wiring.training.run_export"),
         ):
-            run_fit_and_test(trainer, lit_module, lit_dm, config, _tasks())
+            run_experiment(trainer, lit_module, lit_dm, config, _tasks())
 
         mock_load.assert_called_once_with(lit_module, "/pretrain.ckpt")
         trainer.fit.assert_called_once_with(lit_module, lit_dm)

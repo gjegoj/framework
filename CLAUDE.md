@@ -11,12 +11,19 @@ and torchmetrics. It is a clean-architecture rewrite of the prototype in `old/`
 milestone breakdown live in the approved plan at
 `~/.claude/plans/clean-code-refactoring-patterns-softwar-merry-sunbeam.md`.
 
-Status: M1–M5 substantially complete — classification + all Objective variants, DENSE
-segmentation, multi-stream `SmpBackbone` (`ENCODER_LAST`/`DECODER`, per-task `feature_key`),
-M4 (per-head LR via param-groups; typed metric handlers scalar/vector/matrix/curve;
-`PlotLogger` + ClearML logger), and M5 callbacks — EMA (a thin subclass of Lightning's
-`EMAWeightAveraging`), freeze, checkpoint, a rich `MetricsProgressBar`, and batch transforms
-(MixUp/CutMix/Mosaic). Next: M6–M7 (embeddings, ranking/multimodal, LoRA).
+Status: M1–M7 substantially complete. Tasks: classification + every objective
+(multiclass/binary/multilabel/continuous), DENSE segmentation, and **metric learning** —
+RANKING (Siamese: N views through one shared backbone) and MULTISTREAM (dual/multi-encoder,
+CLIP/SigLIP-style) topologies with triplet / margin-ranking / InfoNCE / SigLIP / ArcFace
+losses. Backbones: `TimmBackbone`, multi-stream `SmpBackbone` (`ENCODER_LAST`/`DECODER`,
+per-task `feature_key`), precomputed-`EmbeddingBackbone`, and multi-encoder `MultiEncoderBackbone`.
+Training: per-head LR via param-groups, LR **schedulers** (`training/scheduler.py`), typed metric
+handlers (scalar/vector/matrix/curve), ClearML logger, and M5 callbacks — EMA (thin subclass of
+Lightning's `EMAWeightAveraging`), freeze, checkpoint, `MetricsProgressBar`, `SampleLogCallback`,
+and batch transforms (MixUp/CutMix/Mosaic). Cross-cutting subsystems: model **export**
+(`export/`: ONNX/TorchScript + numerical-parity verification), sample **visualization**
+(`visualization/`: interactive HTML GT-vs-pred grid behind `SampleLogCallback`), and an in-RAM
+image/mask **cache** (`data/cache.py`). Next: LoRA/PEFT.
 
 ## Commands
 
@@ -51,10 +58,19 @@ albumentations are details** kept behind ABC ports. Layers:
 - `data/`, `models/`, `tasks/`, `losses/`, `metrics/`, `training/`, `transforms/` —
   adapters/use cases implementing the core ports. `transforms/input.py` holds the
   per-sample `Transform`/`AlbumentationsTransform`; `transforms/batch/` holds batch
-  transforms (MixUp/CutMix/Mosaic).
+  transforms (MixUp/CutMix/Mosaic). `data/cache.py` is the in-RAM image/mask cache;
+  `training/scheduler.py` the LR-scheduler adapters; `models/backbones/` the four
+  backbones (timm/smp/embedding/multi); `losses/` the criteria incl. metric-learning
+  (`angular.py`=ArcFace, `contrastive.py`=InfoNCE/SigLIP, `ranking.py`=triplet/margin).
+- `export/` — deployment-export subsystem behind the `ModelExporter` port
+  (`onnx.py`/`torchscript.py`, `pipeline.py`, `verify.py` parity checks, `wrapper.py`
+  trace wrappers). `visualization/` — sample-debug subsystem: `Annotator`/`LabelRenderer`
+  registries render GT-vs-prediction `SampleView`s into one self-contained interactive
+  HTML grid (`renderer.py`), driven by `SampleLogCallback`. Both are details, kept outward.
 - composition root: `composition/wiring/` (split by layer: `data`/`model`/`tasks`/
-  `training`/`callbacks`/`common`, re-exported from its `__init__`) + `main.py`. Wires
-  concrete instances in dependency order.
+  `training`/`callbacks`/`export`/`checkpointing`/`common`, re-exported from its `__init__`)
+  + `main.py`. Wires concrete instances in dependency order; `main.py` is a flat sequence
+  of `build_*` calls ending in `run_experiment` (fit → test → export, each gated by a flag).
 
 Concrete adapters wrap third-party libs (e.g. `TimmBackbone`, `TorchMetricsAdapter`,
 `AlbumentationsTransform`). Parametric components that live in the autograd graph
@@ -68,16 +84,22 @@ orthogonal axes**:
 - **Modality** (input side): image / text / embedding / multimodal — lives in
   `data` + `backbone`. The task does not know the modality; it consumes a feature
   stream.
-- **Topology** (`tasks/strategies/topology.py`, internal): output structure — GLOBAL (per-sample),
-  DENSE (per-pixel), SET, SEQUENCE, EMBEDDING. Picks the head + which `FeatureBundle`
-  stream it consumes (`feature_key`). `feature_key` can be overridden per task via YAML.
-- **Objective** (internal): label semantics — binary / multiclass / multilabel /
-  continuous. Picks the target codec, criterion, activation, metric mode, out-features.
+- **Topology** (`tasks/strategies/topology.py`, internal): output structure — GLOBAL
+  (per-sample), DENSE (per-pixel), RANKING (Siamese: N views stacked through one shared
+  backbone → `[B,N,D]`), MULTISTREAM (N separate encoders, e.g. CLIP/SigLIP). Picks the
+  head + which `FeatureBundle` stream it consumes (`feature_key`, overridable per task).
+- **Objective** (internal): label semantics — multiclass / binary / multilabel /
+  continuous / **metric** (metric learning: target implicit, supervision from pair/triplet
+  structure or the batch diagonal). Picks the target codec, criterion, activation, metric
+  mode, out-features (for `metric`, `num_classes` is reinterpreted as `embedding_dim`).
 
 `TaskBuilder` is the Bridge that combines a `TopologyStrategy` and an
-`ObjectiveStrategy`, validating the combination (invalid pairs raise). Familiar
-**presets** (`classification(...)`, `segmentation(...)`) are thin facades over the
-builder and are the only user-facing names. This is why e.g. `segmentation` +
+`ObjectiveStrategy`, validating the combination (invalid pairs raise; e.g. `metric` only
+pairs with RANKING/MULTISTREAM). Familiar **presets** are thin facades over the builder and
+the only user-facing names: `classification`, `segmentation`, `regression`, `triplet`,
+`pairwise_ranking`, `contrastive`. The loss *method* that varies within an objective lives
+on the preset (`triplet`→`triplet_margin`, `pairwise_ranking`→`margin_ranking`,
+`contrastive`→`info_nce`), not the objective. This is why e.g. `segmentation` +
 `objective="multilabel"` needs no new type. New topology/objective/modality = one new
 class in a registry (OCP).
 
@@ -101,8 +123,10 @@ class in a registry (OCP).
   inference), so losses stay numerically stable.
 - **Extension points are registries** (`backbones`, `head_builders`, `criteria`,
   `data_sources`, `target_codecs`, `input_loaders`, `topology_strategies`, `objective_strategies`,
-  `task_presets`, `batch_transforms`, `callback_builders`). Register with the
-  `@registry.register("key")` decorator; importing a package's `__init__` populates its registries.
+  `task_presets`, `batch_transforms`, `callback_registry`/`callback_builders`, `optimizers`,
+  `schedulers`, `metric_factories`, `loggers`, `exporters`, `label_renderers`, `annotators`).
+  Register with the `@registry.register("key")` decorator; importing a package's `__init__`
+  populates its registries.
 - **Two construction families** (see README "How components are built"). *Typed config
   sections* (backbone/optimizer/data/dataloader/logger) have dedicated builders selecting an
   adapter by `kind`/`name`. *Brick-specs* (loss/metrics/codec/head/callbacks/batch transforms)
@@ -125,7 +149,37 @@ class in a registry (OCP).
   (e.g. future FPN levels `p3`/`p4`) are documented in each backbone's docstring.
 - **DataLoader knobs** live in `config.dataloader` (`DataLoaderConfig`): `num_workers`,
   `pin_memory`, `persistent_workers`, `drop_last`, `prefetch_factor`. `persistent_workers`
-  and `prefetch_factor` are auto-disabled when `num_workers=0`.
+  and `prefetch_factor` are auto-disabled when `num_workers=0`. It is a Hydra config group
+  (`configs/dataloader/`: `default`/`performance`/`debug`) wired into `config.yaml` defaults —
+  override per-run (`dataloader.num_workers=8`) or select a preset (`dataloader=performance`).
+  Like the other typed sections, it is `extra="allow"`: unknown keys forward verbatim to
+  `torch.utils.data.DataLoader` (`forward_extras` → `DataModule.dataloader_kwargs`), except
+  framework-owned keys (`DataLoaderConfig.RESERVED`: dataset/batch_size/shuffle/collate_fn/
+  sampler/batch_sampler) which the schema rejects so per-stage conventions hold.
+- **The `Trainer` is assembled by `build_trainer`** (one home, composition root), not in
+  `main.py`. `TrainerConfig` is a typed section forwarded as kwargs, with two seams: `logger`
+  is injected from `build_logger`, and `profiler` is a brick-spec — a `{_target_: ...}` mapping
+  (e.g. `SimpleProfiler`/`AdvancedProfiler` with `dirpath`/`filename`) is built via `instantiate`,
+  while a string alias (`simple`/`advanced`) or `None` passes straight to Lightning. See
+  `configs/trainer/profile.yaml` for the file-output example.
+- **LR schedulers** (`training/scheduler.py`, registry `schedulers`: `cosine`/`onecycle`/
+  `plateau`/`step`). `SchedulerConfig` mirrors the optimizer (extras forward verbatim);
+  `runtime_kwargs` maps a constructor param to a trainer fact (`total_steps`/`steps_per_epoch`/
+  `epochs`) resolved at fit time. `None` config → constant LR. It is a Hydra group
+  (`configs/scheduler/`); `interval`/`frequency`/`monitor` map to Lightning's `lr_scheduler`.
+- **Export** (`run_export`, gated by `run_export`). `ExportConfig` is a per-format Pydantic
+  *discriminated union* keyed on `format` (`onnx`/`torchscript`; tensorrt reserved), each
+  `extra="forbid"` so a misplaced option fails at `load_config`. Backends implement the
+  `ModelExporter` port (`export`/`load`/`validate`) and self-register in `exporters`; the
+  generic `verify.py` composes their `load()`/`validate()` into a parity report (`atol`/`rtol`).
+  `combined` exports one image→all-logits graph; `split_components` also emits per-part files.
+  Output dir defaults to `{save_dir}/export`. Config group `configs/export/` (`onnx`/
+  `torchscript`/`all`). `validate_export_preconditions` runs the topology guard *before* training.
+- **Sample visualization** (`visualization/`) is driven by `SampleLogCallback` (`sample_log`):
+  it annotates a batch's GT vs predictions and renders an interactive self-contained HTML grid.
+  Two registries keep it open/closed: `annotators` keyed by `(topology, objective)` write the
+  `SampleView` fields; `label_renderers` keyed by `Label` type emit `FieldItem`s (chips for
+  labels, full-cell mask overlays for segmentation). The `Renderer` never branches on label type.
 - Dataclasses for domain/application objects; Pydantic only at I/O boundaries
   (config). Google-style docstrings with a `Parameters:` block.
 
@@ -157,6 +211,11 @@ class in a registry (OCP).
   DPT architecture is supported via the `_dpt_style` flag (detected from `name.lower() == "dpt"`).
   ASPP-based architectures (deeplabv3, pan, upernet) require `batch_size ≥ 2` in train mode
   (BatchNorm after global-avg-pool). See `configs/backbone/smp_dpt.yaml` for DPT config example.
+- `EmbeddingBackbone` (kind `embedding`) consumes precomputed feature vectors (no image
+  encoder) — the modality for embedding/ranking tasks on cached features. `MultiEncoderBackbone`
+  (kind `multi`) holds N named sub-encoders producing N `POOLED` streams for MULTISTREAM tasks;
+  the encoder name == the `data.inputs` alias == the stream name (wiring derives stream order).
+  RANKING instead stacks N input *views* through one shared backbone (`view_keys` from `data.inputs`).
 - The reference dataset `old/data/classification.csv` points at remote URLs with empty
   local placeholder images; tests use synthetic images generated in a tmp dir, and the
   offline smoke should use a synthetic local dataset.

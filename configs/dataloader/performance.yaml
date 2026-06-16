@@ -1,0 +1,8 @@
+# GPU "production" preset: saturate the input pipeline and speed up H2D copies.
+# pin_memory matters once batches are large (transfer_batch_to_device becomes
+# visible); only effective on CUDA. Select with `dataloader=performance`.
+num_workers: 8
+pin_memory: true
+persistent_workers: true
+drop_last: false
+prefetch_factor: 4

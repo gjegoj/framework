@@ -1,7 +1,10 @@
 # Framework
 
-Configuration-driven multi-task computer-vision training on top of
+Configuration-driven **multi-task & multimodal** computer-vision training on top of
 PyTorch Lightning · Hydra · Pydantic · timm / smp · albumentations · torchmetrics.
+
+> Classification · segmentation · regression · **metric learning** (ranking / dual-encoder),
+> with model **export** (ONNX / TorchScript) and interactive **sample visualization** built in.
 
 ---
 
@@ -12,15 +15,21 @@ PyTorch Lightning · Hydra · Pydantic · timm / smp · albumentations · torchm
 - [Configuration guide](#configuration-guide)
   - [How components are built](#how-components-are-built)
   - [Data](#data)
+  - [DataLoader & cache](#dataloader--cache)
   - [Tasks & presets](#tasks--presets)
+  - [Embeddings & metric learning](#embeddings--metric-learning)
   - [Backbone](#backbone)
-  - [Optimizer & LR](#optimizer--lr)
+  - [Optimizer, LR & scheduler](#optimizer-lr--scheduler)
   - [Callbacks](#callbacks)
   - [Logger](#logger)
+  - [Export](#export)
+  - [Sample visualization](#sample-visualization)
 - [Recipes](#recipes)
 - [CLI reference](#cli-reference)
 - [Extending the framework](#extending-the-framework)
 - [Internals](#internals)
+
+> Section bodies are collapsed by default — click a heading's summary to expand it.
 
 ---
 
@@ -49,20 +58,25 @@ uv run python main.py +experiment=my_exp
 ## Core concepts
 
 **A Task is a composition of three orthogonal axes.** A *topology* defines the output
-structure (global per-sample, dense per-pixel, …); an *objective* defines label semantics
-(multiclass / multilabel / binary / continuous); a *modality* defines the input side
-(image / embedding / …). Familiar names — `classification`, `segmentation` — are thin
-presets over this composition. `segmentation(objective="multilabel")` works out of the
-box with no extra code; adding a new variant is one `objective:` change in YAML.
+structure (global per-sample, dense per-pixel, ranking / multistream for embeddings); an
+*objective* defines label semantics (multiclass / multilabel / binary / continuous / metric);
+a *modality* defines the input side (image / precomputed embedding / multi-encoder). Familiar
+names — `classification`, `segmentation`, `regression`, `triplet`, `contrastive` — are thin
+presets over this composition. `segmentation(objective="multilabel")` works out of the box with
+no extra code; adding a new variant is one `objective:` change in YAML.
 
 **`num_classes` is never hardcoded.** The data module reads and fits target codecs at
 setup time, populates a `RuntimeContext`, and only then are tasks and model heads built
 with concrete output dimensions. Class counts flow from data → runtime → model
 automatically.
 
-**Hydra groups = swappable building blocks.** Backbone, optimizer, transforms, logger,
-callbacks, and trainer are independent config groups. Combine them freely; override any
-key via CLI without touching shared config files.
+**Hydra groups = swappable building blocks.** Backbone, optimizer, scheduler, dataloader,
+transforms, logger, callbacks, trainer, and export are independent config groups. Combine
+them freely; override any key via CLI without touching shared config files.
+
+**Train → test → export, one pipeline.** A run executes `fit`, `test`, and model `export`
+(ONNX / TorchScript with numerical-parity verification), each gated by a `run_*` flag.
+`SampleLogCallback` renders ground-truth-vs-prediction grids to interactive HTML along the way.
 
 ---
 
@@ -70,21 +84,28 @@ key via CLI without touching shared config files.
 
 ### How components are built
 
+<details>
+<summary>Two construction families: typed sections vs. brick-specs (<code>name</code> / <code>_target_</code>)</summary>
+
 Most of the config maps directly onto Python objects. There are **two construction
 families** — knowing which one a section uses tells you how to customize it.
 
 **1. Typed sections** — a fixed schema with one dedicated builder. A `kind` (or `name`)
 field selects the registry adapter; the remaining fields are forwarded to it as
-constructor arguments. Used by `backbone`, `optimizer`, `data`, `dataloader`, `logger`.
+constructor arguments. Used by `backbone`, `optimizer`, `scheduler`, `data`, `dataloader`,
+`logger`, `trainer`.
 
 ```yaml
 backbone: {kind: smp, name: unet, encoder_name: resnet34}   # kind → adapter; encoder_name forwarded
 optimizer: {name: adamw, lr: ${lr}, weight_decay: 1.0e-4}    # name → optimizer class; rest forwarded
 ```
 
+Typed sections are `extra="allow"`: unknown keys forward verbatim to the underlying
+constructor (smp's `encoder_name`, an optimizer's `momentum`, a DataLoader's `timeout`).
+
 **2. Brick-specs** — free-form, with three interchangeable forms. Used by `loss`,
-`metrics`, `target_codec`, `head`, `callbacks`, and the `transform` inside a batch
-transform.
+`metrics`, `target_codec`, `head`, `callbacks`, the `transform` inside a batch
+transform, and `trainer.profiler`.
 
 | Form | YAML | Meaning |
 |---|---|---|
@@ -112,6 +133,19 @@ transforms:
 Inside a `_target_`, only `_target_` is available — registry short-names are a
 top-level convenience.
 
+**`trainer.profiler` mixes both.** `trainer` is a typed section, but its `profiler`
+sub-key is a brick-spec: a string alias (`profiler: simple`) passes straight to
+Lightning, while a `_target_` mapping is instantiated so the profiler can declare its
+own output path:
+
+```yaml
+trainer:
+  profiler:
+    _target_: lightning.pytorch.profilers.AdvancedProfiler
+    dirpath: ${save_dir}     # write the report under the run directory
+    filename: profile
+```
+
 **Runtime values are injected, never written.** `num_classes` and similar are inferred
 from data at `setup()` and injected into the components that need them — which is why you
 never write `num_classes` in a loss / metric / transform spec. Any param you set
@@ -124,9 +158,12 @@ form, **or** skip registration and point `_target_` straight at it.
 > Unlike raw Hydra, `_partial_` and positional `_args_` are not supported — components
 > take keyword arguments.
 
----
+</details>
 
 ### Data
+
+<details>
+<summary>Split / pre-split modes · multiple inputs · <code>max_samples</code></summary>
 
 **Split mode** — one file, ratios decide the split:
 
@@ -160,6 +197,14 @@ data:
     caption: {column: text_col, loader: text}   # explicit loader
 ```
 
+**Stratified split** — keep class balance across stages:
+
+```yaml
+data:
+  split: {train: 0.8, val: 0.1, test: 0.1}
+  split_stratify: species      # categorical → classification; numeric → quantile-binned
+```
+
 **Cap dataset size** for fast iteration:
 
 ```yaml
@@ -168,9 +213,55 @@ data:
   max_samples: 0.1       # float → 10% of data
 ```
 
----
+</details>
+
+### DataLoader & cache
+
+<details>
+<summary>Worker knobs (config group + presets) and the in-RAM image/mask cache</summary>
+
+`dataloader` is its own config group. Override per-run, swap a preset, or add a block in an
+experiment:
+
+```bash
+uv run python main.py dataloader.num_workers=8 dataloader.pin_memory=true
+uv run python main.py dataloader=performance      # GPU preset: 8 workers, pin_memory, prefetch 4
+uv run python main.py dataloader=debug            # num_workers=0 (real tracebacks / breakpoints)
+```
+
+| Knob | Meaning |
+|---|---|
+| `num_workers` | loader subprocesses (`0` = main process, debug-friendly) |
+| `pin_memory` | page-locked host memory → faster CPU→GPU copies (CUDA only) |
+| `persistent_workers` | keep workers alive between epochs (auto-off at `num_workers=0`) |
+| `drop_last` | drop the last incomplete **train** batch (val/test never drop) |
+| `prefetch_factor` | batches prefetched per worker (auto-off at `num_workers=0`) |
+
+Extra keys forward verbatim to `torch.utils.data.DataLoader` (e.g. `timeout`,
+`multiprocessing_context`); framework-owned keys (`batch_size`/`shuffle`/`collate_fn`/…) are
+rejected so per-stage conventions hold.
+
+**In-RAM cache** — decode each image/mask once, warmed in the parent before training and
+read-only after (so it stays shared across fork workers). Budget = `min(ram_fraction · free
+RAM, max_gb)`:
+
+```yaml
+data:
+  cache:
+    ram_fraction: 0.5     # cap at half of available RAM (0 disables)
+    max_gb: 8             # absolute cap in GiB
+    workers: 8            # threads used to warm the cache
+```
+
+> The cache + multi-worker only share memory under **fork** (Linux). On macOS (spawn),
+> pick one: cache with `num_workers=0`, or workers with the cache off.
+
+</details>
 
 ### Tasks & presets
+
+<details>
+<summary>Classification · segmentation · regression · objective / loss / metric overrides · per-head LR</summary>
 
 Tasks are declared as a named dict. The key becomes the task name used in metric logs
 (`label/accuracy/val`), loss logs (`loss/val/label`), and per-head LR overrides.
@@ -226,9 +317,11 @@ tasks:
     class_mapping: {0: indoor, 1: outdoor, 2: people}
 ```
 
-Available objectives: `multiclass` · `multilabel` · `binary` · `continuous`.
+Available objectives: `multiclass` · `multilabel` · `binary` · `continuous` · `metric`
+(metric learning — see [Embeddings & metric learning](#embeddings--metric-learning)).
 
-**Custom loss**:
+**Custom loss** (registry keys: `cross_entropy` · `bce` · `mse` · `l1` · `dice` ·
+`weighted_sum` · `arcface` · metric-learning losses):
 
 ```yaml
 tasks:
@@ -257,7 +350,7 @@ tasks:
       confusion_matrix: null
 ```
 
-**Per-head learning rate** (see [Optimizer & LR](#optimizer--lr)):
+**Per-head learning rate** (see [Optimizer, LR & scheduler](#optimizer-lr--scheduler)):
 
 ```yaml
 tasks:
@@ -269,9 +362,73 @@ tasks:
       lr: 1.0e-4                # this head gets its own param group
 ```
 
----
+</details>
+
+### Embeddings & metric learning
+
+<details>
+<summary>Triplet / pairwise ranking (Siamese) and contrastive (dual-encoder, CLIP/SigLIP)</summary>
+
+Metric-learning tasks have no per-sample class label — supervision comes from the
+pair/triplet structure or the batch diagonal. The `metric` objective makes the codec
+pass-through and the activation identity; `num_classes` is reinterpreted as the **embedding
+dimension** (the projection-head size). The *loss method* is pinned by the preset.
+
+| Preset | Topology | Default loss | Shape of supervision |
+|---|---|---|---|
+| `triplet` | RANKING | `triplet_margin` | 3 views: anchor / positive / negative |
+| `pairwise_ranking` | RANKING | `margin_ranking` | 2 views ranked against each other |
+| `contrastive` | MULTISTREAM | `info_nce` | N separate encoders aligned (InfoNCE / SigLIP) |
+
+**RANKING (Siamese)** — N input views go through *one shared backbone* (stacked to
+`[B·N, …]`, reshaped to `[B, N, D]`). The view names come from `data.inputs`:
+
+```yaml
+data:
+  inputs:
+    anchor:   anchor_path
+    positive: positive_path
+    negative: negative_path
+
+tasks:
+  embed:
+    preset: triplet
+    target: anchor_path        # structural; the loss ignores its values
+    dim: 128                   # embedding dimension
+```
+
+**MULTISTREAM (dual / multi-encoder)** — N *separate* encoders (e.g. image + text), one
+named stream each, aligned in a shared space. Use the `multi` backbone whose sub-encoder
+names match the `data.inputs` aliases:
+
+```yaml
+backbone:
+  kind: multi
+  encoders:
+    image: {kind: timm, name: resnet50}
+    text:  {kind: timm, name: ...}      # any registered encoder
+
+tasks:
+  align:
+    preset: contrastive
+    target: image            # structural
+    dim: 256
+    loss: siglip             # swap info_nce → siglip
+```
+
+**Precomputed embeddings** — skip the image encoder entirely with the `embedding`
+backbone (the input is a stored feature vector); pair it with `classification` or a metric
+preset for ANN/retrieval heads.
+
+> See `configs/experiment/{arcface,contrastive,ranking,embeddings}_smoke.yaml` for runnable
+> examples. `arcface` is an angular-margin **loss** you can drop onto a `classification` task.
+
+</details>
 
 ### Backbone
+
+<details>
+<summary>timm · smp (two feature streams) · embedding · multi-encoder; per-task <code>feature_key</code></summary>
 
 Select the backbone group in `defaults` or override it:
 
@@ -280,11 +437,19 @@ defaults:
   - backbone: resnet18    # configs/backbone/resnet18.yaml
 ```
 
-| Group file | Architecture | Key |
+| Group file | Architecture | Kind |
 |---|---|---|
 | `resnet18.yaml` | timm ResNet-18 | `timm` |
 | `smp_unet.yaml` | smp U-Net (ResNet-34 encoder) | `smp` |
 | `smp_dpt.yaml` | smp DPT | `smp` |
+| `embedding.yaml` | precomputed feature vectors (no encoder) | `embedding` |
+
+| Kind | Use for |
+|---|---|
+| `timm` | any timm classifier / encoder (global tasks) |
+| `smp` | segmentation & multi-task (two spatial streams) |
+| `embedding` | precomputed embeddings modality |
+| `multi` | N named encoders for MULTISTREAM (dual-encoder / CLIP-style) |
 
 **timm backbone** (any model from the timm registry):
 
@@ -329,15 +494,18 @@ tasks:
     feature_key: encoder_last   # explicit: use encoder output, not decoder
 ```
 
----
+</details>
 
-### Optimizer & LR
+### Optimizer, LR & scheduler
+
+<details>
+<summary>Global / per-head LR, optimizer choice, and LR schedulers with runtime step counts</summary>
 
 ```yaml
 lr: 1.0e-3          # global LR — all param groups start here
 
 optimizer:
-  name: adamw       # registry key: adamw · sgd · adam
+  name: adamw       # registry key: adamw · adam · sgd · rmsprop
   lr: ${lr}         # references the top-level lr
   weight_decay: 1.0e-4
 ```
@@ -357,9 +525,38 @@ tasks:
       lr: 5.0e-5    # decoder head trains slower than backbone
 ```
 
----
+**Scheduler** is its own config group (`cosine` · `onecycle` · `plateau` · `step`; `none`
+= constant LR). `interval`/`frequency`/`monitor` map to Lightning's scheduling; extra keys
+forward to the scheduler constructor. `runtime_kwargs` fills a constructor argument from a
+trainer fact computed at fit time (`total_steps` / `steps_per_epoch` / `epochs`):
+
+```yaml
+defaults:
+  - scheduler: onecycle
+
+scheduler:
+  name: onecycle
+  interval: step
+  max_lr: ${lr}
+  runtime_kwargs: {total_steps: total_steps}   # filled from the trainer at fit time
+```
+
+```yaml
+# ReduceLROnPlateau — needs a monitored metric
+scheduler:
+  name: plateau
+  interval: epoch
+  monitor: loss/val/total
+  factor: 0.5
+  patience: 3
+```
+
+</details>
 
 ### Callbacks
+
+<details>
+<summary>lr_monitor · ema · checkpoint · freeze · sample_log · batch transforms · custom</summary>
 
 `callbacks` is a dict of `{registry_key: params}` — the same pattern as `metrics`.
 Keys are looked up in `callback_registry`; values are constructor kwargs (`null` = all defaults).
@@ -397,6 +594,9 @@ defaults:
 | `ema` | `EmaCallback` | Maintains an EMA shadow; validation and checkpoints use EMA weights |
 | `checkpoint` | `ModelCheckpoint` | Saves the best model by a monitored metric |
 | `freeze` | `FreezeCallback` | Freezes modules for the first N epochs, then unfreezes |
+| `sample_log` | `SampleLogCallback` | Renders a GT-vs-prediction HTML grid (see [Sample visualization](#sample-visualization)) |
+| `progress_bar` | `MetricsProgressBar` | Rich progress bar with live metrics & directions |
+| `batch_transform` | `BatchTransformCallback` | Schedules MixUp / CutMix / Mosaic |
 
 **Disable a callback at runtime** — delete its key with the `~` prefix:
 
@@ -428,9 +628,12 @@ callbacks:
 no special setup needed. EMA weights are swapped in before validation (where checkpoint
 monitors the metric) and swapped back after.
 
----
+</details>
 
 ### Logger
+
+<details>
+<summary>none (default) · ClearML</summary>
 
 ```yaml
 defaults:
@@ -453,11 +656,78 @@ Override at runtime:
 uv run python main.py 'defaults=[{override /logger: clearml}]'
 ```
 
+</details>
+
+### Export
+
+<details>
+<summary>ONNX / TorchScript with numerical-parity verification; combined & per-component graphs</summary>
+
+After `fit`/`test`, the model is exported for deployment (gated by `run_export`). Export is
+a config group (`onnx` · `torchscript` · `all`); targets are a per-format list, so one run
+can emit several formats:
+
+```yaml
+defaults:
+  - export: onnx        # or: torchscript · all
+
+export:
+  targets:
+    - {format: onnx, opset_version: 17, dynamic_batch: true, simplify: true}
+    - {format: torchscript, method: trace}
+  combined: true          # one graph: image → all task logits
+  split_components: false # also write backbone + each head as separate files
+  output_dir: null        # defaults to {save_dir}/export
+```
+
+Each format validates its own option surface at `load_config` time (a misplaced
+`opset_version` under `torchscript` fails immediately). Every target is **verified**: the
+written artifact is re-run and its outputs compared to the source model within tolerance —
+
+```yaml
+export:
+  targets:
+    - {format: onnx, verify_outputs: true, atol: 1.0e-4, rtol: 1.0e-3}
+```
+
+A rich table reports per-output abs/rel error and a pass/fail verdict. Disable export with
+`run_export: false` or an empty `targets` list.
+
+> `tensorrt` is reserved for a later phase (the option model + exporter aren't registered yet).
+
+</details>
+
+### Sample visualization
+
+<details>
+<summary>Interactive HTML grid of ground-truth vs predictions, via <code>sample_log</code></summary>
+
+`SampleLogCallback` periodically takes a batch, runs the model, and renders a
+self-contained interactive **HTML grid**: each cell shows the image with toggleable overlays
+— chips for classification/regression labels, full-cell colored masks for segmentation —
+and a sidebar to switch ground-truth / prediction layers per task and class.
+
+```yaml
+callbacks:
+  sample_log:
+    num_images: 8
+    every_n_epochs: 5
+    batch_index: 0
+    title_prefix: samples
+```
+
+It is label-type agnostic: an `annotators` registry keyed by `(topology, objective)` writes
+the GT/pred fields, and a `label_renderers` registry keyed by `Label` type emits the cell
+overlays — so a new task kind plugs in without touching the renderer.
+
+</details>
+
 ---
 
 ## Recipes
 
-### Single-task classification
+<details>
+<summary>Single-task classification</summary>
 
 ```yaml
 # configs/experiment/classify_pets.yaml
@@ -488,9 +758,10 @@ tasks:
 uv run python main.py +experiment=classify_pets
 ```
 
----
+</details>
 
-### Multi-task: classification + segmentation on one backbone
+<details>
+<summary>Multi-task: classification + segmentation on one backbone</summary>
 
 ```yaml
 # configs/experiment/multitask.yaml
@@ -526,9 +797,43 @@ tasks:
       lr: 5.0e-4
 ```
 
----
+</details>
 
-### Fine-tuning with frozen backbone
+<details>
+<summary>Metric learning: contrastive dual-encoder alignment</summary>
+
+```yaml
+# configs/experiment/align.yaml
+# @package _global_
+defaults:
+  - override /backbone: ...        # a `multi` backbone (image + other encoder)
+  - override /callbacks: default
+  - override /scheduler: cosine
+
+project: align
+epochs: 50
+batch_size: 64
+lr: 3.0e-4
+
+data:
+  sources: data/pairs.csv
+  inputs:
+    image: image_path
+    other: other_path
+  split: {train: 0.9, val: 0.1}
+
+tasks:
+  align:
+    preset: contrastive          # MULTISTREAM + InfoNCE
+    target: image                # structural target
+    dim: 256
+    loss: siglip                 # or info_nce
+```
+
+</details>
+
+<details>
+<summary>Fine-tuning with a frozen backbone</summary>
 
 ```yaml
 # configs/experiment/finetune.yaml
@@ -550,15 +855,17 @@ callbacks:
 # ... data and tasks as usual
 ```
 
----
+</details>
 
-### Fast debugging
+<details>
+<summary>Fast debugging</summary>
 
 ```yaml
 # configs/experiment/debug_quick.yaml
 # @package _global_
 defaults:
   - override /trainer: cpu_smoke
+  - override /dataloader: debug
   - override /callbacks: none
   - override /logger: none
 
@@ -572,9 +879,14 @@ data:
 # ... tasks as usual
 ```
 
+</details>
+
 ---
 
 ## CLI reference
+
+<details>
+<summary>Hydra override syntax — scalars, group swaps, experiments</summary>
 
 Override any config value directly — standard Hydra syntax:
 
@@ -584,6 +896,9 @@ uv run python main.py epochs=5 batch_size=64
 
 # swap a config group
 uv run python main.py 'defaults=[{override /backbone: smp_unet}]'
+
+# swap dataloader / scheduler / export presets
+uv run python main.py dataloader=performance scheduler=cosine export=all
 
 # load a full experiment override
 uv run python main.py +experiment=classify_pets
@@ -596,11 +911,20 @@ uv run python main.py 'defaults=[{override /callbacks: default}]' '~callbacks.em
 
 # per-task LR from CLI
 uv run python main.py 'tasks.mask.optimizer.lr=1e-5'
+
+# train only / eval-only / skip export
+uv run python main.py run_test=false run_export=false
+uv run python main.py run_train=false ckpt_path=runs/.../epoch=11.ckpt
 ```
+
+</details>
 
 ---
 
 ## Extending the framework
+
+<details>
+<summary>Custom loss / metric / callback / data source via registry or <code>_target_</code></summary>
 
 Every component is a registry key. Register your own with the `@registry.register` decorator — importing the module is enough to make it available.
 
@@ -673,8 +997,6 @@ callbacks:
     max_norm: 0.5
 ```
 
----
-
 **Custom data source** (e.g. Parquet):
 
 ```python
@@ -692,13 +1014,21 @@ data:
   source_type: parquet
 ```
 
+**Other extension points** follow the same pattern — `backbones`, `head_builders`,
+`target_codecs`, `input_loaders`, `topology_strategies`, `objective_strategies`,
+`task_presets`, `batch_transforms`, `schedulers`, `exporters`, `label_renderers`,
+`annotators`.
+
+</details>
+
 ---
 
 ## Internals
 
 The diagrams below show the full data flow for readers who want to understand or extend the framework internals.
 
-### Phase 1 — Setup (runs once before `trainer.fit`)
+<details>
+<summary>Phase 1 — Setup (runs once before <code>trainer.fit</code>)</summary>
 
 ```mermaid
 sequenceDiagram
@@ -758,10 +1088,13 @@ sequenceDiagram
     Note over CM: TimmBackbone + nn.ModuleDict(head per task)<br/>head sized from backbone.feature_dim(feature_key)
     CM-->>main: CompositeModel
 
-    main->>main: LitModule(model, tasks, optimizer_builder)<br/>L.Trainer(…).fit(lit_module, lit_datamodule)
+    main->>main: build_lit_module(...) ; build_lit_data_module(...)<br/>build_trainer(...) ; run_experiment(fit → test → export)
 ```
 
-### Phase 2 — Training step (repeats every batch)
+</details>
+
+<details>
+<summary>Phase 2 — Training step (repeats every batch)</summary>
 
 ```mermaid
 sequenceDiagram
@@ -828,7 +1161,10 @@ sequenceDiagram
     LitM-->>Trainer: combined.total  →  .backward()
 ```
 
-### Epoch end — metrics flush
+</details>
+
+<details>
+<summary>Epoch end — metrics flush</summary>
 
 ```mermaid
 sequenceDiagram
@@ -846,3 +1182,5 @@ sequenceDiagram
         LitM->>Met: reset()
     end
 ```
+
+</details>

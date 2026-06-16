@@ -33,12 +33,14 @@ from src.composition.wiring.export import run_export, validate_export_preconditi
 from src.composition.wiring.model import build_backbone
 from src.composition.wiring.tasks import build_bindings, build_tasks
 from src.composition.wiring.training import (
+    build_lit_data_module,
     build_lit_module,
     build_logger,
     build_optimizer_builder,
     build_scheduler_builder,
     build_task_lr_overrides,
-    run_fit_and_test,
+    build_trainer,
+    run_experiment,
 )
 
 __all__ = [
@@ -48,6 +50,7 @@ __all__ = [
     "build_callbacks",
     "build_data_module",
     "build_data_source",
+    "build_lit_data_module",
     "build_lit_module",
     "build_logger",
     "build_optimizer_builder",
@@ -55,6 +58,7 @@ __all__ = [
     "build_staged_sources",
     "build_task_lr_overrides",
     "build_tasks",
+    "build_trainer",
     "build_transforms",
     "callback_builders",
     "extract_model_state_dict",
@@ -62,7 +66,7 @@ __all__ = [
     "load_init_weights",
     "resolve_ckpt_file",
     "resolve_test_ckpt_path",
+    "run_experiment",
     "run_export",
-    "run_fit_and_test",
     "validate_export_preconditions",
 ]

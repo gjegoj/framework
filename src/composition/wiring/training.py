@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 import lightning as L
@@ -12,13 +13,15 @@ from src.composition.wiring.common import forward_extras
 from src.composition.wiring.export import run_export
 from src.config.schema import ExperimentConfig, OptimizerConfig, SchedulerConfig
 from src.core.entities import Task
+from src.core.instantiate import instantiate
 from src.models.assembly import CompositeModel
+from src.training.datamodule import LitDataModule
 from src.training.module import LitModule
 from src.training.optimizer import OptimizerBuilder
 from src.training.scheduler import TRAINER_FACTS, SchedulerBuilder
 
 if TYPE_CHECKING:
-    from src.training.datamodule import LitDataModule
+    from src.data.datamodule import DataModule
 
 log = logging.getLogger(__name__)
 
@@ -128,6 +131,23 @@ def build_lit_module(
     )
 
 
+def build_lit_data_module(data_module: DataModule) -> LitDataModule:
+    """Wrap the domain ``DataModule`` in its Lightning humble object.
+
+    The data-side counterpart of ``build_lit_module``: the plain ``DataModule``
+    owns all data logic (sources, codecs, cache, dataloader knobs); ``LitDataModule``
+    is the thin Lightning adapter exposing train/val/test dataloaders. Build it after
+    ``data_module.setup()`` so codecs are fitted and ``num_classes`` is populated.
+
+    Parameters:
+        data_module (DataModule): The setup-complete domain data module.
+
+    Returns:
+        LitDataModule: Lightning-facing wrapper ready for ``Trainer.fit``.
+    """
+    return LitDataModule(data_module)
+
+
 def build_logger(config: ExperimentConfig) -> Any:
     """Build the experiment logger from config.
 
@@ -145,14 +165,57 @@ def build_logger(config: ExperimentConfig) -> Any:
     return _build_logger(config)
 
 
-def run_fit_and_test(
+def build_trainer(config: ExperimentConfig, logger: Any, callbacks: list[Any]) -> L.Trainer:
+    """Assemble the Lightning ``Trainer`` from the typed trainer config.
+
+    The single home for Trainer construction (composition root). ``TrainerConfig``
+    is a typed section forwarded verbatim as kwargs, with two seams:
+
+    - ``logger`` is built separately (``build_logger``) and injected, so any
+      ``logger`` key in the dumped kwargs is dropped.
+    - ``profiler`` is a brick-spec: a ``{_target_: ...}`` mapping is built via the
+      ``_target_`` grammar (``instantiate``) into a concrete ``Profiler`` — this is
+      what lets a profiler declare its own ``dirpath``/``filename`` from YAML. A
+      plain string alias (``simple``/``advanced``) or ``None`` passes straight to
+      Lightning, which resolves it itself.
+
+    Parameters:
+        config (ExperimentConfig): Validated experiment config.
+        logger (Any): Logger built by ``build_logger`` (``Logger`` or ``False``).
+        callbacks (list[Any]): Callbacks built by ``build_callbacks``.
+
+    Returns:
+        L.Trainer: Configured trainer ready for ``fit``/``test``.
+    """
+    kwargs = config.trainer.model_dump(mode="python")
+    kwargs.pop("logger", None)  # logger is built separately and injected below
+    profiler_spec = kwargs.pop("profiler", None)
+    # Mapping → _target_ brick-spec (no registry); str alias / None → Lightning resolves it.
+    profiler = instantiate(profiler_spec) if isinstance(profiler_spec, Mapping) else profiler_spec
+    if config.save_dir is not None:
+        kwargs.setdefault("default_root_dir", config.save_dir)
+    return L.Trainer(
+        max_epochs=config.epochs,
+        logger=logger,
+        callbacks=callbacks,
+        profiler=profiler,
+        **kwargs,
+    )
+
+
+def run_experiment(
     trainer: L.Trainer,
     lit_module: LitModule,
     lit_dm: LitDataModule,
     config: ExperimentConfig,
     tasks: list[Task],
 ) -> None:
-    """Run training and/or testing according to ``run_train`` / ``run_test`` flags.
+    """Execute the experiment's run phases, each gated by its ``run_*`` flag.
+
+    In order: ``run_train`` → ``fit`` (optionally loading ``init_ckpt_path`` first),
+    ``run_test`` → ``test`` (on the resolved best/last checkpoint or in-memory weights),
+    ``run_export`` → export the model. Adding a future phase extends this one home
+    without touching ``main.py``.
 
     Parameters:
         trainer (L.Trainer): Configured Lightning trainer.

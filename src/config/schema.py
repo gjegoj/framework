@@ -15,7 +15,7 @@ Design notes:
 from __future__ import annotations
 
 import math
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -165,7 +165,17 @@ class DataLoaderConfig(BaseModel):
     val/test never shuffle and never drop.  Only ``drop_last`` is exposed here
     because it occasionally needs to be disabled (e.g. when dataset size is
     exactly divisible and the last batch matters for metrics).
+
+    Extra keys are allowed and forwarded verbatim to ``torch.utils.data.DataLoader``
+    (e.g. ``timeout``, ``multiprocessing_context``, ``pin_memory_device``), mirroring
+    how ``trainer``/``optimizer`` forward their extras. Keys the framework owns
+    (``RESERVED``: dataset/batch_size/shuffle/collate_fn/sampler/batch_sampler) are
+    rejected so per-stage conventions cannot be silently broken.
     """
+
+    RESERVED: ClassVar[frozenset[str]] = frozenset(
+        {"dataset", "batch_size", "shuffle", "collate_fn", "sampler", "batch_sampler"}
+    )
 
     num_workers: int = Field(0, ge=0, description="Worker processes per DataLoader. 0 → main process (debug-friendly).")
     pin_memory: bool = Field(
@@ -181,7 +191,17 @@ class DataLoaderConfig(BaseModel):
         None, ge=1, description="Batches prefetched per worker. None → PyTorch default (2). Requires num_workers > 0."
     )
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="allow")
+
+    @model_validator(mode="after")
+    def _reject_reserved_extras(self) -> DataLoaderConfig:
+        clashing = self.RESERVED & set(self.model_extra or {})
+        if clashing:
+            raise ValueError(
+                f"dataloader keys {sorted(clashing)} are managed by the framework "
+                "(per-stage shuffle/drop_last, batch_size, collate_fn) and cannot be set here."
+            )
+        return self
 
 
 class BackboneConfig(BaseModel):
@@ -337,6 +357,14 @@ class TrainerConfig(BaseModel):
     devices: int | str = "auto"
     precision: str = "32-true"
     log_every_n_steps: int = 10
+    profiler: str | dict[str, Any] | None = Field(
+        None,
+        description=(
+            "Lightning profiler. String alias ('simple'/'advanced'/'pytorch') is passed through; "
+            "a {_target_: ...} mapping is built via the _target_ grammar (e.g. AdvancedProfiler with "
+            "dirpath/filename to write the report to a file). None disables profiling."
+        ),
+    )
 
     model_config = ConfigDict(extra="allow")
 

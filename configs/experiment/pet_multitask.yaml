@@ -14,7 +14,6 @@ image_size: [128, 128]
 run_train: true
 run_test: true
 run_export: true
-ckpt_path: runs/pet-multitask/2026-06-14/20-51-17/checkpoints/epoch=5-step=264.ckpt
 
 callbacks:
   sample_log:
@@ -28,7 +27,7 @@ data:
   sources: data/pet/data.csv
   inputs: image_path
   split_stratify: breed
-  cache: {ram_fraction: 0.0, max_gb: 4}
+  cache: {ram_fraction: 0.5}
   max_samples: 1000
   split:
     train: 0.7
