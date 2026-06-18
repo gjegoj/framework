@@ -6,7 +6,7 @@ import torch
 from src.core.entities import HeadSpec
 from src.core.keys import DECODER, ENCODER_LAST, IMAGE, POOLED
 from src.models import CompositeModel, build_composite_model
-from src.models.backbones import EmbeddingBackbone, SmpBackbone, TimmBackbone
+from src.models.backbones import DinoDptBackbone, EmbeddingBackbone, SmpBackbone, TimmBackbone
 from src.models.registry import backbones, head_builders
 
 
@@ -112,11 +112,60 @@ class TestSmpBackbone:
         assert output.task_logits["mask"].shape == (2, 3, 32, 32)
         assert output.task_logits["label"].shape == (2, 5)
 
+    def test_explicit_encoder_weights_overrides_pretrained(self) -> None:
+        # An explicit encoder_weights must override pretrained's default, not collide with the
+        # positional argument (None here also avoids any weight download).
+        backbone = SmpBackbone(name="unet", encoder_name="resnet18", pretrained=True, encoder_weights=None)
+        assert set(backbone(_images(2)).streams) == {ENCODER_LAST, DECODER}
+
+
+class TestDinoDptPatch:
+    @staticmethod
+    def _stub_smp_build(monkeypatch: pytest.MonkeyPatch, encoder: object) -> None:
+        """Stub SmpBackbone.__init__ so DinoDptBackbone builds without a real smp model."""
+
+        def fake_init(self: SmpBackbone, **kwargs: object) -> None:
+            self._encoder = encoder
+
+        monkeypatch.setattr(SmpBackbone, "__init__", fake_init)
+
+    def test_init_norms_prefix_token_intermediates(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        recorded: list[dict[str, object]] = []
+
+        class _Model:
+            def forward_intermediates(
+                self, x: torch.Tensor, **kwargs: object
+            ) -> list[tuple[torch.Tensor, torch.Tensor]]:
+                recorded.append(kwargs)
+                return [(torch.zeros(1), torch.ones(1)), (torch.zeros(1), torch.ones(1))]
+
+        class _Encoder:
+            has_prefix_tokens = True
+            _output_indices = [2, 5]
+            model = _Model()
+
+        self._stub_smp_build(monkeypatch, _Encoder())
+        backbone = DinoDptBackbone(encoder_name="x")
+        features, prefix = backbone._encoder._forward_with_prefix_tokens(torch.zeros(1))
+
+        assert recorded[0]["norm"] is True
+        assert recorded[0]["return_prefix_tokens"] is True
+        assert len(features) == 2 and len(prefix) == 2
+
+    def test_init_noop_without_prefix_tokens(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        class _Encoder:
+            has_prefix_tokens = False
+
+        self._stub_smp_build(monkeypatch, _Encoder())
+        backbone = DinoDptBackbone(encoder_name="x")
+        assert not hasattr(backbone._encoder, "_forward_with_prefix_tokens")
+
 
 class TestRegistries:
     def test_builtins_registered(self) -> None:
         assert "timm" in backbones
         assert "smp" in backbones
+        assert "dino_dpt" in backbones
         assert "linear" in head_builders
         assert "conv" in head_builders
 

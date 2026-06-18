@@ -2,8 +2,8 @@
 
 from src.models.backbones.embedding import EmbeddingBackbone
 from src.models.backbones.multi import MultiEncoderBackbone
-from src.models.backbones.smp import SmpBackbone
+from src.models.backbones.smp import DinoDptBackbone, SmpBackbone
 from src.models.backbones.timm import TimmBackbone
 from src.models.registry import backbones
 
-__all__ = ["EmbeddingBackbone", "MultiEncoderBackbone", "SmpBackbone", "TimmBackbone", "backbones"]
+__all__ = ["DinoDptBackbone", "EmbeddingBackbone", "MultiEncoderBackbone", "SmpBackbone", "TimmBackbone", "backbones"]

@@ -172,13 +172,21 @@ class in a registry (OCP).
   overrides survive** (a scalar would otherwise broadcast and clobber them); add a scheduler
   with per-group LR args = one map entry, `build` stays generic.
 - **Export** (`run_export`, gated by `run_export`). `ExportConfig` is a per-format Pydantic
-  *discriminated union* keyed on `format` (`onnx`/`torchscript`; tensorrt reserved), each
+  *discriminated union* keyed on `format` (`onnx`/`torchscript`/`tensorrt`), each
   `extra="forbid"` so a misplaced option fails at `load_config`. Backends implement the
   `ModelExporter` port (`export`/`load`/`validate`) and self-register in `exporters`; the
   generic `verify.py` composes their `load()`/`validate()` into a parity report (`atol`/`rtol`).
   `combined` exports one image→all-logits graph; `split_components` also emits per-part files.
   Output dir defaults to `{save_dir}/export`. Config group `configs/export/` (`onnx`/
-  `torchscript`/`all`). `validate_export_preconditions` runs the topology guard *before* training.
+  `torchscript`/`tensorrt`/`all`). `validate_export_preconditions` runs the topology guard *before* training.
+- **TensorRT export** (`export/tensorrt.py`, format `tensorrt`) compiles straight from the
+  PyTorch graph via **torch-tensorrt** (no ONNX intermediate) to a serialized engine (`.plan`).
+  CUDA-only and hardware/TRT-version specific — `export()` raises off-GPU and moves the (CPU)
+  module to cuda then restores it in `finally` so the shared module survives other targets.
+  `TrtShapes` is the min/opt/max profile for the image input; H/W reference `${image_size.*}`
+  (never hardcoded), `None` → batch `1/4/8` over the example's own C,H,W. `torch_tensorrt`/`tensorrt`
+  are optional, lazy-imported (`uv add --optional export-trt torch-tensorrt tensorrt`); the real
+  engine round-trip test is `skipif`-gated, the config/registry/no-CUDA paths run on CPU.
 - **Sample visualization** (`visualization/`) is driven by `SampleLogCallback` (`sample_log`):
   it annotates a batch's GT vs predictions and renders an interactive self-contained HTML grid.
   Two registries keep it open/closed: `annotators` keyed by `(topology, objective)` write the

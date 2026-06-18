@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 from pathlib import Path
 
 import pytest
@@ -98,9 +99,30 @@ class TestExportConfig:
         with pytest.raises(ConfigError):
             load_config(_raw(export={"targets": [{"format": "coreml"}]}))
 
-    def test_tensorrt_format_rejected(self) -> None:
+    def test_tensorrt_format_accepted(self) -> None:
+        config = load_config(_raw(export={"targets": [{"format": "tensorrt", "precision": "fp16"}]}))
+        target = config.export.targets[0]
+        assert target.format == "tensorrt"
+        assert target.precision == "fp16"
+
+    def test_tensorrt_shapes_reject_min_above_max(self) -> None:
+        with pytest.raises(ConfigError, match="min<=opt<=max"):
+            load_config(
+                _raw(
+                    export={
+                        "targets": [
+                            {
+                                "format": "tensorrt",
+                                "shapes": {"min": [9, 3, 8, 8], "opt": [4, 3, 8, 8], "max": [8, 3, 8, 8]},
+                            }
+                        ]
+                    }
+                )
+            )
+
+    def test_tensorrt_misplaced_onnx_option_rejected(self) -> None:
         with pytest.raises(ConfigError):
-            load_config(_raw(export={"targets": [{"format": "tensorrt"}]}))
+            load_config(_raw(export={"targets": [{"format": "tensorrt", "opset_version": 17}]}))
 
     def test_empty_targets_allowed(self) -> None:
         config = load_config(_raw(export={"targets": []}))
@@ -137,6 +159,64 @@ class TestExporterPort:
         assert isinstance(exporters.create("onnx"), OnnxExporter)
         assert exporters.create("onnx").extension == ".onnx"
         assert exporters.create("torchscript").extension == ".pt"
+        assert exporters.create("tensorrt").extension == ".plan"
+
+
+class TestTensorRtExporter:
+    def test_export_without_cuda_raises(self, tmp_path: Path) -> None:
+        from src.core.entities import ExportRequest
+        from src.export.tensorrt import TensorRtExporter
+
+        if torch.cuda.is_available():
+            pytest.skip("CUDA present — the no-CUDA guard does not trigger here.")
+        request = ExportRequest(
+            module=torch.nn.Identity(),
+            example_inputs=(torch.randn(1, 3, 8, 8),),
+            path=tmp_path / "model.plan",
+            input_names=["input"],
+            output_names=["output"],
+            options={"precision": "fp16"},
+        )
+        with pytest.raises(RuntimeError, match="requires a CUDA device"):
+            TensorRtExporter().export(request)
+
+    def test_profile_shapes_explicit_and_fallback(self) -> None:
+        from src.export.tensorrt import _profile_shapes
+
+        example = torch.randn(1, 3, 8, 8)
+        # Fallback: batch 1/4/8 over the example's own C, H, W.
+        assert _profile_shapes({}, example) == ([1, 3, 8, 8], [4, 3, 8, 8], [8, 3, 8, 8])
+        # Explicit profile wins.
+        shapes = {"min": [1, 3, 16, 16], "opt": [2, 3, 16, 16], "max": [4, 3, 16, 16]}
+        assert _profile_shapes({"shapes": shapes}, example) == ([1, 3, 16, 16], [2, 3, 16, 16], [4, 3, 16, 16])
+
+    @pytest.mark.skipif(
+        not torch.cuda.is_available() or importlib.util.find_spec("torch_tensorrt") is None,
+        reason="TensorRT round-trip needs CUDA + torch-tensorrt (GPU node only).",
+    )
+    def test_engine_round_trip(self, tmp_path: Path) -> None:
+        from src.core.entities import ExportRequest
+        from src.export.tensorrt import TensorRtExporter
+
+        module = torch.nn.Sequential(
+            torch.nn.Conv2d(3, 8, 3, padding=1), torch.nn.ReLU(), torch.nn.Conv2d(8, 3, 3, padding=1)
+        ).eval()
+        request = ExportRequest(
+            module=module,
+            example_inputs=(torch.randn(1, 3, 16, 16),),
+            path=tmp_path / "model_combined.plan",
+            input_names=["input"],
+            output_names=["output"],
+            options={"precision": "fp32", "min_block_size": 1},
+        )
+        exporter = TensorRtExporter()
+        exporter.export(request)
+        assert request.path.exists()
+        assert next(module.parameters()).device.type == "cpu"  # restored after export
+
+        runner = exporter.load(request.path)
+        out = runner({"input": torch.randn(1, 3, 16, 16)})
+        assert len(out) == 1 and out[0].shape == (1, 3, 16, 16)
 
 
 class TestExportOnnx:
@@ -330,14 +410,18 @@ class TestExportGuards:
 
 class TestExportYamlConfigs:
     def test_all_export_group_files_validate(self) -> None:
-        import yaml
+        from omegaconf import OmegaConf
 
         group_dir = Path("configs/export")
         for path in sorted(group_dir.glob("*.yaml")):
-            raw = yaml.safe_load(path.read_text()) or {}
-            if not raw:  # fully-commented placeholder (tensorrt.yaml)
+            cfg = OmegaConf.load(path)
+            if not cfg:  # fully-commented placeholder
                 continue
-            ExportConfig.model_validate(raw)  # must not raise
+            # Provide image_size so ${image_size.*} interpolations (tensorrt.yaml) resolve.
+            resolved = OmegaConf.to_container(OmegaConf.merge({"image_size": [224, 224]}, cfg), resolve=True)
+            assert isinstance(resolved, dict)
+            resolved.pop("image_size", None)
+            ExportConfig.model_validate(resolved)  # must not raise
 
 
 class TestExportReport:

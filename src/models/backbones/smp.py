@@ -78,10 +78,14 @@ class SmpBackbone(Backbone):
         **kwargs: Any,
     ) -> None:
         super().__init__()
+        # ``pretrained`` picks ImageNet by default, but a config may override the weight tag
+        # explicitly (e.g. ``encoder_weights: true`` to load a ViT encoder's own pretrained,
+        # like DINOv3) — without it, that key would collide with the positional argument below.
+        encoder_weights = kwargs.pop("encoder_weights", "imagenet" if pretrained else None)
         model = smp.create_model(
             arch=name,
             encoder_name=encoder_name,
-            encoder_weights="imagenet" if pretrained else None,
+            encoder_weights=encoder_weights,
             classes=1,  # placeholder: we drop smp's head and keep only encoder+decoder
             **kwargs,
         )
@@ -206,3 +210,35 @@ def _clone_with_new_out_channels(
         out_channels,
         bias=layer.bias is not None,
     )
+
+
+@backbones.register("dino_dpt")
+class DinoDptBackbone(SmpBackbone):
+    """smp DPT with the DINOv3 prefix-token *norm* patch.
+
+    Equivalent to ``kind: smp, name: dpt`` but applies the final ViT LayerNorm to the encoder's
+    intermediate features before DPT reassembly — smp calls ``forward_intermediates`` without
+    ``norm`` and exposes no flag for it, so we wrap the encoder's ``_forward_with_prefix_tokens``.
+    Everything else (decoder, head, ``feature_dim``, the ``_dpt_style`` forward) is inherited.
+    Pair it with a DINOv3 ViT encoder, e.g. ``encoder_name: tu-vit_small_plus_patch16_dinov3.lvd1689m``
+    and ``encoder_weights: true`` to load its pretrained weights.
+
+    Parameters:
+        name (str | None): smp arch; coerced to ``"dpt"`` (the only arch this variant targets).
+        **kwargs (Any): Forwarded to ``SmpBackbone`` (``encoder_name``, ``encoder_weights``, …).
+    """
+
+    def __init__(self, name: str | None = "dpt", **kwargs: Any) -> None:
+        super().__init__(name=name or "dpt", **kwargs)
+        encoder: Any = self._encoder
+        if not getattr(encoder, "has_prefix_tokens", False):
+            return
+        model, indices = encoder.model, encoder._output_indices
+
+        def _forward_with_prefix_tokens(x: Tensor) -> tuple[list[Tensor], list[Tensor]]:
+            outputs = model.forward_intermediates(
+                x, indices=indices, intermediates_only=True, return_prefix_tokens=True, norm=True
+            )
+            return [output[0] for output in outputs], [output[1] for output in outputs]
+
+        encoder._forward_with_prefix_tokens = _forward_with_prefix_tokens

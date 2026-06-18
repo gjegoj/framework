@@ -1,0 +1,15 @@
+# DINOv3 ViT encoder + smp DPT decoder for segmentation.
+# `kind: dino_dpt` is `name: dpt` plus the prefix-token norm patch (DINOv3 intermediates are
+# normed before reassembly). Drop to `kind: smp` if your smp build already norms them. The
+# framework drops smp's segmentation head and sizes its own from runtime num_classes, so no
+# `classes` here. Decoder/encoder knobs forward verbatim to smp.create_model.
+kind: dino_dpt
+name: dpt
+encoder_name: tu-vit_small_plus_patch16_dinov3.lvd1689m
+encoder_weights: true                 # load the DINOv3 timm pretrained (overrides pretrained→imagenet)
+encoder_depth: 4
+encoder_output_indices: [2, 5, 8, 11]
+decoder_readout: cat                  # [cat, add, ignore]
+decoder_intermediate_channels: [256, 512, 1024, 1024]
+decoder_fusion_channels: 256
+global_pool: token                    # required for ViT token-pool encoders

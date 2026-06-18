@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Literal
 
 ExportArtifactKind = Literal["combined", "backbone", "head"]
-ExportFormat = Literal["onnx", "torchscript"]
+ExportFormat = Literal["onnx", "torchscript", "tensorrt"]
 
 
 @dataclass(frozen=True)

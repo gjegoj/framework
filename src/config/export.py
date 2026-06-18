@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class _VerifiableExport(BaseModel):
@@ -53,8 +53,50 @@ class TorchScriptOptions(_VerifiableExport):
     )
 
 
+class TrtShapes(BaseModel):
+    """Explicit min/opt/max input shapes for a TensorRT optimization profile.
+
+    Each is a full ``[N, C, H, W]`` shape for the image input. Reference the run's input
+    size instead of hardcoding it, e.g. ``min: [1, 3, "${image_size.0}", "${image_size.1}"]``.
+    ``None`` on the option falls back to a batch-only profile (1/4/8) over the example input's
+    own ``C, H, W`` (also derived from ``image_size``).
+    """
+
+    min: list[int] = Field(..., description="Lower-bound shape [N, C, H, W].")
+    opt: list[int] = Field(..., description="Optimization (typical) shape [N, C, H, W].")
+    max: list[int] = Field(..., description="Upper-bound shape [N, C, H, W].")
+
+    model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="after")
+    def _validate(self) -> TrtShapes:
+        if not (len(self.min) == len(self.opt) == len(self.max)):
+            raise ValueError(f"min/opt/max must share a length, got {len(self.min)}/{len(self.opt)}/{len(self.max)}.")
+        for axis, (lo, mid, hi) in enumerate(zip(self.min, self.opt, self.max, strict=True)):
+            if not (lo <= mid <= hi):
+                raise ValueError(f"shapes must satisfy min<=opt<=max per axis; axis {axis} is {lo}/{mid}/{hi}.")
+        return self
+
+
+class TensorRtOptions(_VerifiableExport):
+    """TensorRT backend options — exports a serialized engine (``.plan``).
+
+    Compiled directly from the PyTorch graph via torch-tensorrt (no ONNX intermediate).
+    fp16 needs a looser ``atol`` than the default — set it in ``configs/export/tensorrt.yaml``.
+    """
+
+    format: Literal["tensorrt"] = "tensorrt"
+    precision: Literal["fp32", "fp16"] = Field("fp16", description="Compute precision (enabled_precisions).")
+    shapes: TrtShapes | None = Field(
+        None,
+        description="Explicit min/opt/max profile for the image input. None → batch 1/4/8 over the example shape.",
+    )
+    workspace_size: int | None = Field(None, gt=0, description="TensorRT builder workspace budget in bytes.")
+    min_block_size: int = Field(5, ge=1, description="Minimum number of ops in a TensorRT subgraph.")
+
+
 ExportTarget = Annotated[
-    OnnxOptions | TorchScriptOptions,
+    OnnxOptions | TorchScriptOptions | TensorRtOptions,
     Field(discriminator="format"),
 ]
 
