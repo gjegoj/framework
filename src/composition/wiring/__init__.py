@@ -9,7 +9,7 @@ Two construction families coexist by design:
 - **Typed config sections** (backbone, optimizer, data, logger) have dedicated
   builders — their schema is fixed and ``kind``/``name`` would clash with the
   brick-spec grammar, so they are not brick-specs.
-- **Free-form brick-specs** (transforms, codecs, losses, callbacks, batch
+- **Free-form brick-specs** (transforms, encoders, losses, callbacks, batch
   transforms) all go through ``instantiate`` — one grammar, one home for
   ``_target_``. Context-aware construction is a Strategy registry
   (``callback_builders``), never an ``if`` ladder.

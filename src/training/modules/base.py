@@ -1,22 +1,15 @@
-"""LitModule: the humble Lightning training module.
+"""BaseLitModule: the shared Lightning scaffolding for training/eval modules.
 
-Orchestrates one training step: forward → per-task loss → aggregation. All
-decision logic lives in the Task objects and the aggregator; LitModule is a
-thin coordinator that also handles logging and optimizer configuration.
-
-The step loop from the plan:
-
-    features = model.backbone(batch.inputs)
-    for task in tasks:
-        logits = model.heads[task.name](features[task.feature_key])
-        target = task.codec.adapt(batch.targets[task.name])
-        losses[task.name] = task.criterion(logits, target.loss)
-        task.metrics[stage].update(task.activation(logits), target.metric)
-    total = aggregator.combine(losses, weights)
+Holds everything common across training regimes — construction, the step dispatch,
+device/epoch hooks, optimizer configuration, loss/metric logging — leaving only the
+per-batch ``_shared_step`` (forward → loss → aggregate) for subclasses. ``LitModule`` is
+the standard supervised implementation; a knowledge-distillation module would subclass this
+and override ``_shared_step`` (teacher forward + KD loss) while reusing the rest unchanged.
 """
 
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from typing import Any
 
@@ -24,7 +17,7 @@ import lightning as L
 from lightning.pytorch.loggers import Logger as LightningLogger
 from lightning.pytorch.utilities.types import OptimizerLRScheduler, OptimizerLRSchedulerConfig
 
-from src.core.entities import Batch, LossResult, StepOutput, Task, TaskStepView
+from src.core.entities import Batch, LossResult, StepOutput, Task
 from src.core.enums import Stage
 from src.core.ports import LossAggregator
 from src.metrics.directions import task_metric_directions
@@ -36,20 +29,22 @@ from src.metrics.handlers import (
 )
 from src.models.assembly import CompositeModel
 from src.training.aggregator import WeightedSumAggregator
-from src.training.optimizer import OptimizerBuilder
-from src.training.scheduler import TRAINER_FACTS, SchedulerBuilder
+from src.training.optim.optimizer import OptimizerBuilder
+from src.training.optim.scheduler import TRAINER_FACTS, SchedulerBuilder
 
 
-class LitModule(L.LightningModule):
-    """Lightning training/evaluation module for multi-task vision models.
+class BaseLitModule(L.LightningModule, ABC):
+    """Shared scaffolding for multi-task Lightning modules; subclasses implement ``_shared_step``.
 
     Parameters:
         model (CompositeModel): Shared backbone + heads.
-        tasks (list[Task]): Task bundles (codec/criterion/activation/metrics).
+        tasks (list[Task]): Task bundles (adapter/criterion/activation/metrics).
         optimizer_builder (OptimizerBuilder): Builds the optimizer on configure.
         scheduler_builder (SchedulerBuilder | None): Optional LR scheduler builder.
         aggregator (LossAggregator | None): Loss combiner; defaults to weighted sum.
         task_lr_overrides (dict[str, float] | None): Per-head LR for the optimizer.
+        metric_handlers (Sequence[MetricHandler]): Typed metric loggers (scalar/vector/...).
+        hparams (dict[str, Any] | None): Config snapshot logged at ``on_fit_start``.
     """
 
     def __init__(
@@ -66,7 +61,7 @@ class LitModule(L.LightningModule):
         super().__init__()
         self.model = model
         self.tasks = tasks
-        self._task_map: dict[str, Task] = {t.name: t for t in tasks}
+        self._task_map: dict[str, Task] = {task.name: task for task in tasks}
         self._optimizer_builder = optimizer_builder
         self._scheduler_builder = scheduler_builder
         self._aggregator: LossAggregator = aggregator or WeightedSumAggregator()
@@ -76,34 +71,9 @@ class LitModule(L.LightningModule):
 
     # ------------------------------------------------------------------ steps
 
+    @abstractmethod
     def _shared_step(self, batch: Batch | dict[str, Any], stage: Stage) -> StepOutput:
-        """Run the forward + loss/metric loop and return step artifacts.
-
-        Returns a :class:`StepOutput` dict. ``task_views`` (post-activation
-        preds + metric targets) flow to ``on_*_batch_end(outputs, ...)`` so
-        visualization callbacks reuse step work without re-running activation or
-        codec adaptation. ``preds`` are detached — the activation output only
-        feeds metrics/inference, never backprop (the loss runs on ``logits``).
-        """
-        if isinstance(batch, dict):
-            batch = Batch(**batch)
-
-        output = self.model(batch.inputs)
-        losses: dict[str, LossResult] = {}
-        task_views: dict[str, TaskStepView] = {}
-
-        for task in self.tasks:
-            logits = output.task_logits[task.name]
-            target = task.codec.adapt(batch.targets[task.name])
-            preds = task.activation(logits).detach()
-            losses[task.name] = task.criterion(logits, target.loss)
-            task.metrics[stage].update(preds, target.metric)
-            task_views[task.name] = TaskStepView(preds=preds, metric_target=target.metric)
-
-        weights = {t.name: t.weight for t in self.tasks}
-        combined = self._aggregator.combine(losses, weights)
-        self._log_losses(combined, stage)
-        return {"loss": combined.total, "task_views": task_views}
+        """Run one forward + loss/metric step and return its artifacts (regime-specific)."""
 
     def training_step(self, batch: Batch | dict[str, Any], batch_idx: int) -> StepOutput:
         return self._shared_step(batch, Stage.TRAIN)
@@ -135,14 +105,14 @@ class LitModule(L.LightningModule):
         for task in self.tasks:
             metrics = task.metrics[stage].compute()
             for metric_name, value in metrics.items():
-                ctx = MetricLogContext(
+                context = MetricLogContext(
                     log_scalar=lambda key, val: self.log(key, val, prog_bar=True),
                     logger=self.logger,
                     step=self.current_epoch,
                     class_names=task.class_names,
                     metric_name=metric_name,
                 )
-                dispatch(f"{task.name}/{metric_name}/{stage}", value, ctx, self._metric_handlers)
+                dispatch(f"{task.name}/{metric_name}/{stage}", value, context, self._metric_handlers)
             task.metrics[stage].reset()
 
     def on_train_epoch_end(self) -> None:

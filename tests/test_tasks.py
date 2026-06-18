@@ -16,14 +16,14 @@ from src.losses.criterion import (
 from src.metrics.builders import build_metric_set
 from src.tasks import (
     BinaryObjective,
-    BinaryTaskCodec,
+    BinaryTargetAdapter,
     ContinuousObjective,
-    ContinuousTaskCodec,
+    ContinuousTargetAdapter,
     GlobalTopology,
     MulticlassObjective,
-    MulticlassTaskCodec,
+    MulticlassTargetAdapter,
     MultilabelObjective,
-    MultilabelTaskCodec,
+    MultilabelTargetAdapter,
     Objective,
     TaskBuilder,
     Topology,
@@ -46,25 +46,25 @@ class TestTaxonomyAndStrategies:
         assert objective.out_features(5) == 5
         assert objective.supports(Topology.GLOBAL)
         assert not objective.supports(Topology.RANKING)
-        assert isinstance(objective.build_task_codec(), MulticlassTaskCodec)
+        assert isinstance(objective.build_target_adapter(), MulticlassTargetAdapter)
 
     def test_binary_objective_bricks(self) -> None:
         obj = BinaryObjective()
         assert obj.out_features(2) == 1  # always 1 regardless of num_classes
         assert obj.supports(Topology.GLOBAL)
-        assert isinstance(obj.build_task_codec(), BinaryTaskCodec)
+        assert isinstance(obj.build_target_adapter(), BinaryTargetAdapter)
 
     def test_multilabel_objective_bricks(self) -> None:
         obj = MultilabelObjective()
         assert obj.out_features(7) == 7
         assert obj.supports(Topology.GLOBAL)
-        assert isinstance(obj.build_task_codec(), MultilabelTaskCodec)
+        assert isinstance(obj.build_target_adapter(), MultilabelTargetAdapter)
 
     def test_continuous_objective_bricks(self) -> None:
         obj = ContinuousObjective()
         assert obj.out_features(1) == 1
         assert obj.supports(Topology.GLOBAL)
-        assert isinstance(obj.build_task_codec(), ContinuousTaskCodec)
+        assert isinstance(obj.build_target_adapter(), ContinuousTargetAdapter)
 
     def test_dense_topology_head_spec(self) -> None:
         from src.tasks import DenseTopology
@@ -84,7 +84,7 @@ class TestTaxonomyAndStrategies:
 
 class TestBricks:
     def test_task_codec_squeezes_and_longs(self) -> None:
-        view = MulticlassTaskCodec().adapt(torch.tensor([[0], [2]], dtype=torch.int32))
+        view = MulticlassTargetAdapter().adapt(torch.tensor([[0], [2]], dtype=torch.int32))
         assert view.loss.shape == (2,)
         assert view.loss.dtype == torch.long
         assert torch.equal(view.loss, view.metric)
@@ -178,12 +178,12 @@ class TestTaskBuilder:
         task = TaskBuilder(GlobalTopology(), BinaryObjective()).build("is_cat", num_classes=2)
         assert task.head_spec.out_features == 1
         assert task.head_spec.feature_key == "pooled"
-        assert isinstance(task.codec, BinaryTaskCodec)
+        assert isinstance(task.adapter, BinaryTargetAdapter)
 
     def test_bridge_multilabel_on_global_topology(self) -> None:
         task = TaskBuilder(GlobalTopology(), MultilabelObjective()).build("tags", num_classes=5)
         assert task.head_spec.out_features == 5
-        assert isinstance(task.codec, MultilabelTaskCodec)
+        assert isinstance(task.adapter, MultilabelTargetAdapter)
         # default metrics should be accuracy (multilabel accuracy)
         preds = torch.sigmoid(torch.randn(8, 5))
         targets = torch.randint(0, 2, (8, 5))
@@ -193,7 +193,7 @@ class TestTaskBuilder:
     def test_bridge_continuous_on_global_topology(self) -> None:
         task = TaskBuilder(GlobalTopology(), ContinuousObjective()).build("value", num_classes=1)
         assert task.head_spec.out_features == 1
-        assert isinstance(task.codec, ContinuousTaskCodec)
+        assert isinstance(task.adapter, ContinuousTargetAdapter)
         # default metrics should be mse + mae
         preds = torch.randn(8, 1)
         targets = torch.randn(8, 1)
@@ -209,7 +209,7 @@ class TestTaskBuilder:
         assert task.head_spec.kind == "conv"
         assert task.head_spec.feature_key == "decoder"
         assert task.head_spec.out_features == 5
-        assert isinstance(task.codec, MulticlassTaskCodec)  # objective bricks unchanged
+        assert isinstance(task.adapter, MulticlassTargetAdapter)  # objective bricks unchanged
 
     def test_invalid_combination_raises(self) -> None:
         class _RankingTopology(TopologyStrategy):
@@ -228,7 +228,7 @@ class TestRegressionPreset:
 
         task = regression("price", num_classes=1)
         assert task.head_spec.out_features == 1
-        assert isinstance(task.codec, ContinuousTaskCodec)
+        assert isinstance(task.adapter, ContinuousTargetAdapter)
 
     def test_regression_default_metric_is_mae(self) -> None:
         from src.tasks import regression
@@ -262,7 +262,7 @@ class TestSegmentationPreset:
         assert task.head_spec.kind == "conv"
         assert task.head_spec.feature_key == "decoder"
         assert task.head_spec.out_features == 4
-        assert isinstance(task.codec, MulticlassTaskCodec)
+        assert isinstance(task.adapter, MulticlassTargetAdapter)
 
     def test_segmentation_default_metrics(self) -> None:
         from src.tasks import segmentation
@@ -276,7 +276,7 @@ class TestSegmentationPreset:
 
     def test_preset_carries_mask_codec_default(self) -> None:
         preset = task_presets.create("segmentation")
-        assert preset.default_codec == "mask"
+        assert preset.default_encoder == "mask"
         assert preset.topology == Topology.DENSE
 
 

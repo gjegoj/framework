@@ -19,7 +19,7 @@ from torch import Tensor, nn
 
 from src.core.entities import LossResult
 from src.core.ports import Criterion
-from src.losses.criterion import criteria
+from src.losses.registry import criteria
 
 # CLIP clamps the exponentiated logit scale to keep training stable.
 _MAX_LOGIT_SCALE = 100.0

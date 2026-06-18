@@ -55,7 +55,7 @@ class TestCosineHead:
 class TestArcFaceCriterion:
     def test_registered(self) -> None:
         import src.losses.angular  # noqa: F401 — import registers the criterion
-        from src.losses.criterion import criteria
+        from src.losses.registry import criteria
 
         assert "arcface" in criteria
 

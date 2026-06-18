@@ -10,7 +10,7 @@ import lightning as L
 import torch
 
 from src.config.schema import ExperimentConfig
-from src.training.module import LitModule
+from src.training.modules import LitModule
 
 log = logging.getLogger(__name__)
 

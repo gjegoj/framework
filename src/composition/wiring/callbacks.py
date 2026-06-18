@@ -7,7 +7,7 @@ need runtime/config context to build are handled by a Strategy registry of
 closed for modification (OCP): a new context-aware callback registers a builder
 with ``@callback_builders.register(...)`` instead of editing ``build_callbacks``.
 
-A builder has the signature ``(spec: Mapping, ctx: WiringContext) -> Callback``.
+A builder has the signature ``(spec: Mapping, context: WiringContext) -> Callback``.
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ from src.core.runtime import RuntimeContext
 from src.tasks.presets import task_presets
 from src.transforms.batch.spec import TargetSpec
 
-# key → builder ``(spec, ctx) -> Callback``; the registry's value type is the Callback it yields.
+# key → builder ``(spec, context) -> Callback``; the registry's value type is the Callback it yields.
 callback_builders: Registry[L.Callback] = Registry("callback_builder")
 
 
@@ -48,12 +48,12 @@ def build_callbacks(config: ExperimentConfig, runtime: RuntimeContext) -> list[A
     if config.callbacks is None:
         return []
 
-    ctx = WiringContext(config=config, runtime=runtime)
+    context = WiringContext(config=config, runtime=runtime)
     callbacks: list[Any] = []
     for key, raw_params in config.callbacks.items():
         spec, registry_key = _normalize_callback_spec(key, raw_params)
         if registry_key is not None and registry_key in callback_builders:
-            callbacks.append(callback_builders.create(registry_key, spec, ctx))
+            callbacks.append(callback_builders.create(registry_key, spec, context))
         else:
             callbacks.append(instantiate(spec, _callback_registry()))
     return callbacks
@@ -84,23 +84,23 @@ def _callback_registry() -> Registry[L.Callback]:
 
 
 @callback_builders.register("checkpoint")
-def _build_checkpoint(spec: dict[str, Any], ctx: WiringContext) -> L.Callback:
+def _build_checkpoint(spec: dict[str, Any], context: WiringContext) -> L.Callback:
     """Default ``ModelCheckpoint.dirpath`` to ``{save_dir}/checkpoints`` when unset."""
     spec = dict(spec)
-    if "dirpath" not in spec and ctx.config.save_dir is not None:
-        spec["dirpath"] = f"{ctx.config.save_dir}/checkpoints"
+    if "dirpath" not in spec and context.config.save_dir is not None:
+        spec["dirpath"] = f"{context.config.save_dir}/checkpoints"
     return instantiate(spec, _callback_registry())
 
 
 @callback_builders.register("batch_transform")
-def _build_batch_transform_callback(spec: dict[str, Any], ctx: WiringContext) -> L.Callback:
+def _build_batch_transform_callback(spec: dict[str, Any], context: WiringContext) -> L.Callback:
     """Build the nested ``transform`` (with runtime num_classes) before the callback."""
     spec = dict(spec)
-    spec["transform"] = _build_batch_transform(spec["transform"], ctx)
+    spec["transform"] = _build_batch_transform(spec["transform"], context)
     return instantiate(spec, _callback_registry())
 
 
-def _build_batch_transform(spec: Any, ctx: WiringContext) -> Any:
+def _build_batch_transform(spec: Any, context: WiringContext) -> Any:
     """Build a ``BatchTransform``, injecting every task's ``TargetSpec``.
 
     A batch transform changes the shared image, so it must rewrite *every* task's
@@ -110,7 +110,7 @@ def _build_batch_transform(spec: Any, ctx: WiringContext) -> Any:
     """
     from src.transforms.batch import batch_transforms
 
-    targets = [_target_spec(task_name, ctx) for task_name in ctx.config.tasks]
+    targets = [_target_spec(task_name, context) for task_name in context.config.tasks]
 
     transform_cls = _resolve_transform_class(spec, batch_transforms)
     supported: frozenset[Any] = getattr(transform_cls, "supported_topologies", frozenset())
@@ -137,9 +137,9 @@ def _resolve_transform_class(spec: Any, registry: Registry[Any]) -> Any:
     return registry.get(str(spec["name"]))
 
 
-def _target_spec(task_name: str, ctx: WiringContext) -> TargetSpec:
+def _target_spec(task_name: str, context: WiringContext) -> TargetSpec:
     """Build the ``TargetSpec`` (key, topology, num_classes) for one task."""
-    task_cfg = ctx.config.tasks[task_name]
-    topology = task_presets.create(task_cfg.preset).topology
-    num_classes = _resolve_num_classes(task_name, task_cfg, ctx.runtime)
+    task_config = context.config.tasks[task_name]
+    topology = task_presets.create(task_config.preset).topology
+    num_classes = _resolve_num_classes(task_name, task_config, context.runtime)
     return TargetSpec(key=task_name, topology=topology, num_classes=num_classes)

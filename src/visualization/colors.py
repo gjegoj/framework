@@ -30,15 +30,15 @@ def task_palette(task: str, classes: list[str]) -> dict[str, str]:
     """
     offset = int(hashlib.md5(task.encode("utf-8")).hexdigest(), 16) % 360
     return {
-        cls: _hsl_hex((offset + i * GOLDEN_ANGLE) % 360, _SATURATION, _LIGHTNESS)
-        for i, cls in enumerate(sorted(classes))
+        class_name: _hsl_hex((offset + index * GOLDEN_ANGLE) % 360, _SATURATION, _LIGHTNESS)
+        for index, class_name in enumerate(sorted(classes))
     }
 
 
 def hex_to_rgb(value: str) -> tuple[int, int, int]:
     """Convert ``"#rrggbb"`` to an ``(r, g, b)`` int triple (for mask pixel coloring)."""
-    v = value.lstrip("#")
-    return int(v[0:2], 16), int(v[2:4], 16), int(v[4:6], 16)
+    hex_digits = value.lstrip("#")
+    return int(hex_digits[0:2], 16), int(hex_digits[2:4], 16), int(hex_digits[4:6], 16)
 
 
 def _hsl_hex(hue_deg: float, saturation: float, lightness: float) -> str:

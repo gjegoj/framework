@@ -1,8 +1,8 @@
-"""Task-layer codecs: light shape/type adaptation of targets for loss/metrics.
+"""Task-layer target adapters: light shape/type adaptation of targets for loss/metrics.
 
-Heavy decoding (label -> index, mask I/O) happens in the data layer; here we
-only adjust the already-tensor target to the shape each objective's criterion
-and metrics expect.
+Heavy encoding (label -> index, mask I/O) happens in the data layer (``data/encoders.py``);
+here we only adjust the already-tensor target to the shape each objective's criterion and
+metrics expect.
 """
 
 from __future__ import annotations
@@ -10,10 +10,10 @@ from __future__ import annotations
 from torch import Tensor
 
 from src.core.entities import TargetView
-from src.core.ports import TaskCodec
+from src.core.ports import TargetAdapter
 
 
-class MulticlassTaskCodec(TaskCodec):
+class MulticlassTargetAdapter(TargetAdapter):
     """Class-index targets for cross-entropy and accuracy: ``[B]`` long tensor.
 
     Also accepts *soft* targets ``[B, C]`` float (produced by MixUp/CutMix): the
@@ -30,7 +30,7 @@ class MulticlassTaskCodec(TaskCodec):
         return TargetView(loss=target, metric=target)
 
 
-class BinaryTaskCodec(TaskCodec):
+class BinaryTargetAdapter(TargetAdapter):
     """Binary target: ``[B, 1]`` float for BCE loss; ``[B, 1]`` long for metrics.
 
     BCEWithLogitsLoss needs float targets matching the logit shape ``[B, 1]``.
@@ -48,7 +48,7 @@ class BinaryTaskCodec(TaskCodec):
         return TargetView(loss=loss_target, metric=metric_target)
 
 
-class MultilabelTaskCodec(TaskCodec):
+class MultilabelTargetAdapter(TargetAdapter):
     """Multilabel target: ``[B, C]`` float for BCE; ``[B, C]`` long for metrics."""
 
     def adapt(self, target: Tensor) -> TargetView:
@@ -57,7 +57,7 @@ class MultilabelTaskCodec(TaskCodec):
         return TargetView(loss=loss_target, metric=metric_target)
 
 
-class ContinuousTaskCodec(TaskCodec):
+class ContinuousTargetAdapter(TargetAdapter):
     """Continuous (regression) target: ``[B, 1]`` float for both loss and metrics."""
 
     def adapt(self, target: Tensor) -> TargetView:
@@ -67,8 +67,8 @@ class ContinuousTaskCodec(TaskCodec):
         return TargetView(loss=target, metric=target)
 
 
-class MetricTaskCodec(TaskCodec):
-    """Pass-through codec for metric-learning tasks (ranking + contrastive).
+class MetricTargetAdapter(TargetAdapter):
+    """Pass-through adapter for metric-learning tasks (ranking + contrastive).
 
     Supervision is implicit in the data structure, not a per-sample label, so the
     ``target`` is passed through as a ``[B]`` float for both loss and metrics

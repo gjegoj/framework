@@ -196,15 +196,24 @@ class SegmentationAnnotator(Annotator):
         self._ignore_index = ignore_index
 
     def annotate(self, sample: SampleView, task: Task, view: TaskStepView, index: int) -> None:
-        pred_map = view.preds[index].detach().cpu().argmax(dim=0).numpy()  # [H, W] class indices
-        gt_map = view.metric_target[index].detach().cpu().long().numpy()  # [H, W] class indices
-        names = task.class_names
-        gt_masks: list[ClassMask] = [(v, gt_map == v) for v in sorted(int(v) for v in np.unique(gt_map))]
-        pred_masks: list[ClassMask] = [(v, pred_map == v) for v in sorted(int(v) for v in np.unique(pred_map))]
-        sample.fields[f"{task.name}_gt"] = _segmentation_from_masks(gt_masks, names, self._ignore_index)
-        sample.fields[f"{task.name}_pred"] = _segmentation_from_masks(pred_masks, names, self._ignore_index)
-        values = ({v for v, _ in gt_masks} | {v for v, _ in pred_masks}) - {self._ignore_index}
-        ious = [_iou(gt_map == v, pred_map == v) for v in values]
+        prediction_map = view.preds[index].detach().cpu().argmax(dim=0).numpy()  # [H, W] class indices
+        ground_truth_map = view.metric_target[index].detach().cpu().long().numpy()  # [H, W] class indices
+        class_names = task.class_names
+        ground_truth_masks: list[ClassMask] = [
+            (class_index, ground_truth_map == class_index)
+            for class_index in sorted(int(value) for value in np.unique(ground_truth_map))
+        ]
+        prediction_masks: list[ClassMask] = [
+            (class_index, prediction_map == class_index)
+            for class_index in sorted(int(value) for value in np.unique(prediction_map))
+        ]
+        sample.fields[f"{task.name}_gt"] = _segmentation_from_masks(ground_truth_masks, class_names, self._ignore_index)
+        sample.fields[f"{task.name}_pred"] = _segmentation_from_masks(prediction_masks, class_names, self._ignore_index)
+        present_classes = (
+            {class_index for class_index, _ in ground_truth_masks}
+            | {class_index for class_index, _ in prediction_masks}
+        ) - {self._ignore_index}
+        ious = [_iou(ground_truth_map == class_index, prediction_map == class_index) for class_index in present_classes]
         sample.tags.append(f"{task.name}:miou={_mean_iou(ious):.2f}")
 
 
@@ -223,12 +232,20 @@ class MultilabelSegmentationAnnotator(Annotator):
         self._ignore_index = ignore_index
 
     def annotate(self, sample: SampleView, task: Task, view: TaskStepView, index: int) -> None:
-        probs = view.preds[index].detach().cpu().numpy()  # [C, H, W] sigmoid scores
-        gt = view.metric_target[index].detach().cpu().numpy()  # [C, H, W] multi-hot
-        names = task.class_names
-        gt_masks: list[ClassMask] = [(c, gt[c] > 0.5) for c in range(gt.shape[0])]
-        pred_masks: list[ClassMask] = [(c, probs[c] >= self._threshold) for c in range(probs.shape[0])]
-        sample.fields[f"{task.name}_gt"] = _segmentation_from_masks(gt_masks, names, self._ignore_index)
-        sample.fields[f"{task.name}_pred"] = _segmentation_from_masks(pred_masks, names, self._ignore_index)
-        ious = [_iou(gm, pm) for (c, gm), (_, pm) in zip(gt_masks, pred_masks) if c != self._ignore_index]
+        class_scores = view.preds[index].detach().cpu().numpy()  # [C, H, W] sigmoid scores
+        ground_truth = view.metric_target[index].detach().cpu().numpy()  # [C, H, W] multi-hot
+        class_names = task.class_names
+        ground_truth_masks: list[ClassMask] = [
+            (channel, ground_truth[channel] > 0.5) for channel in range(ground_truth.shape[0])
+        ]
+        prediction_masks: list[ClassMask] = [
+            (channel, class_scores[channel] >= self._threshold) for channel in range(class_scores.shape[0])
+        ]
+        sample.fields[f"{task.name}_gt"] = _segmentation_from_masks(ground_truth_masks, class_names, self._ignore_index)
+        sample.fields[f"{task.name}_pred"] = _segmentation_from_masks(prediction_masks, class_names, self._ignore_index)
+        ious = [
+            _iou(ground_truth_mask, prediction_mask)
+            for (channel, ground_truth_mask), (_, prediction_mask) in zip(ground_truth_masks, prediction_masks)
+            if channel != self._ignore_index
+        ]
         sample.tags.append(f"{task.name}:miou={_mean_iou(ious):.2f}")

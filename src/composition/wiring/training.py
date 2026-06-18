@@ -15,10 +15,8 @@ from src.config.schema import ExperimentConfig, OptimizerConfig, SchedulerConfig
 from src.core.entities import Task
 from src.core.instantiate import instantiate
 from src.models.assembly import CompositeModel
-from src.training.datamodule import LitDataModule
-from src.training.module import LitModule
-from src.training.optimizer import OptimizerBuilder
-from src.training.scheduler import TRAINER_FACTS, SchedulerBuilder
+from src.training.modules import LitDataModule, LitModule
+from src.training.optim import TRAINER_FACTS, OptimizerBuilder, SchedulerBuilder
 
 if TYPE_CHECKING:
     from src.data.datamodule import DataModule
@@ -29,29 +27,29 @@ _OPTIMIZER_CORE_FIELDS = frozenset({"name", "lr", "weight_decay"})
 _SCHEDULER_CORE_FIELDS = frozenset({"name", "interval", "frequency", "monitor", "strict", "runtime_kwargs"})
 
 
-def build_optimizer_builder(optimizer_cfg: OptimizerConfig) -> OptimizerBuilder:
+def build_optimizer_builder(optimizer_config: OptimizerConfig) -> OptimizerBuilder:
     """Build an ``OptimizerBuilder`` from the optimizer config.
 
-    Resolves the optimizer class from ``optimizer_cfg.name`` (so ``sgd`` etc.
+    Resolves the optimizer class from ``optimizer_config.name`` (so ``sgd`` etc.
     actually take effect) and forwards any extra fields (``momentum``, ``betas``,
     ``nesterov``, ...) as constructor kwargs.
 
     Parameters:
-        optimizer_cfg (OptimizerConfig): Validated optimizer config (extras allowed).
+        optimizer_config (OptimizerConfig): Validated optimizer config (extras allowed).
 
     Returns:
         OptimizerBuilder: Builder bound to the named optimizer class.
     """
-    extra = forward_extras(optimizer_cfg, _OPTIMIZER_CORE_FIELDS)
+    extra = forward_extras(optimizer_config, _OPTIMIZER_CORE_FIELDS)
     return OptimizerBuilder.from_name(
-        name=optimizer_cfg.name,
-        base_lr=optimizer_cfg.lr,
-        base_weight_decay=optimizer_cfg.weight_decay,
+        name=optimizer_config.name,
+        base_lr=optimizer_config.lr,
+        base_weight_decay=optimizer_config.weight_decay,
         extra_kwargs=extra,
     )
 
 
-def build_scheduler_builder(scheduler_cfg: SchedulerConfig | None) -> SchedulerBuilder | None:
+def build_scheduler_builder(scheduler_config: SchedulerConfig | None) -> SchedulerBuilder | None:
     """Build a ``SchedulerBuilder`` from the optional scheduler config.
 
     ``None`` config → ``None`` builder (constant LR). Validates that every
@@ -59,27 +57,27 @@ def build_scheduler_builder(scheduler_cfg: SchedulerConfig | None) -> SchedulerB
     Scheduler-specific extras forward verbatim, exactly like the optimizer.
 
     Parameters:
-        scheduler_cfg (SchedulerConfig | None): Validated scheduler config (extras allowed).
+        scheduler_config (SchedulerConfig | None): Validated scheduler config (extras allowed).
 
     Returns:
         SchedulerBuilder | None: Builder bound to the named scheduler, or None.
     """
-    if scheduler_cfg is None:
+    if scheduler_config is None:
         return None
-    unknown = set(scheduler_cfg.runtime_kwargs.values()) - set(TRAINER_FACTS)
+    unknown = set(scheduler_config.runtime_kwargs.values()) - set(TRAINER_FACTS)
     if unknown:
         raise ValueError(
             f"scheduler.runtime_kwargs references unknown trainer fact(s) {sorted(unknown)}. "
             f"Available: {sorted(TRAINER_FACTS)}."
         )
-    extra = forward_extras(scheduler_cfg, _SCHEDULER_CORE_FIELDS)
+    extra = forward_extras(scheduler_config, _SCHEDULER_CORE_FIELDS)
     return SchedulerBuilder.from_name(
-        scheduler_cfg.name,
-        interval=scheduler_cfg.interval,
-        frequency=scheduler_cfg.frequency,
-        monitor=scheduler_cfg.monitor,
-        strict=scheduler_cfg.strict,
-        runtime_kwargs=scheduler_cfg.runtime_kwargs,
+        scheduler_config.name,
+        interval=scheduler_config.interval,
+        frequency=scheduler_config.frequency,
+        monitor=scheduler_config.monitor,
+        strict=scheduler_config.strict,
+        runtime_kwargs=scheduler_config.runtime_kwargs,
         extra_kwargs=extra,
     )
 
@@ -96,7 +94,11 @@ def build_task_lr_overrides(config: ExperimentConfig) -> dict[str, float]:
     Returns:
         dict[str, float]: ``{task_name: lr}`` for tasks with an optimizer override.
     """
-    return {name: task_cfg.optimizer.lr for name, task_cfg in config.tasks.items() if task_cfg.optimizer is not None}
+    return {
+        name: task_config.optimizer.lr
+        for name, task_config in config.tasks.items()
+        if task_config.optimizer is not None
+    }
 
 
 def build_lit_module(
@@ -135,9 +137,9 @@ def build_lit_data_module(data_module: DataModule) -> LitDataModule:
     """Wrap the domain ``DataModule`` in its Lightning humble object.
 
     The data-side counterpart of ``build_lit_module``: the plain ``DataModule``
-    owns all data logic (sources, codecs, cache, dataloader knobs); ``LitDataModule``
+    owns all data logic (sources, encoders, cache, dataloader knobs); ``LitDataModule``
     is the thin Lightning adapter exposing train/val/test dataloaders. Build it after
-    ``data_module.setup()`` so codecs are fitted and ``num_classes`` is populated.
+    ``data_module.setup()`` so encoders are fitted and ``num_classes`` is populated.
 
     Parameters:
         data_module (DataModule): The setup-complete domain data module.
@@ -149,20 +151,28 @@ def build_lit_data_module(data_module: DataModule) -> LitDataModule:
 
 
 def build_logger(config: ExperimentConfig) -> Any:
-    """Build the experiment logger from config.
+    """Build the experiment logger by dispatching on ``logger.kind`` via ``logger_builders``.
 
     Returns ``False`` (Lightning's "disable logging" sentinel) for ``kind: none``;
-    returns a concrete ``Logger`` for any named backend.
+    a concrete ``Logger`` for any registered backend. The single home for the dispatch
+    (the registry holds only the per-backend builders).
 
     Parameters:
         config (ExperimentConfig): Validated experiment config.
 
     Returns:
         Logger | bool: Configured logger, or ``False`` to disable.
-    """
-    from src.loggers.registry import build_logger as _build_logger
 
-    return _build_logger(config)
+    Raises:
+        ValueError: If ``config.logger.kind`` is not a registered backend.
+    """
+    from src.loggers.registry import logger_builders
+
+    kind = config.logger.kind
+    if kind not in logger_builders:
+        known = ", ".join(sorted(logger_builders.keys()))
+        raise ValueError(f"Unknown logger kind: {kind!r}. Known kinds: {known}.")
+    return logger_builders.create(kind, config)
 
 
 def build_trainer(config: ExperimentConfig, logger: Any, callbacks: list[Any]) -> L.Trainer:

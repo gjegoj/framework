@@ -23,7 +23,7 @@ from src.core.ports import (
     Head,
     LossAggregator,
     MetricSet,
-    TaskCodec,
+    TargetAdapter,
 )
 from src.core.registry import Registry
 from src.core.runtime import RuntimeContext
@@ -46,5 +46,5 @@ __all__ = [
     "Stage",
     "TargetView",
     "Task",
-    "TaskCodec",
+    "TargetAdapter",
 ]

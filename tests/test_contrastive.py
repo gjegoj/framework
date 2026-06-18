@@ -267,7 +267,7 @@ class TestInfoNCECriterion:
 class TestSigLIPCriterion:
     def test_registered_under_siglip(self) -> None:
         import src.losses.contrastive  # noqa: F401 — import registers the criterion
-        from src.losses.criterion import criteria
+        from src.losses.registry import criteria
 
         assert "siglip" in criteria
 

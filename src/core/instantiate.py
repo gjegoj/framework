@@ -12,7 +12,7 @@ of power:
 ``instantiate`` is also recursive: when a spec has a ``_target_`` key, every
 value inside it is resolved the same way before the factory is called.  Lists
 are walked element-by-element.  This makes the same function work for both
-flat brick selection (losses, metrics, codecs) and deeply nested object graphs
+flat brick selection (losses, metrics, encoders) and deeply nested object graphs
 (e.g. an Albumentations ``Compose`` pipeline with ``OneOf`` sub-groups).
 
 Pass a ``registry`` for the string / ``name`` forms; omit it (``None``) for
@@ -45,11 +45,11 @@ def resolve_target(path: str) -> Any:
     Raises:
         ValueError: If ``path`` has no module component.
     """
-    module_path, _, attr = path.rpartition(".")
+    module_path, _, attribute_name = path.rpartition(".")
     if not module_path:
         raise ValueError(f"_target_ must be a dotted path 'module.attr', got {path!r}.")
     module = importlib.import_module(module_path)
-    return getattr(module, attr)
+    return getattr(module, attribute_name)
 
 
 def instantiate[T](
@@ -93,12 +93,12 @@ def instantiate[T](
         return spec  # plain string value inside a nested _target_ spec
 
     if isinstance(spec, Mapping):
-        params = {k: v for k, v in spec.items() if k not in _HYDRA_META}
+        params = {key: value for key, value in spec.items() if key not in _HYDRA_META}
         target = params.pop("_target_", None)
 
         if target is not None:
             factory = resolve_target(str(target))
-            resolved = {k: instantiate(v) for k, v in params.items()}
+            resolved = {key: instantiate(value) for key, value in params.items()}
             return factory(**{**injected, **resolved})
 
         name = params.pop("name", None)

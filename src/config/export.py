@@ -72,9 +72,11 @@ class TrtShapes(BaseModel):
     def _validate(self) -> TrtShapes:
         if not (len(self.min) == len(self.opt) == len(self.max)):
             raise ValueError(f"min/opt/max must share a length, got {len(self.min)}/{len(self.opt)}/{len(self.max)}.")
-        for axis, (lo, mid, hi) in enumerate(zip(self.min, self.opt, self.max, strict=True)):
-            if not (lo <= mid <= hi):
-                raise ValueError(f"shapes must satisfy min<=opt<=max per axis; axis {axis} is {lo}/{mid}/{hi}.")
+        for axis, (min_size, opt_size, max_size) in enumerate(zip(self.min, self.opt, self.max, strict=True)):
+            if not (min_size <= opt_size <= max_size):
+                raise ValueError(
+                    f"shapes must satisfy min<=opt<=max per axis; axis {axis} is {min_size}/{opt_size}/{max_size}."
+                )
         return self
 
 

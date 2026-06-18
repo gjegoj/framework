@@ -21,8 +21,8 @@ class WeightedSumAggregator(LossAggregator):
         total = torch.zeros(1, device=next(iter(losses.values())).total.device).squeeze()
         components: dict[str, torch.Tensor] = {}
         for task_name, result in losses.items():
-            w = weights.get(task_name, 1.0)
-            total = total + w * result.total
+            weight = weights.get(task_name, 1.0)
+            total = total + weight * result.total
             for component_name, value in result.components.items():
                 components[f"{task_name}/{component_name}"] = value
         return LossResult(total=total, components=components)

@@ -37,9 +37,9 @@ class TaskPreset:
         topology (Topology): Output-structure axis this preset fixes.
         default_objective (Objective): Label-semantics axis used when the task
             config omits ``objective:``.
-        default_codec (str | None): ``target_codecs`` key overriding the
+        default_encoder (str | None): ``target_encoders`` key overriding the
             objective's default (e.g. segmentation needs ``"mask"``).
-            ``None`` → fall back to the objective's ``default_codec``.
+            ``None`` → fall back to the objective's ``default_encoder``.
         default_metrics (MetricsSpec | None): Metric spec used when the user
             gives no ``metrics:``.  ``None`` → the objective's default.
         default_loss (str | None): ``criteria`` key used when the task config omits
@@ -53,7 +53,7 @@ class TaskPreset:
 
     topology: Topology
     default_objective: Objective
-    default_codec: str | None = None
+    default_encoder: str | None = None
     default_metrics: MetricsSpec | None = None
     default_loss: str | None = None
     topology_kwargs: dict[str, Any] = field(default_factory=dict)
@@ -149,7 +149,7 @@ task_presets.register_instance("regression", regression)
 segmentation = TaskPreset(
     topology=Topology.DENSE,
     default_objective=Objective.MULTICLASS,
-    default_codec="mask",
+    default_encoder="mask",
     default_metrics={
         "iou": _PER_CLASS,
         "f1": _PER_CLASS,

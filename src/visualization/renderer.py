@@ -128,7 +128,7 @@ class LabelRenderer(ABC):
     """Renders one ``Label`` field (gt or pred) into its ``FieldItem``s."""
 
     @abstractmethod
-    def render_field(self, ctx: FieldContext, label: Label) -> list[FieldItem]:
+    def render_field(self, context: FieldContext, label: Label) -> list[FieldItem]:
         """Return one ``FieldItem`` per leaf (class / component) of ``label``."""
 
     @abstractmethod
@@ -136,11 +136,11 @@ class LabelRenderer(ABC):
         """Return the leaf names ``label`` contributes (without color) for palette sizing."""
 
 
-def _chip_item(ctx: FieldContext, leaf: str, text: str, color: str) -> FieldItem:
-    """Build a chip ``FieldItem`` for one leaf under ``ctx`` (gt filled / pred outlined)."""
-    filled = ctx.kind == "gt"
-    key = field_key(ctx.task, ctx.kind, leaf)
-    overlay = render_chip(key, text, color, filled=filled, max_chars=ctx.max_chip_chars)
+def _chip_item(context: FieldContext, leaf: str, text: str, color: str) -> FieldItem:
+    """Build a chip ``FieldItem`` for one leaf under ``context`` (gt filled / pred outlined)."""
+    filled = context.kind == "gt"
+    key = field_key(context.task, context.kind, leaf)
+    overlay = render_chip(key, text, color, filled=filled, max_chars=context.max_chip_chars)
     return FieldItem(key, overlay, "chips", leaf, color, filled)
 
 
@@ -150,10 +150,10 @@ def _classification_text(item: Classification) -> str:
 
 @label_renderers.register(Classification.__name__)
 class ClassificationLabelRenderer(LabelRenderer):
-    def render_field(self, ctx: FieldContext, label: Label) -> list[FieldItem]:
+    def render_field(self, context: FieldContext, label: Label) -> list[FieldItem]:
         assert isinstance(label, Classification)
-        color = ctx.colors.get(label.label, FALLBACK_COLOR)
-        return [_chip_item(ctx, label.label, _classification_text(label), color)]
+        color = context.colors.get(label.label, FALLBACK_COLOR)
+        return [_chip_item(context, label.label, _classification_text(label), color)]
 
     def leaves(self, label: Label) -> list[str]:
         assert isinstance(label, Classification)
@@ -162,31 +162,36 @@ class ClassificationLabelRenderer(LabelRenderer):
 
 @label_renderers.register(Classifications.__name__)
 class ClassificationsLabelRenderer(LabelRenderer):
-    def render_field(self, ctx: FieldContext, label: Label) -> list[FieldItem]:
+    def render_field(self, context: FieldContext, label: Label) -> list[FieldItem]:
         assert isinstance(label, Classifications)
         return [
-            _chip_item(ctx, c.label, _classification_text(c), ctx.colors.get(c.label, FALLBACK_COLOR))
-            for c in label.items
+            _chip_item(
+                context,
+                classification.label,
+                _classification_text(classification),
+                context.colors.get(classification.label, FALLBACK_COLOR),
+            )
+            for classification in label.items
         ]
 
     def leaves(self, label: Label) -> list[str]:
         assert isinstance(label, Classifications)
-        return [c.label for c in label.items]
+        return [classification.label for classification in label.items]
 
 
 @label_renderers.register(Regression.__name__)
 class RegressionLabelRenderer(LabelRenderer):
     """Regression: one neutral-colored chip per component; pred shows signed Δ as text."""
 
-    def render_field(self, ctx: FieldContext, label: Label) -> list[FieldItem]:
+    def render_field(self, context: FieldContext, label: Label) -> list[FieldItem]:
         assert isinstance(label, Regression)
         items: list[FieldItem] = []
         for component in label.components:
             leaf = component.name or "value"
             number = f"{component.value:.2f}"
             body = f"{component.name} {number}" if component.name else number
-            text = body if (ctx.kind == "gt" or component.error is None) else f"{body} Δ{component.error:+.2f}"
-            items.append(_chip_item(ctx, leaf, text, REGRESSION_COLOR))
+            text = body if (context.kind == "gt" or component.error is None) else f"{body} Δ{component.error:+.2f}"
+            items.append(_chip_item(context, leaf, text, REGRESSION_COLOR))
         return items
 
     def leaves(self, label: Label) -> list[str]:
@@ -198,15 +203,15 @@ class RegressionLabelRenderer(LabelRenderer):
 class SegmentationLabelRenderer(LabelRenderer):
     """Segmentation: one full-cell mask layer per class; gt solid / pred dashed border."""
 
-    def render_field(self, ctx: FieldContext, label: Label) -> list[FieldItem]:
+    def render_field(self, context: FieldContext, label: Label) -> list[FieldItem]:
         assert isinstance(label, Segmentation)
-        filled = ctx.kind == "gt"
+        filled = context.kind == "gt"
         items: list[FieldItem] = []
         for seg_class in label.classes:
-            color = ctx.colors.get(seg_class.name, FALLBACK_COLOR)
-            key = field_key(ctx.task, ctx.kind, seg_class.name)
-            src = mask_overlay_uri(seg_class.mask, hex_to_rgb(color))
-            overlay = f'<img class="layer mask" data-key="{html.escape(key, quote=True)}" src="{src}">'
+            color = context.colors.get(seg_class.name, FALLBACK_COLOR)
+            key = field_key(context.task, context.kind, seg_class.name)
+            overlay_uri = mask_overlay_uri(seg_class.mask, hex_to_rgb(color))
+            overlay = f'<img class="layer mask" data-key="{html.escape(key, quote=True)}" src="{overlay_uri}">'
             items.append(FieldItem(key, overlay, "cover", seg_class.name, color, filled))
         return items
 
@@ -215,8 +220,8 @@ class SegmentationLabelRenderer(LabelRenderer):
         return [seg_class.name for seg_class in label.classes]
 
 
-def _render_field(ctx: FieldContext, label: Label) -> list[FieldItem]:
-    return label_renderers.create(type(label).__name__).render_field(ctx, label)
+def _render_field(context: FieldContext, label: Label) -> list[FieldItem]:
+    return label_renderers.create(type(label).__name__).render_field(context, label)
 
 
 def _leaves(label: Label) -> list[str]:
@@ -290,8 +295,8 @@ class HtmlRenderer(Renderer):
         collected: list[tuple[str, str, FieldItem]] = []
         for field_name, label in sample.fields.items():
             task, kind = _split_field(field_name)
-            ctx = FieldContext(task, kind, self._max_chip_chars, colors=palettes.get(task, {}))
-            for item in _render_field(ctx, label):
+            context = FieldContext(task, kind, self._max_chip_chars, colors=palettes.get(task, {}))
+            for item in _render_field(context, label):
                 zones[item.zone].append(item.overlay_html)
                 collected.append((task, kind, item))
         image_uri = _encode_image(sample.image)

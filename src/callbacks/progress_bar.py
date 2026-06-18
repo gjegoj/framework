@@ -103,7 +103,7 @@ class MetricsProgressBar(RichProgressBar):
         parts = metric_name.split("/")
         if self._metric_filters is None:
             return len(parts) == 3 and parts[-1] in _TRAINING_STAGES
-        return any(f in metric_name for f in self._metric_filters)
+        return any(filter_substring in metric_name for filter_substring in self._metric_filters)
 
     def _track(self, metric_name: str, value: float) -> None:
         """Record a new observation: update step delta and best-value tracking."""

@@ -57,7 +57,7 @@ class Mosaic(BatchTransform):
         inputs = {**batch.inputs, self._input_key: self._mosaic(batch.inputs[self._input_key], split_y, split_x)}
         targets = {
             **batch.targets,
-            **{s.key: self._mosaic(batch.targets[s.key], split_y, split_x) for s in self._targets},
+            **{spec.key: self._mosaic(batch.targets[spec.key], split_y, split_x) for spec in self._targets},
         }
         return Batch(inputs=inputs, targets=targets, meta=batch.meta)
 

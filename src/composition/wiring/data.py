@@ -13,8 +13,9 @@ from src.core.instantiate import instantiate
 from src.core.runtime import RuntimeContext
 from src.data.bindings import TargetBinding
 from src.data.datamodule import DataModule
-from src.data.sources import DataSource, data_sources
-from src.transforms.input import AlbumentationsTransform, Transform
+from src.data.registry import data_sources
+from src.data.sources import DataSource
+from src.transforms.sample import AlbumentationsTransform, Transform
 
 log = logging.getLogger(__name__)
 
@@ -74,7 +75,7 @@ def build_transforms(
     Returns:
         dict[Stage, Transform]: A transform for every lifecycle stage.
     """
-    spatial = [b.name for b in (bindings or []) if b.codec.spatial]
+    spatial = [binding.name for binding in (bindings or []) if binding.encoder.spatial]
 
     if config.transforms is None:
         raise ValueError(
@@ -85,7 +86,7 @@ def build_transforms(
 
 
 def _build_transforms_from_config(
-    transforms_cfg: dict[str, Any],
+    transforms_config: dict[str, Any],
     spatial_targets: list[str],
 ) -> dict[Stage, Transform]:
     """Instantiate one ``Transform`` per stage from its spec.
@@ -95,29 +96,29 @@ def _build_transforms_from_config(
     which is wrapped in an ``AlbumentationsTransform``.
     """
     result: dict[Stage, Transform] = {}
-    for stage_str, spec in transforms_cfg.items():
+    for stage_str, spec in transforms_config.items():
         built = instantiate(spec)
         if not isinstance(built, Transform):
             built = AlbumentationsTransform(built, spatial_targets=spatial_targets)
         result[Stage(stage_str)] = built
 
     # Derive missing stages from the nearest eval transform.
-    eval_t = result.get(Stage.VAL) or result.get(Stage.TEST)
-    if eval_t:
+    eval_transform = result.get(Stage.VAL) or result.get(Stage.TEST)
+    if eval_transform:
         for stage in (Stage.TEST, Stage.PREDICT):
             if stage not in result:
-                result[stage] = eval_t
+                result[stage] = eval_transform
     return result
 
 
-def build_staged_sources(data_cfg: DataConfig) -> dict[Stage, DataSource] | None:
+def build_staged_sources(data_config: DataConfig) -> dict[Stage, DataSource] | None:
     """Build per-stage ``DataSource`` objects when ``sources`` is a dict (pre-split mode).
 
     Returns ``None`` in split mode (``sources`` is a str/list), so the caller
     can branch cleanly::
 
         staged = build_staged_sources(config.data)
-        dm = DataModule(
+        data_module = DataModule(
             source=build_data_source(config.data) if staged is None else None,
             split=config.data.split if staged is None else None,
             staged_sources=staged,
@@ -125,29 +126,29 @@ def build_staged_sources(data_cfg: DataConfig) -> dict[Stage, DataSource] | None
         )
 
     Parameters:
-        data_cfg (DataConfig): Validated data config.
+        data_config (DataConfig): Validated data config.
 
     Returns:
         dict[Stage, DataSource] or None: Per-stage sources, or ``None`` in split mode.
     """
-    if not isinstance(data_cfg.sources, dict):
+    if not isinstance(data_config.sources, dict):
         return None
     result: dict[Stage, DataSource] = {}
-    for stage_str, paths in data_cfg.sources.items():
+    for stage_str, paths in data_config.sources.items():
         path_list = [paths] if isinstance(paths, str) else list(paths)
-        key = data_cfg.source_type or _infer_source_type(path_list)
+        key = data_config.source_type or _infer_source_type(path_list)
         result[Stage(stage_str)] = data_sources.create(key, path_list)
     return result
 
 
-def build_data_source(data_cfg: DataConfig) -> DataSource:
+def build_data_source(data_config: DataConfig) -> DataSource:
     """Build a single ``DataSource`` when ``sources`` is a path string or list (split mode).
 
     The registry key comes from ``source_type`` when set, otherwise inferred from
     the file extension.
 
     Parameters:
-        data_cfg (DataConfig): Validated data config (split mode).
+        data_config (DataConfig): Validated data config (split mode).
 
     Returns:
         DataSource: A source ready for ``DataModule.setup`` to ``read``.
@@ -155,9 +156,9 @@ def build_data_source(data_cfg: DataConfig) -> DataSource:
     Raises:
         ValueError: If the format cannot be inferred or paths mix extensions.
     """
-    assert not isinstance(data_cfg.sources, dict), "Use build_staged_sources for pre-split mode."
-    paths = [data_cfg.sources] if isinstance(data_cfg.sources, str) else list(data_cfg.sources)
-    key = data_cfg.source_type or _infer_source_type(paths)
+    assert not isinstance(data_config.sources, dict), "Use build_staged_sources for pre-split mode."
+    paths = [data_config.sources] if isinstance(data_config.sources, str) else list(data_config.sources)
+    key = data_config.source_type or _infer_source_type(paths)
     return data_sources.create(key, paths)
 
 
@@ -173,19 +174,19 @@ def build_data_module(
     splits by ratio (with optional stratification).
 
     ``DataModule.setup()`` must be called by the caller after this returns so
-    that codec fitting and dataset construction happen in the right order
+    that encoder fitting and dataset construction happen in the right order
     relative to ``build_tasks``.
 
     Parameters:
         config (ExperimentConfig): Validated experiment config.
-        bindings (list[TargetBinding]): Target bindings (un-fitted codecs).
+        bindings (list[TargetBinding]): Target bindings (un-fitted encoders).
         runtime (RuntimeContext): Populated by ``DataModule.setup()``.
 
     Returns:
         DataModule: Ready to call ``.setup()`` on.
     """
     staged = build_staged_sources(config.data)
-    dl = config.dataloader
+    dataloader_config = config.dataloader
     return DataModule(
         target_bindings=bindings,
         inputs_config=config.data.inputs,
@@ -198,12 +199,12 @@ def build_data_module(
         split_stratify=config.data.split_stratify if staged is None else None,
         max_samples=config.data.max_samples,
         staged_sources=staged,
-        num_workers=dl.num_workers,
-        pin_memory=dl.pin_memory,
-        persistent_workers=dl.persistent_workers,
-        drop_last=dl.drop_last,
-        prefetch_factor=dl.prefetch_factor,
-        dataloader_kwargs=forward_extras(dl, _DATALOADER_CORE_FIELDS),
+        num_workers=dataloader_config.num_workers,
+        pin_memory=dataloader_config.pin_memory,
+        persistent_workers=dataloader_config.persistent_workers,
+        drop_last=dataloader_config.drop_last,
+        prefetch_factor=dataloader_config.prefetch_factor,
+        dataloader_kwargs=forward_extras(dataloader_config, _DATALOADER_CORE_FIELDS),
         root_path=config.data.root_path,
         cache_bytes=_resolve_cache_bytes(config.data.cache),
         cache_workers=config.data.cache.workers if config.data.cache is not None else 8,

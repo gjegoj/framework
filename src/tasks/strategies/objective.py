@@ -1,6 +1,6 @@
 """Objective strategies: the label semantics axis of task composition.
 
-An objective owns the target codec, criterion, activation, output size and
+An objective owns the target adapter, criterion, activation, output size and
 metrics. It declares which topologies it supports so invalid combinations fail
 with a clear message at build time.
 """
@@ -10,17 +10,17 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 
 from src.core.instantiate import BrickSpec, instantiate
-from src.core.ports import Activation, Criterion, MetricSet, TaskCodec
+from src.core.ports import Activation, Criterion, MetricSet, TargetAdapter
 from src.core.registry import Registry
-from src.losses.criterion import criteria
+from src.losses.registry import criteria
 from src.metrics.builders import MetricsSpec, build_metric_set
 from src.tasks.activations import IdentityActivation, SigmoidActivation, SoftmaxActivation
-from src.tasks.codecs import (
-    BinaryTaskCodec,
-    ContinuousTaskCodec,
-    MetricTaskCodec,
-    MulticlassTaskCodec,
-    MultilabelTaskCodec,
+from src.tasks.adapters import (
+    BinaryTargetAdapter,
+    ContinuousTargetAdapter,
+    MetricTargetAdapter,
+    MulticlassTargetAdapter,
+    MultilabelTargetAdapter,
 )
 from src.tasks.taxonomy import Objective, Topology
 
@@ -28,7 +28,7 @@ _REGRESSION_METRICS: MetricsSpec = {"mse": None, "mae": None}
 
 
 class ObjectiveStrategy(ABC):
-    """Produces the loss/metric/codec bricks for a given label semantics.
+    """Produces the loss/metric/adapter bricks for a given label semantics.
 
     Each strategy supplies *defaults* for its objective and applies optional
     user overrides (``loss``/``metrics`` specs from YAML) on top — so the simple
@@ -38,14 +38,14 @@ class ObjectiveStrategy(ABC):
         kind (Objective): The objective this strategy implements.
         supported_topologies (frozenset[Topology]): Valid topology pairings.
         default_loss (str): ``criteria`` registry key used when ``loss:`` is absent.
-        default_codec (str): ``target_codecs`` registry key for the data-layer
+        default_encoder (str): ``target_encoders`` registry key for the data-layer
             target decoder this objective's labels require.
     """
 
     kind: Objective
     supported_topologies: frozenset[Topology]
     default_loss: str
-    default_codec: str
+    default_encoder: str
 
     def supports(self, topology: Topology) -> bool:
         """Whether this objective is valid on ``topology``."""
@@ -56,8 +56,8 @@ class ObjectiveStrategy(ABC):
         """Number of head output channels for ``num_classes``."""
 
     @abstractmethod
-    def build_task_codec(self) -> TaskCodec:
-        """Build the task-layer target codec."""
+    def build_target_adapter(self) -> TargetAdapter:
+        """Build the task-layer target adapter."""
 
     @abstractmethod
     def build_activation(self) -> Activation:
@@ -94,13 +94,13 @@ class MulticlassObjective(ObjectiveStrategy):
     kind = Objective.MULTICLASS
     supported_topologies = frozenset({Topology.GLOBAL, Topology.DENSE})
     default_loss = "cross_entropy"
-    default_codec = "label_index"
+    default_encoder = "label"
 
     def out_features(self, num_classes: int) -> int:
         return num_classes
 
-    def build_task_codec(self) -> TaskCodec:
-        return MulticlassTaskCodec()
+    def build_target_adapter(self) -> TargetAdapter:
+        return MulticlassTargetAdapter()
 
     def build_activation(self) -> Activation:
         return SoftmaxActivation()
@@ -116,13 +116,13 @@ class BinaryObjective(ObjectiveStrategy):
     kind = Objective.BINARY
     supported_topologies = frozenset({Topology.GLOBAL, Topology.DENSE})
     default_loss = "bce"
-    default_codec = "label_index"
+    default_encoder = "label"
 
     def out_features(self, num_classes: int) -> int:
         return 1
 
-    def build_task_codec(self) -> TaskCodec:
-        return BinaryTaskCodec()
+    def build_target_adapter(self) -> TargetAdapter:
+        return BinaryTargetAdapter()
 
     def build_activation(self) -> Activation:
         return SigmoidActivation()
@@ -138,13 +138,13 @@ class MultilabelObjective(ObjectiveStrategy):
     kind = Objective.MULTILABEL
     supported_topologies = frozenset({Topology.GLOBAL, Topology.DENSE})
     default_loss = "bce"
-    default_codec = "multilabel_binarize"
+    default_encoder = "multilabel"
 
     def out_features(self, num_classes: int) -> int:
         return num_classes
 
-    def build_task_codec(self) -> TaskCodec:
-        return MultilabelTaskCodec()
+    def build_target_adapter(self) -> TargetAdapter:
+        return MultilabelTargetAdapter()
 
     def build_activation(self) -> Activation:
         return SigmoidActivation()
@@ -160,13 +160,13 @@ class ContinuousObjective(ObjectiveStrategy):
     kind = Objective.CONTINUOUS
     supported_topologies = frozenset({Topology.GLOBAL, Topology.DENSE})
     default_loss = "mse"
-    default_codec = "float"
+    default_encoder = "scalar"
 
     def out_features(self, num_classes: int) -> int:
         return num_classes  # num_classes carries dim for regression
 
-    def build_task_codec(self) -> TaskCodec:
-        return ContinuousTaskCodec()
+    def build_target_adapter(self) -> TargetAdapter:
+        return ContinuousTargetAdapter()
 
     def build_activation(self) -> Activation:
         return IdentityActivation()
@@ -185,7 +185,7 @@ class MetricObjective(ObjectiveStrategy):
     Covers both embedding topologies — RANKING (triplet/pair views through one
     shared backbone) and MULTISTREAM (InfoNCE/SigLIP over N separate encoders).
     There is no per-sample class label: positives come from the pair/triplet
-    grouping or the batch diagonal, so the codec is pass-through and the
+    grouping or the batch diagonal, so the adapter is pass-through and the
     activation is identity.  ``num_classes`` is reinterpreted as ``embedding_dim``
     (the head projection size).  Metrics are empty by default; add retrieval
     metrics via the YAML ``metrics:`` block.
@@ -199,13 +199,13 @@ class MetricObjective(ObjectiveStrategy):
     kind = Objective.METRIC
     supported_topologies = frozenset({Topology.RANKING, Topology.MULTISTREAM})
     default_loss = "triplet_margin"  # fallback only; presets set the real default
-    default_codec = "float"  # dummy/structural target; the loss ignores its values
+    default_encoder = "scalar"  # dummy/structural target; the loss ignores its values
 
     def out_features(self, num_classes: int) -> int:
         return num_classes  # num_classes = embedding_dim for metric tasks
 
-    def build_task_codec(self) -> TaskCodec:
-        return MetricTaskCodec()  # pass-through (no labels to adapt)
+    def build_target_adapter(self) -> TargetAdapter:
+        return MetricTargetAdapter()  # pass-through (no labels to adapt)
 
     def build_activation(self) -> Activation:
         return IdentityActivation()

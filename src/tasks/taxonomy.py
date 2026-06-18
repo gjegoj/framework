@@ -23,7 +23,7 @@ EXPORTABLE_TOPOLOGIES: frozenset[Topology] = frozenset({Topology.GLOBAL, Topolog
 
 
 class Objective(StrEnum):
-    """Label semantics (which codec + criterion + activation + metric mode)."""
+    """Label semantics (which adapter + criterion + activation + metric mode)."""
 
     BINARY = "binary"
     MULTICLASS = "multiclass"

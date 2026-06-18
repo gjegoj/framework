@@ -14,7 +14,7 @@ from torch import Tensor
 
 from src.core.entities import LossResult
 from src.core.ports import Criterion
-from src.losses.criterion import criteria
+from src.losses.registry import criteria
 
 
 @criteria.register("triplet_margin")

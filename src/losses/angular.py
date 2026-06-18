@@ -17,7 +17,7 @@ from torch import Tensor
 
 from src.core.entities import LossResult
 from src.core.ports import Criterion
-from src.losses.criterion import criteria
+from src.losses.registry import criteria
 
 
 @criteria.register("arcface")
@@ -29,7 +29,7 @@ class ArcFaceCriterion(Criterion):
     space forces tighter intra-class / wider inter-class angular separation than
     plain softmax.  The non-target logits are left untouched; the standard
     monotonicity guard (``easy_margin=False``) keeps the target term well-behaved
-    for angles past ``π − m``.
+    for angles past ``π - m``.
 
     Margin and scale are fixed (no learnable state) — the only trained parameters
     are the class prototypes in the ``cosine`` head.

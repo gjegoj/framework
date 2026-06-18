@@ -91,7 +91,7 @@ class Activation(ABC):
         """Convert logits to predictions used by metrics/inference."""
 
 
-class TaskCodec(ABC):
+class TargetAdapter(ABC):
     """Adapts a raw batched target into loss/metric views (task-layer shaping)."""
 
     @abstractmethod
@@ -138,7 +138,7 @@ class BatchTransform(ABC):
     ``supported_topologies: frozenset[Topology]`` (the topologies whose target
     they can re-derive). The composition root guards incompatible combinations
     (e.g. MixUp + a DENSE head) at build time. Label-mixing transforms return soft
-    targets; the task codec turns those into a ``TargetView`` (soft for loss,
+    targets; the task adapter turns those into a ``TargetView`` (soft for loss,
     hard for metrics).
     """
 

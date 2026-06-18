@@ -48,20 +48,26 @@ albumentations are details** kept behind ABC ports. Layers:
 
 - `core/` — framework-agnostic center. Entities (`Sample`, `Batch`, `FeatureBundle`,
   `ModelOutput`, `LossResult`, `TargetView`, `Task`, `HeadSpec`), ABC ports
-  (`Backbone`, `Head`, `Criterion`, `Activation`, `MetricSet`, `TaskCodec`,
+  (`Backbone`, `Head`, `Criterion`, `Activation`, `MetricSet`, `TargetAdapter`,
   `LossAggregator`), the `Registry`, `RuntimeContext`, and canonical string keys
-  (`core/keys.py`). Imports only torch + stdlib.
+  (`core/keys.py`). Imports only torch + stdlib. A port lives here only when a core
+  entity references it (e.g. `Task.adapter: TargetAdapter`); data-only ABCs
+  (`TargetEncoder`, `InputLoader`, `DataSource`) stay in the data layer.
 - `config/` — the single Pydantic contract (`ExperimentConfig`). The boundary:
   Hydra → plain dict → `load_config()` → typed DTOs. Nothing downstream re-parses raw
   config. Component sections allow `extra` keys so per-brick overrides / `_target_`
   escape hatch survive validation.
 - `data/`, `models/`, `tasks/`, `losses/`, `metrics/`, `training/`, `transforms/` —
-  adapters/use cases implementing the core ports. `transforms/input.py` holds the
+  adapters/use cases implementing the core ports. `transforms/sample.py` holds the
   per-sample `Transform`/`AlbumentationsTransform`; `transforms/batch/` holds batch
   transforms (MixUp/CutMix/Mosaic). `data/cache.py` is the in-RAM image/mask cache;
-  `training/scheduler.py` the LR-scheduler adapters; `models/backbones/` the four
-  backbones (timm/smp/embedding/multi); `losses/` the criteria incl. metric-learning
-  (`angular.py`=ArcFace, `contrastive.py`=InfoNCE/SigLIP, `ranking.py`=triplet/margin).
+  `data/encoders.py` the raw-value→tensor `TargetEncoder`s (label/mask/scalar);
+  `models/backbones/` the four backbones (timm/smp/embedding/multi); `losses/` the criteria
+  incl. metric-learning (`angular.py`=ArcFace, `contrastive.py`=InfoNCE/SigLIP, `ranking.py`).
+  `training/` groups its Lightning humble objects under `modules/` (`base.py`=`BaseLitModule`,
+  `lit_module.py`, `lit_datamodule.py`) and the optimizer+scheduler+their registry under `optim/`.
+  Each layer's registries live in `<layer>/registry.py` (`losses`, `data`, `models`, `metrics`,
+  `export`, `callbacks`, `training/optim`).
 - `export/` — deployment-export subsystem behind the `ModelExporter` port
   (`onnx.py`/`torchscript.py`, `pipeline.py`, `verify.py` parity checks, `wrapper.py`
   trace wrappers). `visualization/` — sample-debug subsystem: `Annotator`/`LabelRenderer`
@@ -90,7 +96,7 @@ orthogonal axes**:
   head + which `FeatureBundle` stream it consumes (`feature_key`, overridable per task).
 - **Objective** (internal): label semantics — multiclass / binary / multilabel /
   continuous / **metric** (metric learning: target implicit, supervision from pair/triplet
-  structure or the batch diagonal). Picks the target codec, criterion, activation, metric
+  structure or the batch diagonal). Picks the target adapter, criterion, activation, metric
   mode, out-features (for `metric`, `num_classes` is reinterpreted as `embedding_dim`).
 
 `TaskBuilder` is the Bridge that combines a `TopologyStrategy` and an
@@ -112,24 +118,24 @@ class in a registry (OCP).
   reference across model/module/data.
 - **Runtime values via `RuntimeContext` + ordering, not string interpolation.**
   `num_classes` is inferred from data by default: `DataModule.setup()` fits target
-  codecs and populates `RuntimeContext.num_classes`; tasks (and therefore heads) are
+  encoders and populates `RuntimeContext.num_classes`; tasks (and therefore heads) are
   built *after* setup, so `HeadSpec.out_features` is always a concrete int.
   `RuntimeValue`/`resolve_runtime` remain for other lazy values (e.g. scheduler steps).
-- **Split codec.** Heavy/format-specific target decoding (label→index, mask I/O) runs
-  in the data layer inside DataLoader workers (`TargetCodec`); light shape/type
-  adaptation for loss vs metrics happens task-side (`TaskCodec` → `TargetView`, which
-  keeps loss and metric targets separate for future MixUp).
+- **Split encode/adapt.** Heavy/format-specific target encoding (label→index, mask I/O) runs
+  in the data layer inside DataLoader workers (`TargetEncoder`, `data/encoders.py`); light
+  shape/type adaptation for loss vs metrics happens task-side (`TargetAdapter` → `TargetView`,
+  in `tasks/adapters.py`, which keeps loss and metric targets separate for MixUp).
 - **Criterion operates on logits; activation is separate** (used only for metrics /
   inference), so losses stay numerically stable.
 - **Extension points are registries** (`backbones`, `head_builders`, `criteria`,
-  `data_sources`, `target_codecs`, `input_loaders`, `topology_strategies`, `objective_strategies`,
+  `data_sources`, `target_encoders`, `input_loaders`, `topology_strategies`, `objective_strategies`,
   `task_presets`, `batch_transforms`, `callback_registry`/`callback_builders`, `optimizers`,
   `schedulers`, `metric_factories`, `loggers`, `exporters`, `label_renderers`, `annotators`).
   Register with the `@registry.register("key")` decorator; importing a package's `__init__`
   populates its registries.
 - **Two construction families** (see README "How components are built"). *Typed config
   sections* (backbone/optimizer/data/dataloader/logger) have dedicated builders selecting an
-  adapter by `kind`/`name`. *Brick-specs* (loss/metrics/codec/head/callbacks/batch transforms)
+  adapter by `kind`/`name`. *Brick-specs* (loss/metrics/target_encoder/head/callbacks/batch transforms)
   all go through `instantiate` — one grammar (`str` / `{name,…}` / `{_target_,…}`, recursive),
   one home for `_target_`. Callbacks needing runtime/config context are built by a
   `callback_builders` Strategy registry (`checkpoint` dirpath, `batch_transform`), keyed by
@@ -139,7 +145,7 @@ class in a registry (OCP).
   transform must rewrite *every* task's target: it is injected the tasks' `TargetSpec` list and
   declares `supported_topologies`; the wiring guard rejects incoherent combos (e.g. MixUp + a
   DENSE head) at build time. MixUp/CutMix subclass torchvision `v2` for multi-head label mixing
-  (one shared `lam`, per-head one-hot); the multiclass `TaskCodec` is soft-target aware
+  (one shared `lam`, per-head one-hot); the multiclass `TargetAdapter` is soft-target aware
   (`[B,C]` float → soft loss target + argmax metric target). Mosaic is DENSE-only.
 - **Metric direction** is read from `torchmetrics`' declared `higher_is_better`, not guessed:
   `MetricSet.directions()` → `LitModule.metric_directions()` (the `MetricDirectionProvider`
@@ -194,13 +200,25 @@ class in a registry (OCP).
   labels, full-cell mask overlays for segmentation). The `Renderer` never branches on label type.
 - Dataclasses for domain/application objects; Pydantic only at I/O boundaries
   (config). Google-style docstrings with a `Parameters:` block.
+- **Naming: full words, no cryptic abbreviations.** A name must state what it holds /
+  what happens — write it out. No `lo`/`mid`/`hi`, `tb`/`ib`, `dl`, `pw`, `cfg`, `ctx`,
+  `gt`/`pred`, `vec`, `tmp`, `res`/`ret`, `attr`, etc. Use the spelled-out form
+  everywhere, including loop and comprehension variables and function parameters:
+  `context` (not `ctx`), `config`/`task_config`/`backbone_config` (not `cfg`/`*_cfg`),
+  `target_binding`/`input_binding` (not `tb`/`ib`), `for task in self.tasks` (not `for t`),
+  `for key, value in mapping.items()` (not `k, v`), `for param in params` (not `p`),
+  `ground_truth`/`prediction` (not `gt`/`pred`). Registry string keys are the concept,
+  matching their class (`label`/`multilabel`/`scalar`/`mask` → `LabelEncoder` etc.) — no
+  redundant/encoding-detail suffixes. **Allowed** (these *are* meaningful by convention,
+  do not "expand" them): tensor-dim letters `B`/`C`/`H`/`W`, a pure-math tensor arg `x`,
+  `i`/`index` in `enumerate`, `r`/`g`/`b` for color channels, `lr`, and the throwaway `_`.
 
 ## Key data-layer conventions
 
 - `data.inputs` (not `image_column`) drives input loading: `str` = single image shorthand;
   `dict[alias, column]` = multiple inputs, loader auto-detected from file extensions at
   `setup()` time; `dict[alias, {column, loader}]` = explicit loader key.
-- `InputBinding(name, column, loader)` is the input-side counterpart of `TargetBinding(name, column, codec)`.
+- `InputBinding(name, column, loader)` is the input-side counterpart of `TargetBinding(name, column, encoder)`.
   Both use `target_bindings` / `input_bindings` as parameter names in `DataModule` and `Dataset`.
 - `instantiate(spec)` is recursive — handles nested `_target_` graphs (Albumentations pipelines,
   `OneOf`, etc.); `registry` is optional (omit for pure `_target_` mode with no registry lookup).

@@ -3,7 +3,7 @@
 Deliberately not a ``LightningDataModule`` — it is plain and unit-testable. The
 thin Lightning wrapper that delegates here is added in the training layer.
 
-On ``setup`` it: reads the source, fits target codecs (inferring ``num_classes``
+On ``setup`` it: reads the source, fits target encoders (inferring ``num_classes``
 into the RuntimeContext), resolves ``InputBinding``s with loader auto-detection,
 splits into per-stage datasets, and records dataset sizes.
 """
@@ -22,13 +22,14 @@ from torch.utils.data import DataLoader
 from src.core.enums import Stage
 from src.core.runtime import RuntimeContext
 from src.data.bindings import InputBinding, TargetBinding
-from src.data.cache import ArrayCache, CachingCodec, CachingLoader
+from src.data.cache import ArrayCache, CachingLoader, CachingTargetEncoder
 from src.data.collate import collate_samples
 from src.data.dataset import Dataset, resolve_path
-from src.data.loaders import _infer_loader_key, _normalize_inputs, input_loaders
+from src.data.loaders import _infer_loader_key, _normalize_inputs
+from src.data.registry import input_loaders
 from src.data.sources import DataSource
 from src.data.split import split_dataframe
-from src.transforms.input import Transform
+from src.transforms.sample import Transform
 
 log = logging.getLogger(__name__)
 
@@ -46,12 +47,12 @@ class DataModule:
 
         DataModule(staged_sources={Stage.TRAIN: train_src, Stage.VAL: val_src}, ...)
 
-    In pre-split mode codecs are fitted on train data only (no leakage).
+    In pre-split mode encoders are fitted on train data only (no leakage).
     ``InputBinding`` loaders are auto-detected from column values at ``setup()``
     time when not explicitly specified in ``inputs_config``.
 
     Parameters:
-        bindings (list[TargetBinding]): Per-task target column + codec.
+        bindings (list[TargetBinding]): Per-task target column + encoder.
         inputs_config: Input column(s) and optional loader keys.
             ``str`` → single image input; ``dict`` → multiple inputs.
         transforms (dict[Stage, Transform]): Per-stage input transforms.
@@ -127,7 +128,7 @@ class DataModule:
         self._setup_done = False
 
     def setup(self) -> None:
-        """Read data, fit codecs, resolve input bindings, and build per-stage datasets.
+        """Read data, fit encoders, resolve input bindings, and build per-stage datasets.
 
         Idempotent: subsequent calls are no-ops. Lightning calls this on every rank
         during ``trainer.fit()``; the first call (from ``main.py``) is the one that
@@ -142,22 +143,22 @@ class DataModule:
         self._setup_done = True
 
     def _setup_from_source(self) -> None:
-        """Split mode: read the single source, fit codecs on all data, split by ratio."""
+        """Split mode: read the single source, fit encoders on all data, split by ratio."""
         assert self._source is not None and self._split is not None, "unreachable: validated in __init__"
         frame = _apply_max_samples(self._source.read(), self._max_samples, self._seed)
         self._input_bindings = _build_input_bindings(self._inputs_config, frame)
-        self._fit_codecs(frame)
+        self._fit_encoders(frame)
         parts = split_dataframe(frame, self._split, self._seed, self._split_stratify)
         self._setup_cache(parts)
         for stage, part in parts.items():
             self._build_dataset(stage, part)
 
     def _setup_from_staged_sources(self) -> None:
-        """Pre-split mode: fit codecs on train data only, build datasets from each source."""
+        """Pre-split mode: fit encoders on train data only, build datasets from each source."""
         assert self._staged_sources is not None, "unreachable: validated in __init__"
         train_frame = _apply_max_samples(self._staged_sources[Stage.TRAIN].read(), self._max_samples, self._seed)
         self._input_bindings = _build_input_bindings(self._inputs_config, train_frame)
-        self._fit_codecs(train_frame)
+        self._fit_encoders(train_frame)
         frames: dict[Stage, pd.DataFrame] = {Stage.TRAIN: train_frame}
         for stage, source in self._staged_sources.items():
             if stage != Stage.TRAIN:
@@ -167,9 +168,9 @@ class DataModule:
             self._build_dataset(stage, frame)
 
     def _setup_cache(self, frames: dict[Stage, pd.DataFrame]) -> None:
-        """Warm the cache (parent process) and wrap cacheable loaders/codecs.
+        """Warm the cache (parent process) and wrap cacheable loaders/encoders.
 
-        Called after codecs are fit and frames are known, before datasets are
+        Called after encoders are fit and frames are known, before datasets are
         built. Warms from train + val paths only; wrapping is what makes the
         datasets read from the cache (``Dataset`` itself is unchanged).
         """
@@ -181,25 +182,34 @@ class DataModule:
         warm_frames = [frames[stage] for stage in (Stage.TRAIN, Stage.VAL) if stage in frames]
         candidates: set[str] = set()
 
-        for ib in self._input_bindings:
-            if not ib.loader.file_based:
+        for input_binding in self._input_bindings:
+            if not input_binding.loader.file_based:
                 continue
-            keys = [resolve_path(root, value) for frame in warm_frames for value in frame[ib.column]]
+            keys = [resolve_path(root, value) for frame in warm_frames for value in frame[input_binding.column]]
             candidates.update(keys)
-            cache.warm(keys, ib.loader.load, self._cache_workers)
-        for tb in self._target_bindings:
-            if not tb.codec.spatial:
+            cache.warm(keys, input_binding.loader.load, self._cache_workers)
+        for target_binding in self._target_bindings:
+            if not target_binding.encoder.spatial:
                 continue
-            keys = [resolve_path(root, value) for frame in warm_frames for value in frame[tb.column]]
+            keys = [resolve_path(root, value) for frame in warm_frames for value in frame[target_binding.column]]
             candidates.update(keys)
-            cache.warm(keys, tb.codec.load, self._cache_workers)
+            cache.warm(keys, target_binding.encoder.load, self._cache_workers)
 
         self._input_bindings = [
-            replace(ib, loader=CachingLoader(ib.loader, cache)) if ib.loader.file_based else ib
-            for ib in self._input_bindings
+            (
+                replace(input_binding, loader=CachingLoader(input_binding.loader, cache))
+                if input_binding.loader.file_based
+                else input_binding
+            )
+            for input_binding in self._input_bindings
         ]
         self._target_bindings = [
-            replace(tb, codec=CachingCodec(tb.codec, cache)) if tb.codec.spatial else tb for tb in self._target_bindings
+            (
+                replace(target_binding, encoder=CachingTargetEncoder(target_binding.encoder, cache))
+                if target_binding.encoder.spatial
+                else target_binding
+            )
+            for target_binding in self._target_bindings
         ]
         self._cache = cache
         self._log_cache_summary(cache, len(candidates), budget)
@@ -228,10 +238,10 @@ class DataModule:
                 from_disk,
             )
 
-    def _fit_codecs(self, frame: pd.DataFrame) -> None:
+    def _fit_encoders(self, frame: pd.DataFrame) -> None:
         for binding in self._target_bindings:
-            binding.codec.fit(frame[binding.column])
-            num_classes = binding.codec.num_classes
+            binding.encoder.fit(frame[binding.column])
+            num_classes = binding.encoder.num_classes
             if num_classes is not None:
                 self._runtime.num_classes[binding.name] = num_classes
 

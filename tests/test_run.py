@@ -14,8 +14,8 @@ from src.config import ExperimentConfig, load_config
 from src.models.assembly import build_composite_model
 from src.models.backbones import EmbeddingBackbone
 from src.tasks import classification
-from src.training.module import LitModule
-from src.training.optimizer import OptimizerBuilder
+from src.training.modules import LitModule
+from src.training.optim import OptimizerBuilder
 from tests.test_config import _raw
 
 

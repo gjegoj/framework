@@ -23,8 +23,8 @@ from src.models.assembly import build_composite_model
 from src.models.backbones import SmpBackbone, TimmBackbone
 from src.models.heads import LinearHead
 from src.tasks import classification, segmentation, triplet
-from src.training.module import LitModule
-from src.training.optimizer import OptimizerBuilder
+from src.training.modules import LitModule
+from src.training.optim import OptimizerBuilder
 from tests.test_config import _raw
 
 

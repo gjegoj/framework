@@ -4,11 +4,11 @@ Per item:
 1. Load all inputs via ``InputBinding.loader.load``:
    file-based loaders (images) receive a root_path-resolved path;
    raw-value loaders (text) receive the column value as-is.
-2. Load targets via ``codec.load``:
-   spatial codecs (masks) read the file; scalar codecs return the raw value.
+2. Load targets via ``encoder.load``:
+   spatial encoders (masks) read the file; scalar encoders return the raw value.
 3. Apply transform — inputs and spatial targets pass through together so
    geometric operations stay aligned across image and mask.
-4. Finalise all targets to tensors via ``codec.to_tensor``.
+4. Finalise all targets to tensors via ``encoder.to_tensor``.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ from torch.utils.data import Dataset as TorchDataset
 
 from src.core.entities import Sample
 from src.data.bindings import InputBinding, TargetBinding
-from src.transforms.input import Transform
+from src.transforms.sample import Transform
 
 
 def resolve_path(root: Path | None, raw: object) -> str:
@@ -35,7 +35,7 @@ class Dataset(TorchDataset[Sample]):
     Parameters:
         frame (pd.DataFrame): Rows for this split.
         input_bindings (list[InputBinding]): Per-input column + loader.
-        target_bindings (list[TargetBinding]): Per-task target column + codec.
+        target_bindings (list[TargetBinding]): Per-task target column + encoder.
         transform (Transform): Input transform applied after loading.
         root_path (str | None): Prefix prepended to file-based input paths.
     """
@@ -65,20 +65,26 @@ class Dataset(TorchDataset[Sample]):
         sample = Sample(inputs={}, meta={"index": index})
 
         # 1. Load all inputs (file-based → resolved path; raw-value → as-is).
-        for ib in self._input_bindings:
-            value = self._resolve(row[ib.column]) if ib.loader.file_based else str(row[ib.column])
-            sample.inputs[ib.name] = ib.loader.load(value)
+        for input_binding in self._input_bindings:
+            value = (
+                self._resolve(row[input_binding.column])
+                if input_binding.loader.file_based
+                else str(row[input_binding.column])
+            )
+            sample.inputs[input_binding.name] = input_binding.loader.load(value)
 
         # 2. Load all targets (spatial → array; scalar → raw value).
-        for tb in self._target_bindings:
-            raw = self._resolve(row[tb.column]) if tb.codec.spatial else row[tb.column]
-            sample.targets[tb.name] = tb.codec.load(raw)
+        for target_binding in self._target_bindings:
+            column_value = row[target_binding.column]
+            raw = self._resolve(column_value) if target_binding.encoder.spatial else column_value
+            sample.targets[target_binding.name] = target_binding.encoder.load(raw)
 
         # 3. Transform: inputs + spatial targets pass through together.
         sample = self._transform.apply(sample)
 
         # 4. Finalise all targets to tensors.
-        for tb in self._target_bindings:
-            sample.targets[tb.name] = tb.codec.to_tensor(sample.targets[tb.name])
+        for target_binding in self._target_bindings:
+            current = sample.targets[target_binding.name]
+            sample.targets[target_binding.name] = target_binding.encoder.to_tensor(current)
 
         return sample

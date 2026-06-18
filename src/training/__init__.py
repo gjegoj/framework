@@ -1,11 +1,8 @@
 """Training: Lightning wrappers (humble objects) over the framework's domain logic."""
 
 from src.training.aggregator import WeightedSumAggregator
-from src.training.datamodule import LitDataModule
-from src.training.module import LitModule
-from src.training.optimizer import OptimizerBuilder
-from src.training.registry import optimizers
-from src.training.scheduler import SchedulerBuilder
+from src.training.modules import LitDataModule, LitModule
+from src.training.optim import OptimizerBuilder, SchedulerBuilder, optimizers
 
 __all__ = [
     "LitDataModule",

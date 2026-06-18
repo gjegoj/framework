@@ -14,9 +14,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from src.core.registry import Registry
-
-data_sources: Registry[DataSource] = Registry("data_source")
+from src.data.registry import data_sources
 
 
 class DataSource(ABC):

@@ -12,7 +12,7 @@ from src.config.schema import ExperimentConfig
 from src.core.entities import Task
 from src.export.pipeline import export_model
 from src.export.spec import guard_exportable_topologies
-from src.training.module import LitModule
+from src.training.modules import LitModule
 
 log = logging.getLogger(__name__)
 

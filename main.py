@@ -41,7 +41,7 @@ from src.composition.wiring import (
 from src.config import load_config
 from src.core.runtime import RuntimeContext
 from src.models.assembly import build_composite_model
-from src.utils.rich_utils import print_config
+from src.utils.console import print_config
 
 log = logging.getLogger(__name__)
 

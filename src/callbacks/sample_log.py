@@ -23,7 +23,7 @@ from src.core.constants import IMAGENET_MEAN, IMAGENET_STD
 from src.core.entities import Batch, is_training_step_output
 from src.core.enums import Stage
 from src.core.ports import PlotLogger
-from src.training.module import LitModule
+from src.training.modules import LitModule
 from src.visualization.pipeline import build_sample_views
 from src.visualization.renderer import HtmlRenderer, Renderer
 

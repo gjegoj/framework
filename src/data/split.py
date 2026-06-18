@@ -60,7 +60,7 @@ def split_dataframe(
 def _random_split(frame: pd.DataFrame, ratios: dict[Stage, float], seed: int) -> dict[Stage, pd.DataFrame]:
     shuffled = frame.sample(frac=1.0, random_state=seed).reset_index(drop=True)
     total = len(shuffled)
-    stages = [s for s in _STAGE_ORDER if s in ratios]
+    stages = [stage for stage in _STAGE_ORDER if stage in ratios]
 
     result: dict[Stage, pd.DataFrame] = {}
     cursor = 0
@@ -96,7 +96,7 @@ def _stratified_split(
         raise ValueError(f"stratify_column {stratify_column!r} not found in the dataset.")
 
     strategy = _detect_strategy(frame[stratify_column])
-    stages = [s for s in _STAGE_ORDER if s in ratios]
+    stages = [stage for stage in _STAGE_ORDER if stage in ratios]
 
     if len(stages) == 1:
         return {stages[0]: frame.reset_index(drop=True)}
@@ -106,7 +106,7 @@ def _stratified_split(
 
     train_df, remainder_df = _binary_split(frame, train_size, seed, strategy, stratify_column)
 
-    non_train_stages = [s for s in stages if s != Stage.TRAIN]
+    non_train_stages = [stage for stage in stages if stage != Stage.TRAIN]
     if len(non_train_stages) == 1:
         return {
             Stage.TRAIN: train_df.reset_index(drop=True),
@@ -192,7 +192,7 @@ def _to_multihot(series: pd.Series) -> np.ndarray:
     parsed: list[set[str]] = []
     vocab: set[str] = set()
     for value in series:
-        labels = {p.strip() for p in str(value).split(",") if p.strip()} if pd.notna(value) else set()
+        labels = {part.strip() for part in str(value).split(",") if part.strip()} if pd.notna(value) else set()
         parsed.append(labels)
         vocab.update(labels)
 

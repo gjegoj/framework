@@ -1,10 +1,10 @@
-"""Logger adapters and the build_logger factory.
+"""Logger adapters and the ``logger_builders`` registry.
 
-Import ``build_logger`` from here; concrete adapters are in submodules and
-imported lazily so optional dependencies (clearml, wandb) are not required at
-import time.
+Concrete adapters live in submodules and are imported lazily so optional dependencies
+(clearml, wandb) are not required at import time. The config→logger dispatch is
+``build_logger`` in ``composition/wiring/training.py``.
 """
 
-from src.loggers.registry import build_logger
+from src.loggers.registry import logger_builders
 
-__all__ = ["build_logger"]
+__all__ = ["logger_builders"]

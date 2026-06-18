@@ -39,8 +39,8 @@ class _LabelMixTransform(BatchTransform):
 
     def __call__(self, batch: Batch) -> Batch:
         image = batch.inputs[self._input_key]
-        labels = {t.key: batch.targets[t.key] for t in self._targets}
-        num_classes = {t.key: t.num_classes for t in self._targets}
+        labels = {spec.key: batch.targets[spec.key] for spec in self._targets}
+        num_classes = {spec.key: spec.num_classes for spec in self._targets}
         mixed_image, mixed_labels = self._mixer.mix(image, labels, num_classes)
         return Batch(
             inputs={**batch.inputs, self._input_key: mixed_image},

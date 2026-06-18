@@ -20,9 +20,7 @@ import cv2
 import numpy as np
 import pandas as pd
 
-from src.core.registry import Registry
-
-input_loaders: Registry[InputLoader] = Registry("input_loader")
+from src.data.registry import input_loaders
 
 _IMAGE_EXTENSIONS = frozenset({".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif", ".webp", ".gif"})
 _EMBEDDING_EXTENSIONS = frozenset({".npy"})

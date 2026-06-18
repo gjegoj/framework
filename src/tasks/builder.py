@@ -82,7 +82,7 @@ class TaskBuilder:
         return Task(
             name=name,
             head_spec=head_spec,
-            codec=self._objective.build_task_codec(),
+            adapter=self._objective.build_target_adapter(),
             criterion=self._objective.build_criterion(loss_spec),
             activation=self._objective.build_activation(),
             metrics=metrics,

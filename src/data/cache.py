@@ -7,7 +7,7 @@ Memory-safety model (why this avoids the classic DataLoader blow-up):
   pixel buffers stay shared across forks via copy-on-write (no per-worker copy);
 - a byte budget caps total RAM so warm-up can't OOM.
 
-``CachingLoader`` / ``CachingCodec`` are thin decorators (the ``Dataset`` stays
+``CachingLoader`` / ``CachingTargetEncoder`` are thin decorators (the ``Dataset`` stays
 oblivious to caching). The store is filled only by ``ArrayCache.warm``.
 """
 
@@ -24,7 +24,7 @@ import numpy as np
 from rich.progress import BarColumn, MofNCompleteColumn, Progress, TextColumn
 from torch import Tensor
 
-from src.data.codecs import TargetCodec
+from src.data.encoders import TargetEncoder
 from src.data.loaders import InputLoader
 
 log = logging.getLogger(__name__)
@@ -122,18 +122,18 @@ class CachingLoader(InputLoader):
 
 
 @dataclass
-class CachingCodec(TargetCodec):
-    """Decorator: serve a spatial target codec's ``load`` from an ``ArrayCache``.
+class CachingTargetEncoder(TargetEncoder):
+    """Decorator: serve a spatial target encoder's ``load`` from an ``ArrayCache``.
 
     Delegates ``fit`` / ``to_tensor`` / ``num_classes`` / ``spatial`` to the inner
-    codec; only ``load`` (the file read) is cached.
+    encoder; only ``load`` (the file read) is cached.
 
     Parameters:
-        inner (TargetCodec): The wrapped codec (e.g. ``MaskCodec``).
+        inner (TargetEncoder): The wrapped encoder (e.g. ``MaskEncoder``).
         cache (ArrayCache): Shared cache, keyed by the resolved path.
     """
 
-    inner: TargetCodec
+    inner: TargetEncoder
     cache: ArrayCache
 
     def __post_init__(self) -> None:

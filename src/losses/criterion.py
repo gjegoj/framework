@@ -16,9 +16,7 @@ from torch import Tensor, nn
 from src.core.entities import LossResult
 from src.core.instantiate import instantiate
 from src.core.ports import Criterion
-from src.core.registry import Registry
-
-criteria: Registry[Criterion] = Registry("criterion")
+from src.losses.registry import criteria
 
 
 @criteria.register("cross_entropy")
@@ -68,8 +66,8 @@ class BCEWithLogitsCriterion(Criterion):
         reduction: str = "mean",
     ) -> None:
         super().__init__()
-        pw = torch.tensor(pos_weight, dtype=torch.float) if pos_weight is not None else None
-        self._loss = nn.BCEWithLogitsLoss(pos_weight=pw, reduction=reduction)
+        pos_weight_tensor = torch.tensor(pos_weight, dtype=torch.float) if pos_weight is not None else None
+        self._loss = nn.BCEWithLogitsLoss(pos_weight=pos_weight_tensor, reduction=reduction)
 
     def forward(self, logits: Tensor, target: Tensor) -> LossResult:
         value: Tensor = self._loss(logits, target)

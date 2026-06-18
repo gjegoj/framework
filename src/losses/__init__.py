@@ -7,8 +7,8 @@ from src.losses.criterion import (
     L1Criterion,
     MSECriterion,
     WeightedSumCriterion,
-    criteria,
 )
+from src.losses.registry import criteria
 
 __all__ = [
     "BCEWithLogitsCriterion",

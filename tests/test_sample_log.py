@@ -17,8 +17,8 @@ from src.core.ports import PlotLogger
 from src.models.assembly import build_composite_model
 from src.models.backbones import EmbeddingBackbone
 from src.tasks import classification
-from src.training.module import LitModule
-from src.training.optimizer import OptimizerBuilder
+from src.training.modules import LitModule
+from src.training.optim import OptimizerBuilder
 from src.visualization.renderer import Renderer
 from tests.test_metrics import FakePlotLogger
 
@@ -149,7 +149,7 @@ class TestSampleLogCallback:
         task = lit.tasks[0]
         with (
             patch.object(task.activation, "__call__", wraps=task.activation.__call__) as mock_activation,
-            patch.object(task.codec, "adapt", wraps=task.codec.adapt) as mock_adapt,
+            patch.object(task.adapter, "adapt", wraps=task.adapter.adapt) as mock_adapt,
         ):
             cb.on_validation_batch_end(_trainer(fake_logger), lit, _outputs(), _batch(), batch_idx=0)
         mock_activation.assert_not_called()

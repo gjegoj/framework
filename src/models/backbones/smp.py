@@ -123,7 +123,7 @@ class SmpBackbone(Backbone):
             return self._encoder_last_dim
         if key == DECODER:
             return self._decoder_dim
-        available_keys = ", ".join(f"'{k}'" for k in _AVAILABLE_KEYS)
+        available_keys = ", ".join(f"'{key}'" for key in _AVAILABLE_KEYS)
         raise KeyError(
             f"SmpBackbone exposes: {available_keys}. Got: {key!r}. Check the backbone docstring for stream shapes."
         )

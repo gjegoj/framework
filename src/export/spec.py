@@ -100,7 +100,7 @@ def guard_exportable_topologies(tasks: list[Task]) -> None:
             raise ValueError(
                 f"Export does not yet support task '{task.name}' with topology "
                 f"{task.topology.value}. Phase 1 supports "
-                f"{sorted(t.value for t in EXPORTABLE_TOPOLOGIES)} only."
+                f"{sorted(topology.value for topology in EXPORTABLE_TOPOLOGIES)} only."
             )
 
 

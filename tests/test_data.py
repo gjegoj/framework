@@ -18,10 +18,10 @@ from src.data import (
     CsvDataSource,
     DataModule,
     EmbeddingLoader,
-    FloatCodec,
     JsonDataSource,
-    LabelIndexCodec,
-    MultiLabelBinarizeCodec,
+    LabelEncoder,
+    MultiLabelEncoder,
+    ScalarEncoder,
     TargetBinding,
     collate_samples,
     split_dataframe,
@@ -64,7 +64,7 @@ _TAGS_MAPPING: dict[int, str] = {0: "indoor", 1: "large", 2: "outdoor", 3: "smal
 
 
 def _binding() -> TargetBinding:
-    return TargetBinding(name="label", column="label", codec=LabelIndexCodec(class_mapping=_LABEL_MAPPING))
+    return TargetBinding(name="label", column="label", encoder=LabelEncoder(class_mapping=_LABEL_MAPPING))
 
 
 class TestEmbeddingLoader:
@@ -101,7 +101,7 @@ class TestInferLoaderKey:
 
 class TestIdentityTransform:
     def test_tensorizes_input_vector(self) -> None:
-        from src.transforms.input import IdentityTransform
+        from src.transforms.sample import IdentityTransform
 
         sample = Sample(inputs={"embedding": np.arange(4, dtype=np.float32)})
         result = IdentityTransform().apply(sample)
@@ -110,7 +110,7 @@ class TestIdentityTransform:
         assert result.inputs["embedding"].shape == (4,)
 
     def test_passes_targets_through_unchanged(self) -> None:
-        from src.transforms.input import IdentityTransform
+        from src.transforms.sample import IdentityTransform
 
         target = torch.tensor(2)
         sample = Sample(inputs={"embedding": np.zeros(4, dtype=np.float32)}, targets={"label": target})
@@ -118,85 +118,85 @@ class TestIdentityTransform:
         assert result.targets["label"] is target
 
 
-class TestLabelIndexCodec:
+class TestLabelEncoder:
     def test_class_mapping_sets_vocab(self) -> None:
-        codec = LabelIndexCodec(class_mapping={0: "cat", 1: "cow", 2: "dog"})
+        codec = LabelEncoder(class_mapping={0: "cat", 1: "cow", 2: "dog"})
         assert codec.num_classes == 3
         assert codec.class_mapping == {0: "cat", 1: "cow", 2: "dog"}
 
     def test_to_tensor_returns_long_index(self) -> None:
-        codec = LabelIndexCodec(class_mapping={0: "cat", 1: "dog"})
+        codec = LabelEncoder(class_mapping={0: "cat", 1: "dog"})
         tensor = codec.to_tensor(codec.load("dog"))
         assert tensor.item() == 1
         assert tensor.dtype.is_floating_point is False
 
     def test_load_is_identity(self) -> None:
-        codec = LabelIndexCodec(class_mapping={0: "cat", 1: "dog"})
+        codec = LabelEncoder(class_mapping={0: "cat", 1: "dog"})
         assert codec.load("cat") == "cat"
 
     def test_to_tensor_unknown_label_raises(self) -> None:
-        codec = LabelIndexCodec(class_mapping={0: "cat", 1: "dog"})
+        codec = LabelEncoder(class_mapping={0: "cat", 1: "dog"})
         with pytest.raises(KeyError, match="Unknown label"):
             codec.to_tensor("cow")
 
     def test_fit_validates_known_labels(self) -> None:
-        codec = LabelIndexCodec(class_mapping={0: "cat", 1: "dog"})
+        codec = LabelEncoder(class_mapping={0: "cat", 1: "dog"})
         codec.fit(["cat", "dog", "cat"])  # all known — no error
 
     def test_fit_raises_on_unknown_label(self) -> None:
-        codec = LabelIndexCodec(class_mapping={0: "cat", 1: "dog"})
+        codec = LabelEncoder(class_mapping={0: "cat", 1: "dog"})
         with pytest.raises(ValueError, match="not in class_mapping"):
             codec.fit(["cat", "dog", "cow"])
 
     def test_fit_raises_without_class_mapping(self) -> None:
-        codec = LabelIndexCodec()
+        codec = LabelEncoder()
         with pytest.raises(ValueError, match="class_mapping"):
             codec.fit(["cat", "dog"])
 
 
-class TestMultiLabelBinarizeCodec:
+class TestMultiLabelEncoder:
     def test_class_mapping_sets_vocab(self) -> None:
-        codec = MultiLabelBinarizeCodec(class_mapping={0: "cat", 1: "cow", 2: "dog"})
+        codec = MultiLabelEncoder(class_mapping={0: "cat", 1: "cow", 2: "dog"})
         assert codec.num_classes == 3
 
     def test_to_tensor_multihot(self) -> None:
-        codec = MultiLabelBinarizeCodec(class_mapping={0: "cat", 1: "cow", 2: "dog"})
+        codec = MultiLabelEncoder(class_mapping={0: "cat", 1: "cow", 2: "dog"})
         vec = codec.to_tensor(codec.load("cat,cow"))
         assert vec.dtype == torch.float
         assert vec.shape == (3,)
 
     def test_to_tensor_correct_positions(self) -> None:
-        codec = MultiLabelBinarizeCodec(class_mapping={0: "a", 1: "b", 2: "c"})
+        codec = MultiLabelEncoder(class_mapping={0: "a", 1: "b", 2: "c"})
         vec = codec.to_tensor("a,c")
         assert vec.tolist() == [1.0, 0.0, 1.0]
 
     def test_separator_param(self) -> None:
-        codec = MultiLabelBinarizeCodec(separator="|", class_mapping={0: "x", 1: "y", 2: "z"})
+        codec = MultiLabelEncoder(separator="|", class_mapping={0: "x", 1: "y", 2: "z"})
         assert codec.num_classes == 3
 
     def test_to_tensor_unknown_label_raises(self) -> None:
-        codec = MultiLabelBinarizeCodec(class_mapping={0: "cat", 1: "dog"})
+        codec = MultiLabelEncoder(class_mapping={0: "cat", 1: "dog"})
         with pytest.raises(KeyError, match="Unknown label"):
             codec.to_tensor("cat,fish")
 
     def test_fit_validates_known_labels(self) -> None:
-        codec = MultiLabelBinarizeCodec(class_mapping={0: "cat", 1: "cow", 2: "dog"})
+        codec = MultiLabelEncoder(class_mapping={0: "cat", 1: "cow", 2: "dog"})
         codec.fit(["cat,dog", "cow,dog", "cat"])  # all known — no error
 
     def test_fit_raises_on_unknown_label(self) -> None:
-        codec = MultiLabelBinarizeCodec(class_mapping={0: "cat", 1: "dog"})
+        codec = MultiLabelEncoder(class_mapping={0: "cat", 1: "dog"})
         with pytest.raises(ValueError, match="not in class_mapping"):
             codec.fit(["cat,dog", "cat,fish"])
 
     def test_fit_raises_without_class_mapping(self) -> None:
-        codec = MultiLabelBinarizeCodec()
+        codec = MultiLabelEncoder()
         with pytest.raises(ValueError, match="class_mapping"):
             codec.fit(["cat,dog"])
 
 
-class TestFloatCodec:
+class TestScalarEncoder:
     def test_to_tensor_scalar(self) -> None:
-        codec = FloatCodec()
+        codec = ScalarEncoder()
         codec.fit([1.0, 2.5, 3.0])
         t = codec.to_tensor(codec.load("2.5"))
         assert t.dtype == torch.float
@@ -204,31 +204,31 @@ class TestFloatCodec:
         assert t.item() == pytest.approx(2.5)
 
     def test_num_classes_is_none(self) -> None:
-        codec = FloatCodec()
+        codec = ScalarEncoder()
         codec.fit([1, 2, 3])
         assert codec.num_classes is None
 
 
-class TestTaskCodecs:
+class TestTargetAdapters:
     def test_binary_codec_shapes(self) -> None:
-        from src.tasks.codecs import BinaryTaskCodec
+        from src.tasks.adapters import BinaryTargetAdapter
 
-        view = BinaryTaskCodec().adapt(torch.tensor([0, 1, 1, 0]))
+        view = BinaryTargetAdapter().adapt(torch.tensor([0, 1, 1, 0]))
         assert view.loss.shape == (4, 1) and view.loss.dtype == torch.float
         assert view.metric.shape == (4, 1) and view.metric.dtype == torch.long
 
     def test_multilabel_codec_shapes(self) -> None:
-        from src.tasks.codecs import MultilabelTaskCodec
+        from src.tasks.adapters import MultilabelTargetAdapter
 
         target = torch.tensor([[1, 0, 1], [0, 1, 0]], dtype=torch.float)
-        view = MultilabelTaskCodec().adapt(target)
+        view = MultilabelTargetAdapter().adapt(target)
         assert view.loss.dtype == torch.float
         assert view.metric.dtype == torch.long
 
     def test_continuous_codec_shapes(self) -> None:
-        from src.tasks.codecs import ContinuousTaskCodec
+        from src.tasks.adapters import ContinuousTargetAdapter
 
-        view = ContinuousTaskCodec().adapt(torch.tensor([1.5, 2.3, 0.1]))
+        view = ContinuousTargetAdapter().adapt(torch.tensor([1.5, 2.3, 0.1]))
         assert view.loss.shape == (3, 1) and view.loss.dtype == torch.float
         assert view.metric.shape == (3, 1) and view.metric.dtype == torch.float
 
@@ -393,7 +393,7 @@ class TestDataSources:
             JsonDataSource([])
 
 
-class TestMaskCodecAndDensePipeline:
+class TestMaskEncoderAndDensePipeline:
     @pytest.fixture
     def seg_csv(self, tmp_path: Path) -> Path:
         """5 images + matching index-mask ONGs (classes 0..2)."""
@@ -413,12 +413,12 @@ class TestMaskCodecAndDensePipeline:
         return csv
 
     def test_mask_codec_loads_and_finalizes(self, tmp_path: Path) -> None:
-        from src.data import MaskCodec
+        from src.data import MaskEncoder
 
         mask = np.array([[0, 1], [2, 1]], dtype=np.uint8)
         path = tmp_path / "m.png"
         cv2.imwrite(str(path), mask)
-        codec = MaskCodec()
+        codec = MaskEncoder()
         assert codec.spatial is True
         arr = codec.load(str(path))
         assert arr.shape == (2, 2)
@@ -426,19 +426,19 @@ class TestMaskCodecAndDensePipeline:
         assert tensor.dtype == torch.long
 
     def test_mask_codec_missing_file_raises(self) -> None:
-        from src.data import MaskCodec
+        from src.data import MaskEncoder
 
         with pytest.raises(FileNotFoundError, match="Mask not found"):
-            MaskCodec().load("/no/such/mask.png")
+            MaskEncoder().load("/no/such/mask.png")
 
     def test_dense_pipeline_aligns_image_and_mask(self, seg_csv: Path) -> None:
-        from src.data import MaskCodec
+        from src.data import MaskEncoder
 
         frame = pd.read_csv(seg_csv)
         dataset = Dataset(
             frame=frame,
             input_bindings=_build_input_bindings("image_path", frame),
-            target_bindings=[TargetBinding("mask", "mask_path", MaskCodec())],
+            target_bindings=[TargetBinding("mask", "mask_path", MaskEncoder())],
             transform=_make_transform((16, 16), spatial=["mask"]),
         )
         sample = dataset[0]
@@ -543,7 +543,7 @@ class TestDataModule:
 
 def _binding_fitted(frame: pd.DataFrame) -> TargetBinding:
     binding = _binding()
-    binding.codec.fit(frame["label"])
+    binding.encoder.fit(frame["label"])
     return binding
 
 
@@ -604,13 +604,13 @@ class TestCachingDecorators:
             loader.load("/does-not-exist.png")  # miss falls through to the inner loader
 
     def test_caching_codec_delegates_and_serves(self) -> None:
-        from src.data.cache import ArrayCache, CachingCodec
-        from src.data.codecs import MaskCodec
+        from src.data.cache import ArrayCache, CachingTargetEncoder
+        from src.data.encoders import MaskEncoder
 
         cache = ArrayCache(max_bytes=10**6)
         cached = np.array([[1, 2], [3, 4]], np.uint8)
         cache.warm(["/m.png"], lambda _: cached, workers=1)
-        codec = CachingCodec(MaskCodec(class_mapping={0: "bg", 1: "fg"}), cache)
+        codec = CachingTargetEncoder(MaskEncoder(class_mapping={0: "bg", 1: "fg"}), cache)
         assert codec.spatial is True
         assert codec.num_classes == 2  # delegated
         assert np.array_equal(codec.load("/m.png"), cached)  # served from cache

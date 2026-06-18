@@ -14,7 +14,7 @@ from typing import Any
 import torch
 import torch.nn as nn
 
-from src.training.registry import optimizers
+from src.training.optim.registry import optimizers
 
 
 @dataclass
@@ -131,7 +131,7 @@ class OptimizerBuilder:
             if task_name not in overrides_lr:
                 continue
             params = list(head_module.parameters())
-            head_param_ids.update(id(p) for p in params)
+            head_param_ids.update(id(param) for param in params)
             task_groups.append(
                 ParamGroupSpec(
                     name=f"head/{task_name}",
@@ -141,7 +141,7 @@ class OptimizerBuilder:
                 )
             )
 
-        backbone_params = [p for p in model.parameters() if id(p) not in head_param_ids]
+        backbone_params = [param for param in model.parameters() if id(param) not in head_param_ids]
         groups: list[dict[str, object]] = [
             ParamGroupSpec(
                 name="backbone",

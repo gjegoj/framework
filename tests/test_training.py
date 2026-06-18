@@ -21,7 +21,7 @@ from src.data import (
     AlbumentationsTransform,
     CsvDataSource,
     DataModule,
-    LabelIndexCodec,
+    LabelEncoder,
     TargetBinding,
 )
 from src.models import build_composite_model
@@ -158,7 +158,7 @@ class TestLitModuleSmoke:
         transforms = {s: _make_transform((32, 32)) for s in Stage}
         plain_dm = DataModule(
             target_bindings=[
-                TargetBinding("label", "label", LabelIndexCodec(class_mapping={0: "cat", 1: "cow", 2: "dog"}))
+                TargetBinding("label", "label", LabelEncoder(class_mapping={0: "cat", 1: "cow", 2: "dog"}))
             ],
             inputs_config="image_path",
             transforms=transforms,
@@ -263,13 +263,13 @@ class TestEmbeddingSmoke:
 
     def test_fit_one_epoch_embeddings(self, emb_csv: Path) -> None:
         from src.models.backbones import EmbeddingBackbone
-        from src.transforms.input import IdentityTransform
+        from src.transforms.sample import IdentityTransform
 
         runtime = RuntimeContext()
         transforms = {s: IdentityTransform() for s in Stage}
         plain_dm = DataModule(
             target_bindings=[
-                TargetBinding("label", "label", LabelIndexCodec(class_mapping={0: "cat", 1: "cow", 2: "dog"}))
+                TargetBinding("label", "label", LabelEncoder(class_mapping={0: "cat", 1: "cow", 2: "dog"}))
             ],
             inputs_config={"embedding": "emb_path"},  # .npy paths → "embedding" loader auto-detected
             transforms=transforms,
@@ -320,14 +320,14 @@ class TestSegmentationSmoke:
         return csv
 
     def test_fit_one_epoch_segmentation(self, seg_csv: Path) -> None:
-        from src.data import MaskCodec
+        from src.data import MaskEncoder
         from src.models.backbones import SmpBackbone
         from src.tasks import segmentation
 
         runtime = RuntimeContext()
         transforms = {s: _make_transform((64, 64), spatial=["mask"]) for s in Stage}
         plain_dm = DataModule(
-            target_bindings=[TargetBinding("mask", "mask_path", MaskCodec())],
+            target_bindings=[TargetBinding("mask", "mask_path", MaskEncoder())],
             inputs_config="image_path",
             transforms=transforms,
             runtime=runtime,
@@ -360,7 +360,7 @@ class TestSchedulerRegistry:
     def test_builtin_schedulers_resolve(self) -> None:
         import torch.optim.lr_scheduler as sched
 
-        from src.training.registry import schedulers
+        from src.training.optim import schedulers
 
         assert schedulers.get("cosine") is sched.CosineAnnealingLR
         assert schedulers.get("onecycle") is sched.OneCycleLR
@@ -374,7 +374,7 @@ class TestSchedulerBuilder:
         return torch.optim.SGD([torch.nn.Parameter(torch.zeros(1))], lr=0.1)
 
     def test_cosine_builds_epoch_config_without_monitor(self) -> None:
-        from src.training.scheduler import SchedulerBuilder
+        from src.training.optim import SchedulerBuilder
 
         builder = SchedulerBuilder.from_name("cosine", interval="epoch", extra_kwargs={"T_max": 5})
         config = builder.build(self._optimizer(), trainer_facts={})
@@ -383,14 +383,14 @@ class TestSchedulerBuilder:
         assert "monitor" not in config
 
     def test_plateau_includes_monitor(self) -> None:
-        from src.training.scheduler import SchedulerBuilder
+        from src.training.optim import SchedulerBuilder
 
         builder = SchedulerBuilder.from_name("plateau", monitor="loss/val", extra_kwargs={"mode": "min"})
         config = builder.build(self._optimizer(), trainer_facts={})
         assert config["monitor"] == "loss/val"
 
     def test_runtime_kwargs_routes_trainer_fact(self) -> None:
-        from src.training.scheduler import SchedulerBuilder
+        from src.training.optim import SchedulerBuilder
 
         builder = SchedulerBuilder.from_name(
             "onecycle",
@@ -416,7 +416,7 @@ class TestSchedulerBuilder:
         )
 
     def _build_onecycle(self, optimizer: torch.optim.Optimizer, **extra: Any) -> torch.optim.lr_scheduler.OneCycleLR:
-        from src.training.scheduler import SchedulerBuilder
+        from src.training.optim import SchedulerBuilder
 
         builder = SchedulerBuilder.from_name(
             "onecycle",
@@ -450,7 +450,7 @@ class TestSchedulerBuilder:
 
     def test_cosine_is_unaffected_by_group_scaling(self) -> None:
         """Schedulers without per-group LR params (cosine) keep each group's own base lr."""
-        from src.training.scheduler import SchedulerBuilder
+        from src.training.optim import SchedulerBuilder
 
         optimizer = self._two_group_optimizer(backbone_lr=1e-3, head_lr=1e-4)
         builder = SchedulerBuilder.from_name("cosine", interval="epoch", extra_kwargs={"T_max": 5})
@@ -477,7 +477,7 @@ class TestSchedulerWiring:
     def test_configure_optimizers_returns_scheduler_dict(self) -> None:
         from types import SimpleNamespace
 
-        from src.training.scheduler import SchedulerBuilder
+        from src.training.optim import SchedulerBuilder
 
         task = classification("label", num_classes=3)
         model = build_composite_model(TimmBackbone("resnet18", pretrained=False), {"label": task.head_spec})

@@ -20,7 +20,7 @@ from lightning.pytorch.utilities.types import LRSchedulerConfigType
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LRScheduler
 
-from src.training.registry import schedulers
+from src.training.optim.registry import schedulers
 
 # Trainer-derived facts a scheduler may request, mapped to the attribute that supplies each.
 # Single source of truth: read in configure_optimizers, validated in build_scheduler_builder.

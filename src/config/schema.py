@@ -305,9 +305,9 @@ class TaskConfig(BaseModel):
         None,
         description="Metric specs by label: {label: {params}}; None -> objective default.",
     )
-    target_codec: str | dict[str, Any] | None = Field(
+    target_encoder: str | dict[str, Any] | None = Field(
         None,
-        description="Data-codec override: registry key or {name/_target_ + params}; None -> inferred from objective.",
+        description="Data-encoder override: registry key or {name/_target_ + params}; None -> inferred from objective.",
     )
 
     model_config = ConfigDict(extra="allow")

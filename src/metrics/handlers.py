@@ -49,7 +49,7 @@ class MetricHandler(ABC):
     def can_handle(self, value: Any) -> bool: ...
 
     @abstractmethod
-    def handle(self, key: str, value: Any, ctx: MetricLogContext) -> None: ...
+    def handle(self, key: str, value: Any, context: MetricLogContext) -> None: ...
 
 
 class ScalarMetricHandler(MetricHandler):
@@ -58,8 +58,8 @@ class ScalarMetricHandler(MetricHandler):
             return False
         return not isinstance(value, torch.Tensor) or value.ndim == 0
 
-    def handle(self, key: str, value: Any, ctx: MetricLogContext) -> None:
-        ctx.log_scalar(key, value)
+    def handle(self, key: str, value: Any, context: MetricLogContext) -> None:
+        context.log_scalar(key, value)
 
 
 class VectorMetricHandler(MetricHandler):
@@ -72,10 +72,10 @@ class VectorMetricHandler(MetricHandler):
     def can_handle(self, value: Any) -> bool:
         return isinstance(value, torch.Tensor) and value.ndim == 1
 
-    def handle(self, key: str, value: Any, ctx: MetricLogContext) -> None:
-        ctx.log_scalar(f"{key}/mean", value.float().mean())
+    def handle(self, key: str, value: Any, context: MetricLogContext) -> None:
+        context.log_scalar(f"{key}/mean", value.float().mean())
         for i, class_value in enumerate(value):
-            ctx.log_scalar(f"{key}/{_class_label(i, ctx.class_names)}", class_value.float())
+            context.log_scalar(f"{key}/{_class_label(i, context.class_names)}", class_value.float())
 
 
 class MatrixMetricHandler(MetricHandler):
@@ -93,15 +93,15 @@ class MatrixMetricHandler(MetricHandler):
     def can_handle(self, value: Any) -> bool:
         return isinstance(value, torch.Tensor) and value.ndim == 2
 
-    def handle(self, key: str, value: Any, ctx: MetricLogContext) -> None:
-        if not isinstance(ctx.logger, PlotLogger):
+    def handle(self, key: str, value: Any, context: MetricLogContext) -> None:
+        if not isinstance(context.logger, PlotLogger):
             return
-        xaxis, yaxis = self._axes.get(ctx.metric_name or "", (None, None))
-        ctx.logger.log_matrix(
+        xaxis, yaxis = self._axes.get(context.metric_name or "", (None, None))
+        context.logger.log_matrix(
             title=key,
             matrix=value,
-            iteration=ctx.step,
-            labels=ctx.class_names,
+            iteration=context.step,
+            labels=context.class_names,
             xaxis=xaxis,
             yaxis=yaxis,
         )
@@ -128,21 +128,21 @@ class CurveMetricHandler(MetricHandler):
     def can_handle(self, value: Any) -> bool:
         return isinstance(value, tuple) and len(value) == 3
 
-    def handle(self, key: str, value: Any, ctx: MetricLogContext) -> None:
-        if not isinstance(ctx.logger, PlotLogger):
+    def handle(self, key: str, value: Any, context: MetricLogContext) -> None:
+        if not isinstance(context.logger, PlotLogger):
             return
-        spec = self._specs.get(ctx.metric_name or "", CurveSpec(xaxis="x", yaxis="y"))
+        spec = self._specs.get(context.metric_name or "", CurveSpec(xaxis="x", yaxis="y"))
         first_output, second_output, _ = value
         is_binary = not isinstance(first_output, list)  # binary metrics emit single tensors
         x_per_class = _to_per_class_list(first_output if spec.x_idx == 0 else second_output)
         y_per_class = _to_per_class_list(first_output if spec.y_idx == 0 else second_output)
         for i, (x_vals, y_vals) in enumerate(zip(x_per_class, y_per_class)):
-            ctx.logger.log_curve(
+            context.logger.log_curve(
                 title=key,
                 x=x_vals,
                 y=y_vals,
-                iteration=ctx.step,
-                series=_curve_series(i, ctx.class_names, is_binary),
+                iteration=context.step,
+                series=_curve_series(i, context.class_names, is_binary),
                 xaxis=spec.xaxis,
                 yaxis=spec.yaxis,
             )
@@ -177,13 +177,13 @@ DEFAULT_METRIC_HANDLERS: tuple[MetricHandler, ...] = (
 def dispatch(
     key: str,
     value: Any,
-    ctx: MetricLogContext,
+    context: MetricLogContext,
     handlers: tuple[MetricHandler, ...] = DEFAULT_METRIC_HANDLERS,
 ) -> None:
     """Route ``value`` through the handler chain; warn and skip if nothing matches."""
     for handler in handlers:
         if handler.can_handle(value):
-            handler.handle(key, value, ctx)
+            handler.handle(key, value, context)
             return
     if isinstance(value, torch.Tensor):
         warnings.warn(f"No handler for metric '{key}' with ndim={value.ndim}; skipping.", stacklevel=2)

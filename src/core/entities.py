@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     import torch
 
     from src.core.enums import Stage
-    from src.core.ports import Activation, Criterion, MetricSet, TaskCodec
+    from src.core.ports import Activation, Criterion, MetricSet, TargetAdapter
     from src.tasks.taxonomy import Objective, Topology
 
 
@@ -198,7 +198,7 @@ class TaskStepView:
 
     Parameters:
         preds (Tensor): Post-activation predictions (same tensor passed to ``MetricSet.update``).
-        metric_target (Tensor): The metric target from ``TaskCodec.adapt`` (``TargetView.metric``).
+        metric_target (Tensor): The metric target from ``TargetAdapter.adapt`` (``TargetView.metric``).
     """
 
     preds: Tensor
@@ -240,7 +240,7 @@ class Task:
     Parameters:
         name (str): Unique task name; also the key into ``Batch.targets``.
         head_spec (HeadSpec): How to build/route this task's head.
-        codec (TaskCodec): Adapts the raw target into a ``TargetView``.
+        adapter (TargetAdapter): Adapts the raw target into a ``TargetView``.
         criterion (Criterion): Loss computed on logits.
         activation (Activation): Maps logits to predictions for metrics.
         metrics (dict[Stage, MetricSet]): Per-stage metric collections.
@@ -254,7 +254,7 @@ class Task:
 
     name: str
     head_spec: HeadSpec
-    codec: TaskCodec
+    adapter: TargetAdapter
     criterion: Criterion
     activation: Activation
     metrics: dict[Stage, MetricSet]

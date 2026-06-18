@@ -4,10 +4,10 @@
 to ``Trainer(logger=False)``.
 
 Extension point (per the framework's "extension points are registries" rule):
-register a new backend with ``@logger_builders.register("kind")`` instead of
-editing ``build_logger``. Each builder takes the validated ``ExperimentConfig``
-so it can resolve context (project/task names) and import its adapter lazily —
-mirroring ``callback_builders`` in ``composition/wiring/callbacks.py``.
+register a new backend with ``@logger_builders.register("kind")``; the dispatch
+lives in ``build_logger`` (composition wiring). Each builder takes the validated
+``ExperimentConfig`` so it can resolve context (project/task names) and import its
+adapter lazily — mirroring ``callback_builders`` in ``composition/wiring/callbacks.py``.
 """
 
 from __future__ import annotations
@@ -36,22 +36,3 @@ def _build_clearml(config: ExperimentConfig) -> L.pytorch.loggers.Logger | bool:
     project = config.logger.project or config.project
     task = config.logger.task or config.run_name
     return ClearMLLogger(project_name=project, task_name=task, tags=config.logger.tags)
-
-
-def build_logger(config: ExperimentConfig) -> L.pytorch.loggers.Logger | bool:
-    """Build the experiment logger from config.
-
-    Parameters:
-        config (ExperimentConfig): Validated experiment config.
-
-    Returns:
-        Logger | bool: A configured Lightning Logger, or ``False`` to disable.
-
-    Raises:
-        ValueError: If ``config.logger.kind`` is not a registered backend.
-    """
-    kind = config.logger.kind
-    if kind not in logger_builders:
-        known = ", ".join(sorted(logger_builders.keys()))
-        raise ValueError(f"Unknown logger kind: {kind!r}. Known kinds: {known}.")
-    return logger_builders.create(kind, config)

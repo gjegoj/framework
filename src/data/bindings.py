@@ -1,14 +1,14 @@
 """Input and target bindings: DTOs that link ``Sample`` keys to CSV columns.
 
 Kept in their own file so they are discoverable next to the other
-single-responsibility data modules (``sources`` / ``codecs`` / ``transforms``).
+single-responsibility data modules (``sources`` / ``encoders`` / ``transforms``).
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-from src.data.codecs import TargetCodec
+from src.data.encoders import TargetEncoder
 from src.data.loaders import InputLoader
 
 
@@ -29,14 +29,14 @@ class InputBinding:
 
 @dataclass(frozen=True)
 class TargetBinding:
-    """Binds a task to the data column and codec that produce its target.
+    """Binds a task to the data column and encoder that produce its target.
 
     Parameters:
         name (str): Task name; also the key under which the target is stored.
         column (str): Source column in the DataFrame.
-        codec (TargetCodec): Codec that decodes the raw column value.
+        encoder (TargetEncoder): Encoder that turns the raw column value into a tensor.
     """
 
     name: str
     column: str
-    codec: TargetCodec
+    encoder: TargetEncoder

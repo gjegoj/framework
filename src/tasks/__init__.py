@@ -8,8 +8,13 @@ import src.losses.angular  # noqa: F401 — registers arcface criterion
 import src.losses.contrastive  # noqa: F401 — registers info_nce criterion
 import src.losses.ranking  # noqa: F401 — registers triplet_margin / margin_ranking criteria
 from src.tasks.activations import IdentityActivation, SigmoidActivation, SoftmaxActivation
+from src.tasks.adapters import (
+    BinaryTargetAdapter,
+    ContinuousTargetAdapter,
+    MulticlassTargetAdapter,
+    MultilabelTargetAdapter,
+)
 from src.tasks.builder import DEFAULT_STAGES, TaskBuilder
-from src.tasks.codecs import BinaryTaskCodec, ContinuousTaskCodec, MulticlassTaskCodec, MultilabelTaskCodec
 from src.tasks.presets import (
     TaskPreset,
     classification,
@@ -42,18 +47,18 @@ from src.tasks.taxonomy import Objective, Topology
 __all__ = [
     "DEFAULT_STAGES",
     "BinaryObjective",
-    "BinaryTaskCodec",
+    "BinaryTargetAdapter",
     "ContinuousObjective",
-    "ContinuousTaskCodec",
+    "ContinuousTargetAdapter",
     "DenseTopology",
     "GlobalTopology",
     "IdentityActivation",
     "MetricObjective",
     "MultistreamTopology",
     "MulticlassObjective",
-    "MulticlassTaskCodec",
+    "MulticlassTargetAdapter",
     "MultilabelObjective",
-    "MultilabelTaskCodec",
+    "MultilabelTargetAdapter",
     "Objective",
     "ObjectiveStrategy",
     "RankingTopology",

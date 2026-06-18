@@ -65,7 +65,7 @@ names — `classification`, `segmentation`, `regression`, `triplet`, `contrastiv
 presets over this composition. `segmentation(objective="multilabel")` works out of the box with
 no extra code; adding a new variant is one `objective:` change in YAML.
 
-**`num_classes` is never hardcoded.** The data module reads and fits target codecs at
+**`num_classes` is never hardcoded.** The data module reads and fits target encoders at
 setup time, populates a `RuntimeContext`, and only then are tasks and model heads built
 with concrete output dimensions. Class counts flow from data → runtime → model
 automatically.
@@ -104,7 +104,7 @@ Typed sections are `extra="allow"`: unknown keys forward verbatim to the underly
 constructor (smp's `encoder_name`, an optimizer's `momentum`, a DataLoader's `timeout`).
 
 **2. Brick-specs** — free-form, with three interchangeable forms. Used by `loss`,
-`metrics`, `target_codec`, `head`, `callbacks`, the `transform` inside a batch
+`metrics`, `target_encoder`, `head`, `callbacks`, the `transform` inside a batch
 transform, and `trainer.profiler`.
 
 | Form | YAML | Meaning |
@@ -370,7 +370,7 @@ tasks:
 <summary>Triplet / pairwise ranking (Siamese) and contrastive (dual-encoder, CLIP/SigLIP)</summary>
 
 Metric-learning tasks have no per-sample class label — supervision comes from the
-pair/triplet structure or the batch diagonal. The `metric` objective makes the codec
+pair/triplet structure or the batch diagonal. The `metric` objective makes the adapter
 pass-through and the activation identity; `num_classes` is reinterpreted as the **embedding
 dimension** (the projection-head size). The *loss method* is pinned by the preset.
 
@@ -1042,7 +1042,7 @@ data:
 ```
 
 **Other extension points** follow the same pattern — `backbones`, `head_builders`,
-`target_codecs`, `input_loaders`, `topology_strategies`, `objective_strategies`,
+`target_encoders`, `input_loaders`, `topology_strategies`, `objective_strategies`,
 `task_presets`, `batch_transforms`, `schedulers`, `exporters`, `label_renderers`,
 `annotators`.
 
@@ -1065,7 +1065,7 @@ sequenceDiagram
     participant DM as DataModule
     participant DS as DataSource<br/>(CsvDataSource)
     participant IL as InputLoader<br/>(per input)
-    participant Codec as TargetCodec<br/>(per task)
+    participant Codec as TargetEncoder<br/>(per task)
     participant RT as RuntimeContext
     participant TB as TaskBuilder<br/>(TopologyStrategy × ObjectiveStrategy)
     participant CM as CompositeModel<br/>(TimmBackbone + heads)
@@ -1074,8 +1074,8 @@ sequenceDiagram
     Config-->>main: ExperimentConfig
 
     main->>Wiring: build_bindings(config)
-    Note over Wiring: infers TargetCodec per task<br/>from preset + objective
-    Wiring-->>main: list[TargetBinding(name, column, codec)]
+    Note over Wiring: infers TargetEncoder per task<br/>from preset + objective
+    Wiring-->>main: list[TargetBinding(name, column, encoder)]
 
     main->>Wiring: build_data_module(config, target_bindings, runtime)
     Note over Wiring: resolves split/pre-split mode,<br/>builds transforms from configs/transforms/
@@ -1092,7 +1092,7 @@ sequenceDiagram
 
     loop for each TargetBinding
         DM->>Codec: fit(column_values)
-        Note over Codec: LabelIndexCodec → sorts vocab<br/>MultiLabelBinarizeCodec → multi-hot vocab<br/>FloatCodec / MaskCodec → no-op
+        Note over Codec: LabelEncoder → sorts vocab<br/>MultiLabelEncoder → multi-hot vocab<br/>ScalarEncoder / MaskEncoder → no-op
         Codec-->>RT: num_classes[task_name] = C
     end
 
@@ -1106,8 +1106,8 @@ sequenceDiagram
     loop for each task in config.tasks
         Wiring->>TB: build(name, num_classes, objective, ...)
         TB->>TB: validate Topology × Objective
-        TB->>TB: out_features / head_spec / codec<br/>criterion / activation / metrics × stages
-        TB-->>Wiring: Task { head_spec, codec, criterion,<br/>activation, metrics, weight }
+        TB->>TB: out_features / head_spec / adapter<br/>criterion / activation / metrics × stages
+        TB-->>Wiring: Task { head_spec, adapter, criterion,<br/>activation, metrics, weight }
     end
     Wiring-->>main: list[Task]
 
@@ -1132,7 +1132,7 @@ sequenceDiagram
     participant CM as CompositeModel
     participant BB as TimmBackbone
     participant Head as LinearHead / ConvHead<br/>(per task)
-    participant TC as TaskCodec<br/>(per task)
+    participant TC as TargetAdapter<br/>(per task)
     participant Crit as Criterion<br/>(per task)
     participant Act as Activation<br/>(per task)
     participant Met as MetricSet<br/>(per task × stage)
@@ -1147,7 +1147,7 @@ sequenceDiagram
     end
     DS->>DS: Transform.apply(sample) → tensors [C,H,W]
     loop for each TargetBinding
-        DS->>DS: codec.load(raw) then codec.to_tensor(val) → Tensor
+        DS->>DS: encoder.load(raw) then encoder.to_tensor(val) → Tensor
     end
     DS-->>DL: Sample { inputs: {alias: Tensor}, targets: {task: Tensor} }
     DL->>DL: collate_samples(list[Sample])
@@ -1165,7 +1165,7 @@ sequenceDiagram
 
     loop for each Task
         LitM->>TC: adapt(batch.targets[task.name])
-        Note over TC: MulticlassTaskCodec → [B] long<br/>BinaryTaskCodec    → [B,1] float / [B,1] long<br/>MultilabelTaskCodec→ [B,C] float / [B,C] long<br/>ContinuousTaskCodec→ [B,1] float
+        Note over TC: MulticlassTargetAdapter → [B] long<br/>BinaryTargetAdapter    → [B,1] float / [B,1] long<br/>MultilabelTargetAdapter→ [B,C] float / [B,C] long<br/>ContinuousTargetAdapter→ [B,1] float
         TC-->>LitM: TargetView { loss: Tensor, metric: Tensor }
 
         LitM->>Crit: forward(logits, target.loss)

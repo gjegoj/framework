@@ -24,7 +24,7 @@ from src.composition.wiring import (
 from src.config import load_config
 from src.core.enums import Stage
 from src.core.runtime import RuntimeContext
-from src.data.codecs import FloatCodec, LabelIndexCodec, MultiLabelBinarizeCodec
+from src.data.encoders import LabelEncoder, MultiLabelEncoder, ScalarEncoder
 from src.data.sources import CsvDataSource, JsonDataSource
 
 _RESIZE_NORMALIZE_TOTENSOR = [
@@ -116,12 +116,12 @@ class TestBuildTransforms:
         assert set(transforms) == {Stage.TRAIN, Stage.VAL, Stage.TEST, Stage.PREDICT}
 
     def test_non_albumentations_transform_used_directly(self) -> None:
-        from src.transforms.input import IdentityTransform
+        from src.transforms.sample import IdentityTransform
 
         raw = _minimal_config()
         raw["transforms"] = {
-            "train": {"_target_": "src.transforms.input.IdentityTransform"},
-            "val": {"_target_": "src.transforms.input.IdentityTransform"},
+            "train": {"_target_": "src.transforms.sample.IdentityTransform"},
+            "val": {"_target_": "src.transforms.sample.IdentityTransform"},
         }
         config = load_config(raw)
         transforms = build_transforms(config)
@@ -209,11 +209,11 @@ class TestBuildTasks:
 
 
 class TestBuildBindings:
-    def test_classification_gets_label_index_codec(self) -> None:
+    def test_classification_gets_label_encoder(self) -> None:
         config = load_config(_minimal_config())
         bindings = build_bindings(config)
         assert len(bindings) == 1
-        assert isinstance(bindings[0].codec, LabelIndexCodec)
+        assert isinstance(bindings[0].encoder, LabelEncoder)
         assert bindings[0].column == "label"
 
     def test_regression_gets_float_codec(self) -> None:
@@ -221,7 +221,7 @@ class TestBuildBindings:
         raw["tasks"] = {"score": {"preset": "regression", "target": "score", "dim": 1}}
         config = load_config(raw)
         bindings = build_bindings(config)
-        assert isinstance(bindings[0].codec, FloatCodec)
+        assert isinstance(bindings[0].encoder, ScalarEncoder)
 
     def test_multilabel_gets_binarize_codec(self) -> None:
         raw = _minimal_config()
@@ -234,38 +234,38 @@ class TestBuildBindings:
         }
         config = load_config(raw)
         bindings = build_bindings(config)
-        assert isinstance(bindings[0].codec, MultiLabelBinarizeCodec)
+        assert isinstance(bindings[0].encoder, MultiLabelEncoder)
 
-    def test_custom_separator_via_target_codec_spec(self) -> None:
+    def test_custom_separator_via_target_encoder_spec(self) -> None:
         raw = _minimal_config()
         raw["tasks"] = {
             "tags": {
                 "preset": "classification",
                 "target": "tags",
                 "objective": "multilabel",
-                "target_codec": {"name": "multilabel_binarize", "separator": "|"},
+                "target_encoder": {"name": "multilabel", "separator": "|"},
             }
         }
         config = load_config(raw)
         bindings = build_bindings(config)
-        assert isinstance(bindings[0].codec, MultiLabelBinarizeCodec)
-        assert bindings[0].codec._separator == "|"
+        assert isinstance(bindings[0].encoder, MultiLabelEncoder)
+        assert bindings[0].encoder._separator == "|"
 
-    def test_target_codec_override(self) -> None:
+    def test_target_encoder_override(self) -> None:
         raw = _minimal_config()
-        raw["tasks"]["label"]["target_codec"] = "label_index"
+        raw["tasks"]["label"]["target_encoder"] = "label"
         config = load_config(raw)
         bindings = build_bindings(config)
-        assert isinstance(bindings[0].codec, LabelIndexCodec)
+        assert isinstance(bindings[0].encoder, LabelEncoder)
 
     def test_segmentation_gets_mask_codec(self) -> None:
-        from src.data.codecs import MaskCodec
+        from src.data.encoders import MaskEncoder
 
         raw = _minimal_config()
         raw["tasks"] = {"mask": {"preset": "segmentation", "target": "mask_path", "num_classes": 4}}
         config = load_config(raw)
         bindings = build_bindings(config)
-        assert isinstance(bindings[0].codec, MaskCodec)
+        assert isinstance(bindings[0].encoder, MaskEncoder)
 
 
 class TestDataConfigModes:

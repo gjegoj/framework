@@ -10,7 +10,7 @@ import torch
 from src.callbacks.batch_transform import BatchTransformCallback
 from src.core.entities import Batch
 from src.core.ports import BatchTransform
-from src.tasks.codecs import MulticlassTaskCodec
+from src.tasks.adapters import MulticlassTargetAdapter
 from src.tasks.taxonomy import Topology
 from src.transforms.batch import CutMix, MixUp, Mosaic, TargetSpec
 
@@ -171,15 +171,15 @@ class TestBatchTransformCallback:
 class TestMulticlassCodecSoftTarget:
     def test_soft_target_kept_for_loss_argmax_for_metric(self) -> None:
         soft = torch.tensor([[0.7, 0.3, 0.0], [0.1, 0.2, 0.7]])
-        view = MulticlassTaskCodec().adapt(soft)
+        view = MulticlassTargetAdapter().adapt(soft)
         assert torch.equal(view.loss, soft)
         assert view.metric.tolist() == [0, 2]
 
     def test_hard_target_unchanged(self) -> None:
-        view = MulticlassTaskCodec().adapt(torch.tensor([0, 2, 1]))
+        view = MulticlassTargetAdapter().adapt(torch.tensor([0, 2, 1]))
         assert view.loss.dtype == torch.long
         assert torch.equal(view.loss, view.metric)
 
     def test_hard_column_vector_squeezed(self) -> None:
-        view = MulticlassTaskCodec().adapt(torch.tensor([[0], [2], [1]]))
+        view = MulticlassTargetAdapter().adapt(torch.tensor([[0], [2], [1]]))
         assert view.loss.tolist() == [0, 2, 1]

@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 class RuntimeContext:
     """Per-task class counts inferred from data, threaded from setup to task building.
 
-    ``DataModule.setup()`` fits the target codecs and fills ``num_classes``;
+    ``DataModule.setup()`` fits the target encoders and fills ``num_classes``;
     ``build_tasks()`` reads it to size each head.
 
     Values known only once the trainer is attached (total optimizer steps, epoch
