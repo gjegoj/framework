@@ -24,12 +24,13 @@ from lightning.pytorch.loggers import Logger
 from lightning.pytorch.utilities.rank_zero import rank_zero_only
 
 from src.core.enums import Stage
+from src.core.keys import LOSS
 from src.core.ports import PlotLogger
 
 # Stage tokens (train/val/test/predict) — pulled out of a *loss* key as the ClearML
 # *series* so the train/val/test curves of one loss share a single graph. Metrics are
 # left untouched (their stage already trails, so averaged metrics group by stage).
-_STAGE_TOKENS = frozenset(stage.value for stage in Stage)
+_STAGE_TOKENS = frozenset(Stage)
 
 if TYPE_CHECKING:
     from clearml import Task
@@ -192,8 +193,8 @@ class ClearMLLogger(Logger, PlotLogger):
         parts = name.split("/")
         if len(parts) == 1:
             return name, "value"
-        if parts[0] == "loss" and len(parts) >= 3 and parts[1] in _STAGE_TOKENS:
-            return "loss/" + "/".join(parts[2:]), parts[1]
+        if parts[0] == LOSS and len(parts) >= 3 and parts[1] in _STAGE_TOKENS:
+            return f"{LOSS}/" + "/".join(parts[2:]), parts[1]
         return "/".join(parts[:-1]), parts[-1]
 
 

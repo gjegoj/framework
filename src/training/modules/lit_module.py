@@ -18,8 +18,6 @@ The step loop:
 
 from __future__ import annotations
 
-from typing import Any
-
 from src.core.entities import Batch, LossResult, StepOutput, TaskStepView
 from src.core.enums import Stage
 from src.training.modules.base import BaseLitModule
@@ -28,7 +26,7 @@ from src.training.modules.base import BaseLitModule
 class LitModule(BaseLitModule):
     """Standard supervised multi-task module: forward → per-task loss → aggregate."""
 
-    def _shared_step(self, batch: Batch | dict[str, Any], stage: Stage) -> StepOutput:
+    def _shared_step(self, batch: Batch, stage: Stage) -> StepOutput:
         """Run the forward + loss/metric loop and return step artifacts.
 
         Returns a :class:`StepOutput` dict. ``task_views`` (post-activation preds + metric
@@ -37,9 +35,6 @@ class LitModule(BaseLitModule):
         the activation output only feeds metrics/inference, never backprop (the loss runs on
         ``logits``).
         """
-        if isinstance(batch, dict):
-            batch = Batch(**batch)
-
         output = self.model(batch.inputs)
         losses: dict[str, LossResult] = {}
         task_views: dict[str, TaskStepView] = {}
@@ -52,7 +47,6 @@ class LitModule(BaseLitModule):
             task.metrics[stage].update(preds, target.metric)
             task_views[task.name] = TaskStepView(preds=preds, metric_target=target.metric)
 
-        weights = {task.name: task.weight for task in self.tasks}
-        combined = self._aggregator.combine(losses, weights)
+        combined = self._aggregator.combine(losses, self._task_weights)
         self._log_losses(combined, stage)
         return {"loss": combined.total, "task_views": task_views}

@@ -35,5 +35,11 @@ loggers:
     level: WARNING
     handlers: [rich]
     propagate: false
+  # Pre-configured (non-empty handlers) so ClearML's "add my handler if none" check
+  # skips it — otherwise its plain-format handler double-prints every resource-monitor line.
+  clearml.resource_monitor:
+    level: INFO
+    handlers: [rich]
+    propagate: false
 
 disable_existing_loggers: false

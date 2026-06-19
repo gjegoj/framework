@@ -14,11 +14,13 @@ from rich.live import Live
 from rich.table import Table
 from rich.text import Text
 
+from src.core.enums import Stage
+from src.core.keys import LOSS
 from src.core.ports import MetricDirectionProvider
 
 _MetricMode = Literal["min", "max"]
 
-_TRAINING_STAGES: frozenset[str] = frozenset({"train", "val"})
+_TRAINING_STAGES: frozenset[str] = frozenset({Stage.TRAIN, Stage.VAL})
 
 _REFRESH_RATE = 4  # Hz — how often the Live display redraws
 
@@ -62,7 +64,7 @@ class MetricsProgressBar(RichProgressBar):
 
     def __init__(
         self,
-        loss_key: str = "loss",
+        loss_key: str = LOSS,
         metric_filters: list[str] | None = None,
         **kwargs: Any,
     ) -> None:

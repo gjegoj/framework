@@ -36,8 +36,9 @@ backbone→FeatureBundle→head split (and per-head LR / multitask on one backbo
         class_mapping: {0: cat, 1: dog}
         feature_key: encoder_last   # ← uses smp's ClassificationHead (pools internally)
 
-The original smp segmentation head is retained as a template so ``native_head``
-can reconstruct it with the correct ``out_channels``.  This works generically for
+The original smp segmentation head is retained (un-registered, so it is never trained,
+checkpointed or exported) as a template so ``native_head`` can reconstruct it with the
+correct ``out_channels``.  This works generically for
 any smp architecture (``SegmentationHead``, ``DPTSegmentationHead``, etc.) by
 finding the last ``Conv2d``/``Linear`` in the head's module tree and replacing
 its output dimension — no ``isinstance`` checks on the head type required.
@@ -91,7 +92,11 @@ class SmpBackbone(Backbone):
         )
         self._encoder = model.encoder
         self._decoder = model.decoder
-        self._seg_head_template: nn.Module = model.segmentation_head
+        # smp's segmentation head, kept ONLY as a cloning template for ``native_head``.
+        # Wrapped in a 1-tuple so it is *not* registered as a submodule: its weights are never
+        # used in forward (we deep-copy it per task), so registering them would be dead weight
+        # in the param summary, the training checkpoint, and the traced TorchScript export.
+        self._seg_head_template: tuple[nn.Module] = (model.segmentation_head,)
         self._encoder_last_dim = int(model.encoder.out_channels[-1])
 
         # DPT is the only smp architecture whose encoder returns
@@ -137,7 +142,7 @@ class SmpBackbone(Backbone):
         - Anything else → ``None`` (use the head registry instead).
         """
         if feature_key == DECODER:
-            segmentation_head = copy.deepcopy(self._seg_head_template)
+            segmentation_head = copy.deepcopy(self._seg_head_template[0])
             _replace_last_projection(segmentation_head, out_features)
             return segmentation_head
         if feature_key == ENCODER_LAST:
@@ -152,9 +157,7 @@ class SmpBackbone(Backbone):
         return None
 
 
-# ---------------------------------------------------------------------------
-# Module-level helpers (private)
-# ---------------------------------------------------------------------------
+# ------------------------------------------- Module-level helpers (private)
 
 
 def _first_conv_in_channels(module: nn.Module) -> int:

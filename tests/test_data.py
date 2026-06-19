@@ -447,6 +447,21 @@ class TestMaskEncoderAndDensePipeline:
         assert sample.targets["mask"].dtype == torch.long
         assert sample.targets["mask"].max().item() <= 2  # nearest preserved class indices
 
+    def test_meta_records_input_and_target_source_paths(self, seg_csv: Path) -> None:
+        from src.data import MaskEncoder
+
+        frame = pd.read_csv(seg_csv)
+        dataset = Dataset(
+            frame=frame,
+            input_bindings=_build_input_bindings("image_path", frame),
+            target_bindings=[TargetBinding("mask", "mask_path", MaskEncoder())],
+            transform=_make_transform((16, 16), spatial=["mask"]),
+        )
+        sample = dataset[2]
+        assert sample.meta["index"] == 2
+        assert sample.meta["input_sources"]["image"] == str(frame.iloc[2]["image_path"])  # image file path
+        assert sample.meta["target_sources"]["mask"] == str(frame.iloc[2]["mask_path"])  # mask file path
+
 
 class TestSplit:
     def test_split_sizes_sum_and_are_disjoint(self) -> None:
@@ -483,6 +498,26 @@ class TestDatasetAndCollate:
         batch = collate_samples([dataset[i] for i in range(4)])
         assert batch.inputs["image"].shape == (4, 3, 16, 16)
         assert batch.targets["label"].shape == (4,)
+
+    def test_collate_transposes_meta_sources(self) -> None:
+        samples = [
+            Sample(
+                inputs={"image": torch.zeros(3, 4, 4)},
+                targets={"mask": torch.zeros(4, 4, dtype=torch.long)},
+                meta={
+                    "index": i,
+                    "input_sources": {"image": f"/img/{i}.jpg"},
+                    "target_sources": {"mask": f"/msk/{i}.png"},
+                },
+            )
+            for i in range(3)
+        ]
+        batch = collate_samples(samples)
+        assert batch.meta["index"] == [0, 1, 2]  # scalar → per-sample list
+        assert batch.meta["input_sources"] == {
+            "image": ["/img/0.jpg", "/img/1.jpg", "/img/2.jpg"]
+        }  # dict → dict-of-lists
+        assert batch.meta["target_sources"] == {"mask": ["/msk/0.png", "/msk/1.png", "/msk/2.png"]}
 
 
 class TestDataModule:

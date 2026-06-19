@@ -1,7 +1,8 @@
-"""Rich-based console utilities."""
+"""Console output helpers: config pretty-print and third-party warning suppression."""
 
 from __future__ import annotations
 
+import warnings
 from functools import partial
 from typing import Any
 
@@ -11,6 +12,25 @@ from rich.tree import Tree
 
 _NOT_EXPAND = frozenset({"mean", "std"})
 _SKIP_KEYS = frozenset({"warnings"})
+
+# Repetitive third-party notices we can't act on per-run; matched (regex) against the
+# warning text. Project warnings and anything new still surface.
+_NOISY_WARNINGS = (
+    r".*LeafSpec.* is deprecated",  # torch pytree deprecation fired inside Lightning
+    r".*does not have many workers.*bottleneck",  # DataLoader num_workers tip
+    r".*infer the .batch_size. from an ambiguous",  # multi-head batch_size guess
+)
+
+
+def silence_known_warnings() -> None:
+    """Filter the repetitive Lightning/torch warnings that clutter the run log.
+
+    Each is an internal notice we can't address per-run (a torch deprecation Lightning
+    triggers, the ``num_workers`` tip, the multi-target ``batch_size`` inference). Call
+    once at startup; unrelated and new warnings are unaffected.
+    """
+    for message in _NOISY_WARNINGS:
+        warnings.filterwarnings("ignore", message=message)
 
 
 def print_config(

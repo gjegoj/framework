@@ -13,6 +13,7 @@ backbone's feature dimension and constructs it via one of three paths:
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import cast
 
 import torch
 from torch import Tensor, nn
@@ -142,6 +143,11 @@ class CompositeModel(nn.Module):
             features=shared_features if shared_features is not None else FeatureBundle(streams={}),
             task_logits=task_logits,
         )
+
+    def __call__(self, inputs: dict[str, Tensor]) -> ModelOutput:
+        # Typed delegate to nn.Module.__call__ so callers get ModelOutput, not Any
+        # (torch types Module.__call__ as Callable[..., Any]); hooks still run.
+        return cast(ModelOutput, super().__call__(inputs))
 
 
 def build_composite_model(backbone: Backbone, specs: dict[str, HeadSpec]) -> CompositeModel:

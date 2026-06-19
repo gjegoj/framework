@@ -8,12 +8,17 @@ Parametric components that live in the autograd graph (``Backbone``, ``Head``,
 ``nn.Module`` — torch is the framework's "language", so this is honest rather
 than leaky. Pure-logic ports (``Activation``, ``LossAggregator``) stay plain
 ABCs.
+
+Each ``nn.Module`` port re-declares a typed ``__call__`` that delegates to
+``nn.Module.__call__`` (so hooks still run): torch types ``Module.__call__`` as
+``Callable[..., Any]``, which erases ``forward``'s return type at every call site
+(``backbone(inputs)`` would be ``Any``). The typed ``__call__`` restores it.
 """
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
 
 import torch.nn as nn
 
@@ -45,6 +50,10 @@ class Backbone(nn.Module, ABC):
             FeatureBundle: Named feature streams consumed by heads.
         """
 
+    def __call__(self, inputs: dict[str, Tensor]) -> FeatureBundle:
+        # Typed delegate to nn.Module.__call__ (see module docstring); preserves hooks.
+        return cast("FeatureBundle", super().__call__(inputs))
+
     @abstractmethod
     def feature_dim(self, key: str) -> int:
         """Return the channel/feature dimension of stream ``key`` (sizes heads)."""
@@ -66,6 +75,10 @@ class Head(nn.Module, ABC):
     def forward(self, features: Tensor) -> Tensor:
         """Map a feature stream to raw logits (pre-activation) for the task."""
 
+    def __call__(self, features: Tensor) -> Tensor:
+        # Typed delegate to nn.Module.__call__ (see module docstring); preserves hooks.
+        return cast("Tensor", super().__call__(features))
+
 
 class Criterion(nn.Module, ABC):
     """Computes a task loss from logits and target (operates on logits)."""
@@ -81,6 +94,10 @@ class Criterion(nn.Module, ABC):
         Returns:
             LossResult: Total scalar loss and its named components.
         """
+
+    def __call__(self, logits: Tensor, target: Tensor) -> LossResult:
+        # Typed delegate to nn.Module.__call__ (see module docstring); preserves hooks.
+        return cast("LossResult", super().__call__(logits, target))
 
 
 class Activation(ABC):

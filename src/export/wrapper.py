@@ -6,8 +6,6 @@ can trace a stable graph without dicts or dataclasses.
 
 from __future__ import annotations
 
-from typing import cast
-
 from torch import Tensor, nn
 
 from src.core.keys import IMAGE
@@ -80,4 +78,4 @@ class HeadExportModel(nn.Module):
         self._activation = activation
 
     def forward(self, features: Tensor) -> Tensor:
-        return self._activation(cast(Tensor, self._head(features)))
+        return self._activation(self._head(features))

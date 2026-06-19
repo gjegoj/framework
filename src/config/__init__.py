@@ -11,6 +11,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from src.config.export import ExportConfig, ExportTarget, OnnxOptions, TorchScriptOptions
+from src.config.resolvers import register_resolvers
 from src.config.schema import (
     BackboneConfig,
     DataConfig,
@@ -19,6 +20,9 @@ from src.config.schema import (
     TaskConfig,
     TrainerConfig,
 )
+
+# Make ``${key:NAME}`` available wherever a config is resolved (runtime + tests).
+register_resolvers()
 
 
 class ConfigError(ValueError):

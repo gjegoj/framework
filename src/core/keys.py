@@ -24,15 +24,11 @@ raises a ``KeyError`` listing what the backbone actually exposes.  Each backbone
 docstring has a **Streams** section with the available keys and their shapes.
 """
 
-# ---------------------------------------------------------------------------
-# Input modality keys — used in ``Sample.inputs`` / ``Batch.inputs``
-# ---------------------------------------------------------------------------
+# ------------------------------------------------------ Input modality keys
 IMAGE = "image"
 TEXT = "text"
 
-# ---------------------------------------------------------------------------
-# Feature stream keys — used in ``FeatureBundle.streams`` and ``HeadSpec.feature_key``
-# ---------------------------------------------------------------------------
+# ------------------------------------------------------ Feature stream keys
 
 # The only *mandatory* output contract: a per-sample vector [B, D].
 # Every backbone that supports GlobalTopology must provide this stream.
@@ -46,3 +42,11 @@ DECODER = "decoder"
 # Exposes the encoder features *before* the decoder, allowing a classification
 # head (e.g. smp.ClassificationHead) to do its own spatial pooling.
 ENCODER_LAST = "encoder_last"
+
+# ----------------------------------------------------- Logging / metric keys
+# Fixed tokens of the logged scalar keys. The full key is composed inline where
+# it is logged — losses as ``{LOSS}/{stage}/{component}`` (``loss/val/total``),
+# task metrics as ``{task}/{metric}/{stage}``. Centralised here so the token
+# names can be changed in one place and referenced from YAML via ``${key:LOSS}``.
+LOSS = "loss"  # namespace prefix for loss scalars
+TOTAL = "total"  # the aggregate (weighted-sum) loss component

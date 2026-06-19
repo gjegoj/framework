@@ -18,7 +18,7 @@ from pathlib import Path
 import pandas as pd
 from torch.utils.data import Dataset as TorchDataset
 
-from src.core.entities import Sample
+from src.core.entities import Sample, SampleMeta
 from src.data.bindings import InputBinding, TargetBinding
 from src.transforms.sample import Transform
 
@@ -62,21 +62,28 @@ class Dataset(TorchDataset[Sample]):
 
     def __getitem__(self, index: int) -> Sample:
         row = self._frame.iloc[index]
-        sample = Sample(inputs={}, meta={"index": index})
+        # ``input_sources``/``target_sources`` record the resolved source path of each
+        # file-based input / spatial (mask) target, keyed by binding name — so a prediction
+        # can be traced back to its file (collate transposes these to per-sample lists).
+        sample = Sample(inputs={}, meta=SampleMeta(index=index, input_sources={}, target_sources={}))
 
-        # 1. Load all inputs (file-based → resolved path; raw-value → as-is).
+        # 1. Load all inputs (file-based → resolved path, also kept as a source; raw-value → as-is).
         for input_binding in self._input_bindings:
-            value = (
-                self._resolve(row[input_binding.column])
-                if input_binding.loader.file_based
-                else str(row[input_binding.column])
-            )
+            if input_binding.loader.file_based:
+                value = self._resolve(row[input_binding.column])
+                sample.meta["input_sources"][input_binding.name] = value
+            else:
+                value = str(row[input_binding.column])
             sample.inputs[input_binding.name] = input_binding.loader.load(value)
 
-        # 2. Load all targets (spatial → array; scalar → raw value).
+        # 2. Load all targets (spatial → resolved path, also kept as a source; scalar → raw value).
         for target_binding in self._target_bindings:
             column_value = row[target_binding.column]
-            raw = self._resolve(column_value) if target_binding.encoder.spatial else column_value
+            if target_binding.encoder.spatial:
+                raw = self._resolve(column_value)
+                sample.meta["target_sources"][target_binding.name] = raw
+            else:
+                raw = column_value
             sample.targets[target_binding.name] = target_binding.encoder.load(raw)
 
         # 3. Transform: inputs + spatial targets pass through together.

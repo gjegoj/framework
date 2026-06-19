@@ -14,7 +14,7 @@ image_size: [128, 128]
 
 run_train: true
 run_test: true
-run_export: true
+run_export: false
 
 callbacks:
   sample_log:

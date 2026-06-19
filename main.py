@@ -41,13 +41,14 @@ from src.composition.wiring import (
 from src.config import load_config
 from src.core.runtime import RuntimeContext
 from src.models.assembly import build_composite_model
-from src.utils.console import print_config
+from src.utils.console import print_config, silence_known_warnings
 
 log = logging.getLogger(__name__)
 
 
 @hydra.main(version_base=None, config_path="configs", config_name="config")
 def main(cfg: DictConfig) -> None:
+    silence_known_warnings()
     raw = OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True)
     print_config(raw)
     config = load_config(raw)

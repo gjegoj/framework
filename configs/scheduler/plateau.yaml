@@ -1,6 +1,6 @@
 name: plateau
 interval: epoch
-monitor: loss/val/total
+monitor: ${key:LOSS}/val/${key:TOTAL}
 mode: min
 factor: 0.1
 patience: 10

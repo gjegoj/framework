@@ -131,10 +131,10 @@ class SampleLogCallback(L.Callback):
 
         images = _denormalize_to_uint8(first_tensor, self._num_images, self._mean, self._std).numpy()
         samples = build_sample_views(images, pl_module.tasks, outputs["task_views"])
-        title = f"{self._title_prefix}/{stage.value}"
+        title = f"{self._title_prefix}/{stage}"
         html = self._renderer.render(samples, title=title)
         trainer.logger.log_html(title=title, html=html, iteration=trainer.current_epoch)
-        log.debug("Logged sample grid for %s epoch %s.", stage.value, trainer.current_epoch)
+        log.debug("Logged sample grid for %s epoch %s.", stage, trainer.current_epoch)
 
 
 def _denormalize_to_uint8(tensor: Tensor, num_images: int, mean: Tensor, std: Tensor) -> Tensor:

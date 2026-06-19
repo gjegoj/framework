@@ -244,8 +244,11 @@ class TestSchedulerYamlConfigs:
         for name in ("cosine", "onecycle", "plateau"):
             raw = yaml.safe_load(Path(f"configs/scheduler/{name}.yaml").read_text())
             for key, value in list(raw.items()):
-                if isinstance(value, str) and value.startswith("${"):
-                    raw[key] = 1
+                if isinstance(value, str) and "${" in value:
+                    # Stub runtime interpolations: a bare ${...} stands in for a number
+                    # (${lr}/${epochs}); a composite (${key:LOSS}/val/${key:TOTAL}) is a string.
+                    whole_interpolation = value.startswith("${") and value.endswith("}") and value.count("${") == 1
+                    raw[key] = 1 if whole_interpolation else "loss/val/total"
             SchedulerConfig.model_validate(raw)
 
 

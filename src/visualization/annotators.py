@@ -38,7 +38,7 @@ def axes_key(topology: Topology, objective: Objective) -> str:
     ``Registry`` stays ``str``-keyed — avoiding a ``Hashable`` widening that would
     ripple into its ``keys()`` consumers. Still "keyed by (topology, objective)".
     """
-    return f"{topology.value}:{objective.value}"
+    return f"{topology}:{objective}"
 
 
 class Annotator(ABC):

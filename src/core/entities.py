@@ -27,6 +27,43 @@ if TYPE_CHECKING:
     from src.tasks.taxonomy import Objective, Topology
 
 
+class SampleMeta(TypedDict, total=False):
+    """Per-sample provenance metadata, populated by the data layer.
+
+    ``total=False`` so a ``Sample`` can be built without it (tests/visualization);
+    the dataset fills all three. ``input_sources``/``target_sources`` record the
+    resolved source path of each file-based input / spatial (mask) target, keyed by
+    binding name — so a prediction can be traced back to its file.
+
+    Keys:
+        index (int): Row index of the sample within its dataset.
+        input_sources (dict[str, str]): ``input alias -> resolved file path``.
+        target_sources (dict[str, str]): ``task name -> resolved file path``.
+    """
+
+    index: int
+    input_sources: dict[str, str]
+    target_sources: dict[str, str]
+
+
+class BatchMeta(TypedDict, total=False):
+    """``SampleMeta`` aggregated across a collated batch (see ``collate_samples``).
+
+    Each ``SampleMeta`` field is transposed to per-sample lists, mirroring how
+    ``inputs``/``targets`` are batched: the source of sample ``j`` is
+    ``batch.meta["input_sources"][alias][j]``.
+
+    Keys:
+        index (list[int]): Per-sample dataset row indices.
+        input_sources (dict[str, list[str]]): ``input alias -> per-sample file paths``.
+        target_sources (dict[str, list[str]]): ``task name -> per-sample file paths``.
+    """
+
+    index: list[int]
+    input_sources: dict[str, list[str]]
+    target_sources: dict[str, list[str]]
+
+
 @dataclass
 class Sample:
     """A single, un-batched example produced by the data layer.
@@ -38,12 +75,12 @@ class Sample:
     Parameters:
         inputs (dict[str, Any]): Named model inputs (e.g. ``{"image": ndarray}``).
         targets (dict[str, Any]): Named task targets keyed by target column.
-        meta (dict[str, Any]): Free-form metadata (paths, source, ...).
+        meta (SampleMeta): Provenance metadata (index + per-binding source paths).
     """
 
     inputs: dict[str, Any] = field(default_factory=dict)
     targets: dict[str, Any] = field(default_factory=dict)
-    meta: dict[str, Any] = field(default_factory=dict)
+    meta: SampleMeta = field(default_factory=SampleMeta)
 
 
 @dataclass
@@ -53,12 +90,12 @@ class Batch:
     Parameters:
         inputs (dict[str, Tensor]): Batched, named model inputs.
         targets (dict[str, Tensor]): Batched, named task targets.
-        meta (dict[str, Any]): Aggregated per-sample metadata.
+        meta (BatchMeta): Aggregated per-sample provenance metadata.
     """
 
     inputs: dict[str, Tensor] = field(default_factory=dict)
     targets: dict[str, Tensor] = field(default_factory=dict)
-    meta: dict[str, Any] = field(default_factory=dict)
+    meta: BatchMeta = field(default_factory=BatchMeta)
 
     def to(self, device: torch.device | str) -> Batch:
         """Return a copy with all input/target tensors moved to ``device``.

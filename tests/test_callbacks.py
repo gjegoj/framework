@@ -11,6 +11,8 @@ import torch.nn as nn
 
 from src.callbacks.ema import EmaCallback
 from src.callbacks.freeze import FreezeCallback
+from src.callbacks.model_summary import TreeModelSummary, tree_names
+from src.callbacks.registry import callback_registry
 
 # ---------------------------------------------------------------- helpers
 
@@ -115,3 +117,61 @@ class TestFreezeCallbackInit:
     def test_minus_one_means_never_unfreeze(self) -> None:
         cb = FreezeCallback(targets=["model.backbone"], unfreeze_at=-1)
         assert cb._resolve_epoch(max_epochs=10) is None
+
+
+# ---------------------------------------------------------------- TreeModelSummary
+
+
+class TestTreeModelSummary:
+    def test_tree_names_builds_connectors(self) -> None:
+        names = [
+            "model",
+            "model.backbone",
+            "model.backbone.encoder",
+            "model.backbone.decoder",
+            "model.heads",
+            "model.heads.species",
+            "model.heads.mask",
+        ]
+        assert tree_names(names) == [
+            "model",
+            "├─ backbone",
+            "│  ├─ encoder",
+            "│  └─ decoder",
+            "└─ heads",
+            "   ├─ species",
+            "   └─ mask",
+        ]
+
+    def test_tree_names_single_root(self) -> None:
+        assert tree_names(["model"]) == ["model"]
+
+    def test_registered_under_model_summary(self) -> None:
+        callback = callback_registry.create("model_summary", max_depth=3)
+        assert isinstance(callback, TreeModelSummary)
+        assert callback._max_depth == 3
+
+    def test_summarize_renders_tree_and_footer(self) -> None:
+        from rich import get_console
+
+        summary_data = [
+            (" ", ["0", "1", "2"]),  # index column — must be dropped
+            ("Name", ["model", "model.backbone", "model.heads"]),
+            ("Type", ["CompositeModel", "SmpBackbone", "ModuleDict"]),
+            ("Params", ["14.3 M", "14.3 M", "19.9 K"]),
+            ("Mode", ["train", "train", "train"]),
+            ("FLOPs", ["0", "0", "0"]),
+        ]
+        with get_console().capture() as capture:
+            TreeModelSummary.summarize(
+                summary_data,
+                total_parameters=14_300_000,
+                trainable_parameters=14_300_000,
+                model_size=57.392,
+                total_training_modes={"train": 159, "eval": 0},
+                total_flops=0,
+            )
+        output = capture.get()
+        assert "├─ backbone" in output and "└─ heads" in output  # tree connectors in Name column
+        assert "Trainable params" in output and "Modules in train mode" in output  # footer kept
+        assert "Total FLOPs" in output

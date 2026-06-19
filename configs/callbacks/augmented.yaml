@@ -24,7 +24,7 @@ lr_monitor:
   logging_interval: epoch
 
 checkpoint:
-  monitor: loss/val/total
+  monitor: ${key:LOSS}/val/${key:TOTAL}
   mode: min
   save_top_k: 1
   save_weights_only: true

@@ -19,6 +19,7 @@ from lightning.pytorch.utilities.types import OptimizerLRScheduler, OptimizerLRS
 
 from src.core.entities import Batch, LossResult, StepOutput, Task
 from src.core.enums import Stage
+from src.core.keys import LOSS, TOTAL
 from src.core.ports import LossAggregator
 from src.metrics.directions import task_metric_directions
 from src.metrics.handlers import (
@@ -62,6 +63,7 @@ class BaseLitModule(L.LightningModule, ABC):
         self.model = model
         self.tasks = tasks
         self._task_map: dict[str, Task] = {task.name: task for task in tasks}
+        self._task_weights: dict[str, float] = {task.name: task.weight for task in tasks}
         self._optimizer_builder = optimizer_builder
         self._scheduler_builder = scheduler_builder
         self._aggregator: LossAggregator = aggregator or WeightedSumAggregator()
@@ -72,17 +74,21 @@ class BaseLitModule(L.LightningModule, ABC):
     # ------------------------------------------------------------------ steps
 
     @abstractmethod
-    def _shared_step(self, batch: Batch | dict[str, Any], stage: Stage) -> StepOutput:
-        """Run one forward + loss/metric step and return its artifacts (regime-specific)."""
+    def _shared_step(self, batch: Batch, stage: Stage) -> StepOutput:
+        """Run one forward + loss/metric step on a normalized ``Batch`` (regime-specific)."""
+
+    def _run_step(self, batch: Batch | dict[str, Any], stage: Stage) -> StepOutput:
+        """Normalize the Lightning batch (collate may yield a dict) and dispatch to ``_shared_step``."""
+        return self._shared_step(Batch(**batch) if isinstance(batch, dict) else batch, stage)
 
     def training_step(self, batch: Batch | dict[str, Any], batch_idx: int) -> StepOutput:
-        return self._shared_step(batch, Stage.TRAIN)
+        return self._run_step(batch, Stage.TRAIN)
 
     def validation_step(self, batch: Batch | dict[str, Any], batch_idx: int) -> StepOutput:
-        return self._shared_step(batch, Stage.VAL)
+        return self._run_step(batch, Stage.VAL)
 
     def test_step(self, batch: Batch | dict[str, Any], batch_idx: int) -> StepOutput:
-        return self._shared_step(batch, Stage.TEST)
+        return self._run_step(batch, Stage.TEST)
 
     # --------------------------------------------------------- device hooks
 
@@ -145,7 +151,7 @@ class BaseLitModule(L.LightningModule, ABC):
 
     def _log_losses(self, combined: LossResult, stage: Stage) -> None:
         self.log(
-            f"loss/{stage}/total",
+            f"{LOSS}/{stage}/{TOTAL}",
             combined.total,
             prog_bar=True,
             on_step=False,
@@ -153,4 +159,4 @@ class BaseLitModule(L.LightningModule, ABC):
             sync_dist=True,
         )
         for name, value in combined.components.items():
-            self.log(f"loss/{stage}/{name}", value, on_step=False, on_epoch=True, sync_dist=True)
+            self.log(f"{LOSS}/{stage}/{name}", value, on_step=False, on_epoch=True, sync_dist=True)

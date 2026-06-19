@@ -81,6 +81,11 @@ albumentations are details** kept behind ABC ports. Layers:
 Concrete adapters wrap third-party libs (e.g. `TimmBackbone`, `TorchMetricsAdapter`,
 `AlbumentationsTransform`). Parametric components that live in the autograd graph
 (`Backbone`/`Head`/`Criterion`/`MetricSet`) inherit `nn.Module` *and* their ABC port.
+Each such port (and `CompositeModel`) re-declares a typed `__call__` delegating to
+`nn.Module.__call__` — torch types `Module.__call__` as `Callable[..., Any]`, which would
+erase `forward`'s return type at every call site (`backbone(inputs)` → `Any`); the typed
+`__call__` restores it (so e.g. `model(inputs)` is `ModelOutput`, not `Any`). A new
+`nn.Module` port should do the same.
 
 ## Central idea: a Task is a composition, not an enum type
 
@@ -150,9 +155,14 @@ class in a registry (OCP).
 - **Metric direction** is read from `torchmetrics`' declared `higher_is_better`, not guessed:
   `MetricSet.directions()` → `LitModule.metric_directions()` (the `MetricDirectionProvider`
   Protocol) lets consumers (the progress bar) bind direction without parsing metric names.
-- Canonical input/feature keys (`IMAGE`, `POOLED`, `DECODER`, `ENCODER_LAST`) live in
-  `core/keys.py` — use them instead of literal strings. Other backbone-specific streams
-  (e.g. future FPN levels `p3`/`p4`) are documented in each backbone's docstring.
+- Canonical input/feature keys (`IMAGE`, `POOLED`, `DECODER`, `ENCODER_LAST`) and the
+  logged-scalar tokens (`LOSS`, `TOTAL`) live in `core/keys.py` — use them instead of literal
+  strings. The full key is composed inline where logged (losses `f"{LOSS}/{stage}/{TOTAL}"`,
+  task metrics `f"{task}/{metric}/{stage}"`); no `*_key` builder functions. YAML references the
+  same tokens via the `${key:NAME}` OmegaConf resolver (`config/resolvers.py`, registered as a
+  `src.config` import side-effect), e.g. `monitor: ${key:LOSS}/val/${key:TOTAL}` → `loss/val/total`.
+  Other backbone-specific streams (e.g. future FPN levels `p3`/`p4`) are documented in each
+  backbone's docstring.
 - **DataLoader knobs** live in `config.dataloader` (`DataLoaderConfig`): `num_workers`,
   `pin_memory`, `persistent_workers`, `drop_last`, `prefetch_factor`. `persistent_workers`
   and `prefetch_factor` are auto-disabled when `num_workers=0`. It is a Hydra config group
