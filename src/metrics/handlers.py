@@ -18,7 +18,6 @@ from typing import Any
 import torch
 
 from src.core.ports import PlotLogger
-from src.metrics.registry import CurveSpec, curve_specs, matrix_axes
 
 
 @dataclass(frozen=True)
@@ -27,7 +26,7 @@ class MetricLogContext:
 
     Parameters:
         log_scalar (Callable): Bound ``self.log`` from ``LitModule``.
-        logger (Any): Active Lightning logger; may also implement ``PlotLogger``.
+        logger (object): Active logger; plot handlers narrow it to ``PlotLogger`` at use.
         step (int): Current epoch, used as iteration counter for plot backends.
         class_names (list[str] | None): Maps class index → display name.
             ``None`` falls back to ``class{i}`` keys.
@@ -36,10 +35,35 @@ class MetricLogContext:
     """
 
     log_scalar: Callable[[str, Any], None]
-    logger: Any
+    logger: object
     step: int
     class_names: list[str] | None = None
     metric_name: str | None = None
+
+
+@dataclass(frozen=True)
+class CurveSpec:
+    """Axis labels and output-index mapping for a torchmetrics curve metric.
+
+    torchmetrics curve metrics return ``(first, second, thresholds)``, but the
+    semantic order differs across families:
+      - PrecisionRecallCurve: ``(precision, recall, ...)`` — recall is index 1
+      - ROC / DET:            ``(fpr, tpr/fnr, ...)``     — fpr is index 0
+
+    ``x_index`` and ``y_index`` select which element (0 or 1) maps to each axis so the
+    handler can extract the correct tensors regardless of metric family.
+
+    Parameters:
+        xaxis (str): X-axis label shown in the plot backend.
+        yaxis (str): Y-axis label shown in the plot backend.
+        x_index (int): Index into the tuple that provides X values.
+        y_index (int): Index into the tuple that provides Y values.
+    """
+
+    xaxis: str
+    yaxis: str
+    x_index: int = 1
+    y_index: int = 0
 
 
 class MetricHandler(ABC):
@@ -112,7 +136,7 @@ class CurveMetricHandler(MetricHandler):
 
     torchmetrics curve metrics return ``(first, second, thresholds)`` where
     ``first`` and ``second`` are lists of tensors (multiclass) or single tensors
-    (binary). ``CurveSpec.x_idx`` / ``y_idx`` select which tuple element is X vs Y
+    (binary). ``CurveSpec.x_index`` / ``y_index`` select which tuple element is X vs Y
     — necessary because metric families disagree on ordering (PR: precision first;
     ROC: fpr first).
 
@@ -134,13 +158,13 @@ class CurveMetricHandler(MetricHandler):
         spec = self._specs.get(context.metric_name or "", CurveSpec(xaxis="x", yaxis="y"))
         first_output, second_output, _ = value
         is_binary = not isinstance(first_output, list)  # binary metrics emit single tensors
-        x_per_class = _to_per_class_list(first_output if spec.x_idx == 0 else second_output)
-        y_per_class = _to_per_class_list(first_output if spec.y_idx == 0 else second_output)
-        for i, (x_vals, y_vals) in enumerate(zip(x_per_class, y_per_class)):
+        x_per_class = _to_per_class_list(first_output if spec.x_index == 0 else second_output)
+        y_per_class = _to_per_class_list(first_output if spec.y_index == 0 else second_output)
+        for i, (x_values, y_values) in enumerate(zip(x_per_class, y_per_class)):
             context.logger.log_curve(
                 title=key,
-                x=x_vals,
-                y=y_vals,
+                x=x_values,
+                y=y_values,
                 iteration=context.step,
                 series=_curve_series(i, context.class_names, is_binary),
                 xaxis=spec.xaxis,
@@ -166,11 +190,23 @@ def _curve_series(index: int, class_names: list[str] | None, is_binary: bool) ->
     return _class_label(index, class_names)
 
 
+# Default axis specs for the matrix / curve handlers, keyed by the metric_factories
+# registration name (``confusion_matrix``, ``precision_recall_curve``, ...).
+MATRIX_AXES: dict[str, tuple[str, str]] = {
+    "confusion_matrix": ("Predicted", "True"),
+}
+
+CURVE_SPECS: dict[str, CurveSpec] = {
+    "precision_recall_curve": CurveSpec(xaxis="Recall", yaxis="Precision", x_index=1, y_index=0),
+    "roc": CurveSpec(xaxis="FPR", yaxis="TPR", x_index=0, y_index=1),
+}
+
+
 DEFAULT_METRIC_HANDLERS: tuple[MetricHandler, ...] = (
     ScalarMetricHandler(),
     VectorMetricHandler(),
-    MatrixMetricHandler(matrix_axes),
-    CurveMetricHandler(curve_specs),
+    MatrixMetricHandler(MATRIX_AXES),
+    CurveMetricHandler(CURVE_SPECS),
 )
 
 

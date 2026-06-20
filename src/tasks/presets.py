@@ -29,7 +29,7 @@ from src.tasks.strategies.topology import topology_strategies
 from src.tasks.taxonomy import Objective, Topology
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class TaskPreset:
     """A named (topology, default-objective) pairing that builds tasks.
 
@@ -121,9 +121,9 @@ class TaskPreset:
 
 task_presets: Registry[TaskPreset] = Registry("task_preset")
 
-# Per-class metrics (average="none"): torchmetrics returns a [C] tensor.
-# _log_metric in LitModule logs the mean as the primary key and per-class
-# values as {key}_class{i} — full per-class logging lands in M4 (typed metrics).
+# Per-class metrics (average="none"): torchmetrics returns a [C] tensor, which the
+# typed VectorMetricHandler logs as the mean at {key}/mean plus one scalar per class
+# at {key}/<class_name> (falling back to class{i}).
 _PER_CLASS: dict[str, str] = {"average": "none"}
 
 classification = TaskPreset(

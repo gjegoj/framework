@@ -11,7 +11,7 @@ import torch
 
 from src.callbacks.sample_log import SampleLogCallback, _denormalize_to_uint8
 from src.core.constants import IMAGENET_MEAN, IMAGENET_STD
-from src.core.entities import Batch, StepOutput, TaskStepView, is_training_step_output
+from src.core.entities import Batch, StepOutput, TaskStepView, is_step_output
 from src.core.keys import IMAGE
 from src.core.ports import PlotLogger
 from src.models.assembly import build_composite_model
@@ -43,7 +43,7 @@ def _outputs() -> StepOutput:
             )
         },
     }
-    assert is_training_step_output(output)
+    assert is_step_output(output)
     return output
 
 

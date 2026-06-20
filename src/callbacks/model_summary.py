@@ -100,19 +100,17 @@ def _footer(
     total_flops: int,
 ) -> Table:
     """Build the totals footer grid, matching ``RichModelSummary``'s layout."""
-    cells = [
-        get_human_readable_count(int(trainable_parameters)),
-        get_human_readable_count(int(total_parameters - trainable_parameters)),
-        get_human_readable_count(int(total_parameters)),
-        get_formatted_model_size(model_size),
-    ]
+    trainable = get_human_readable_count(int(trainable_parameters))
+    non_trainable = get_human_readable_count(int(total_parameters - trainable_parameters))
+    total = get_human_readable_count(int(total_parameters))
+    size = get_formatted_model_size(model_size)
     grid = Table.grid(expand=True)
     grid.add_column()
     grid.add_column()
-    grid.add_row(f"[bold]Trainable params[/]: {cells[0]:<10}")
-    grid.add_row(f"[bold]Non-trainable params[/]: {cells[1]:<10}")
-    grid.add_row(f"[bold]Total params[/]: {cells[2]:<10}")
-    grid.add_row(f"[bold]Total estimated model params size (MB)[/]: {cells[3]:<10}")
+    grid.add_row(f"[bold]Trainable params[/]: {trainable:<10}")
+    grid.add_row(f"[bold]Non-trainable params[/]: {non_trainable:<10}")
+    grid.add_row(f"[bold]Total params[/]: {total:<10}")
+    grid.add_row(f"[bold]Total estimated model params size (MB)[/]: {size:<10}")
     grid.add_row(f"[bold]Modules in train mode[/]: {total_training_modes['train']}")
     grid.add_row(f"[bold]Modules in eval mode[/]: {total_training_modes['eval']}")
     grid.add_row(f"[bold]Total FLOPs[/]: {get_human_readable_count(total_flops)}")

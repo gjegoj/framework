@@ -63,7 +63,7 @@ class MarginRankingCriterion(Criterion):
         if logits.ndim != 3 or logits.size(1) != 2:
             raise ValueError(f"MarginRankingCriterion expects logits of shape [B, 2, D], got {tuple(logits.shape)}.")
         # Use L2 norm as a scalar score for each embedding.
-        score1: Tensor = logits[:, 0].norm(dim=-1)
-        score2: Tensor = logits[:, 1].norm(dim=-1)
-        value: Tensor = F.margin_ranking_loss(score1, score2, target, margin=self._margin)
+        first_score: Tensor = logits[:, 0].norm(dim=-1)
+        second_score: Tensor = logits[:, 1].norm(dim=-1)
+        value: Tensor = F.margin_ranking_loss(first_score, second_score, target, margin=self._margin)
         return LossResult(total=value, components={"margin_ranking": value})

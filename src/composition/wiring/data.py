@@ -12,7 +12,8 @@ from src.core.enums import Stage
 from src.core.instantiate import instantiate
 from src.core.runtime import RuntimeContext
 from src.data.bindings import TargetBinding
-from src.data.datamodule import DataModule
+from src.data.cache import BYTES_PER_GIB
+from src.data.datamodule import CacheOptions, DataLoaderOptions, DataModule
 from src.data.registry import data_sources
 from src.data.sources import DataSource
 from src.transforms.sample import AlbumentationsTransform, Transform
@@ -21,8 +22,6 @@ log = logging.getLogger(__name__)
 
 # File extension → data_sources registry key, for inferring the source format.
 _EXTENSION_TO_SOURCE: dict[str, str] = {".csv": "csv", ".json": "json"}
-
-_BYTES_PER_GB = 1024**3
 
 # DataLoader knobs the builder passes explicitly; every other (extra) key is forwarded
 # verbatim to torch.utils.data.DataLoader (the reserved keys are rejected in the schema).
@@ -41,14 +40,14 @@ def _resolve_cache_bytes(cache: CacheConfig | None) -> int | None:
 
     available = psutil.virtual_memory().available
     fraction_bytes = int(cache.ram_fraction * available)
-    cap_bytes = int(cache.max_gb * _BYTES_PER_GB) if cache.max_gb is not None else fraction_bytes
+    cap_bytes = int(cache.max_gb * BYTES_PER_GIB) if cache.max_gb is not None else fraction_bytes
     budget = min(fraction_bytes, cap_bytes)
     limiter = "max_gb cap" if cap_bytes < fraction_bytes else f"{cache.ram_fraction:.0%} of available RAM"
     log.info(
         "Data cache budget: %.2f GiB (limited by %s; available RAM %.2f GiB, max_gb %s).",
-        budget / _BYTES_PER_GB,
+        budget / BYTES_PER_GIB,
         limiter,
-        available / _BYTES_PER_GB,
+        available / BYTES_PER_GIB,
         f"{cache.max_gb:.2f} GiB" if cache.max_gb is not None else "none",
     )
     return budget
@@ -199,15 +198,19 @@ def build_data_module(
         split_stratify=config.data.split_stratify if staged is None else None,
         max_samples=config.data.max_samples,
         staged_sources=staged,
-        num_workers=dataloader_config.num_workers,
-        pin_memory=dataloader_config.pin_memory,
-        persistent_workers=dataloader_config.persistent_workers,
-        drop_last=dataloader_config.drop_last,
-        prefetch_factor=dataloader_config.prefetch_factor,
-        dataloader_kwargs=forward_extras(dataloader_config, _DATALOADER_CORE_FIELDS),
+        dataloader_options=DataLoaderOptions(
+            num_workers=dataloader_config.num_workers,
+            pin_memory=dataloader_config.pin_memory,
+            persistent_workers=dataloader_config.persistent_workers,
+            drop_last=dataloader_config.drop_last,
+            prefetch_factor=dataloader_config.prefetch_factor,
+            extra_kwargs=forward_extras(dataloader_config, _DATALOADER_CORE_FIELDS),
+        ),
         root_path=config.data.root_path,
-        cache_bytes=_resolve_cache_bytes(config.data.cache),
-        cache_workers=config.data.cache.workers if config.data.cache is not None else 8,
+        cache_options=CacheOptions(
+            max_bytes=_resolve_cache_bytes(config.data.cache),
+            workers=config.data.cache.workers if config.data.cache is not None else 8,
+        ),
     )
 
 

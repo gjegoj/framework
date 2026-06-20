@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any, cast
 
 import timm
-from torch import Tensor
+from torch import Tensor, nn
 
 from src.core.entities import FeatureBundle
 from src.core.keys import IMAGE, POOLED
@@ -42,10 +42,10 @@ class TimmBackbone(Backbone):
             raise KeyError(f"TimmBackbone exposes only {POOLED!r}, requested {key!r}.")
         return self._num_features
 
-    def native_head(self, feature_key: str, in_features: int, out_features: int) -> Any:
+    def native_head(self, feature_key: str, in_features: int, out_features: int) -> nn.Module | None:
         if feature_key != POOLED:
             return None
         from timm.layers import create_classifier
 
         _, classifier = create_classifier(in_features, out_features)
-        return classifier
+        return cast(nn.Module, classifier)

@@ -47,19 +47,19 @@ class ArcFaceCriterion(Criterion):
         super().__init__()
         self._margin = margin
         self._scale = scale
-        self._cos_m = math.cos(margin)
-        self._sin_m = math.sin(margin)
+        self._cos_margin = math.cos(margin)
+        self._sin_margin = math.sin(margin)
         self._threshold = math.cos(math.pi - margin)  # below this, use the linear fallback
-        self._mm = math.sin(math.pi - margin) * margin
+        self._linear_margin = math.sin(math.pi - margin) * margin  # penalty for the linear-fallback branch
 
     def forward(self, logits: Tensor, target: Tensor) -> LossResult:
         if logits.ndim != 2:
             raise ValueError(f"ArcFaceCriterion expects cosine logits of shape [B, C], got {tuple(logits.shape)}.")
         cosine = logits.clamp(-1.0, 1.0)
         sine = torch.sqrt((1.0 - cosine**2).clamp_min(0.0))
-        phi = cosine * self._cos_m - sine * self._sin_m  # cos(θ + m)
+        phi = cosine * self._cos_margin - sine * self._sin_margin  # cos(θ + m)
         # Keep the target term monotonic for large angles (ArcFace, easy_margin=False).
-        phi = torch.where(cosine > self._threshold, phi, cosine - self._mm)
+        phi = torch.where(cosine > self._threshold, phi, cosine - self._linear_margin)
 
         labels = target.long()
         one_hot = torch.zeros_like(cosine)

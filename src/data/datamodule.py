@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping
-from dataclasses import replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -22,16 +22,55 @@ from torch.utils.data import DataLoader
 from src.core.enums import Stage
 from src.core.runtime import RuntimeContext
 from src.data.bindings import InputBinding, TargetBinding
-from src.data.cache import ArrayCache, CachingLoader, CachingTargetEncoder
+from src.data.cache import BYTES_PER_GIB, ArrayCache, CachingLoader, CachingTargetEncoder
 from src.data.collate import collate_samples
 from src.data.dataset import Dataset, resolve_path
-from src.data.loaders import _infer_loader_key, _normalize_inputs
+from src.data.loaders import infer_loader_key, normalize_inputs
 from src.data.registry import input_loaders
 from src.data.sources import DataSource
 from src.data.split import split_dataframe
 from src.transforms.sample import Transform
 
 log = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class DataLoaderOptions:
+    """DataLoader construction knobs shared across all stages.
+
+    Groups the six DataLoader parameters so they travel as one cohesive value
+    instead of widening every ``DataModule`` signature; built from the
+    ``DataLoaderConfig`` section in the composition root.
+
+    Parameters:
+        num_workers (int): Worker processes per DataLoader (0 → main process).
+        pin_memory (bool): Pin host memory for faster CPU→GPU transfers.
+        persistent_workers (bool): Keep workers alive between epochs (needs num_workers > 0).
+        drop_last (bool): Drop the last incomplete batch during training.
+        prefetch_factor (int | None): Batches prefetched per worker (None → PyTorch default).
+        extra_kwargs (Mapping[str, Any]): Extra kwargs forwarded verbatim to every
+            ``DataLoader`` (e.g. ``timeout``); framework-owned keys always win over these.
+    """
+
+    num_workers: int = 0
+    pin_memory: bool = False
+    persistent_workers: bool = False
+    drop_last: bool = False
+    prefetch_factor: int | None = None
+    extra_kwargs: Mapping[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, slots=True)
+class CacheOptions:
+    """In-RAM image/mask cache budget for ``DataModule``.
+
+    Parameters:
+        max_bytes (int | None): Total RAM budget in bytes; ``None`` or ``<= 0`` disables the cache.
+        workers (int): Threads used to warm the cache in the parent process.
+    """
+
+    max_bytes: int | None = None
+    workers: int = 8
 
 
 class DataModule:
@@ -52,7 +91,7 @@ class DataModule:
     time when not explicitly specified in ``inputs_config``.
 
     Parameters:
-        bindings (list[TargetBinding]): Per-task target column + encoder.
+        target_bindings (list[TargetBinding]): Per-task target column + encoder.
         inputs_config: Input column(s) and optional loader keys.
             ``str`` → single image input; ``dict`` → multiple inputs.
         transforms (dict[Stage, Transform]): Per-stage input transforms.
@@ -64,14 +103,9 @@ class DataModule:
         split_stratify (str | None): Column to stratify by (split mode only).
         max_samples (int | float | None): Cap dataset size.
         staged_sources (dict[Stage, DataSource] | None): Per-stage sources (pre-split mode).
-        num_workers (int): DataLoader worker processes (0 → main process).
-        pin_memory (bool): Pin host memory for faster CPU→GPU transfers.
-        persistent_workers (bool): Keep workers alive between epochs (requires num_workers > 0).
-        drop_last (bool): Drop the last incomplete batch during training.
-        prefetch_factor (int | None): Batches prefetched per worker (None → PyTorch default).
-        dataloader_kwargs (dict[str, Any] | None): Extra keyword args forwarded verbatim to every
-            ``DataLoader`` (e.g. ``timeout``). Framework-owned keys always win over these.
+        dataloader_options (DataLoaderOptions): DataLoader knobs shared across all stages.
         root_path (str | None): Optional prefix prepended to file-based input paths.
+        cache_options (CacheOptions): In-RAM image/mask cache budget (disabled by default).
     """
 
     def __init__(
@@ -88,15 +122,9 @@ class DataModule:
         split_stratify: str | None = None,
         max_samples: int | float | None = None,
         staged_sources: dict[Stage, DataSource] | None = None,
-        num_workers: int = 0,
-        pin_memory: bool = False,
-        persistent_workers: bool = False,
-        drop_last: bool = False,
-        prefetch_factor: int | None = None,
-        dataloader_kwargs: dict[str, Any] | None = None,
+        dataloader_options: DataLoaderOptions = DataLoaderOptions(),
         root_path: str | None = None,
-        cache_bytes: int | None = None,
-        cache_workers: int = 8,
+        cache_options: CacheOptions = CacheOptions(),
     ) -> None:
         if (source is None) == (staged_sources is None):
             raise ValueError("Provide exactly one of: source+split (split mode) or staged_sources (pre-split mode).")
@@ -113,15 +141,9 @@ class DataModule:
         self._runtime = runtime
         self._batch_size = batch_size
         self._seed = seed
-        self._num_workers = num_workers
-        self._pin_memory = pin_memory
-        self._persistent_workers = persistent_workers
-        self._drop_last = drop_last
-        self._prefetch_factor = prefetch_factor
-        self._dataloader_kwargs = dataloader_kwargs or {}
+        self._dataloader_options = dataloader_options
         self._root_path = root_path
-        self._cache_bytes = cache_bytes
-        self._cache_workers = cache_workers
+        self._cache_options = cache_options
         self._cache: ArrayCache | None = None
         self._datasets: dict[Stage, Dataset] = {}
         self._input_bindings: list[InputBinding] = []
@@ -174,9 +196,9 @@ class DataModule:
         built. Warms from train + val paths only; wrapping is what makes the
         datasets read from the cache (``Dataset`` itself is unchanged).
         """
-        if not self._cache_bytes or self._cache_bytes <= 0:
+        if not self._cache_options.max_bytes or self._cache_options.max_bytes <= 0:
             return
-        budget = self._cache_bytes
+        budget = self._cache_options.max_bytes
         cache = ArrayCache(budget)
         root = Path(self._root_path) if self._root_path else None
         warm_frames = [frames[stage] for stage in (Stage.TRAIN, Stage.VAL) if stage in frames]
@@ -187,13 +209,13 @@ class DataModule:
                 continue
             keys = [resolve_path(root, value) for frame in warm_frames for value in frame[input_binding.column]]
             candidates.update(keys)
-            cache.warm(keys, input_binding.loader.load, self._cache_workers)
+            cache.warm(keys, input_binding.loader.load, self._cache_options.workers)
         for target_binding in self._target_bindings:
             if not target_binding.encoder.spatial:
                 continue
             keys = [resolve_path(root, value) for frame in warm_frames for value in frame[target_binding.column]]
             candidates.update(keys)
-            cache.warm(keys, target_binding.encoder.load, self._cache_workers)
+            cache.warm(keys, target_binding.encoder.load, self._cache_options.workers)
 
         self._input_bindings = [
             (
@@ -219,20 +241,19 @@ class DataModule:
         """Report how much of the dataset is in RAM vs still read from disk."""
         cached = len(cache)
         from_disk = total - cached
-        gib = 1024**3
         log.info(
             "Data cache: %d/%d files in RAM (%.2f / %.2f GiB); %d read from disk each epoch.",
             cached,
             total,
-            cache.nbytes / gib,
-            budget / gib,
+            cache.nbytes / BYTES_PER_GIB,
+            budget / BYTES_PER_GIB,
             from_disk,
         )
         if from_disk > 0:
             log.warning(
                 "Cache budget (%.2f GiB) reached — only %d of %d files fit, %d will be read from disk "
                 "every epoch. Raise data.cache.ram_fraction / max_gb (or free RAM) to cache more.",
-                budget / gib,
+                budget / BYTES_PER_GIB,
                 cached,
                 total,
                 from_disk,
@@ -255,22 +276,23 @@ class DataModule:
         )
 
     def _dataloader(self, stage: Stage, *, shuffle: bool, drop_last: bool = False) -> DataLoader:
-        kwargs: dict = dict(
+        options = self._dataloader_options
+        kwargs: dict[str, Any] = dict(
             batch_size=self._batch_size,
             shuffle=shuffle,
-            num_workers=self._num_workers,
+            num_workers=options.num_workers,
             collate_fn=collate_samples,
-            pin_memory=self._pin_memory,
+            pin_memory=options.pin_memory,
             drop_last=drop_last,
-            persistent_workers=self._persistent_workers and self._num_workers > 0,
+            persistent_workers=options.persistent_workers and options.num_workers > 0,
         )
-        if self._prefetch_factor is not None and self._num_workers > 0:
-            kwargs["prefetch_factor"] = self._prefetch_factor
+        if options.prefetch_factor is not None and options.num_workers > 0:
+            kwargs["prefetch_factor"] = options.prefetch_factor
         # User extras fill gaps; framework-owned keys (batch_size/shuffle/collate_fn/...) always win.
-        return DataLoader(self._datasets[stage], **{**self._dataloader_kwargs, **kwargs})
+        return DataLoader(self._datasets[stage], **{**options.extra_kwargs, **kwargs})
 
     def train_dataloader(self) -> DataLoader:
-        return self._dataloader(Stage.TRAIN, shuffle=True, drop_last=self._drop_last)
+        return self._dataloader(Stage.TRAIN, shuffle=True, drop_last=self._dataloader_options.drop_last)
 
     def val_dataloader(self) -> DataLoader:
         return self._dataloader(Stage.VAL, shuffle=False)
@@ -293,15 +315,15 @@ def _build_input_bindings(
     Returns:
         list[InputBinding]: One binding per input, with a resolved loader.
     """
-    normalized = _normalize_inputs(inputs_config)
+    normalized = normalize_inputs(inputs_config)
     bindings: list[InputBinding] = []
     for name, spec in normalized.items():
         if isinstance(spec, str):
             column = spec
-            loader_key = _infer_loader_key(frame[column]) if column in frame.columns else "image"
+            loader_key = infer_loader_key(frame[column]) if column in frame.columns else "image"
         else:
             column = spec["column"]
-            loader_key = spec.get("loader") or _infer_loader_key(frame[column])
+            loader_key = spec.get("loader") or infer_loader_key(frame[column])
         bindings.append(InputBinding(name=name, column=column, loader=input_loaders.create(loader_key)))
     return bindings
 

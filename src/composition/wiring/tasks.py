@@ -8,10 +8,10 @@ from typing import Any
 from src.config.schema import ExperimentConfig, TaskConfig
 from src.core.entities import Task
 from src.core.instantiate import instantiate
-from src.core.keys import IMAGE
 from src.core.runtime import RuntimeContext
 from src.data.bindings import TargetBinding
 from src.data.encoders import TargetEncoder
+from src.data.loaders import input_aliases
 from src.data.registry import target_encoders
 from src.tasks.presets import task_presets
 from src.tasks.strategies.objective import objective_strategies
@@ -66,7 +66,7 @@ def build_bindings(config: ExperimentConfig) -> list[TargetBinding]:
     ]
 
 
-def _resolve_num_classes(task_name: str, task_config: TaskConfig, runtime: RuntimeContext) -> int:
+def resolve_num_classes(task_name: str, task_config: TaskConfig, runtime: RuntimeContext) -> int:
     """Return the concrete class count / output dim for a task.
 
     For regression tasks with ``dim`` set, returns ``dim`` directly.
@@ -84,18 +84,6 @@ def _resolve_num_classes(task_name: str, task_config: TaskConfig, runtime: Runti
     return value
 
 
-def _input_aliases(inputs: str | dict[str, Any]) -> tuple[str, ...]:
-    """Extract ordered input alias names from the data config.
-
-    For ``inputs: image_path`` (single-image shorthand) the only alias is the
-    canonical ``IMAGE`` key.  For ``inputs: {anchor: ..., positive: ...}`` the
-    aliases are the dict keys in declaration order.
-    """
-    if isinstance(inputs, dict):
-        return tuple(inputs.keys())
-    return (IMAGE,)
-
-
 def _bind_input_keys(task: Task, topology: Topology, inputs: str | dict[str, Any]) -> Task:
     """Fill a multi-input task's key field (``view_keys``/``stream_keys``) from data.inputs.
 
@@ -105,9 +93,9 @@ def _bind_input_keys(task: Task, topology: Topology, inputs: str | dict[str, Any
     Other topologies and already-populated specs pass through unchanged.
     """
     if topology == Topology.RANKING and task.head_spec.view_keys is None:
-        head_spec = dataclasses.replace(task.head_spec, view_keys=_input_aliases(inputs))
+        head_spec = dataclasses.replace(task.head_spec, view_keys=input_aliases(inputs))
     elif topology == Topology.MULTISTREAM and task.head_spec.stream_keys is None:
-        head_spec = dataclasses.replace(task.head_spec, stream_keys=_input_aliases(inputs))
+        head_spec = dataclasses.replace(task.head_spec, stream_keys=input_aliases(inputs))
     else:
         return task
     return dataclasses.replace(task, head_spec=head_spec)
@@ -133,7 +121,7 @@ def build_tasks(config: ExperimentConfig, runtime: RuntimeContext) -> list[Task]
     """
     tasks: list[Task] = []
     for task_name, task_config in config.tasks.items():
-        num_classes = _resolve_num_classes(task_name, task_config, runtime)
+        num_classes = resolve_num_classes(task_name, task_config, runtime)
         preset = task_presets.create(task_config.preset)
         task = preset.build(
             name=task_name,

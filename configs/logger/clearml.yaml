@@ -10,7 +10,7 @@ tags:
   - "${backbone.kind}"                       # timm / smp / multi
   - "${backbone.name}"                       # e.g. resnet18
   - "${optimizer.name}"
-  - "${scheduler.name}"
+  - "${oc.select:scheduler.name,''}"         # oc.select: scheduler may be wholly null (scheduler: none)
   - "lr=${lr}"
   - "bs=${batch_size}"
   - "epochs=${epochs}"

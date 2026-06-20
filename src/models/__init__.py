@@ -4,16 +4,13 @@ Importing this package registers the built-in backbones and heads so they are
 available by key in the registries.
 """
 
+import src.models.backbones  # noqa: F401 — importing registers the built-in backbones
+import src.models.heads  # noqa: F401 — importing registers the built-in heads
 from src.models.assembly import CompositeModel, build_composite_model
-from src.models.backbones import TimmBackbone
-from src.models.heads import ConvHead, LinearHead
 from src.models.registry import backbones, head_builders
 
 __all__ = [
     "CompositeModel",
-    "ConvHead",
-    "LinearHead",
-    "TimmBackbone",
     "backbones",
     "build_composite_model",
     "head_builders",

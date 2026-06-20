@@ -23,17 +23,9 @@ from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
 import torch.nn as nn
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-    from pathlib import Path
-
     from torch import Tensor
 
-    from src.core.entities import Batch, ExportRequest, FeatureBundle, LossResult, TargetView
-
-    # A loaded exported artifact: callable, named inputs → ordered output tensors.
-    # Implemented per format by adapters (onnxruntime, torch.jit, …) so the generic
-    # verifier can run any exported artifact uniformly. Used only in annotations.
-    RunnableModel = Callable[[dict[str, Tensor]], tuple[Tensor, ...]]
+    from src.core.entities import FeatureBundle, LossResult, TargetView
 
 
 class Backbone(nn.Module, ABC):
@@ -144,26 +136,6 @@ class MetricSet(nn.Module, ABC):
         """
 
 
-class BatchTransform(ABC):
-    """A cross-sample transform applied to a collated training ``Batch``.
-
-    Unlike a per-sample (Albumentations) transform that runs in the data layer, a
-    batch transform mixes/combines whole samples (MixUp, CutMix, Mosaic) and so
-    needs the collated batch. Because it changes the *shared* image, it must
-    rewrite **every** task's target coherently; concrete transforms are injected
-    with the tasks' ``TargetSpec`` list and declare a class attribute
-    ``supported_topologies: frozenset[Topology]`` (the topologies whose target
-    they can re-derive). The composition root guards incompatible combinations
-    (e.g. MixUp + a DENSE head) at build time. Label-mixing transforms return soft
-    targets; the task adapter turns those into a ``TargetView`` (soft for loss,
-    hard for metrics).
-    """
-
-    @abstractmethod
-    def __call__(self, batch: Batch) -> Batch:
-        """Return the transformed batch (a new ``Batch``; inputs not mutated)."""
-
-
 class LossAggregator(ABC):
     """Combines per-task losses into a single optimization objective."""
 
@@ -242,37 +214,6 @@ class PlotLogger(ABC):
             html (str): Full HTML string to ship to the backend.
             iteration (int): Current training step (epoch or global step).
         """
-
-
-class ModelExporter(ABC):
-    """Export a traceable ``nn.Module`` to a deployment file format."""
-
-    @property
-    @abstractmethod
-    def extension(self) -> str:
-        """File extension for this format (e.g. ``.onnx``)."""
-
-    @abstractmethod
-    def export(self, request: ExportRequest) -> None:
-        """Serialize ``request.module`` to ``request.path``."""
-
-    def load(self, path: Path) -> RunnableModel | None:
-        """Load the written artifact as a callable, for numerical parity checks.
-
-        Override in a backend that can run its own format (e.g. onnxruntime,
-        ``torch.jit``). Returning ``None`` means the backend has no runner, so the
-        generic verifier skips parity for it.
-        """
-        return None
-
-    def validate(self, request: ExportRequest) -> dict[str, str]:
-        """Run format-specific static checks; return ``{name: detail}``.
-
-        ``detail`` is ``""`` when the check passed, or the failure message when it
-        failed. The default has no checks (empty dict), so non-validating backends
-        degrade gracefully.
-        """
-        return {}
 
 
 @runtime_checkable

@@ -53,24 +53,40 @@ def _class_name(names: list[str], index: int) -> str:
     return names[index] if 0 <= index < len(names) else str(index)
 
 
-@annotators.register(axes_key(Topology.GLOBAL, Objective.MULTICLASS))
-class ClassificationAnnotator(Annotator):
-    """Multiclass single-label: argmax prediction with its probability vs the target index."""
+class _SingleLabelAnnotator(Annotator):
+    """Shared single-label flow: predict one class, write ``{task}_gt``/``_pred`` chips, tag correctness.
+
+    Subclasses supply only ``_predict`` — argmax for multiclass, threshold for binary.
+    """
+
+    @abstractmethod
+    def _predict(self, probabilities: Tensor) -> tuple[int, float]:
+        """Return ``(predicted class index, confidence)`` for one sample's flattened probabilities."""
 
     def annotate(self, sample: SampleView, task: Task, view: TaskStepView, index: int) -> None:
         names = task.class_names or []
-        probs: Tensor = view.preds[index].detach().cpu().reshape(-1).float()
-        pred_index = int(torch.argmax(probs).item())
-        confidence = float(probs[pred_index].item())
-        gt_index = int(view.metric_target[index].detach().cpu().reshape(-1)[0].item())
+        probabilities: Tensor = view.preds[index].detach().cpu().reshape(-1).float()
+        prediction_index, confidence = self._predict(probabilities)
+        ground_truth_index = int(view.metric_target[index].detach().cpu().reshape(-1)[0].item())
 
-        sample.fields[f"{task.name}_gt"] = Classification(label=_class_name(names, gt_index))
-        sample.fields[f"{task.name}_pred"] = Classification(label=_class_name(names, pred_index), confidence=confidence)
-        sample.tags.append(f"{task.name}:{'correct' if pred_index == gt_index else 'wrong'}")
+        sample.fields[f"{task.name}_gt"] = Classification(label=_class_name(names, ground_truth_index))
+        sample.fields[f"{task.name}_pred"] = Classification(
+            label=_class_name(names, prediction_index), confidence=confidence
+        )
+        sample.tags.append(f"{task.name}:{'correct' if prediction_index == ground_truth_index else 'wrong'}")
+
+
+@annotators.register(axes_key(Topology.GLOBAL, Objective.MULTICLASS))
+class ClassificationAnnotator(_SingleLabelAnnotator):
+    """Multiclass single-label: argmax prediction with its probability vs the target index."""
+
+    def _predict(self, probabilities: Tensor) -> tuple[int, float]:
+        prediction_index = int(torch.argmax(probabilities).item())
+        return prediction_index, float(probabilities[prediction_index].item())
 
 
 @annotators.register(axes_key(Topology.GLOBAL, Objective.BINARY))
-class BinaryClassificationAnnotator(Annotator):
+class BinaryClassificationAnnotator(_SingleLabelAnnotator):
     """Binary single-label: threshold the single positive-class probability.
 
     A binary head emits one sigmoid value = P(positive class, index 1), so argmax
@@ -83,16 +99,11 @@ class BinaryClassificationAnnotator(Annotator):
     def __init__(self, threshold: float = 0.5) -> None:
         self._threshold = threshold
 
-    def annotate(self, sample: SampleView, task: Task, view: TaskStepView, index: int) -> None:
-        names = task.class_names or []
-        positive_prob = float(view.preds[index].detach().cpu().reshape(-1)[0].item())
-        pred_index = 1 if positive_prob >= self._threshold else 0
-        confidence = positive_prob if pred_index == 1 else 1.0 - positive_prob
-        gt_index = int(view.metric_target[index].detach().cpu().reshape(-1)[0].item())
-
-        sample.fields[f"{task.name}_gt"] = Classification(label=_class_name(names, gt_index))
-        sample.fields[f"{task.name}_pred"] = Classification(label=_class_name(names, pred_index), confidence=confidence)
-        sample.tags.append(f"{task.name}:{'correct' if pred_index == gt_index else 'wrong'}")
+    def _predict(self, probabilities: Tensor) -> tuple[int, float]:
+        positive_probability = float(probabilities[0].item())
+        prediction_index = 1 if positive_probability >= self._threshold else 0
+        confidence = positive_probability if prediction_index == 1 else 1.0 - positive_probability
+        return prediction_index, confidence
 
 
 @annotators.register(axes_key(Topology.GLOBAL, Objective.MULTILABEL))
@@ -111,16 +122,19 @@ class MultilabelAnnotator(Annotator):
         probs: Tensor = view.preds[index].detach().cpu().reshape(-1).float()
         target: Tensor = view.metric_target[index].detach().cpu().reshape(-1).float()
 
-        gt_indices = torch.nonzero(target > 0.5, as_tuple=False).reshape(-1).tolist()
-        pred_indices = torch.nonzero(probs >= self._threshold, as_tuple=False).reshape(-1).tolist()
+        ground_truth_indices = torch.nonzero(target > 0.5, as_tuple=False).reshape(-1).tolist()
+        prediction_indices = torch.nonzero(probs >= self._threshold, as_tuple=False).reshape(-1).tolist()
 
         sample.fields[f"{task.name}_gt"] = Classifications(
-            items=[Classification(label=_class_name(names, i)) for i in gt_indices]
+            items=[Classification(label=_class_name(names, i)) for i in ground_truth_indices]
         )
         sample.fields[f"{task.name}_pred"] = Classifications(
-            items=[Classification(label=_class_name(names, i), confidence=float(probs[i].item())) for i in pred_indices]
+            items=[
+                Classification(label=_class_name(names, i), confidence=float(probs[i].item()))
+                for i in prediction_indices
+            ]
         )
-        correct = set(gt_indices) == set(pred_indices)
+        correct = set(ground_truth_indices) == set(prediction_indices)
         sample.tags.append(f"{task.name}:{'correct' if correct else 'wrong'}")
 
 

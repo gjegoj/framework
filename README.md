@@ -4,7 +4,7 @@ Configuration-driven **multi-task & multimodal** computer-vision training on top
 PyTorch Lightning · Hydra · Pydantic · timm / smp · albumentations · torchmetrics.
 
 > Classification · segmentation · regression · **metric learning** (ranking / dual-encoder),
-> with model **export** (ONNX / TorchScript) and interactive **sample visualization** built in.
+> with model **export** (ONNX / TorchScript / TensorRT) and interactive **sample visualization** built in.
 
 ---
 
@@ -75,7 +75,7 @@ transforms, logger, callbacks, trainer, and export are independent config groups
 them freely; override any key via CLI without touching shared config files.
 
 **Train → test → export, one pipeline.** A run executes `fit`, `test`, and model `export`
-(ONNX / TorchScript with numerical-parity verification), each gated by a `run_*` flag.
+(ONNX / TorchScript / TensorRT with numerical-parity verification), each gated by a `run_*` flag.
 `SampleLogCallback` renders ground-truth-vs-prediction grids to interactive HTML along the way.
 
 ---
@@ -1052,162 +1052,88 @@ data:
 
 ## Internals
 
-The diagrams below show the full data flow for readers who want to understand or extend the framework internals.
+The framework assembles an experiment in a fixed order — the same flat `build_*` sequence
+that `main.py` runs. The diagrams below show the top-level blocks and how they connect; each
+diagram after the first zooms into one block.
 
-<details>
-<summary>Phase 1 — Setup (runs once before <code>trainer.fit</code>)</summary>
-
-```mermaid
-sequenceDiagram
-    participant main
-    participant Config as ExperimentConfig<br/>(Pydantic)
-    participant Wiring as wiring.py
-    participant DM as DataModule
-    participant DS as DataSource<br/>(CsvDataSource)
-    participant IL as InputLoader<br/>(per input)
-    participant Codec as TargetEncoder<br/>(per task)
-    participant RT as RuntimeContext
-    participant TB as TaskBuilder<br/>(TopologyStrategy × ObjectiveStrategy)
-    participant CM as CompositeModel<br/>(TimmBackbone + heads)
-
-    main->>Config: load_config(raw_dict)<br/>Hydra DictConfig → validated DTOs
-    Config-->>main: ExperimentConfig
-
-    main->>Wiring: build_bindings(config)
-    Note over Wiring: infers TargetEncoder per task<br/>from preset + objective
-    Wiring-->>main: list[TargetBinding(name, column, encoder)]
-
-    main->>Wiring: build_data_module(config, target_bindings, runtime)
-    Note over Wiring: resolves split/pre-split mode,<br/>builds transforms from configs/transforms/
-    Wiring-->>main: DataModule
-
-    main->>DM: setup()
-
-    DM->>DS: read()
-    DS-->>DM: DataFrame (full annotation table)
-
-    DM->>DM: _build_input_bindings(inputs_config, frame)
-    Note over DM: auto-detects loader per column<br/>from file extensions → image/text
-    DM-->>IL: InputBinding(name, column, loader) per input
-
-    loop for each TargetBinding
-        DM->>Codec: fit(column_values)
-        Note over Codec: LabelEncoder → sorts vocab<br/>MultiLabelEncoder → multi-hot vocab<br/>ScalarEncoder / MaskEncoder → no-op
-        Codec-->>RT: num_classes[task_name] = C
-    end
-
-    DM->>DM: split_dataframe(ratios, seed, stratify_column?)
-    Note over DM: → Dataset per stage<br/>(frame + input_bindings + target_bindings + transform)
-    DM-->>RT: dataset_sizes[stage] = N
-
-    main->>Wiring: build_tasks(config, runtime)
-    Note over Wiring: runs AFTER setup()<br/>so num_classes is a concrete int
-
-    loop for each task in config.tasks
-        Wiring->>TB: build(name, num_classes, objective, ...)
-        TB->>TB: validate Topology × Objective
-        TB->>TB: out_features / head_spec / adapter<br/>criterion / activation / metrics × stages
-        TB-->>Wiring: Task { head_spec, adapter, criterion,<br/>activation, metrics, weight }
-    end
-    Wiring-->>main: list[Task]
-
-    main->>CM: build_composite_model(backbone, {name: HeadSpec})
-    Note over CM: TimmBackbone + nn.ModuleDict(head per task)<br/>head sized from backbone.feature_dim(feature_key)
-    CM-->>main: CompositeModel
-
-    main->>main: build_lit_module(...) ; build_lit_data_module(...)<br/>build_trainer(...) ; run_experiment(fit → test → export)
-```
-
-</details>
-
-<details>
-<summary>Phase 2 — Training step (repeats every batch)</summary>
+### The assembly pipeline
 
 ```mermaid
-sequenceDiagram
-    participant Trainer as L.Trainer
-    participant LitM as LitModule
-    participant DL as DataLoader
-    participant DS as Dataset.__getitem__
-    participant CM as CompositeModel
-    participant BB as TimmBackbone
-    participant Head as LinearHead / ConvHead<br/>(per task)
-    participant TC as TargetAdapter<br/>(per task)
-    participant Crit as Criterion<br/>(per task)
-    participant Act as Activation<br/>(per task)
-    participant Met as MetricSet<br/>(per task × stage)
-    participant Agg as WeightedSumAggregator
-
-    Trainer->>LitM: training_step(batch, batch_idx)
-
-    LitM->>DL: next(dataloader)
-    DL->>DS: __getitem__(index)
-    loop for each InputBinding
-        DS->>DS: InputLoader.load(value) → ndarray / str
-    end
-    DS->>DS: Transform.apply(sample) → tensors [C,H,W]
-    loop for each TargetBinding
-        DS->>DS: encoder.load(raw) then encoder.to_tensor(val) → Tensor
-    end
-    DS-->>DL: Sample { inputs: {alias: Tensor}, targets: {task: Tensor} }
-    DL->>DL: collate_samples(list[Sample])
-    DL-->>LitM: Batch { inputs: {…: [B,C,H,W]},<br/>targets: {task_name: Tensor[B,…]} }
-
-    LitM->>CM: forward(batch.inputs)
-    CM->>BB: forward({"image": Tensor[B,C,H,W]})
-    BB-->>CM: FeatureBundle { "pooled": [B,D] / "decoder": [B,D,H,W] }
-
-    loop for each task head
-        CM->>Head: forward(features[task.feature_key])
-        Head-->>CM: logits Tensor[B, out_features]
-    end
-    CM-->>LitM: ModelOutput { task_logits: {name: Tensor} }
-
-    loop for each Task
-        LitM->>TC: adapt(batch.targets[task.name])
-        Note over TC: MulticlassTargetAdapter → [B] long<br/>BinaryTargetAdapter    → [B,1] float / [B,1] long<br/>MultilabelTargetAdapter→ [B,C] float / [B,C] long<br/>ContinuousTargetAdapter→ [B,1] float
-        TC-->>LitM: TargetView { loss: Tensor, metric: Tensor }
-
-        LitM->>Crit: forward(logits, target.loss)
-        Note over Crit: CrossEntropyCriterion / BCEWithLogitsCriterion<br/>MSECriterion / DiceCriterion / CompositeCriterion
-        Crit-->>LitM: LossResult { total, components: {name: Tensor} }
-
-        LitM->>Act: __call__(logits)
-        Note over Act: SoftmaxActivation / SigmoidActivation / IdentityActivation
-        Act-->>LitM: preds Tensor
-
-        LitM->>Met: update(preds, target.metric)
-        Note over Met: TorchMetricsAdapter wraps MetricCollection<br/>accumulates state across batches
-    end
-
-    LitM->>Agg: combine(losses, weights)
-    Note over Agg: total = Σ weight_i × task_i.total<br/>components namespaced as "task/component"
-    Agg-->>LitM: LossResult { total (scalar), components }
-
-    LitM->>LitM: self.log("loss/train/total", …)
-    LitM-->>Trainer: combined.total  →  .backward()
+flowchart TB
+    yaml["configs/ — Hydra groups"] -->|"compose + validate"| cfg["ExperimentConfig"]
+    cfg --> data["① Data<br/>build_bindings → build_data_module → setup()"]
+    data -->|"setup() fits the target encoders"| rt[("RuntimeContext<br/>num_classes")]
+    rt --> tasks["② Tasks<br/>build_tasks()"]
+    cfg --> tasks
+    tasks --> model["③ Model<br/>build_backbone → build_composite_model"]
+    cfg --> model
+    model --> wrap["④ Lightning wrappers + optimizer / scheduler<br/>logger / callbacks / trainer"]
+    tasks --> wrap
+    cfg --> wrap
+    wrap --> run["⑤ run_experiment<br/>fit → test → export  (each gated by a run_* flag)"]
 ```
 
-</details>
+`setup()` is the hinge: it fits the target encoders and writes `num_classes` into the
+`RuntimeContext`, so tasks and model heads — built *next* — always receive concrete output
+sizes. Nothing is hardcoded or shared by reference across config, data, model, and module.
 
-<details>
-<summary>Epoch end — metrics flush</summary>
+### ① Building the data
+
+`build_data_module` then `setup()`: read the annotation table, fit the encoders (which
+populate `num_classes`), and split into one `Dataset` per stage.
 
 ```mermaid
-sequenceDiagram
-    participant Trainer as L.Trainer
-    participant LitM as LitModule
-    participant Met as MetricSet<br/>(per task × stage)
-    participant Log as Lightning Logger
-
-    Trainer->>LitM: on_train_epoch_end() / on_validation_epoch_end()
-
-    loop for each Task
-        LitM->>Met: compute()
-        Met-->>LitM: { "accuracy": 0.83, "macro_f1": 0.79, … }
-        LitM->>Log: self.log("{task}/{metric}/{stage}", value)
-        LitM->>Met: reset()
-    end
+flowchart LR
+    cfg["config.data"] --> enc["TargetEncoder per task<br/>(build_bindings)"]
+    cfg --> read["DataSource.read()<br/>CSV / JSON → DataFrame"]
+    read --> fit["fit encoders on the column values"]
+    enc --> fit
+    fit -->|"num_classes"| rt[("RuntimeContext")]
+    read --> split["split → Dataset per stage<br/>train / val / test"]
 ```
 
-</details>
+### ② Composing a task — the three-axis Bridge
+
+A preset fixes a `(topology, default objective)` point; `TaskBuilder` validates the pair
+(e.g. `metric` only with RANKING / MULTISTREAM) and assembles the bricks into one `Task`.
+
+```mermaid
+flowchart TB
+    preset["Preset<br/>classification · segmentation · triplet · contrastive · …"] --> topo["Topology<br/>GLOBAL · DENSE · RANKING · MULTISTREAM"]
+    preset --> obj["Objective<br/>multiclass · binary · multilabel · continuous · metric"]
+    topo --> tb["TaskBuilder — Bridge<br/>validates the topology × objective pair"]
+    obj --> tb
+    rt[("RuntimeContext<br/>num_classes")] --> tb
+    tb --> task["Task<br/>head_spec · adapter · criterion · activation · metrics"]
+```
+
+### ③ Assembling the model
+
+One shared backbone plus one head per task; each head is sized from the backbone's feature
+dimension for the stream it reads — so output sizes follow from data, never from config.
+
+```mermaid
+flowchart LR
+    bb["build_backbone<br/>timm · smp · embedding · multi"] --> cm["build_composite_model"]
+    spec["HeadSpec per task<br/>(Task.head_spec)"] --> cm
+    cm -->|"each head sized from<br/>backbone.feature_dim(feature_key)"| model["CompositeModel<br/>shared backbone + one head per task"]
+```
+
+### ④ A training step
+
+`forward` runs the backbone once and routes its features to each head; then, per task, the
+criterion takes logits while the activation feeds metrics; the aggregator sums the weighted
+task losses into the scalar that is back-propagated.
+
+```mermaid
+flowchart TB
+    batch["Batch — inputs + targets"] --> fwd["CompositeModel.forward<br/>backbone → per-task heads"]
+    fwd --> logits["task_logits (per task)"]
+    logits --> crit["Criterion(logits, target)<br/>→ LossResult"]
+    logits --> met["Activation → preds<br/>→ MetricSet.update"]
+    crit --> agg["WeightedSumAggregator<br/>Σ weightᵢ · lossᵢ"]
+    agg --> back["total loss → backward()"]
+```
+
+At epoch end each `MetricSet` is computed, logged as `task/metric/stage` (typed handlers
+route scalars / per-class vectors / confusion matrices / curves), then reset.

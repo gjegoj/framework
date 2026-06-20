@@ -14,6 +14,7 @@ framework works without it installed.
 
 from __future__ import annotations
 
+import logging
 from argparse import Namespace
 from collections.abc import Mapping
 from io import StringIO
@@ -27,6 +28,8 @@ from src.core.enums import Stage
 from src.core.keys import LOSS
 from src.core.ports import PlotLogger
 
+log = logging.getLogger(__name__)
+
 # Stage tokens (train/val/test/predict) — pulled out of a *loss* key as the ClearML
 # *series* so the train/val/test curves of one loss share a single graph. Metrics are
 # left untouched (their stage already trails, so averaged metrics group by stage).
@@ -35,6 +38,7 @@ _STAGE_TOKENS = frozenset(Stage)
 if TYPE_CHECKING:
     from clearml import Task
     from clearml.logger import Logger as ClearMLBackendLogger
+    from torch import Tensor
 
 
 class ClearMLLogger(Logger, PlotLogger):
@@ -109,16 +113,16 @@ class ClearMLLogger(Logger, PlotLogger):
     def finalize(self, status: str) -> None:
         try:
             self._task.flush()
-        except Exception:
-            pass
+        except Exception as error:  # noqa: BLE001 — best-effort flush must not crash teardown
+            log.warning("ClearML task flush failed during finalize: %s", error)
 
     def close(self) -> None:
         """Flush and close the ClearML task (call once at end of training)."""
         try:
             self._task.flush()
             self._task.close()
-        except Exception:
-            pass
+        except Exception as error:  # noqa: BLE001 — best-effort close must not crash teardown
+            log.warning("ClearML task close failed: %s", error)
 
     # ----------------------------------------------------------- PlotLogger
 
@@ -126,7 +130,7 @@ class ClearMLLogger(Logger, PlotLogger):
     def log_matrix(
         self,
         title: str,
-        matrix: Any,
+        matrix: Tensor,
         iteration: int,
         labels: list[str] | None = None,
         xaxis: str | None = None,
@@ -147,8 +151,8 @@ class ClearMLLogger(Logger, PlotLogger):
     def log_curve(
         self,
         title: str,
-        x: Any,
-        y: Any,
+        x: Tensor,
+        y: Tensor,
         iteration: int,
         series: str = "curve",
         xaxis: str | None = None,
@@ -198,7 +202,7 @@ class ClearMLLogger(Logger, PlotLogger):
         return "/".join(parts[:-1]), parts[-1]
 
 
-def _round_matrix(matrix: Any) -> np.ndarray:
+def _round_matrix(matrix: Tensor) -> np.ndarray:
     """Round a matrix to 3 decimals for display.
 
     A normalized confusion matrix is full of long floats (e.g. ``0.333333…``); 3

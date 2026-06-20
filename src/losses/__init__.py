@@ -1,5 +1,12 @@
-"""Losses: criterion bricks behind the ``Criterion`` port."""
+"""Losses: criterion bricks behind the ``Criterion`` port.
 
+Importing this package registers every built-in criterion in the ``criteria``
+registry — the standard losses (criterion.py) and the metric-learning ones
+(angular / contrastive / ranking) alike — so ``import src.losses`` is enough.
+"""
+
+from src.losses.angular import ArcFaceCriterion
+from src.losses.contrastive import InfoNCECriterion, SigLIPCriterion
 from src.losses.criterion import (
     BCEWithLogitsCriterion,
     CrossEntropyCriterion,
@@ -8,14 +15,20 @@ from src.losses.criterion import (
     MSECriterion,
     WeightedSumCriterion,
 )
+from src.losses.ranking import MarginRankingCriterion, TripletMarginCriterion
 from src.losses.registry import criteria
 
 __all__ = [
+    "ArcFaceCriterion",
     "BCEWithLogitsCriterion",
-    "WeightedSumCriterion",
     "CrossEntropyCriterion",
     "DiceCriterion",
+    "InfoNCECriterion",
     "L1Criterion",
     "MSECriterion",
+    "MarginRankingCriterion",
+    "SigLIPCriterion",
+    "TripletMarginCriterion",
+    "WeightedSumCriterion",
     "criteria",
 ]

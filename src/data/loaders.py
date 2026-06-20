@@ -2,9 +2,9 @@
 
 ``InputLoader`` is the port; concrete adapters implement ``load`` for each
 modality and are registered in ``input_loaders`` so configs can reference them
-by key.  When no loader is specified, ``_infer_loader_key`` picks one from the
-actual column values — same idea as ``_infer_source_type`` for data sources:
-image file extensions → "image", anything else → "text".
+by key.  When no loader is specified, ``infer_loader_key`` picks one from the
+actual column values — the same extension-based inference the wiring layer uses
+to choose a data-source format: image file extensions → "image", anything else → "text".
 
 ``file_based`` on each loader controls whether ``root_path`` is prepended to the
 value before loading (True for file-path loaders, False for raw-value loaders).
@@ -110,7 +110,7 @@ class EmbeddingLoader(InputLoader):
         return vector.astype(np.float32)
 
 
-def _infer_loader_key(series: pd.Series) -> str:
+def infer_loader_key(series: pd.Series) -> str:
     """Infer the ``input_loaders`` key for ``series`` from its values.
 
     Samples up to five non-null values and inspects their file extension: image
@@ -131,7 +131,7 @@ def _infer_loader_key(series: pd.Series) -> str:
     return "text"
 
 
-def _normalize_inputs(
+def normalize_inputs(
     inputs: str | dict[str, str | dict[str, str]],
 ) -> dict[str, str | dict[str, str]]:
     """Normalise the ``inputs`` config to a uniform dict form.
@@ -146,3 +146,13 @@ def _normalize_inputs(
     if isinstance(inputs, str):
         return {"image": inputs}
     return dict(inputs)
+
+
+def input_aliases(inputs: str | dict[str, str | dict[str, str]]) -> tuple[str, ...]:
+    """Ordered input alias names from the ``data.inputs`` config.
+
+    ``str`` shorthand → the single ``image`` alias; a dict → its keys in declaration
+    order. The single source of truth shared by task wiring (RANKING/MULTISTREAM key
+    derivation) and export planning (the traced input alias).
+    """
+    return tuple(normalize_inputs(inputs).keys())

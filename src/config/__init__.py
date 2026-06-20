@@ -10,16 +10,8 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from src.config.export import ExportConfig, ExportTarget, OnnxOptions, TorchScriptOptions
 from src.config.resolvers import register_resolvers
-from src.config.schema import (
-    BackboneConfig,
-    DataConfig,
-    ExperimentConfig,
-    OptimizerConfig,
-    TaskConfig,
-    TrainerConfig,
-)
+from src.config.schema import ExperimentConfig
 
 # Make ``${key:NAME}`` available wherever a config is resolved (runtime + tests).
 register_resolvers()
@@ -48,16 +40,7 @@ def load_config(raw: dict[str, Any]) -> ExperimentConfig:
 
 
 __all__ = [
-    "BackboneConfig",
     "ConfigError",
-    "DataConfig",
     "ExperimentConfig",
-    "ExportConfig",
-    "ExportTarget",
-    "OnnxOptions",
-    "OptimizerConfig",
-    "TaskConfig",
-    "TorchScriptOptions",
-    "TrainerConfig",
     "load_config",
 ]

@@ -79,5 +79,5 @@ class FreezeCallback(BaseFinetuning):
     def _resolve(pl_module: L.LightningModule, path: str) -> Any:
         try:
             return pl_module.get_submodule(path)
-        except AttributeError as exc:
-            raise ValueError(f"Cannot resolve module path '{path}' on {type(pl_module).__name__}.") from exc
+        except AttributeError as error:
+            raise ValueError(f"Cannot resolve module path '{path}' on {type(pl_module).__name__}.") from error

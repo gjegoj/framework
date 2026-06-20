@@ -121,7 +121,7 @@ class SmpBackbone(Backbone):
         else:
             decoder_output = self._decoder(encoder_output)
             encoder_last = encoder_output[-1]  # [B, D, H, W]
-        return FeatureBundle({ENCODER_LAST: encoder_last, DECODER: decoder_output})
+        return FeatureBundle(streams={ENCODER_LAST: encoder_last, DECODER: decoder_output})
 
     def feature_dim(self, key: str) -> int:
         if key == ENCODER_LAST:

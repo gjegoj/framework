@@ -1,13 +1,38 @@
-"""Export domain objects — artifacts and verification reports."""
+"""Export domain objects — the export request, artifacts and verification reports."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
+
+import torch.nn as nn
+from torch import Tensor
 
 ExportArtifactKind = Literal["combined", "backbone", "head"]
 ExportFormat = Literal["onnx", "torchscript", "tensorrt"]
+
+
+@dataclass(frozen=True)
+class ExportRequest:
+    """Format-neutral export invocation — adapters own format-specific details.
+
+    Parameters:
+        module (nn.Module): Traceable export wrapper (eval + cpu applied by pipeline).
+        example_inputs (tuple[Tensor, ...]): Dummy tensors for tracing.
+        path (Path): Destination file path (suffix set by the exporter).
+        input_names (list[str]): Logical input tensor names for the serialized graph.
+        output_names (list[str]): Logical output tensor names.
+        options (dict[str, Any]): Format-specific options (e.g. ``opset_version``,
+            ``dynamic_batch`` for ONNX). The sole carrier of per-format settings.
+    """
+
+    module: nn.Module
+    example_inputs: tuple[Tensor, ...]
+    path: Path
+    input_names: list[str]
+    output_names: list[str]
+    options: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

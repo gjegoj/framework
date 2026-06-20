@@ -21,8 +21,8 @@ import hydra
 import lightning as L
 from omegaconf import DictConfig, OmegaConf
 
-import src.models  # noqa: F401 — registers TimmBackbone and LinearHead
-import src.tasks  # noqa: F401 — registers topology/objective strategies and presets
+import src.models  # noqa: F401 — populate the backbone / head registries
+import src.tasks  # noqa: F401 — populate the topology / objective / preset (and criteria) registries
 from src.composition.wiring import (
     build_backbone,
     build_bindings,
@@ -33,6 +33,7 @@ from src.composition.wiring import (
     build_logger,
     build_optimizer_builder,
     build_scheduler_builder,
+    build_task_lr_overrides,
     build_tasks,
     build_trainer,
     run_experiment,
@@ -47,9 +48,9 @@ log = logging.getLogger(__name__)
 
 
 @hydra.main(version_base=None, config_path="configs", config_name="config")
-def main(cfg: DictConfig) -> None:
+def main(hydra_config: DictConfig) -> None:
     silence_known_warnings()
-    raw = OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True)
+    raw = OmegaConf.to_container(hydra_config, resolve=True, throw_on_missing=True)
     print_config(raw)
     config = load_config(raw)
 
@@ -58,10 +59,10 @@ def main(cfg: DictConfig) -> None:
     # 1. Runtime context — populated incrementally as setup steps run
     runtime = RuntimeContext()
 
-    # 2. Data: read → fit codecs (infers num_classes) → split → datasets
+    # 2. Data: read → fit encoders (infers num_classes) → split → datasets
     bindings = build_bindings(config)
-    plain_dm = build_data_module(config, bindings, runtime)
-    plain_dm.setup()
+    plain_data_module = build_data_module(config, bindings, runtime)
+    plain_data_module.setup()
 
     # 3. Tasks — built after setup so num_classes is a concrete int
     tasks = build_tasks(config, runtime)
@@ -69,21 +70,21 @@ def main(cfg: DictConfig) -> None:
 
     # 4. Model — heads sized from backbone.feature_dim, derived from tasks
     backbone = build_backbone(config.backbone)
-    model = build_composite_model(backbone, {t.name: t.head_spec for t in tasks})
+    model = build_composite_model(backbone, {task.name: task.head_spec for task in tasks})
 
-    # 5. Optimizer
-    optimizer_builder = build_optimizer_builder(config.optimizer)
+    # 5. Optimizer — per-head LR overrides (from task configs) bound into the builder
+    optimizer_builder = build_optimizer_builder(config.optimizer, build_task_lr_overrides(config))
     scheduler_builder = build_scheduler_builder(config.scheduler)
 
     # 6. Lightning wrappers (humble objects delegating to domain logic)
     lit_module = build_lit_module(config, model, tasks, optimizer_builder, scheduler_builder)
-    lit_dm = build_lit_data_module(plain_dm)
+    lit_data_module = build_lit_data_module(plain_data_module)
 
     # 7. Train and/or test
     logger = build_logger(config)
     callbacks = build_callbacks(config, runtime)
     trainer = build_trainer(config, logger, callbacks)
-    run_experiment(trainer, lit_module, lit_dm, config, tasks)
+    run_experiment(trainer, lit_module, lit_data_module, config, tasks)
 
 
 if __name__ == "__main__":

@@ -4,13 +4,11 @@ Importing this package registers the built-in topology/objective strategies and
 task presets so they are resolvable by key.
 """
 
-import src.losses.angular  # noqa: F401 — registers arcface criterion
-import src.losses.contrastive  # noqa: F401 — registers info_nce criterion
-import src.losses.ranking  # noqa: F401 — registers triplet_margin / margin_ranking criteria
 from src.tasks.activations import IdentityActivation, SigmoidActivation, SoftmaxActivation
 from src.tasks.adapters import (
     BinaryTargetAdapter,
     ContinuousTargetAdapter,
+    MetricTargetAdapter,
     MulticlassTargetAdapter,
     MultilabelTargetAdapter,
 )
@@ -45,26 +43,28 @@ from src.tasks.strategies.topology import (
 from src.tasks.taxonomy import Objective, Topology
 
 __all__ = [
-    "DEFAULT_STAGES",
     "BinaryObjective",
     "BinaryTargetAdapter",
     "ContinuousObjective",
     "ContinuousTargetAdapter",
+    "DEFAULT_STAGES",
     "DenseTopology",
     "GlobalTopology",
     "IdentityActivation",
     "MetricObjective",
-    "MultistreamTopology",
+    "MetricTargetAdapter",
     "MulticlassObjective",
     "MulticlassTargetAdapter",
     "MultilabelObjective",
     "MultilabelTargetAdapter",
+    "MultistreamTopology",
     "Objective",
     "ObjectiveStrategy",
     "RankingTopology",
     "SigmoidActivation",
     "SoftmaxActivation",
     "TaskBuilder",
+    "TaskPreset",
     "Topology",
     "TopologyStrategy",
     "classification",
@@ -73,7 +73,6 @@ __all__ = [
     "pairwise_ranking",
     "regression",
     "segmentation",
-    "TaskPreset",
     "task_presets",
     "topology_strategies",
     "triplet",

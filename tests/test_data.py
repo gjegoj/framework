@@ -15,7 +15,9 @@ from src.core.enums import Stage
 from src.core.runtime import RuntimeContext
 from src.data import (
     AlbumentationsTransform,
+    CacheOptions,
     CsvDataSource,
+    DataLoaderOptions,
     DataModule,
     EmbeddingLoader,
     JsonDataSource,
@@ -87,16 +89,16 @@ class TestEmbeddingLoader:
 
 class TestInferLoaderKey:
     def test_npy_paths_infer_embedding(self) -> None:
-        from src.data.loaders import _infer_loader_key
+        from src.data.loaders import infer_loader_key
 
         series = pd.Series(["emb/a.npy", "emb/b.npy"])
-        assert _infer_loader_key(series) == "embedding"
+        assert infer_loader_key(series) == "embedding"
 
     def test_image_paths_still_infer_image(self) -> None:
-        from src.data.loaders import _infer_loader_key
+        from src.data.loaders import infer_loader_key
 
         series = pd.Series(["img/a.jpg", "img/b.png"])
-        assert _infer_loader_key(series) == "image"
+        assert infer_loader_key(series) == "image"
 
 
 class TestIdentityTransform:
@@ -292,7 +294,7 @@ class TestDataLoaderKwargs:
             seed=0,
             source=CsvDataSource(str(csv_path)),
             split={Stage.TRAIN: 0.8, Stage.VAL: 0.2},
-            dataloader_kwargs=dict(extra),
+            dataloader_options=DataLoaderOptions(extra_kwargs=dict(extra)),
         )
 
     def test_extra_kwargs_reach_dataloader(self, csv_path: Path) -> None:
@@ -665,7 +667,7 @@ class TestDataModuleCache:
             seed=0,
             source=CsvDataSource(str(csv_path)),
             split={Stage.TRAIN: 0.8, Stage.VAL: 0.2},
-            cache_bytes=10**9,
+            cache_options=CacheOptions(max_bytes=10**9),
         )
         dm.setup()
         assert isinstance(dm._input_bindings[0].loader, CachingLoader)

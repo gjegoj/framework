@@ -362,12 +362,12 @@ class TestContrastiveWiring:
     def test_stream_keys_derived_from_data_inputs(self) -> None:
         import dataclasses
 
-        from src.composition.wiring.tasks import _input_aliases
+        from src.data.loaders import input_aliases
         from src.tasks.presets import contrastive
 
         task = contrastive("align", num_classes=64)
         assert task.head_spec.stream_keys is None  # pre-wiring
 
-        stream_keys = _input_aliases({"left": "left_path", "right": "right_path"})
+        stream_keys = input_aliases({"left": "left_path", "right": "right_path"})
         task = dataclasses.replace(task, head_spec=dataclasses.replace(task.head_spec, stream_keys=stream_keys))
         assert task.head_spec.stream_keys == ("left", "right")

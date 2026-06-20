@@ -164,7 +164,7 @@ class TestExporterPort:
 
 class TestTensorRtExporter:
     def test_export_without_cuda_raises(self, tmp_path: Path) -> None:
-        from src.core.entities import ExportRequest
+        from src.export.entities import ExportRequest
         from src.export.tensorrt import TensorRtExporter
 
         if torch.cuda.is_available():
@@ -195,7 +195,7 @@ class TestTensorRtExporter:
         reason="TensorRT round-trip needs CUDA + torch-tensorrt (GPU node only).",
     )
     def test_engine_round_trip(self, tmp_path: Path) -> None:
-        from src.core.entities import ExportRequest
+        from src.export.entities import ExportRequest
         from src.export.tensorrt import TensorRtExporter
 
         module = torch.nn.Sequential(
@@ -233,6 +233,25 @@ class TestExportOnnx:
         onnx.checker.check_model(model)
         assert [node.name for node in model.graph.input] == ["input"]
         assert [node.name for node in model.graph.output] == ["output"]
+
+    def test_static_batch_onnx_export(self, tmp_path: Path) -> None:
+        """dynamic_batch=False skips the dry-run forward (no dynamic axes); the graph must
+        still export valid with a *static* batch dimension (dynamic_axes=None path)."""
+        pytest.importorskip("onnx")
+        import onnx
+
+        lit = _single_task_lit_module()
+        config = load_config(
+            _raw(
+                image_size=[32, 32], export={"targets": [{"format": "onnx", "dynamic_batch": False}], "combined": True}
+            )
+        )
+        artifacts = export_model(lit.model, lit.tasks, config, tmp_path)
+        model = onnx.load(str(artifacts[0].path))
+        onnx.checker.check_model(model)
+        batch_dim = model.graph.input[0].type.tensor_type.shape.dim[0]
+        assert batch_dim.dim_param == "", f"expected static batch, got dim_param={batch_dim.dim_param!r}"
+        assert batch_dim.dim_value == 1
 
     def test_simplify_produces_valid_onnx(self, tmp_path: Path) -> None:
         pytest.importorskip("onnx")
@@ -351,7 +370,7 @@ class TestExportTorchScript:
         assert probs.shape == (1, 3)
 
     def test_script_method_compiles_a_scriptable_module(self, tmp_path: Path) -> None:
-        from src.core.entities import ExportRequest
+        from src.export.entities import ExportRequest
 
         class _Double(torch.nn.Module):
             def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -459,8 +478,8 @@ class TestExportReport:
 
 class TestExporterPortDefaults:
     def test_default_load_and_validate_are_noops(self) -> None:
-        from src.core.entities import ExportRequest
-        from src.core.ports import ModelExporter
+        from src.export.entities import ExportRequest
+        from src.export.ports import ModelExporter
 
         class _Dummy(ModelExporter):
             @property

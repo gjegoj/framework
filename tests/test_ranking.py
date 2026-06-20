@@ -296,28 +296,28 @@ class TestRankingPresets:
         assert isinstance(pairwise_ranking("pair", num_classes=32).criterion, MarginRankingCriterion)
 
     def test_input_aliases_multi_view(self) -> None:
-        """_input_aliases extracts dict keys in declaration order."""
-        from src.composition.wiring.tasks import _input_aliases
+        """input_aliases extracts dict keys in declaration order."""
         from src.core.keys import IMAGE
+        from src.data.loaders import input_aliases
 
-        assert _input_aliases({"anchor": "a", "positive": "p", "negative": "n"}) == (
+        assert input_aliases({"anchor": "a", "positive": "p", "negative": "n"}) == (
             "anchor",
             "positive",
             "negative",
         )
-        assert _input_aliases("image_path") == (IMAGE,)
+        assert input_aliases("image_path") == (IMAGE,)
 
     def test_ranking_task_head_spec_gets_view_keys_after_wiring(self) -> None:
         """After build_tasks the RANKING head_spec carries view_keys from data.inputs."""
         import dataclasses
 
-        from src.composition.wiring.tasks import _input_aliases
+        from src.data.loaders import input_aliases
         from src.tasks.presets import triplet
 
         # Simulate what build_tasks does for a single RANKING task.
         task = triplet("sim", num_classes=64)
         assert task.head_spec.view_keys is None  # pre-wiring
 
-        view_keys = _input_aliases({"anchor": "a_path", "positive": "p_path", "negative": "n_path"})
+        view_keys = input_aliases({"anchor": "a_path", "positive": "p_path", "negative": "n_path"})
         task = dataclasses.replace(task, head_spec=dataclasses.replace(task.head_spec, view_keys=view_keys))
         assert task.head_spec.view_keys == ("anchor", "positive", "negative")

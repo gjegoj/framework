@@ -4,7 +4,7 @@
 # vector rather than an image — the Albumentations image pipeline does not apply.
 # Val/test/predict are derived from val automatically.
 train:
-  _target_: src.transforms.input.IdentityTransform
+  _target_: src.transforms.sample.IdentityTransform
 
 val:
-  _target_: src.transforms.input.IdentityTransform
+  _target_: src.transforms.sample.IdentityTransform

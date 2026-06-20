@@ -7,21 +7,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 A configuration-driven framework for training computer-vision models (multi-task,
 multi-modal) on top of PyTorch Lightning, Hydra, Pydantic, timm/smp, albumentations
 and torchmetrics. It is a clean-architecture rewrite of the prototype in `old/`
-(kept only as reference — do not edit or import from it). The full design and the
-milestone breakdown live in the approved plan at
-`~/.claude/plans/clean-code-refactoring-patterns-softwar-merry-sunbeam.md`.
+(kept only as reference — do not edit or import from it). See `README.md` for the
+design walkthrough and the "How components are built" guide.
 
-Status: M1–M7 substantially complete. Tasks: classification + every objective
+Status: the scope below is implemented and covered by the test suite. Tasks: classification + every objective
 (multiclass/binary/multilabel/continuous), DENSE segmentation, and **metric learning** —
 RANKING (Siamese: N views through one shared backbone) and MULTISTREAM (dual/multi-encoder,
 CLIP/SigLIP-style) topologies with triplet / margin-ranking / InfoNCE / SigLIP / ArcFace
 losses. Backbones: `TimmBackbone`, multi-stream `SmpBackbone` (`ENCODER_LAST`/`DECODER`,
 per-task `feature_key`), precomputed-`EmbeddingBackbone`, and multi-encoder `MultiEncoderBackbone`.
 Training: per-head LR via param-groups, LR **schedulers** (`training/scheduler.py`), typed metric
-handlers (scalar/vector/matrix/curve), ClearML logger, and M5 callbacks — EMA (thin subclass of
+handlers (scalar/vector/matrix/curve), ClearML logger, and callbacks — EMA (thin subclass of
 Lightning's `EMAWeightAveraging`), freeze, checkpoint, `MetricsProgressBar`, `SampleLogCallback`,
 and batch transforms (MixUp/CutMix/Mosaic). Cross-cutting subsystems: model **export**
-(`export/`: ONNX/TorchScript + numerical-parity verification), sample **visualization**
+(`export/`: ONNX/TorchScript/TensorRT + numerical-parity verification), sample **visualization**
 (`visualization/`: interactive HTML GT-vs-pred grid behind `SampleLogCallback`), and an in-RAM
 image/mask **cache** (`data/cache.py`). Next: LoRA/PEFT.
 
@@ -50,9 +49,14 @@ albumentations are details** kept behind ABC ports. Layers:
   `ModelOutput`, `LossResult`, `TargetView`, `Task`, `HeadSpec`), ABC ports
   (`Backbone`, `Head`, `Criterion`, `Activation`, `MetricSet`, `TargetAdapter`,
   `LossAggregator`), the `Registry`, `RuntimeContext`, and canonical string keys
-  (`core/keys.py`). Imports only torch + stdlib. A port lives here only when a core
-  entity references it (e.g. `Task.adapter: TargetAdapter`); data-only ABCs
-  (`TargetEncoder`, `InputLoader`, `DataSource`) stay in the data layer.
+  (`core/keys.py`). Imports only torch + stdlib. A port lives here when a core entity
+  references it (e.g. `Task.adapter: TargetAdapter` → so `Criterion`/`Activation`/
+  `MetricSet`/`TargetAdapter`), when it is a foundational model-graph port
+  (`Backbone`/`Head`), or when it is a genuinely cross-cutting abstraction
+  (`LossAggregator`, `PlotLogger`, `MetricDirectionProvider`). Leaf-specific ports stay
+  in their own subsystem — `ModelExporter` + `ExportRequest` in `export/`,
+  `BatchTransform` in `transforms/batch/`, data-only ABCs (`TargetEncoder`,
+  `InputLoader`, `DataSource`) in the data layer.
 - `config/` — the single Pydantic contract (`ExperimentConfig`). The boundary:
   Hydra → plain dict → `load_config()` → typed DTOs. Nothing downstream re-parses raw
   config. Component sections allow `extra` keys so per-brick overrides / `_target_`
@@ -68,9 +72,9 @@ albumentations are details** kept behind ABC ports. Layers:
   `lit_module.py`, `lit_datamodule.py`) and the optimizer+scheduler+their registry under `optim/`.
   Each layer's registries live in `<layer>/registry.py` (`losses`, `data`, `models`, `metrics`,
   `export`, `callbacks`, `training/optim`).
-- `export/` — deployment-export subsystem behind the `ModelExporter` port
-  (`onnx.py`/`torchscript.py`, `pipeline.py`, `verify.py` parity checks, `wrapper.py`
-  trace wrappers). `visualization/` — sample-debug subsystem: `Annotator`/`LabelRenderer`
+- `export/` — deployment-export subsystem behind the `ModelExporter` port (`ports.py`,
+  `entities.py`; `onnx.py`/`torchscript.py`/`tensorrt.py` backends, `pipeline.py`,
+  `verify.py` parity checks, `wrapper.py`/`tracing.py` trace helpers). `visualization/` — sample-debug subsystem: `Annotator`/`LabelRenderer`
   registries render GT-vs-prediction `SampleView`s into one self-contained interactive
   HTML grid (`renderer.py`), driven by `SampleLogCallback`. Both are details, kept outward.
 - composition root: `composition/wiring/` (split by layer: `data`/`model`/`tasks`/
@@ -169,7 +173,8 @@ class in a registry (OCP).
   (`configs/dataloader/`: `default`/`performance`/`debug`) wired into `config.yaml` defaults —
   override per-run (`dataloader.num_workers=8`) or select a preset (`dataloader=performance`).
   Like the other typed sections, it is `extra="allow"`: unknown keys forward verbatim to
-  `torch.utils.data.DataLoader` (`forward_extras` → `DataModule.dataloader_kwargs`), except
+  `torch.utils.data.DataLoader` (the composition root groups the section into a `DataLoaderOptions`
+  value object, `forward_extras` → `DataLoaderOptions.extra_kwargs`), except
   framework-owned keys (`DataLoaderConfig.RESERVED`: dataset/batch_size/shuffle/collate_fn/
   sampler/batch_sampler) which the schema rejects so per-stage conventions hold.
 - **The `Trainer` is assembled by `build_trainer`** (one home, composition root), not in

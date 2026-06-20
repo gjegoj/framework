@@ -457,7 +457,9 @@ class TestBuildTaskLrOverrides:
 
 
 class TestBuildLitModule:
-    def test_creates_lit_module_without_overrides(self) -> None:
+    def test_creates_lit_module_and_serialises_hparams(self) -> None:
+        # Per-task LR lives on the OptimizerBuilder now (see TestOptimizerBuilder); build_lit_module
+        # only wires collaborators + hparams, so it no longer branches on per-task overrides.
         from src.models import build_composite_model
         from src.models.registry import backbones
         from src.training import LitModule, OptimizerBuilder
@@ -467,34 +469,15 @@ class TestBuildLitModule:
         tasks = build_tasks(config, runtime)
         backbone = backbones.create("timm", name="resnet18", pretrained=False)
         model = build_composite_model(backbone, {t.name: t.head_spec for t in tasks})
-        opt_builder = OptimizerBuilder(base_lr=1e-3)
 
-        lit = build_lit_module(config, model, tasks, opt_builder)
+        lit = build_lit_module(config, model, tasks, OptimizerBuilder(base_lr=1e-3))
         assert isinstance(lit, LitModule)
-        assert lit._task_lr_overrides == {}
-
-    def test_creates_lit_module_with_per_task_lr(self) -> None:
-        from src.models import build_composite_model
-        from src.models.registry import backbones
-        from src.training import LitModule, OptimizerBuilder
-
-        raw = _minimal_config()
-        raw["tasks"]["label"]["optimizer"] = {"lr": 1e-4}
-        config = load_config(raw)
-        runtime = RuntimeContext(num_classes={"label": 3})
-        tasks = build_tasks(config, runtime)
-        backbone = backbones.create("timm", name="resnet18", pretrained=False)
-        model = build_composite_model(backbone, {t.name: t.head_spec for t in tasks})
-        opt_builder = OptimizerBuilder(base_lr=1e-3)
-
-        lit = build_lit_module(config, model, tasks, opt_builder)
-        assert isinstance(lit, LitModule)
-        assert lit._task_lr_overrides == {"label": pytest.approx(1e-4)}
+        assert lit._hparams_to_log is not None  # full config serialised as hyperparams
 
     def test_param_groups_reflect_per_task_lr(self) -> None:
+        from src.composition.wiring import build_optimizer_builder
         from src.models import build_composite_model
         from src.models.registry import backbones
-        from src.training import OptimizerBuilder
 
         raw = _minimal_config()
         raw["tasks"]["label"]["optimizer"] = {"lr": 1e-4}
@@ -503,7 +486,7 @@ class TestBuildLitModule:
         tasks = build_tasks(config, runtime)
         backbone = backbones.create("timm", name="resnet18", pretrained=False)
         model = build_composite_model(backbone, {t.name: t.head_spec for t in tasks})
-        opt_builder = OptimizerBuilder(base_lr=1e-3)
+        opt_builder = build_optimizer_builder(config.optimizer, build_task_lr_overrides(config))
 
         lit = build_lit_module(config, model, tasks, opt_builder)
         result = lit.configure_optimizers()

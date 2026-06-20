@@ -4,7 +4,7 @@
 # Uses MultiViewTransform instead of AlbumentationsTransform so each view is
 # processed through compose(image=view)["image"] without requiring an "image" key.
 train:
-  _target_: src.transforms.input.MultiViewTransform
+  _target_: src.transforms.sample.MultiViewTransform
   compose:
     _target_: albumentations.Compose
     seed: ${seed}
@@ -19,7 +19,7 @@ train:
       - _target_: albumentations.pytorch.ToTensorV2
 
 val:
-  _target_: src.transforms.input.MultiViewTransform
+  _target_: src.transforms.sample.MultiViewTransform
   compose:
     _target_: albumentations.Compose
     seed: ${seed}

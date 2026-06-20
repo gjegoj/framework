@@ -27,18 +27,24 @@ _OPTIMIZER_CORE_FIELDS = frozenset({"name", "lr", "weight_decay"})
 _SCHEDULER_CORE_FIELDS = frozenset({"name", "interval", "frequency", "monitor", "strict", "runtime_kwargs"})
 
 
-def build_optimizer_builder(optimizer_config: OptimizerConfig) -> OptimizerBuilder:
+def build_optimizer_builder(
+    optimizer_config: OptimizerConfig,
+    task_lr_overrides: dict[str, float] | None = None,
+) -> OptimizerBuilder:
     """Build an ``OptimizerBuilder`` from the optimizer config.
 
     Resolves the optimizer class from ``optimizer_config.name`` (so ``sgd`` etc.
     actually take effect) and forwards any extra fields (``momentum``, ``betas``,
-    ``nesterov``, ...) as constructor kwargs.
+    ``nesterov``, ...) as constructor kwargs. Per-task LR overrides (from
+    ``build_task_lr_overrides``) are bound here, so the builder is fully configured
+    and its consumer just hands it the model.
 
     Parameters:
         optimizer_config (OptimizerConfig): Validated optimizer config (extras allowed).
+        task_lr_overrides (dict[str, float] | None): Per-task LR (task name → lr).
 
     Returns:
-        OptimizerBuilder: Builder bound to the named optimizer class.
+        OptimizerBuilder: Builder bound to the named optimizer class and per-head LRs.
     """
     extra = forward_extras(optimizer_config, _OPTIMIZER_CORE_FIELDS)
     return OptimizerBuilder.from_name(
@@ -46,6 +52,7 @@ def build_optimizer_builder(optimizer_config: OptimizerConfig) -> OptimizerBuild
         base_lr=optimizer_config.lr,
         base_weight_decay=optimizer_config.weight_decay,
         extra_kwargs=extra,
+        task_lr_overrides=task_lr_overrides,
     )
 
 
@@ -108,17 +115,17 @@ def build_lit_module(
     optimizer_builder: OptimizerBuilder,
     scheduler_builder: SchedulerBuilder | None = None,
 ) -> LitModule:
-    """Build a ``LitModule`` wired with per-task LR overrides and hyperparams from config.
+    """Build a ``LitModule`` from the assembled collaborators and config hyperparams.
 
-    The single authoritative place that reads ``task.optimizer.lr`` for the
-    per-head param-group split in ``OptimizerBuilder``, and serialises the full
-    config as hyperparams so the logger can record them in ``on_fit_start``.
+    Per-task LR overrides already live on ``optimizer_builder`` (bound in
+    ``build_optimizer_builder``), so this only wires the module and serialises the
+    full config as hyperparams the logger records at ``on_fit_start``.
 
     Parameters:
         config (ExperimentConfig): Validated experiment config.
         model (CompositeModel): Backbone + heads.
         tasks (list[Task]): Assembled task bundles.
-        optimizer_builder (OptimizerBuilder): Bound to the global optimizer config.
+        optimizer_builder (OptimizerBuilder): Fully configured (incl. per-head LRs).
 
     Returns:
         LitModule: Ready for ``L.Trainer.fit``.
@@ -128,7 +135,6 @@ def build_lit_module(
         tasks=tasks,
         optimizer_builder=optimizer_builder,
         scheduler_builder=scheduler_builder,
-        task_lr_overrides=build_task_lr_overrides(config),
         hparams=config.model_dump(mode="json"),
     )
 
@@ -216,7 +222,7 @@ def build_trainer(config: ExperimentConfig, logger: Any, callbacks: list[Any]) -
 def run_experiment(
     trainer: L.Trainer,
     lit_module: LitModule,
-    lit_dm: LitDataModule,
+    lit_data_module: LitDataModule,
     config: ExperimentConfig,
     tasks: list[Task],
 ) -> None:
@@ -230,7 +236,7 @@ def run_experiment(
     Parameters:
         trainer (L.Trainer): Configured Lightning trainer.
         lit_module (LitModule): Model module.
-        lit_dm (LitDataModule): Data module.
+        lit_data_module (LitDataModule): Data module.
         config (ExperimentConfig): Validated experiment config.
         tasks (list[Task]): Active tasks (for export planning).
     """
@@ -240,7 +246,7 @@ def run_experiment(
     if config.run_train:
         if config.init_ckpt_path is not None:
             load_init_weights(lit_module, config.init_ckpt_path)
-        trainer.fit(lit_module, lit_dm)
+        trainer.fit(lit_module, lit_data_module)
         trained = True
         log.info("Training complete.")
 
@@ -248,10 +254,10 @@ def run_experiment(
         ckpt_path = resolve_test_ckpt_path(trainer, config, trained=trained)
         if ckpt_path is not None:
             log.info("Running test with checkpoint: %s", ckpt_path)
-            trainer.test(lit_module, lit_dm, ckpt_path=ckpt_path)
+            trainer.test(lit_module, lit_data_module, ckpt_path=ckpt_path)
         else:
             log.info("Running test with in-memory weights.")
-            trainer.test(lit_module, lit_dm)
+            trainer.test(lit_module, lit_data_module)
         tested = True
         log.info("Test complete.")
 

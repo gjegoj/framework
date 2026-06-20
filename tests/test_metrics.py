@@ -2,17 +2,20 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 from unittest.mock import MagicMock
 
 import pytest
 import torch
 
+from src.core.entities import Task
 from src.core.enums import Stage
 from src.core.ports import PlotLogger
 from src.metrics.directions import task_metric_directions
 from src.metrics.handlers import (
+    CURVE_SPECS,
     DEFAULT_METRIC_HANDLERS,
+    MATRIX_AXES,
     CurveMetricHandler,
     MatrixMetricHandler,
     MetricHandler,
@@ -21,7 +24,7 @@ from src.metrics.handlers import (
     VectorMetricHandler,
     dispatch,
 )
-from src.metrics.registry import curve_specs, matrix_axes
+from src.metrics.reporter import MetricReporter
 from src.tasks.presets import classification, regression
 
 # ------------------------------------------------------------------ fixtures
@@ -219,7 +222,7 @@ class TestMatrixMetricHandler:
     def test_passes_axes_from_registry(self) -> None:
         fake = FakePlotLogger()
         ctx, _ = _ctx(plot_logger=fake, metric_name="confusion_matrix")
-        MatrixMetricHandler(matrix_axes).handle("conf_mat", torch.eye(2), ctx)
+        MatrixMetricHandler(MATRIX_AXES).handle("conf_mat", torch.eye(2), ctx)
         call = fake.matrix_calls[0]
         assert call["xaxis"] == "Predicted"
         assert call["yaxis"] == "True"
@@ -227,7 +230,7 @@ class TestMatrixMetricHandler:
     def test_axes_none_when_not_in_registry(self) -> None:
         fake = FakePlotLogger()
         ctx, _ = _ctx(plot_logger=fake, metric_name="unknown_matrix")
-        MatrixMetricHandler(matrix_axes).handle("m", torch.eye(2), ctx)
+        MatrixMetricHandler(MATRIX_AXES).handle("m", torch.eye(2), ctx)
         call = fake.matrix_calls[0]
         assert call["xaxis"] is None
         assert call["yaxis"] is None
@@ -260,38 +263,38 @@ class TestCurveMetricHandler:
         fake = FakePlotLogger()
         ctx, _ = _ctx(plot_logger=fake, metric_name="precision_recall_curve")
         prec, rec, the = self._make_multiclass_pr(n_classes=3)
-        CurveMetricHandler(curve_specs).handle("pr", (prec, rec, the), ctx)
+        CurveMetricHandler(CURVE_SPECS).handle("pr", (prec, rec, the), ctx)
         assert len(fake.curve_calls) == 3
 
     def test_curve_axes_from_pr_spec(self) -> None:
         fake = FakePlotLogger()
         ctx, _ = _ctx(plot_logger=fake, metric_name="precision_recall_curve")
         prec, rec, the = self._make_multiclass_pr(n_classes=2)
-        CurveMetricHandler(curve_specs).handle("pr", (prec, rec, the), ctx)
+        CurveMetricHandler(CURVE_SPECS).handle("pr", (prec, rec, the), ctx)
         call = fake.curve_calls[0]
         assert call["xaxis"] == "Recall"
         assert call["yaxis"] == "Precision"
 
     def test_pr_curve_x_is_recall_y_is_precision(self) -> None:
-        # PR spec: x_idx=1 (recall), y_idx=0 (precision)
+        # PR spec: x_index=1 (recall), y_index=0 (precision)
         fake = FakePlotLogger()
         ctx, _ = _ctx(plot_logger=fake, metric_name="precision_recall_curve")
         prec = [torch.tensor([0.9, 0.8])]
         rec = [torch.tensor([0.1, 0.5])]
         the = [torch.tensor([0.5])]
-        CurveMetricHandler(curve_specs).handle("pr", (prec, rec, the), ctx)
+        CurveMetricHandler(CURVE_SPECS).handle("pr", (prec, rec, the), ctx)
         call = fake.curve_calls[0]
         assert torch.equal(call["x"], rec[0])
         assert torch.equal(call["y"], prec[0])
 
     def test_roc_curve_x_is_fpr_y_is_tpr(self) -> None:
-        # ROC spec: x_idx=0 (fpr), y_idx=1 (tpr)
+        # ROC spec: x_index=0 (fpr), y_index=1 (tpr)
         fake = FakePlotLogger()
         ctx, _ = _ctx(plot_logger=fake, metric_name="roc")
         fpr = [torch.tensor([0.0, 0.2, 1.0])]
         tpr = [torch.tensor([0.0, 0.8, 1.0])]
         the = [torch.tensor([1.0, 0.5])]
-        CurveMetricHandler(curve_specs).handle("roc", (fpr, tpr, the), ctx)
+        CurveMetricHandler(CURVE_SPECS).handle("roc", (fpr, tpr, the), ctx)
         call = fake.curve_calls[0]
         assert torch.equal(call["x"], fpr[0])
         assert torch.equal(call["y"], tpr[0])
@@ -302,7 +305,7 @@ class TestCurveMetricHandler:
         fake = FakePlotLogger()
         ctx, _ = _ctx(plot_logger=fake, class_names=["cat", "dog"], metric_name="precision_recall_curve")
         prec, rec, the = self._make_multiclass_pr(n_classes=2)
-        CurveMetricHandler(curve_specs).handle("pr", (prec, rec, the), ctx)
+        CurveMetricHandler(CURVE_SPECS).handle("pr", (prec, rec, the), ctx)
         series = [c["series"] for c in fake.curve_calls]
         assert series == ["cat", "dog"]
 
@@ -310,7 +313,7 @@ class TestCurveMetricHandler:
         fake = FakePlotLogger()
         ctx, _ = _ctx(plot_logger=fake, metric_name="precision_recall_curve")
         prec, rec, the = self._make_multiclass_pr(n_classes=3)
-        CurveMetricHandler(curve_specs).handle("pr", (prec, rec, the), ctx)
+        CurveMetricHandler(CURVE_SPECS).handle("pr", (prec, rec, the), ctx)
         series = [c["series"] for c in fake.curve_calls]
         assert series == ["class0", "class1", "class2"]
 
@@ -321,28 +324,28 @@ class TestCurveMetricHandler:
         prec = torch.rand(10)
         rec = torch.rand(10)
         the = torch.rand(9)
-        CurveMetricHandler(curve_specs).handle("pr", (prec, rec, the), ctx)
+        CurveMetricHandler(CURVE_SPECS).handle("pr", (prec, rec, the), ctx)
         assert len(fake.curve_calls) == 1
 
     def test_binary_curve_labeled_positive_class_not_index_zero(self) -> None:
         fake = FakePlotLogger()
         ctx, _ = _ctx(plot_logger=fake, class_names=["cat", "dog"], metric_name="precision_recall_curve")
         prec, rec, the = torch.rand(10), torch.rand(10), torch.rand(9)  # binary: tensors, not lists
-        CurveMetricHandler(curve_specs).handle("pr", (prec, rec, the), ctx)
+        CurveMetricHandler(CURVE_SPECS).handle("pr", (prec, rec, the), ctx)
         assert fake.curve_calls[0]["series"] == "dog"  # positive class (index 1), not "cat"
 
     def test_binary_curve_without_names_labeled_positive(self) -> None:
         fake = FakePlotLogger()
         ctx, _ = _ctx(plot_logger=fake, metric_name="precision_recall_curve")
         t = torch.rand(5)
-        CurveMetricHandler(curve_specs).handle("pr", (t, t, t), ctx)
+        CurveMetricHandler(CURVE_SPECS).handle("pr", (t, t, t), ctx)
         assert fake.curve_calls[0]["series"] == "positive"
 
     def test_generic_axes_when_metric_not_in_registry(self) -> None:
         fake = FakePlotLogger()
         ctx, _ = _ctx(plot_logger=fake, metric_name="unknown_curve")
         t = torch.rand(5)
-        CurveMetricHandler(curve_specs).handle("c", (t, t, t), ctx)
+        CurveMetricHandler(CURVE_SPECS).handle("c", (t, t, t), ctx)
         call = fake.curve_calls[0]
         assert call["xaxis"] == "x"
         assert call["yaxis"] == "y"
@@ -350,13 +353,13 @@ class TestCurveMetricHandler:
     def test_noop_when_logger_is_none(self) -> None:
         ctx, mock = _ctx(plot_logger=None)
         t = torch.rand(5)
-        CurveMetricHandler(curve_specs).handle("pr", (t, t, t), ctx)
+        CurveMetricHandler(CURVE_SPECS).handle("pr", (t, t, t), ctx)
         mock.assert_not_called()
 
     def test_noop_when_logger_is_not_plot_logger(self) -> None:
         ctx, mock = _ctx(plot_logger=MagicMock())
         t = torch.rand(5)
-        CurveMetricHandler(curve_specs).handle("pr", (t, t, t), ctx)
+        CurveMetricHandler(CURVE_SPECS).handle("pr", (t, t, t), ctx)
         mock.assert_not_called()
 
 
@@ -404,6 +407,50 @@ class TestDispatch:
 
     def test_fake_plot_logger_is_plot_logger_instance(self) -> None:
         assert isinstance(FakePlotLogger(), PlotLogger)
+
+
+# ------------------------------------------------------------- MetricReporter
+
+
+class TestMetricReporter:
+    @staticmethod
+    def _task(metric_set: Any) -> Task:
+        task = MagicMock()
+        task.name = "cls"
+        task.class_names = None
+        task.metrics = {Stage.VAL: metric_set}
+        return cast(Task, task)
+
+    def test_report_logs_each_metric_by_shape_then_resets(self) -> None:
+        metric_set = MagicMock()
+        metric_set.compute.return_value = {"acc": torch.tensor(0.9), "f1": torch.tensor([0.5, 0.7])}
+        log_scalar = MagicMock()
+
+        MetricReporter().report(self._task(metric_set), Stage.VAL, log_scalar, logger=None, step=3)
+
+        keys = [call.args[0] for call in log_scalar.call_args_list]
+        assert "cls/acc/val" in keys  # scalar handler
+        assert "cls/f1/val/mean" in keys  # vector handler (mean + per-class)
+        metric_set.reset.assert_called_once()
+
+    def test_report_routes_matrix_to_plot_logger(self) -> None:
+        metric_set = MagicMock()
+        metric_set.compute.return_value = {"cm": torch.zeros(3, 3)}
+        fake = FakePlotLogger()
+
+        MetricReporter().report(self._task(metric_set), Stage.VAL, MagicMock(), logger=fake, step=1)
+
+        assert len(fake.matrix_calls) == 1
+
+    def test_report_uses_injected_handlers(self) -> None:
+        metric_set = MagicMock()
+        metric_set.compute.return_value = {"x": torch.tensor(1.0)}
+        custom = MagicMock(spec=MetricHandler)
+        custom.can_handle.return_value = True
+
+        MetricReporter(handlers=(custom,)).report(self._task(metric_set), Stage.VAL, MagicMock(), None, 0)
+
+        custom.handle.assert_called_once()
 
 
 # ------------------------------------------------------------------ registry specs
@@ -463,19 +510,19 @@ class TestMatrixRounding:
 
 class TestRegistrySpecs:
     def test_matrix_axes_has_confusion_matrix(self) -> None:
-        assert "confusion_matrix" in matrix_axes
-        assert matrix_axes["confusion_matrix"] == ("Predicted", "True")
+        assert "confusion_matrix" in MATRIX_AXES
+        assert MATRIX_AXES["confusion_matrix"] == ("Predicted", "True")
 
     def test_curve_specs_has_pr_curve(self) -> None:
-        spec = curve_specs["precision_recall_curve"]
+        spec = CURVE_SPECS["precision_recall_curve"]
         assert spec.xaxis == "Recall"
         assert spec.yaxis == "Precision"
-        assert spec.x_idx == 1
-        assert spec.y_idx == 0
+        assert spec.x_index == 1
+        assert spec.y_index == 0
 
     def test_curve_specs_has_roc(self) -> None:
-        spec = curve_specs["roc"]
+        spec = CURVE_SPECS["roc"]
         assert spec.xaxis == "FPR"
         assert spec.yaxis == "TPR"
-        assert spec.x_idx == 0
-        assert spec.y_idx == 1
+        assert spec.x_index == 0
+        assert spec.y_index == 1

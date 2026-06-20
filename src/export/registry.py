@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from src.core.ports import ModelExporter
 from src.core.registry import Registry
+from src.export.ports import ModelExporter
 
 exporters: Registry[ModelExporter] = Registry("exporter")

@@ -48,6 +48,7 @@ line-length = 120
 [tool.typos.default.extend-words]
 # ML abbreviations that typos misidentifies as misspellings
 fpr = "fpr"
+mis = "mis"
 FPR = "FPR"
 NCE = "NCE"
 

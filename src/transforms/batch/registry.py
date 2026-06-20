@@ -7,7 +7,7 @@ bypass the registry with a ``_target_`` spec.
 
 from __future__ import annotations
 
-from src.core.ports import BatchTransform
 from src.core.registry import Registry
+from src.transforms.batch.spec import BatchTransform
 
 batch_transforms: Registry[BatchTransform] = Registry("batch_transform")

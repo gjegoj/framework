@@ -8,9 +8,10 @@ from pathlib import Path
 import torch
 from torch import Tensor
 
-from src.core.entities import ExportRequest
-from src.core.ports import ModelExporter
+from src.export.entities import ExportRequest
+from src.export.ports import ModelExporter
 from src.export.registry import exporters
+from src.export.tracing import as_output_tuple, trace_args
 
 
 @dataclass
@@ -22,7 +23,7 @@ class _TorchScriptRunnable:
     def __call__(self, inputs: dict[str, Tensor]) -> tuple[Tensor, ...]:
         with torch.no_grad():
             raw = self.module(*inputs.values())
-        return raw if isinstance(raw, tuple) else (raw,)
+        return as_output_tuple(raw)
 
 
 @exporters.register("torchscript")
@@ -38,9 +39,8 @@ class TorchScriptExporter(ModelExporter):
         if request.options.get("method", "trace") == "script":
             compiled = self._script(request.module)
         else:
-            args = request.example_inputs
             with torch.no_grad():
-                compiled = torch.jit.trace(request.module, args if len(args) > 1 else args[0])
+                compiled = torch.jit.trace(request.module, trace_args(request.example_inputs))
         compiled.save(str(request.path))
 
     @staticmethod

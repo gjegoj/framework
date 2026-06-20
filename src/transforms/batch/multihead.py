@@ -36,14 +36,14 @@ class _MultiHeadMix:
         params["labels"] = _NOT_A_LABEL
         mixed_image: Tensor = self.transform(image, params)  # type: ignore[attr-defined]
 
-        lam = self._label_lam(params)
+        mix_weight = self._label_mix_weight(params)
         mixed = {
-            key: self._mixup_label(self._as_soft(label, num_classes[key]), lam=lam)  # type: ignore[attr-defined]
+            key: self._mixup_label(self._as_soft(label, num_classes[key]), lam=mix_weight)  # type: ignore[attr-defined]
             for key, label in labels.items()
         }
         return mixed_image, mixed
 
-    def _label_lam(self, params: dict[str, Any]) -> float:
+    def _label_mix_weight(self, params: dict[str, Any]) -> float:
         """The mixing weight applied to labels (differs for MixUp vs CutMix)."""
         raise NotImplementedError
 
@@ -58,10 +58,10 @@ class _MultiHeadMix:
 class MixUpMultiHead(_MultiHeadMix, v2.MixUp):
     """MixUp that mixes one image and any number of heads' labels with shared ``lam``."""
 
-    def __init__(self, alpha: float = 0.2) -> None:
+    def __init__(self, alpha: float = 1.0) -> None:
         super().__init__(alpha=alpha, num_classes=None)
 
-    def _label_lam(self, params: dict[str, Any]) -> float:
+    def _label_mix_weight(self, params: dict[str, Any]) -> float:
         return float(params["lam"])
 
 
@@ -71,5 +71,5 @@ class CutMixMultiHead(_MultiHeadMix, v2.CutMix):
     def __init__(self, alpha: float = 1.0) -> None:
         super().__init__(alpha=alpha, num_classes=None)
 
-    def _label_lam(self, params: dict[str, Any]) -> float:
+    def _label_mix_weight(self, params: dict[str, Any]) -> float:
         return float(params["lam_adjusted"])

@@ -10,7 +10,6 @@ and override ``_shared_step`` (teacher forward + KD loss) while reusing the rest
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Sequence
 from typing import Any
 
 import lightning as L
@@ -22,12 +21,7 @@ from src.core.enums import Stage
 from src.core.keys import LOSS, TOTAL
 from src.core.ports import LossAggregator
 from src.metrics.directions import task_metric_directions
-from src.metrics.handlers import (
-    DEFAULT_METRIC_HANDLERS,
-    MetricHandler,
-    MetricLogContext,
-    dispatch,
-)
+from src.metrics.reporter import MetricReporter
 from src.models.assembly import CompositeModel
 from src.training.aggregator import WeightedSumAggregator
 from src.training.optim.optimizer import OptimizerBuilder
@@ -42,9 +36,8 @@ class BaseLitModule(L.LightningModule, ABC):
         tasks (list[Task]): Task bundles (adapter/criterion/activation/metrics).
         optimizer_builder (OptimizerBuilder): Builds the optimizer on configure.
         scheduler_builder (SchedulerBuilder | None): Optional LR scheduler builder.
-        aggregator (LossAggregator | None): Loss combiner; defaults to weighted sum.
-        task_lr_overrides (dict[str, float] | None): Per-head LR for the optimizer.
-        metric_handlers (Sequence[MetricHandler]): Typed metric loggers (scalar/vector/...).
+        loss_aggregator (LossAggregator | None): Loss combiner; defaults to weighted sum.
+        metric_reporter (MetricReporter | None): Logs metrics by shape; defaults to the standard chain.
         hparams (dict[str, Any] | None): Config snapshot logged at ``on_fit_start``.
     """
 
@@ -54,21 +47,18 @@ class BaseLitModule(L.LightningModule, ABC):
         tasks: list[Task],
         optimizer_builder: OptimizerBuilder,
         scheduler_builder: SchedulerBuilder | None = None,
-        aggregator: LossAggregator | None = None,
-        task_lr_overrides: dict[str, float] | None = None,
-        metric_handlers: Sequence[MetricHandler] = DEFAULT_METRIC_HANDLERS,
+        loss_aggregator: LossAggregator | None = None,
+        metric_reporter: MetricReporter | None = None,
         hparams: dict[str, Any] | None = None,
     ) -> None:
         super().__init__()
         self.model = model
         self.tasks = tasks
-        self._task_map: dict[str, Task] = {task.name: task for task in tasks}
         self._task_weights: dict[str, float] = {task.name: task.weight for task in tasks}
         self._optimizer_builder = optimizer_builder
         self._scheduler_builder = scheduler_builder
-        self._aggregator: LossAggregator = aggregator or WeightedSumAggregator()
-        self._task_lr_overrides = task_lr_overrides or {}
-        self._metric_handlers: tuple[MetricHandler, ...] = tuple(metric_handlers)
+        self._loss_aggregator: LossAggregator = loss_aggregator or WeightedSumAggregator()
+        self._metric_reporter = metric_reporter or MetricReporter()
         self._hparams_to_log = hparams
 
     # ------------------------------------------------------------------ steps
@@ -109,17 +99,11 @@ class BaseLitModule(L.LightningModule, ABC):
 
     def _shared_epoch_end(self, stage: Stage) -> None:
         for task in self.tasks:
-            metrics = task.metrics[stage].compute()
-            for metric_name, value in metrics.items():
-                context = MetricLogContext(
-                    log_scalar=lambda key, val: self.log(key, val, prog_bar=True),
-                    logger=self.logger,
-                    step=self.current_epoch,
-                    class_names=task.class_names,
-                    metric_name=metric_name,
-                )
-                dispatch(f"{task.name}/{metric_name}/{stage}", value, context, self._metric_handlers)
-            task.metrics[stage].reset()
+            self._metric_reporter.report(task, stage, self._log_metric, self.logger, self.current_epoch)
+
+    def _log_metric(self, key: str, value: Any) -> None:
+        """Scalar sink handed to the reporter; logs to the progress bar + logger."""
+        self.log(key, value, prog_bar=True)
 
     def on_train_epoch_end(self) -> None:
         self._shared_epoch_end(Stage.TRAIN)
@@ -133,7 +117,7 @@ class BaseLitModule(L.LightningModule, ABC):
     # ----------------------------------------------------------- optimizer
 
     def configure_optimizers(self) -> OptimizerLRScheduler:
-        optimizer = self._optimizer_builder.build(self.model, task_lr_overrides=self._task_lr_overrides)
+        optimizer = self._optimizer_builder.build(self.model)
         if self._scheduler_builder is None:
             return optimizer
         trainer_facts = {name: getattr(self.trainer, attr) for name, attr in TRAINER_FACTS.items()}
@@ -149,14 +133,14 @@ class BaseLitModule(L.LightningModule, ABC):
         """Per-metric ``higher_is_better`` keyed as this module logs (``MetricDirectionProvider``)."""
         return task_metric_directions(self.tasks)
 
-    def _log_losses(self, combined: LossResult, stage: Stage) -> None:
+    def _log_losses(self, combined_loss: LossResult, stage: Stage) -> None:
         self.log(
             f"{LOSS}/{stage}/{TOTAL}",
-            combined.total,
+            combined_loss.total,
             prog_bar=True,
             on_step=False,
             on_epoch=True,
             sync_dist=True,
         )
-        for name, value in combined.components.items():
+        for name, value in combined_loss.components.items():
             self.log(f"{LOSS}/{stage}/{name}", value, on_step=False, on_epoch=True, sync_dist=True)

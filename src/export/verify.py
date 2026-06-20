@@ -19,9 +19,8 @@ from torch import Tensor
 from src.export.entities import ExportReport, ParityResult
 
 if TYPE_CHECKING:
-    from src.core.entities import ExportRequest
-    from src.core.ports import ModelExporter
-    from src.export.entities import ExportArtifact
+    from src.export.entities import ExportArtifact, ExportRequest
+    from src.export.ports import ModelExporter
 
 _REL_EPS = 1e-8
 
@@ -50,11 +49,11 @@ def compute_parity(
     max_abs = 0.0
     max_rel = 0.0
     within = True
-    for name, ref, act in zip(names, reference, actual, strict=True):
-        ref_f = ref.detach().cpu().float()
-        act_f = act.detach().cpu().float()
-        abs_err = (ref_f - act_f).abs()
-        rel_err = abs_err / (ref_f.abs() + _REL_EPS)
+    for name, reference_tensor, actual_tensor in zip(names, reference, actual, strict=True):
+        reference_float = reference_tensor.detach().cpu().float()
+        actual_float = actual_tensor.detach().cpu().float()
+        abs_err = (reference_float - actual_float).abs()
+        rel_err = abs_err / (reference_float.abs() + _REL_EPS)
         abs_value = float(abs_err.max()) if abs_err.numel() else 0.0
         rel_value = float(rel_err.max()) if rel_err.numel() else 0.0
         per_output[name] = (abs_value, rel_value)
@@ -63,7 +62,7 @@ def compute_parity(
         # Combined tolerance (numpy.allclose form): |a - b| <= atol + rtol * |b|.
         # The atol term dominates near zero, where a pure relative error explodes.
         if abs_err.numel():
-            within = within and bool((abs_err <= atol + rtol * ref_f.abs()).all())
+            within = within and bool((abs_err <= atol + rtol * reference_float.abs()).all())
     return ParityResult(max_abs_error=max_abs, max_rel_error=max_rel, within_tolerance=within, per_output=per_output)
 
 

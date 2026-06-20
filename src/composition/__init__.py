@@ -1,23 +1,6 @@
-"""Composition helpers: pure wiring functions used by the root main.py."""
+"""Composition root: pure wiring functions assembling the experiment.
 
-from src.composition.wiring import (
-    build_backbone,
-    build_bindings,
-    build_data_module,
-    build_data_source,
-    build_optimizer_builder,
-    build_staged_sources,
-    build_tasks,
-    build_transforms,
-)
-
-__all__ = [
-    "build_backbone",
-    "build_bindings",
-    "build_data_module",
-    "build_data_source",
-    "build_optimizer_builder",
-    "build_staged_sources",
-    "build_tasks",
-    "build_transforms",
-]
+The public API is :mod:`src.composition.wiring` (the re-exported builders);
+``main.py`` imports what it needs from there. This package itself exposes nothing
+— it only namespaces the wiring submodules.
+"""

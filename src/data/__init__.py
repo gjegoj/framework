@@ -6,7 +6,7 @@ core ``Sample``/``Batch`` entities. Depends on core, never the reverse.
 
 from src.data.bindings import InputBinding, TargetBinding
 from src.data.collate import collate_samples
-from src.data.datamodule import DataModule
+from src.data.datamodule import CacheOptions, DataLoaderOptions, DataModule
 from src.data.dataset import Dataset
 from src.data.encoders import (
     LabelEncoder,
@@ -23,27 +23,29 @@ from src.transforms.sample import AlbumentationsTransform, Transform
 
 __all__ = [
     "AlbumentationsTransform",
+    "CacheOptions",
     "CsvDataSource",
+    "DataLoaderOptions",
     "DataModule",
     "DataSource",
     "Dataset",
     "EmbeddingLoader",
     "FileDataSource",
-    "ScalarEncoder",
     "ImageLoader",
     "InputBinding",
     "InputLoader",
-    "TextLoader",
-    "input_loaders",
     "JsonDataSource",
     "LabelEncoder",
     "MaskEncoder",
     "MultiLabelEncoder",
+    "ScalarEncoder",
     "TargetBinding",
     "TargetEncoder",
+    "TextLoader",
     "Transform",
     "collate_samples",
     "data_sources",
+    "input_loaders",
     "split_dataframe",
     "target_encoders",
 ]

@@ -2,7 +2,7 @@
 
 from src.training.aggregator import WeightedSumAggregator
 from src.training.modules import LitDataModule, LitModule
-from src.training.optim import OptimizerBuilder, SchedulerBuilder, optimizers
+from src.training.optim import OptimizerBuilder, SchedulerBuilder
 
 __all__ = [
     "LitDataModule",
@@ -10,5 +10,4 @@ __all__ = [
     "OptimizerBuilder",
     "SchedulerBuilder",
     "WeightedSumAggregator",
-    "optimizers",
 ]

@@ -12,7 +12,7 @@ from src.data.encoders import TargetEncoder
 from src.data.loaders import InputLoader
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class InputBinding:
     """Binds a ``Sample.inputs`` key to its CSV column and loader.
 
@@ -27,7 +27,7 @@ class InputBinding:
     loader: InputLoader
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class TargetBinding:
     """Binds a task to the data column and encoder that produce its target.
 

@@ -47,6 +47,6 @@ class LitModule(BaseLitModule):
             task.metrics[stage].update(preds, target.metric)
             task_views[task.name] = TaskStepView(preds=preds, metric_target=target.metric)
 
-        combined = self._aggregator.combine(losses, self._task_weights)
-        self._log_losses(combined, stage)
-        return {"loss": combined.total, "task_views": task_views}
+        combined_loss = self._loss_aggregator.combine(losses, self._task_weights)
+        self._log_losses(combined_loss, stage)
+        return {"loss": combined_loss.total, "task_views": task_views}

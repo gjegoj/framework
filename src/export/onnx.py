@@ -9,9 +9,10 @@ from typing import Any, cast
 import torch
 from torch import Tensor
 
-from src.core.entities import ExportRequest
-from src.core.ports import ModelExporter
+from src.export.entities import ExportRequest
+from src.export.ports import ModelExporter
 from src.export.registry import exporters
+from src.export.tracing import as_output_tuple, trace_args
 
 
 @dataclass
@@ -72,17 +73,17 @@ class OnnxExporter(ModelExporter):
     def export(self, request: ExportRequest) -> None:
         request.path.parent.mkdir(parents=True, exist_ok=True)
         args = request.example_inputs
-        with torch.no_grad():
-            raw = request.module(*args) if len(args) > 1 else request.module(args[0])
-        outputs = raw if isinstance(raw, tuple) else (raw,)
         dynamic_batch = bool(request.options.get("dynamic_batch", False))
-        dynamic_axes = _dynamic_axes(request.input_names, request.output_names, outputs) if dynamic_batch else None
+        dynamic_axes = None
+        if dynamic_batch:  # the dry-run forward only feeds dynamic-axis inference; skip it otherwise
+            with torch.no_grad():
+                outputs = as_output_tuple(request.module(*args))
+            dynamic_axes = _dynamic_axes(request.input_names, request.output_names, outputs)
         opset_version = int(request.options.get("opset_version", 17))
-        export_args = cast(Any, args if len(args) > 1 else args[0])
         with torch.no_grad():
             torch.onnx.export(
                 request.module,
-                export_args,
+                cast(Any, trace_args(args)),
                 str(request.path),
                 input_names=request.input_names,
                 output_names=request.output_names,

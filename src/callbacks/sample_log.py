@@ -20,7 +20,7 @@ import torch
 from torch import Tensor
 
 from src.core.constants import IMAGENET_MEAN, IMAGENET_STD
-from src.core.entities import Batch, is_training_step_output
+from src.core.entities import Batch, is_step_output
 from src.core.enums import Stage
 from src.core.ports import PlotLogger
 from src.training.modules import LitModule
@@ -37,8 +37,8 @@ class SampleLogCallback(L.Callback):
         num_images (int): How many batch samples to include in the grid.
         every_n_epochs (int): Log every N epochs (0, N, 2N, ...).
         batch_index (int): Which batch index within the epoch to log.
-        mean (list[float] | None): Denormalization mean (default ImageNet).
-        std (list[float] | None): Denormalization std (default ImageNet).
+        mean (tuple[float, float, float]): Denormalization mean (default ImageNet).
+        std (tuple[float, float, float]): Denormalization std (default ImageNet).
         title_prefix (str): Prefix for the logged grid title.
         renderer (Renderer | None): IR → HTML renderer (default ``HtmlRenderer``).
     """
@@ -114,7 +114,7 @@ class SampleLogCallback(L.Callback):
     ) -> None:
         if not self._should_log(trainer.current_epoch, batch_idx):
             return
-        if not is_training_step_output(outputs):
+        if not is_step_output(outputs):
             return
         if not isinstance(trainer.logger, PlotLogger):
             return

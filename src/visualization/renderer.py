@@ -207,17 +207,17 @@ class SegmentationLabelRenderer(LabelRenderer):
         assert isinstance(label, Segmentation)
         filled = context.kind == "gt"
         items: list[FieldItem] = []
-        for seg_class in label.classes:
-            color = context.colors.get(seg_class.name, FALLBACK_COLOR)
-            key = field_key(context.task, context.kind, seg_class.name)
-            overlay_uri = mask_overlay_uri(seg_class.mask, hex_to_rgb(color))
+        for segmentation_class in label.classes:
+            color = context.colors.get(segmentation_class.name, FALLBACK_COLOR)
+            key = field_key(context.task, context.kind, segmentation_class.name)
+            overlay_uri = mask_overlay_uri(segmentation_class.mask, hex_to_rgb(color))
             overlay = f'<img class="layer mask" data-key="{html.escape(key, quote=True)}" src="{overlay_uri}">'
-            items.append(FieldItem(key, overlay, "cover", seg_class.name, color, filled))
+            items.append(FieldItem(key, overlay, "cover", segmentation_class.name, color, filled))
         return items
 
     def leaves(self, label: Label) -> list[str]:
         assert isinstance(label, Segmentation)
-        return [seg_class.name for seg_class in label.classes]
+        return [segmentation_class.name for segmentation_class in label.classes]
 
 
 def _render_field(context: FieldContext, label: Label) -> list[FieldItem]:
@@ -326,7 +326,8 @@ class HtmlRenderer(Renderer):
                     f'<input type="checkbox" class="grp" data-prefix="{kind_prefix}" checked>'
                     f'<span class="title">{html.escape(kind)}</span></div><div class="children">'
                 )
-                parts.extend(self._class_row(item) for item in sorted(items.values(), key=lambda it: it.sidebar_label))
+                ordered_items = sorted(items.values(), key=lambda item: item.sidebar_label)
+                parts.extend(self._class_row(item) for item in ordered_items)
                 parts.append("</div></div>")
             parts.append("</div></div>")
         return "".join(parts)

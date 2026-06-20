@@ -434,7 +434,10 @@ class ExperimentConfig(BaseModel):
     lr: float = Field(
         ...,
         gt=0,
-        description="Global learning rate — referenced by optimizer.lr via ${lr}. Override per experiment or per task via tasks.<name>.optimizer.lr.",
+        description=(
+            "Global learning rate — referenced by optimizer.lr via ${lr}. "
+            "Override per experiment or per task via tasks.<name>.optimizer.lr."
+        ),
     )
     data: DataConfig
     dataloader: DataLoaderConfig = Field(default_factory=DataLoaderConfig)

@@ -2,7 +2,8 @@
 
 Per-head LR is a first-class feature (G1 in the plan). The builder separates
 backbone and per-task head parameters into independent groups so each can have
-its own lr/weight-decay without duplicating optimizer instances.
+its own lr without duplicating optimizer instances. The per-task overrides are
+the builder's own config (passed in once), so callers just hand it the model.
 """
 
 from __future__ import annotations
@@ -52,6 +53,8 @@ class OptimizerBuilder:
         optimizer_cls (type[torch.optim.Optimizer]): Optimizer class (default: AdamW).
         extra_kwargs (dict[str, Any] | None): Extra constructor args passed to every
             param-group (e.g. ``momentum`` for SGD, ``betas`` for Adam).
+        task_lr_overrides (dict[str, float] | None): Per-task LR (task name → lr); each
+            named head gets its own param-group at that LR, the rest share ``base_lr``.
     """
 
     def __init__(
@@ -60,11 +63,13 @@ class OptimizerBuilder:
         base_weight_decay: float = 0.0,
         optimizer_cls: Callable[..., torch.optim.Optimizer] = torch.optim.AdamW,
         extra_kwargs: dict[str, Any] | None = None,
+        task_lr_overrides: dict[str, float] | None = None,
     ) -> None:
         self._base_lr = base_lr
         self._base_weight_decay = base_weight_decay
         self._optimizer_cls = optimizer_cls
         self._extra_kwargs = extra_kwargs or {}
+        self._task_lr_overrides = task_lr_overrides or {}
 
     @classmethod
     def from_name(
@@ -73,6 +78,7 @@ class OptimizerBuilder:
         base_lr: float,
         base_weight_decay: float = 0.0,
         extra_kwargs: dict[str, Any] | None = None,
+        task_lr_overrides: dict[str, float] | None = None,
     ) -> OptimizerBuilder:
         """Build from an optimizer registry key (e.g. ``"adamw"``/``"sgd"``).
 
@@ -81,6 +87,7 @@ class OptimizerBuilder:
             base_lr (float): Default learning rate.
             base_weight_decay (float): Default weight decay.
             extra_kwargs (dict[str, Any] | None): Extra constructor args (momentum, ...).
+            task_lr_overrides (dict[str, float] | None): Per-task LR (task name → lr).
 
         Returns:
             OptimizerBuilder: Builder bound to the resolved optimizer class.
@@ -90,33 +97,26 @@ class OptimizerBuilder:
             base_weight_decay=base_weight_decay,
             optimizer_cls=optimizers.get(name),
             extra_kwargs=extra_kwargs,
+            task_lr_overrides=task_lr_overrides,
         )
 
-    def build(
-        self,
-        model: nn.Module,
-        task_lr_overrides: dict[str, float] | None = None,
-        task_wd_overrides: dict[str, float] | None = None,
-    ) -> torch.optim.Optimizer:
+    def build(self, model: nn.Module) -> torch.optim.Optimizer:
         """Construct an optimizer with per-head param-groups.
 
-        The backbone (everything not inside ``model.heads``) always forms a
-        single group at ``base_lr``. Each head with an LR override gets its own
-        group; heads without overrides are folded into the backbone group.
+        The backbone (everything not inside ``model.heads``) always forms a single
+        group at ``base_lr``. Each head named in ``task_lr_overrides`` gets its own
+        group at that LR; heads without an override fold into the backbone group.
 
         Parameters:
             model (nn.Module): The ``CompositeModel`` (must have a ``heads`` attribute).
-            task_lr_overrides (dict[str, float] | None): Per-task LR; task names as keys.
-            task_wd_overrides (dict[str, float] | None): Per-task weight decay.
 
         Returns:
             torch.optim.Optimizer: Configured optimizer.
         """
-        overrides_lr = task_lr_overrides or {}
-        overrides_wd = task_wd_overrides or {}
+        overrides = self._task_lr_overrides
 
         heads: nn.ModuleDict | None = getattr(model, "heads", None)
-        if heads is None or not overrides_lr:
+        if heads is None or not overrides:
             return self._optimizer_cls(
                 model.parameters(),
                 lr=self._base_lr,
@@ -128,15 +128,15 @@ class OptimizerBuilder:
         task_groups: list[ParamGroupSpec] = []
 
         for task_name, head_module in heads.items():
-            if task_name not in overrides_lr:
+            if task_name not in overrides:
                 continue
             params = list(head_module.parameters())
             head_param_ids.update(id(param) for param in params)
             task_groups.append(
                 ParamGroupSpec(
                     name=f"head/{task_name}",
-                    lr=overrides_lr[task_name],
-                    weight_decay=overrides_wd.get(task_name, self._base_weight_decay),
+                    lr=overrides[task_name],
+                    weight_decay=self._base_weight_decay,
                     params=params,
                 )
             )

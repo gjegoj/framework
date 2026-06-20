@@ -8,13 +8,14 @@ target, so the compatibility guard rejects them when a DENSE head is present.
 
 from __future__ import annotations
 
+from abc import abstractmethod
+
 from src.core.entities import Batch
 from src.core.keys import IMAGE
-from src.core.ports import BatchTransform
 from src.tasks.taxonomy import Topology
 from src.transforms.batch.multihead import CutMixMultiHead, MixUpMultiHead, _MultiHeadMix
 from src.transforms.batch.registry import batch_transforms
-from src.transforms.batch.spec import TargetSpec
+from src.transforms.batch.spec import BatchTransform, TargetSpec
 
 
 class _LabelMixTransform(BatchTransform):
@@ -29,13 +30,14 @@ class _LabelMixTransform(BatchTransform):
 
     supported_topologies: frozenset[Topology] = frozenset({Topology.GLOBAL})
 
-    def __init__(self, targets: list[TargetSpec], input_key: str = IMAGE, alpha: float = 0.2) -> None:
+    def __init__(self, targets: list[TargetSpec], input_key: str = IMAGE, alpha: float = 1.0) -> None:
         self._targets = targets
         self._input_key = input_key
         self._mixer = self._build_mixer(alpha)
 
+    @abstractmethod
     def _build_mixer(self, alpha: float) -> _MultiHeadMix:
-        raise NotImplementedError
+        """Build the multi-head mixer (MixUp vs CutMix) for this transform."""
 
     def __call__(self, batch: Batch) -> Batch:
         image = batch.inputs[self._input_key]

@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 
-@dataclass
+@dataclass(slots=True)
 class RuntimeContext:
     """Per-task class counts inferred from data, threaded from setup to task building.
 

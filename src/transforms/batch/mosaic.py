@@ -15,10 +15,9 @@ from torch import Tensor
 
 from src.core.entities import Batch
 from src.core.keys import IMAGE
-from src.core.ports import BatchTransform
 from src.tasks.taxonomy import Topology
 from src.transforms.batch.registry import batch_transforms
-from src.transforms.batch.spec import TargetSpec
+from src.transforms.batch.spec import BatchTransform, TargetSpec
 
 
 @batch_transforms.register("mosaic")

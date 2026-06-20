@@ -21,6 +21,8 @@ Streams:
 
 from __future__ import annotations
 
+from typing import cast
+
 from torch import Tensor, nn
 
 from src.core.entities import FeatureBundle
@@ -67,5 +69,5 @@ class MultiEncoderBackbone(Backbone):
             raise KeyError(f"MultiEncoderBackbone exposes streams {tuple(self.encoders)}, requested {key!r}.")
         if self._embed_dim is not None:
             return self._embed_dim
-        encoder: Backbone = self.encoders[key]  # type: ignore[assignment]
+        encoder = cast(Backbone, self.encoders[key])
         return encoder.feature_dim(POOLED)

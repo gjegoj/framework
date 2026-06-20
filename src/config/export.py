@@ -109,7 +109,7 @@ def _default_targets() -> list[ExportTarget]:
 
 
 class ExportConfig(BaseModel):
-    """Model export settings (ONNX / TorchScript; future TensorRT)."""
+    """Model export settings (ONNX / TorchScript / TensorRT)."""
 
     targets: list[ExportTarget] = Field(
         default_factory=_default_targets,

@@ -104,22 +104,22 @@ def _stratified_split(
     train_size = ratios[Stage.TRAIN]
     remainder_size = 1.0 - train_size
 
-    train_df, remainder_df = _binary_split(frame, train_size, seed, strategy, stratify_column)
+    train_frame, remainder_frame = _binary_split(frame, train_size, seed, strategy, stratify_column)
 
     non_train_stages = [stage for stage in stages if stage != Stage.TRAIN]
     if len(non_train_stages) == 1:
         return {
-            Stage.TRAIN: train_df.reset_index(drop=True),
-            non_train_stages[0]: remainder_df.reset_index(drop=True),
+            Stage.TRAIN: train_frame.reset_index(drop=True),
+            non_train_stages[0]: remainder_frame.reset_index(drop=True),
         }
 
     val_size_in_remainder = ratios[Stage.VAL] / remainder_size if remainder_size > 0 else 0.5
-    val_df, test_df = _binary_split(remainder_df, val_size_in_remainder, seed, strategy, stratify_column)
+    val_frame, test_frame = _binary_split(remainder_frame, val_size_in_remainder, seed, strategy, stratify_column)
 
     return {
-        Stage.TRAIN: train_df.reset_index(drop=True),
-        Stage.VAL: val_df.reset_index(drop=True),
-        Stage.TEST: test_df.reset_index(drop=True),
+        Stage.TRAIN: train_frame.reset_index(drop=True),
+        Stage.VAL: val_frame.reset_index(drop=True),
+        Stage.TEST: test_frame.reset_index(drop=True),
     }
 
 
@@ -183,8 +183,8 @@ def _multilabel_split(
         order=2,
         sample_distribution_per_fold=[1.0 - left_size, left_size],
     )
-    left_idx, right_idx = next(stratifier.split(np.arange(len(frame)).reshape(-1, 1), labels))
-    return frame.iloc[left_idx], frame.iloc[right_idx]
+    left_indices, right_indices = next(stratifier.split(np.arange(len(frame)).reshape(-1, 1), labels))
+    return frame.iloc[left_indices], frame.iloc[right_indices]
 
 
 def _to_multihot(series: pd.Series) -> np.ndarray:
@@ -197,9 +197,9 @@ def _to_multihot(series: pd.Series) -> np.ndarray:
         vocab.update(labels)
 
     ordered = sorted(vocab)
-    label_to_col = {label: col for col, label in enumerate(ordered)}
+    label_to_column = {label: column for column, label in enumerate(ordered)}
     matrix = np.zeros((len(series), len(ordered)), dtype=int)
     for row, labels in enumerate(parsed):
         for label in labels:
-            matrix[row, label_to_col[label]] = 1
+            matrix[row, label_to_column[label]] = 1
     return matrix

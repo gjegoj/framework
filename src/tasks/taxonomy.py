@@ -4,6 +4,8 @@ Users pick a familiar preset (``classification``, ``segmentation``, ...); under
 the hood each preset is a point in the ``Topology x Objective`` grid.
 """
 
+from __future__ import annotations
+
 from enum import StrEnum
 
 

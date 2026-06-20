@@ -20,6 +20,7 @@ from src.core.runtime import RuntimeContext
 from src.data import (
     AlbumentationsTransform,
     CsvDataSource,
+    DataLoaderOptions,
     DataModule,
     LabelEncoder,
     TargetBinding,
@@ -106,7 +107,7 @@ class TestOptimizerBuilder:
 
         model = build_composite_model(backbone, {"label": HeadSpec(kind="linear", out_features=3)})
 
-        opt = OptimizerBuilder(base_lr=1e-3).build(model, task_lr_overrides={"label": 1e-4})
+        opt = OptimizerBuilder(base_lr=1e-3, task_lr_overrides={"label": 1e-4}).build(model)
         assert len(opt.param_groups) == 2
         lrs = {g["name"]: g["lr"] for g in opt.param_groups}
         assert lrs["backbone"] == pytest.approx(1e-3)
@@ -118,7 +119,7 @@ class TestOptimizerBuilder:
 
         model = build_composite_model(backbone, {"label": HeadSpec(kind="linear", out_features=3)})
 
-        opt = OptimizerBuilder(base_lr=1e-3).build(model, task_lr_overrides={"label": 1e-4})
+        opt = OptimizerBuilder(base_lr=1e-3, task_lr_overrides={"label": 1e-4}).build(model)
         all_ids: list[int] = []
         for group in opt.param_groups:
             all_ids.extend(id(p) for p in group["params"])
@@ -146,6 +147,20 @@ class TestOptimizerBuilder:
         assert isinstance(opt, torch.optim.SGD)
         assert opt.param_groups[0]["momentum"] == pytest.approx(0.8)
 
+    def test_build_optimizer_builder_binds_per_task_lr(self) -> None:
+        from src.composition.wiring import build_optimizer_builder
+        from src.config.schema import OptimizerConfig
+        from src.core.entities import HeadSpec
+        from src.models import build_composite_model
+
+        builder = build_optimizer_builder(OptimizerConfig(name="adamw", lr=1e-3), {"label": 1e-4})
+        model = build_composite_model(
+            TimmBackbone("resnet18", pretrained=False), {"label": HeadSpec(kind="linear", out_features=3)}
+        )
+        lrs = {group["name"]: group["lr"] for group in builder.build(model).param_groups}
+        assert lrs["head/label"] == pytest.approx(1e-4)  # override bound through the builder
+        assert lrs["backbone"] == pytest.approx(1e-3)
+
 
 # ------------------------------------------------ LitModule smoke
 
@@ -167,7 +182,7 @@ class TestLitModuleSmoke:
             seed=0,
             source=CsvDataSource(str(csv_path)),
             split={Stage.TRAIN: 0.6, Stage.VAL: 0.2, Stage.TEST: 0.2},
-            drop_last=True,  # 15 samples × 0.6 = 9 train → last batch of 1 breaks BN
+            dataloader_options=DataLoaderOptions(drop_last=True),  # 9 train samples → last batch of 1 breaks BN
         )
         plain_dm.setup()
 
@@ -219,10 +234,10 @@ class TestStepOutputContract:
     def test_shared_step_returns_loss_and_task_views(self) -> None:
         import torch
 
-        from src.core.entities import TaskStepView, is_training_step_output
+        from src.core.entities import TaskStepView, is_step_output
 
         result = self._lit()._shared_step(self._batch(), Stage.TRAIN)
-        assert is_training_step_output(result)
+        assert is_step_output(result)
         assert isinstance(result["loss"], torch.Tensor) and result["loss"].ndim == 0
         assert "output" not in result  # vestigial raw ModelOutput dropped — task_views covers viz
         view = result["task_views"]["label"]
@@ -278,7 +293,7 @@ class TestEmbeddingSmoke:
             seed=0,
             source=CsvDataSource(str(emb_csv)),
             split={Stage.TRAIN: 0.6, Stage.VAL: 0.2, Stage.TEST: 0.2},
-            drop_last=True,
+            dataloader_options=DataLoaderOptions(drop_last=True),
         )
         plain_dm.setup()
 

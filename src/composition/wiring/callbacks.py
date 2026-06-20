@@ -17,7 +17,7 @@ from typing import Any
 import lightning as L
 
 from src.composition.wiring.common import WiringContext
-from src.composition.wiring.tasks import _resolve_num_classes
+from src.composition.wiring.tasks import resolve_num_classes
 from src.config.schema import ExperimentConfig
 from src.core.instantiate import instantiate, resolve_target
 from src.core.registry import Registry
@@ -141,5 +141,5 @@ def _target_spec(task_name: str, context: WiringContext) -> TargetSpec:
     """Build the ``TargetSpec`` (key, topology, num_classes) for one task."""
     task_config = context.config.tasks[task_name]
     topology = task_presets.create(task_config.preset).topology
-    num_classes = _resolve_num_classes(task_name, task_config, context.runtime)
+    num_classes = resolve_num_classes(task_name, task_config, context.runtime)
     return TargetSpec(key=task_name, topology=topology, num_classes=num_classes)

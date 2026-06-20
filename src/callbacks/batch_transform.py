@@ -14,7 +14,7 @@ import logging
 import lightning as L
 
 from src.core.entities import Batch
-from src.core.ports import BatchTransform
+from src.transforms.batch.spec import BatchTransform
 
 log = logging.getLogger(__name__)
 

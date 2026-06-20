@@ -7,7 +7,7 @@ objective strategies — and users — can select them by key.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 import segmentation_models_pytorch as smp
 import torch
@@ -19,8 +19,30 @@ from src.core.ports import Criterion
 from src.losses.registry import criteria
 
 
+class _SingleTermCriterion(Criterion):
+    """Base for criteria that wrap one loss module and log it under one component.
+
+    Subclasses build their ``nn.Module`` loss in ``__init__`` and hand it to
+    ``super().__init__``; they set ``_component_name`` — the label the scalar is
+    logged under (conventionally the registry key).
+
+    Parameters:
+        loss (nn.Module): Wrapped loss, called as ``loss(logits, target)``.
+    """
+
+    _component_name: str
+
+    def __init__(self, loss: nn.Module) -> None:
+        super().__init__()
+        self._loss = loss
+
+    def forward(self, logits: Tensor, target: Tensor) -> LossResult:
+        value: Tensor = self._loss(logits, target)
+        return LossResult(total=value, components={self._component_name: value})
+
+
 @criteria.register("cross_entropy")
-class CrossEntropyCriterion(Criterion):
+class CrossEntropyCriterion(_SingleTermCriterion):
     """Multiclass cross-entropy on logits ``[B, C]`` vs class indices ``[B]``.
 
     Parameters:
@@ -29,27 +51,22 @@ class CrossEntropyCriterion(Criterion):
         ignore_index (int): Target value ignored in the loss (default ``-100``).
     """
 
+    _component_name = "cross_entropy"
+
     def __init__(
         self,
         label_smoothing: float = 0.0,
         weight: list[float] | None = None,
         ignore_index: int = -100,
     ) -> None:
-        super().__init__()
         weight_tensor = torch.tensor(weight, dtype=torch.float) if weight is not None else None
-        self._loss = nn.CrossEntropyLoss(
-            weight=weight_tensor,
-            label_smoothing=label_smoothing,
-            ignore_index=ignore_index,
+        super().__init__(
+            nn.CrossEntropyLoss(weight=weight_tensor, label_smoothing=label_smoothing, ignore_index=ignore_index)
         )
-
-    def forward(self, logits: Tensor, target: Tensor) -> LossResult:
-        value: Tensor = self._loss(logits, target)
-        return LossResult(total=value, components={"cross_entropy": value})
 
 
 @criteria.register("bce")
-class BCEWithLogitsCriterion(Criterion):
+class BCEWithLogitsCriterion(_SingleTermCriterion):
     """Binary / multilabel BCE on logits vs float targets.
 
     Operates on logits ``[B]`` or ``[B, C]`` vs float targets of the same shape.
@@ -60,56 +77,43 @@ class BCEWithLogitsCriterion(Criterion):
         reduction (str): ``"mean"`` (default) / ``"sum"`` / ``"none"``.
     """
 
-    def __init__(
-        self,
-        pos_weight: list[float] | None = None,
-        reduction: str = "mean",
-    ) -> None:
-        super().__init__()
-        pos_weight_tensor = torch.tensor(pos_weight, dtype=torch.float) if pos_weight is not None else None
-        self._loss = nn.BCEWithLogitsLoss(pos_weight=pos_weight_tensor, reduction=reduction)
+    _component_name = "bce"
 
-    def forward(self, logits: Tensor, target: Tensor) -> LossResult:
-        value: Tensor = self._loss(logits, target)
-        return LossResult(total=value, components={"bce": value})
+    def __init__(self, pos_weight: list[float] | None = None, reduction: str = "mean") -> None:
+        pos_weight_tensor = torch.tensor(pos_weight, dtype=torch.float) if pos_weight is not None else None
+        super().__init__(nn.BCEWithLogitsLoss(pos_weight=pos_weight_tensor, reduction=reduction))
 
 
 @criteria.register("mse")
-class MSECriterion(Criterion):
+class MSECriterion(_SingleTermCriterion):
     """Mean squared error on raw outputs vs float targets.
 
     Parameters:
         reduction (str): ``"mean"`` (default) / ``"sum"``.
     """
 
-    def __init__(self, reduction: str = "mean") -> None:
-        super().__init__()
-        self._loss = nn.MSELoss(reduction=reduction)
+    _component_name = "mse"
 
-    def forward(self, logits: Tensor, target: Tensor) -> LossResult:
-        value: Tensor = self._loss(logits, target)
-        return LossResult(total=value, components={"mse": value})
+    def __init__(self, reduction: str = "mean") -> None:
+        super().__init__(nn.MSELoss(reduction=reduction))
 
 
 @criteria.register("l1")
-class L1Criterion(Criterion):
+class L1Criterion(_SingleTermCriterion):
     """Mean absolute error on raw outputs vs float targets.
 
     Parameters:
         reduction (str): ``"mean"`` (default) / ``"sum"``.
     """
 
-    def __init__(self, reduction: str = "mean") -> None:
-        super().__init__()
-        self._loss = nn.L1Loss(reduction=reduction)
+    _component_name = "l1"
 
-    def forward(self, logits: Tensor, target: Tensor) -> LossResult:
-        value: Tensor = self._loss(logits, target)
-        return LossResult(total=value, components={"l1": value})
+    def __init__(self, reduction: str = "mean") -> None:
+        super().__init__(nn.L1Loss(reduction=reduction))
 
 
 @criteria.register("dice")
-class DiceCriterion(Criterion):
+class DiceCriterion(_SingleTermCriterion):
     """Soft Dice loss (overlap-based) on logits — strong for segmentation.
 
     Wraps ``smp.losses.DiceLoss``; for multiclass it consumes ``[B, C, H, W]``
@@ -119,13 +123,10 @@ class DiceCriterion(Criterion):
         mode (str): ``"multiclass"`` (default) / ``"multilabel"`` / ``"binary"``.
     """
 
-    def __init__(self, mode: str = "multiclass") -> None:
-        super().__init__()
-        self._loss = smp.losses.DiceLoss(mode=mode)
+    _component_name = "dice"
 
-    def forward(self, logits: Tensor, target: Tensor) -> LossResult:
-        value: Tensor = self._loss(logits, target)
-        return LossResult(total=value, components={"dice": value})
+    def __init__(self, mode: str = "multiclass") -> None:
+        super().__init__(smp.losses.DiceLoss(mode=mode))
 
 
 @criteria.register("weighted_sum")
@@ -162,7 +163,7 @@ class WeightedSumCriterion(Criterion):
     def __init__(self, losses: dict[str, float | dict[str, Any]]) -> None:
         super().__init__()
         if not losses:
-            raise ValueError("CompositeCriterion needs at least one loss.")
+            raise ValueError("WeightedSumCriterion needs at least one loss.")
         weights: list[float] = []
         criterion_list: list[Criterion] = []
         for key, spec in losses.items():
@@ -183,7 +184,7 @@ class WeightedSumCriterion(Criterion):
         total = logits.new_zeros(())
         components: dict[str, Tensor] = {}
         for weight, criterion in zip(self._weights, self._criteria, strict=True):
-            result = criterion(logits, target)
+            result = cast(Criterion, criterion)(logits, target)  # ModuleList iteration erases the element type
             total = total + weight * result.total
             components.update(result.components)
         return LossResult(total=total, components=components)

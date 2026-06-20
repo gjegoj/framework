@@ -18,8 +18,8 @@ from typing import Any
 import torch
 from torch import Tensor
 
-from src.core.entities import ExportRequest
-from src.core.ports import ModelExporter
+from src.export.entities import ExportRequest
+from src.export.ports import ModelExporter
 from src.export.registry import exporters
 
 # Default batch profile when no explicit ``shapes`` is given: min / opt / max batch over the

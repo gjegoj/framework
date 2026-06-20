@@ -13,7 +13,7 @@ from typing import Any
 import numpy as np
 
 
-@dataclass
+@dataclass(frozen=True)
 class Classification:
     """A single-label prediction or ground truth.
 
@@ -26,7 +26,7 @@ class Classification:
     confidence: float | None = None
 
 
-@dataclass
+@dataclass(frozen=True)
 class Classifications:
     """A multilabel set of classifications.
 
@@ -52,7 +52,7 @@ class RegressionComponent:
     error: float | None = None
 
 
-@dataclass
+@dataclass(frozen=True)
 class Regression:
     """A regression prediction or ground truth: one or more named components.
 
@@ -76,7 +76,7 @@ class SegmentationClass:
     mask: np.ndarray
 
 
-@dataclass
+@dataclass(frozen=True)
 class Segmentation:
     """A segmentation prediction or ground truth: the per-class masks present.
 

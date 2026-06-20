@@ -12,6 +12,7 @@ backbone's feature dimension and constructs it via one of three paths:
 
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import cast
 
@@ -26,8 +27,35 @@ from src.models.heads import _AsHead
 from src.models.registry import head_builders
 
 
+class _FeatureExtractor(ABC):
+    """Strategy producing one task's head input from the backbone.
+
+    Each concrete extractor turns the raw inputs into the tensor its head
+    consumes — reading a stream from the shared backbone output, stacking N views
+    through one shared backbone, or stacking N separate-encoder streams — while
+    reusing (and populating) the shared ``FeatureBundle`` so sibling tasks in one
+    forward pass don't re-run the backbone.
+    """
+
+    @abstractmethod
+    def extract(
+        self,
+        backbone: Backbone,
+        inputs: dict[str, Tensor],
+        shared_features: FeatureBundle | None,
+    ) -> tuple[Tensor, FeatureBundle | None]:
+        """Return ``(head_input, shared_features)`` — the latter cached for reuse."""
+
+    @staticmethod
+    def _ensure_shared_features(
+        backbone: Backbone, inputs: dict[str, Tensor], shared_features: FeatureBundle | None
+    ) -> FeatureBundle:
+        """Run the backbone once, or reuse the bundle already cached this forward pass."""
+        return shared_features if shared_features is not None else backbone(inputs)
+
+
 @dataclass(frozen=True)
-class _SingleViewExtractor:
+class _SingleViewExtractor(_FeatureExtractor):
     """Extracts features for a standard single-image task.
 
     Runs the backbone once on the full inputs dict and caches the resulting
@@ -42,13 +70,12 @@ class _SingleViewExtractor:
         inputs: dict[str, Tensor],
         shared_features: FeatureBundle | None,
     ) -> tuple[Tensor, FeatureBundle | None]:
-        if shared_features is None:
-            shared_features = backbone(inputs)
+        shared_features = self._ensure_shared_features(backbone, inputs, shared_features)
         return shared_features[self.feature_key], shared_features
 
 
 @dataclass(frozen=True)
-class _MultiViewExtractor:
+class _MultiViewExtractor(_FeatureExtractor):
     """Extracts features for a multi-view (Siamese) ranking task.
 
     Stacks all N view tensors into one ``[B*N, ...]`` batch, runs the shared
@@ -69,13 +96,13 @@ class _MultiViewExtractor:
         view_features = backbone({IMAGE: stacked_views})
         embeddings = view_features[self.feature_key]
         batch_size = inputs[self.view_keys[0]].size(0)
-        n_views = len(self.view_keys)
-        reshaped_embeddings = embeddings.view(n_views, batch_size, -1).permute(1, 0, 2)
+        num_views = len(self.view_keys)
+        reshaped_embeddings = embeddings.view(num_views, batch_size, -1).permute(1, 0, 2)
         return reshaped_embeddings, shared_features
 
 
 @dataclass(frozen=True)
-class _MultiStreamExtractor:
+class _MultiStreamExtractor(_FeatureExtractor):
     """Extracts features for a multi-encoder (dual/multi-stream) contrastive task.
 
     Reads N named streams produced by a ``MultiEncoderBackbone`` (one per
@@ -92,13 +119,9 @@ class _MultiStreamExtractor:
         inputs: dict[str, Tensor],
         shared_features: FeatureBundle | None,
     ) -> tuple[Tensor, FeatureBundle | None]:
-        if shared_features is None:
-            shared_features = backbone(inputs)
+        shared_features = self._ensure_shared_features(backbone, inputs, shared_features)
         embeddings = [shared_features[key] for key in self.stream_keys]
         return torch.stack(embeddings, dim=1), shared_features
-
-
-_FeatureExtractor = _SingleViewExtractor | _MultiViewExtractor | _MultiStreamExtractor
 
 
 class CompositeModel(nn.Module):
@@ -125,11 +148,6 @@ class CompositeModel(nn.Module):
         self.backbone = backbone
         self.heads = nn.ModuleDict(heads)
         self._extractors = extractors
-
-    @property
-    def extractors(self) -> dict[str, _FeatureExtractor]:
-        """Per-task feature extractors (read-only; used by export and introspection)."""
-        return self._extractors
 
     def forward(self, inputs: dict[str, Tensor]) -> ModelOutput:
         shared_features: FeatureBundle | None = None
@@ -185,9 +203,8 @@ def _build_extractor(spec: HeadSpec, backbone: Backbone) -> tuple[_FeatureExtrac
         in_features = backbone.feature_dim(spec.stream_keys[0])
         return _MultiStreamExtractor(stream_keys=spec.stream_keys), in_features
     if spec.view_keys is not None:
-        return _MultiViewExtractor(feature_key=spec.feature_key, view_keys=spec.view_keys), backbone.feature_dim(
-            spec.feature_key
-        )
+        in_features = backbone.feature_dim(spec.feature_key)
+        return _MultiViewExtractor(feature_key=spec.feature_key, view_keys=spec.view_keys), in_features
     return _SingleViewExtractor(feature_key=spec.feature_key), backbone.feature_dim(spec.feature_key)
 
 

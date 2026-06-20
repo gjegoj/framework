@@ -9,10 +9,8 @@ layer produces ``Sample``/``Batch``; the model produces ``FeatureBundle`` and a
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypedDict, TypeGuard
 
-import torch.nn as nn
 from torch import Tensor
 
 from src.core.keys import POOLED
@@ -64,7 +62,7 @@ class BatchMeta(TypedDict, total=False):
     target_sources: dict[str, list[str]]
 
 
-@dataclass
+@dataclass(slots=True)
 class Sample:
     """A single, un-batched example produced by the data layer.
 
@@ -83,7 +81,7 @@ class Sample:
     meta: SampleMeta = field(default_factory=SampleMeta)
 
 
-@dataclass
+@dataclass(slots=True)
 class Batch:
     """A collated batch of samples ready for the model.
 
@@ -114,7 +112,7 @@ class Batch:
         return Batch(inputs=inputs, targets=targets, meta=self.meta)
 
 
-@dataclass
+@dataclass(slots=True)
 class FeatureBundle:
     """Named feature streams produced by a backbone.
 
@@ -143,7 +141,7 @@ class FeatureBundle:
         return self.streams.keys()
 
 
-@dataclass
+@dataclass(slots=True)
 class LossResult:
     """Output of a criterion: a backprop scalar plus named components.
 
@@ -156,7 +154,7 @@ class LossResult:
     components: dict[str, Tensor] = field(default_factory=dict)
 
 
-@dataclass
+@dataclass(slots=True)
 class ModelOutput:
     """Result of a ``CompositeModel`` forward pass.
 
@@ -169,7 +167,7 @@ class ModelOutput:
     task_logits: dict[str, Tensor] = field(default_factory=dict)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class HeadSpec:
     """Declarative instruction for building a task head.
 
@@ -213,7 +211,7 @@ class HeadSpec:
     stream_keys: tuple[str, ...] | None = None
 
 
-@dataclass
+@dataclass(slots=True)
 class TargetView:
     """A task target adapted for loss and metric computation.
 
@@ -229,7 +227,7 @@ class TargetView:
     metric: Tensor
 
 
-@dataclass
+@dataclass(slots=True)
 class TaskStepView:
     """Per-task view after a step — shared by metrics and visualization.
 
@@ -256,7 +254,7 @@ class StepOutput(TypedDict):
     task_views: dict[str, TaskStepView]
 
 
-def is_training_step_output(outputs: object) -> TypeGuard[StepOutput]:
+def is_step_output(outputs: object) -> TypeGuard[StepOutput]:
     """Return whether ``outputs`` matches the :class:`StepOutput` contract."""
     return (
         isinstance(outputs, dict)
@@ -266,7 +264,7 @@ def is_training_step_output(outputs: object) -> TypeGuard[StepOutput]:
     )
 
 
-@dataclass
+@dataclass(slots=True)
 class Task:
     """A unit of learning: the bundle of bricks for one head.
 
@@ -304,25 +302,3 @@ class Task:
     def feature_key(self) -> str:
         """The feature stream this task's head consumes."""
         return self.head_spec.feature_key
-
-
-@dataclass(frozen=True)
-class ExportRequest:
-    """Format-neutral export invocation — adapters own format-specific details.
-
-    Parameters:
-        module (nn.Module): Traceable export wrapper (eval + cpu applied by pipeline).
-        example_inputs (tuple[Tensor, ...]): Dummy tensors for tracing.
-        path (Path): Destination file path (suffix set by the exporter).
-        input_names (list[str]): Logical input tensor names for the serialized graph.
-        output_names (list[str]): Logical output tensor names.
-        options (dict[str, Any]): Format-specific options (e.g. ``opset_version``,
-            ``dynamic_batch`` for ONNX). The sole carrier of per-format settings.
-    """
-
-    module: nn.Module
-    example_inputs: tuple[Tensor, ...]
-    path: Path
-    input_names: list[str]
-    output_names: list[str]
-    options: dict[str, Any] = field(default_factory=dict)

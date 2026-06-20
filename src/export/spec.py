@@ -3,23 +3,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
 
 import torch
 from torch import Tensor
 
 from src.config.schema import ExperimentConfig
 from src.core.entities import Task
-from src.core.keys import IMAGE
+from src.data.loaders import input_aliases
 from src.models.assembly import CompositeModel
 from src.tasks.taxonomy import EXPORTABLE_TOPOLOGIES
-
-
-def _input_aliases(inputs: str | dict[str, Any]) -> tuple[str, ...]:
-    """Extract ordered input alias names from ``data.inputs`` (mirrors task wiring)."""
-    if isinstance(inputs, dict):
-        return tuple(inputs.keys())
-    return (IMAGE,)
 
 
 @dataclass(frozen=True)
@@ -74,7 +66,7 @@ def resolve_export_input_key(config: ExperimentConfig) -> str:
     """
     if config.export.input_key is not None:
         return config.export.input_key
-    aliases = _input_aliases(config.data.inputs)
+    aliases = input_aliases(config.data.inputs)
     if len(aliases) != 1:
         raise ValueError(
             f"export.input_key is required when data.inputs defines multiple aliases {aliases}. "

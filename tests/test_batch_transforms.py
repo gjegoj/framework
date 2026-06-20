@@ -9,10 +9,10 @@ import torch
 
 from src.callbacks.batch_transform import BatchTransformCallback
 from src.core.entities import Batch
-from src.core.ports import BatchTransform
 from src.tasks.adapters import MulticlassTargetAdapter
 from src.tasks.taxonomy import Topology
 from src.transforms.batch import CutMix, MixUp, Mosaic, TargetSpec
+from src.transforms.batch.spec import BatchTransform
 
 # ---------------------------------------------------------------- helpers
 

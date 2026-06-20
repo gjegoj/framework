@@ -29,7 +29,7 @@ from src.data.loaders import InputLoader
 
 log = logging.getLogger(__name__)
 
-_BYTES_PER_GIB = 1024**3
+BYTES_PER_GIB = 1024**3
 
 
 class ArrayCache:
@@ -77,7 +77,7 @@ class ArrayCache:
 
     def _status(self) -> str:
         """Live progress suffix: total cached files and memory (cumulative across warms)."""
-        return f"[cyan]{len(self._store)} files · {self._bytes / _BYTES_PER_GIB:.2f} GiB"
+        return f"[cyan]{len(self._store)} files · {self._bytes / BYTES_PER_GIB:.2f} GiB"
 
     @staticmethod
     def _safe_load(load: Callable[[str], np.ndarray], key: str) -> tuple[str, np.ndarray | None]:

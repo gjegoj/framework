@@ -25,8 +25,29 @@ from src.losses.registry import criteria
 _MAX_LOGIT_SCALE = 100.0
 
 
+class _PairedStreamCriterion(Criterion):
+    """Base for contrastive losses over two L2-normalized streams ``[B, 2, D]``.
+
+    Holds the learnable log-space ``logit_scale`` and the preparation shared by
+    every pairwise objective — shape validation, per-stream L2-normalization, and
+    the clamped multiplicative scale. Subclasses initialise ``logit_scale`` in
+    ``__init__`` and implement the pairwise objective in ``forward``.
+    """
+
+    logit_scale: nn.Parameter
+
+    def _normalized_streams(self, logits: Tensor) -> tuple[Tensor, Tensor, Tensor]:
+        """Validate ``[B, 2, D]`` and return ``(stream0, stream1, scale)``, streams L2-normalized."""
+        if logits.ndim != 3 or logits.size(1) != 2:
+            raise ValueError(f"{type(self).__name__} expects logits of shape [B, 2, D], got {tuple(logits.shape)}.")
+        anchor = F.normalize(logits[:, 0], dim=-1)
+        other = F.normalize(logits[:, 1], dim=-1)
+        scale = self.logit_scale.exp().clamp(max=_MAX_LOGIT_SCALE)
+        return anchor, other, scale
+
+
 @criteria.register("info_nce")
-class InfoNCECriterion(Criterion):
+class InfoNCECriterion(_PairedStreamCriterion):
     """Symmetric InfoNCE (CLIP loss) on ``[B, 2, D]`` embeddings.
 
     L2-normalizes each stream, forms the ``[B, B]`` similarity matrix scaled by a
@@ -44,12 +65,7 @@ class InfoNCECriterion(Criterion):
         self.logit_scale = nn.Parameter(torch.tensor(math.log(1.0 / temperature)))
 
     def forward(self, logits: Tensor, target: Tensor) -> LossResult:
-        if logits.ndim != 3 or logits.size(1) != 2:
-            raise ValueError(f"InfoNCECriterion expects logits of shape [B, 2, D], got {tuple(logits.shape)}.")
-        anchor = F.normalize(logits[:, 0], dim=-1)
-        other = F.normalize(logits[:, 1], dim=-1)
-
-        scale = self.logit_scale.exp().clamp(max=_MAX_LOGIT_SCALE)
+        anchor, other, scale = self._normalized_streams(logits)
         similarity = scale * anchor @ other.t()  # [B, B]
         labels = torch.arange(similarity.size(0), device=similarity.device)
 
@@ -60,7 +76,7 @@ class InfoNCECriterion(Criterion):
 
 
 @criteria.register("siglip")
-class SigLIPCriterion(Criterion):
+class SigLIPCriterion(_PairedStreamCriterion):
     """Sigmoid pairwise loss (SigLIP) on ``[B, 2, D]`` embeddings.
 
     Unlike InfoNCE's batch-normalized softmax, SigLIP treats every cell of the
@@ -86,12 +102,7 @@ class SigLIPCriterion(Criterion):
         self.bias = nn.Parameter(torch.tensor(float(bias)))
 
     def forward(self, logits: Tensor, target: Tensor) -> LossResult:
-        if logits.ndim != 3 or logits.size(1) != 2:
-            raise ValueError(f"SigLIPCriterion expects logits of shape [B, 2, D], got {tuple(logits.shape)}.")
-        anchor = F.normalize(logits[:, 0], dim=-1)
-        other = F.normalize(logits[:, 1], dim=-1)
-
-        scale = self.logit_scale.exp().clamp(max=_MAX_LOGIT_SCALE)
+        anchor, other, scale = self._normalized_streams(logits)
         pair_logits = scale * anchor @ other.t() + self.bias  # [B, B]
 
         # +1 on the diagonal (positive pairs), −1 elsewhere (negatives).

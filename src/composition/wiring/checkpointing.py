@@ -102,16 +102,11 @@ def resolve_ckpt_file(trainer: L.Trainer, ckpt_path: str) -> str:
     Raises:
         ValueError: If an alias cannot be resolved.
     """
-    if ckpt_path == "best":
-        callback = trainer.checkpoint_callback
-        path = getattr(callback, "best_model_path", None) if callback is not None else None
-        if not path:
-            raise ValueError("ckpt_path='best' but no best checkpoint was saved.")
-        return str(path)
-    if ckpt_path == "last":
-        callback = trainer.checkpoint_callback
-        path = getattr(callback, "last_model_path", None) if callback is not None else None
-        if not path:
-            raise ValueError("ckpt_path='last' but no last checkpoint was saved.")
-        return str(path)
-    return ckpt_path
+    if ckpt_path not in ("best", "last"):
+        return ckpt_path
+    # ``best``/``last`` → the path ``ModelCheckpoint`` recorded for that alias.
+    callback = trainer.checkpoint_callback
+    path = getattr(callback, f"{ckpt_path}_model_path", None) if callback is not None else None
+    if not path:
+        raise ValueError(f"ckpt_path={ckpt_path!r} but no {ckpt_path} checkpoint was saved.")
+    return str(path)
