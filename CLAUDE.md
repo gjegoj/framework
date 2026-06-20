@@ -21,8 +21,10 @@ handlers (scalar/vector/matrix/curve), ClearML logger, and callbacks — EMA (th
 Lightning's `EMAWeightAveraging`), freeze, checkpoint, `MetricsProgressBar`, `SampleLogCallback`,
 and batch transforms (MixUp/CutMix/Mosaic). Cross-cutting subsystems: model **export**
 (`export/`: ONNX/TorchScript/TensorRT + numerical-parity verification), sample **visualization**
-(`visualization/`: interactive HTML GT-vs-pred grid behind `SampleLogCallback`), and an in-RAM
-image/mask **cache** (`data/cache.py`). Next: LoRA/PEFT.
+(`visualization/`: interactive HTML GT-vs-pred grid behind `SampleLogCallback`), an in-RAM
+image/mask **cache** (`data/cache.py`), and a pre-training **dataset distribution report**
+(`data/statistics.py` computes; the `dataset_stats` callback renders terminal tables + ClearML
+histograms). Next: LoRA/PEFT.
 
 ## Commands
 
@@ -239,6 +241,13 @@ class in a registry (OCP).
   `OneOf`, etc.); `registry` is optional (omit for pure `_target_` mode with no registry lookup).
 - `build_data_module(config, target_bindings, runtime)` is the single wiring call that replaces
   manual `DataModule` construction; split/pre-split logic is encapsulated there.
+- **Dataset distributions** are computed by the encoder, not a parallel calculator:
+  `TargetEncoder.summarize(values) -> Distribution | None` (base → `None`; label/multilabel →
+  `CategoricalDistribution`, scalar → `ContinuousDistribution`; `MaskEncoder` deferred → `None`).
+  `DataModule.statistics()` assembles `{task: {stage: Distribution}}` (data *computes*); the
+  `dataset_stats` callback *presents* — terminal tables + `PlotLogger.log_histogram` — keeping
+  `rich`/logger out of the data layer (gated via the `callbacks` group, like `metric_summary`).
+  Segmentation drops in by implementing `MaskEncoder.summarize` — no reporter change (renders any shape).
 
 ## Environment notes
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any, cast
 from unittest.mock import MagicMock
 
@@ -31,12 +32,14 @@ from src.tasks.presets import classification, regression
 
 
 class FakePlotLogger(PlotLogger):
-    """Test double that records ``log_matrix``, ``log_curve``, and ``log_html`` calls."""
+    """Test double recording ``log_matrix`` / ``log_curve`` / ``log_html`` / ``log_single_value`` calls."""
 
     def __init__(self) -> None:
         self.matrix_calls: list[dict[str, Any]] = []
         self.curve_calls: list[dict[str, Any]] = []
         self.html_calls: list[dict[str, Any]] = []
+        self.single_values: dict[str, float] = {}
+        self.histogram_calls: list[dict[str, Any]] = []
 
     def log_matrix(
         self,
@@ -67,6 +70,12 @@ class FakePlotLogger(PlotLogger):
 
     def log_html(self, title: str, html: str, iteration: int) -> None:
         self.html_calls.append({"title": title, "html": html, "iteration": iteration})
+
+    def log_single_value(self, name: str, value: float) -> None:
+        self.single_values[name] = value
+
+    def log_histogram(self, title: str, series: str, values: Sequence[float], labels: list[str] | None = None) -> None:
+        self.histogram_calls.append({"title": title, "series": series, "values": list(values), "labels": labels})
 
 
 def _ctx(
@@ -507,6 +516,12 @@ class TestMatrixRounding:
         matrix = torch.tensor([[5.0, 0.0], [2.0, 8.0]])
         assert _round_matrix(matrix).tolist() == [[5.0, 0.0], [2.0, 8.0]]
 
+    def test_round_single_value_to_three_decimals(self) -> None:
+        from src.loggers.clearml import _round_value
+
+        assert _round_value(0.158322617) == 0.158
+        assert _round_value(0.75) == 0.75  # already short — unchanged
+
 
 class TestRegistrySpecs:
     def test_matrix_axes_has_confusion_matrix(self) -> None:
@@ -526,3 +541,49 @@ class TestRegistrySpecs:
         assert spec.yaxis == "TPR"
         assert spec.x_index == 0
         assert spec.y_index == 1
+
+
+class TestSummaryMetrics:
+    """Headline selection for the end-of-run single-value summary."""
+
+    def _metrics(self) -> dict[str, torch.Tensor]:
+        return {
+            "species/f1/test": torch.tensor(0.75),  # scalar — keep
+            "breed/f1/test/mean": torch.tensor(0.16),  # vector mean — keep
+            "breed/f1/test/Abyssinian": torch.tensor(0.22),  # per-class — drop
+            "mask/iou/test/mean": torch.tensor(0.53),  # vector mean — keep
+            "loss/test/total": torch.tensor(4.87),  # stage total loss — keep
+            "loss/test/breed/cross_entropy": torch.tensor(3.29),  # loss component — drop
+            "species/f1/val": torch.tensor(0.78),  # other stage — drop
+        }
+
+    def test_names_match_the_training_table_rows(self) -> None:
+        """Stage and the ``mean`` leaf are stripped → ``species/f1``, ``loss/total``, …."""
+        from src.metrics.summary import summary_metrics
+
+        selected = summary_metrics(self._metrics(), Stage.TEST)
+        assert set(selected) == {"species/f1", "breed/f1", "mask/iou", "loss/total"}
+
+    def test_vector_uses_mean_not_per_class(self) -> None:
+        from src.metrics.summary import summary_metrics
+
+        selected = summary_metrics(self._metrics(), Stage.TEST)
+        assert selected["breed/f1"] == pytest.approx(0.16, abs=1e-4)  # the mean, not the 0.22 class
+
+    def test_values_are_plain_floats(self) -> None:
+        from src.metrics.summary import summary_metrics
+
+        selected = summary_metrics(self._metrics(), Stage.TEST)
+        assert all(isinstance(value, float) for value in selected.values())
+        assert selected["loss/total"] == pytest.approx(4.87, abs=1e-4)
+
+    def test_other_stage_excluded(self) -> None:
+        """``species/f1`` holds the test value (0.75), never the val value (0.78)."""
+        from src.metrics.summary import summary_metrics
+
+        assert summary_metrics(self._metrics(), Stage.TEST)["species/f1"] == pytest.approx(0.75, abs=1e-4)
+
+    def test_empty_when_stage_absent(self) -> None:
+        from src.metrics.summary import summary_metrics
+
+        assert summary_metrics(self._metrics(), Stage.TRAIN) == {}

@@ -88,6 +88,7 @@ class TreeModelSummary(RichModelSummary):
             table.add_row(*row)
 
         console = get_console()
+        console.print("\n[bold blue]Model summary[/]")
         console.print(table)
         console.print(_footer(total_parameters, trainable_parameters, model_size, total_training_modes, total_flops))
 

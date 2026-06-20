@@ -65,7 +65,8 @@ class TestRunFitAndTest:
             run_experiment(trainer, lit_module, lit_dm, config, _tasks())
 
         trainer.fit.assert_called_once_with(lit_module, lit_dm)
-        trainer.test.assert_called_once_with(lit_module, lit_dm, ckpt_path="best")
+        # verbose=True: the mock trainer has no MetricsProgressBar, so Lightning prints its table.
+        trainer.test.assert_called_once_with(lit_module, lit_dm, ckpt_path="best", verbose=True)
 
     def test_eval_only_skips_fit(self) -> None:
         config = load_config(_raw(run_train=False, ckpt_path="/weights.ckpt"))
@@ -77,7 +78,7 @@ class TestRunFitAndTest:
             run_experiment(trainer, lit_module, lit_dm, config, _tasks())
 
         trainer.fit.assert_not_called()
-        trainer.test.assert_called_once_with(lit_module, lit_dm, ckpt_path="/weights.ckpt")
+        trainer.test.assert_called_once_with(lit_module, lit_dm, ckpt_path="/weights.ckpt", verbose=True)
 
     def test_train_only_skips_test(self) -> None:
         config = load_config(_raw(run_test=False))

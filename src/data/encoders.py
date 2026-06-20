@@ -17,7 +17,8 @@ loop for each stage instead of branching on encoder type.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Iterable
+from collections import Counter
+from collections.abc import Iterable, Mapping
 from typing import Any
 
 import cv2
@@ -26,6 +27,10 @@ import torch
 from torch import Tensor
 
 from src.data.registry import target_encoders
+from src.data.statistics import CategoricalDistribution, ContinuousDistribution, Distribution, Histogram
+
+# Number of bins for the regression value histogram (capped by the sample count).
+_REGRESSION_HISTOGRAM_BINS = 20
 
 
 class TargetEncoder(ABC):
@@ -61,6 +66,22 @@ class TargetEncoder(ABC):
     @property
     def num_classes(self) -> int | None:
         """Number of classes if categorical, else ``None``."""
+        return None
+
+    def summarize(self, values: Iterable[Any]) -> Distribution | None:
+        """Describe the distribution of a raw target column, for the dataset report.
+
+        The base returns ``None`` (no distribution); categorical and scalar encoders
+        override. ``MaskEncoder`` will later return a ``CategoricalDistribution`` of
+        pixel counts — the reporter already handles that shape, so segmentation drops
+        in without touching the report path.
+
+        Parameters:
+            values (Iterable[Any]): Raw column values for one stage.
+
+        Returns:
+            Distribution | None: The distribution, or ``None`` when unsupported.
+        """
         return None
 
 
@@ -118,6 +139,12 @@ class _CategoricalEncoder(TargetEncoder):
     def class_mapping(self) -> dict[int, str]:
         return dict(self._index_to_label)
 
+    def _distribution_from_counts(self, counts: Mapping[str, int]) -> CategoricalDistribution:
+        """Order raw label counts by class index, filling absent classes with zero."""
+        return CategoricalDistribution(
+            counts={label: int(counts.get(label, 0)) for label in self._index_to_label.values()}
+        )
+
 
 @target_encoders.register("label")
 class LabelEncoder(_CategoricalEncoder):
@@ -129,6 +156,9 @@ class LabelEncoder(_CategoricalEncoder):
 
     def to_tensor(self, value: Any) -> Tensor:
         return torch.tensor(self._index_of(str(value)), dtype=torch.long)
+
+    def summarize(self, values: Iterable[Any]) -> Distribution:
+        return self._distribution_from_counts(Counter(str(value) for value in values))
 
 
 @target_encoders.register("multilabel")
@@ -157,6 +187,11 @@ class MultiLabelEncoder(_CategoricalEncoder):
             multi_hot[self._index_of(label)] = 1.0
         return multi_hot
 
+    def summarize(self, values: Iterable[Any]) -> Distribution:
+        # Each row contributes one count per active label (multi-hot), so the per-class
+        # counts can sum to more than the number of rows.
+        return self._distribution_from_counts(Counter(label for value in values for label in self._split(value)))
+
 
 @target_encoders.register("scalar")
 class ScalarEncoder(TargetEncoder):
@@ -170,6 +205,28 @@ class ScalarEncoder(TargetEncoder):
 
     def to_tensor(self, value: Any) -> Tensor:
         return torch.tensor(float(value), dtype=torch.float)
+
+    def summarize(self, values: Iterable[Any]) -> Distribution | None:
+        numbers = np.asarray([float(value) for value in values], dtype=float)
+        numbers = numbers[~np.isnan(numbers)]
+        if numbers.size == 0:
+            return None
+        minimum, q25, median, q75, maximum = (float(x) for x in np.percentile(numbers, [0, 25, 50, 75, 100]))
+        bin_counts, bin_edges = np.histogram(numbers, bins=min(_REGRESSION_HISTOGRAM_BINS, numbers.size))
+        return ContinuousDistribution(
+            count=int(numbers.size),
+            mean=float(numbers.mean()),
+            std=float(numbers.std(ddof=1)) if numbers.size > 1 else 0.0,
+            minimum=minimum,
+            q25=q25,
+            median=median,
+            q75=q75,
+            maximum=maximum,
+            histogram=Histogram(
+                counts=tuple(int(count) for count in bin_counts),
+                edges=tuple(float(edge) for edge in bin_edges),
+            ),
+        )
 
 
 @target_encoders.register("mask")
@@ -210,3 +267,13 @@ class MaskEncoder(TargetEncoder):
     def to_tensor(self, value: Any) -> Tensor:
         tensor = value if isinstance(value, torch.Tensor) else torch.from_numpy(np.asarray(value))
         return tensor.long()
+
+    def summarize(self, values: Iterable[Any]) -> Distribution | None:
+        """Pixel-class distribution is not computed yet (segmentation deferred).
+
+        When implemented, this will read the masks and return a
+        ``CategoricalDistribution`` of pixel counts — the reporter already renders
+        that shape, so no other code changes. Until then, segmentation tasks are
+        simply omitted from the dataset report.
+        """
+        return None

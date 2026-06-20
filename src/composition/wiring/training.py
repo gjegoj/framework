@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 import lightning as L
 
+from src.callbacks.progress_bar import MetricsProgressBar
 from src.composition.wiring.checkpointing import load_init_weights, resolve_test_ckpt_path
 from src.composition.wiring.common import forward_extras
 from src.composition.wiring.export import run_export
@@ -219,6 +220,18 @@ def build_trainer(config: ExperimentConfig, logger: Any, callbacks: list[Any]) -
     )
 
 
+def _lightning_prints_test_results(trainer: L.Trainer) -> bool:
+    """Whether ``trainer.test`` should print Lightning's own results table.
+
+    Suppressed when our ``MetricsProgressBar`` is active: it already renders the test
+    metrics (vector metrics as their mean) in the live table, so Lightning's verbose
+    per-class dump would be redundant clutter. Without our bar, keep the default table.
+    """
+    # ``Trainer.callbacks`` is a public runtime attribute the type stubs do not expose.
+    callbacks: list[Any] = getattr(trainer, "callbacks", [])
+    return not any(isinstance(callback, MetricsProgressBar) for callback in callbacks)
+
+
 def run_experiment(
     trainer: L.Trainer,
     lit_module: LitModule,
@@ -252,12 +265,13 @@ def run_experiment(
 
     if config.run_test:
         ckpt_path = resolve_test_ckpt_path(trainer, config, trained=trained)
+        verbose = _lightning_prints_test_results(trainer)
         if ckpt_path is not None:
             log.info("Running test with checkpoint: %s", ckpt_path)
-            trainer.test(lit_module, lit_data_module, ckpt_path=ckpt_path)
+            trainer.test(lit_module, lit_data_module, ckpt_path=ckpt_path, verbose=verbose)
         else:
             log.info("Running test with in-memory weights.")
-            trainer.test(lit_module, lit_data_module)
+            trainer.test(lit_module, lit_data_module, verbose=verbose)
         tested = True
         log.info("Test complete.")
 

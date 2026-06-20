@@ -29,6 +29,7 @@ from src.data.loaders import infer_loader_key, normalize_inputs
 from src.data.registry import input_loaders
 from src.data.sources import DataSource
 from src.data.split import split_dataframe
+from src.data.statistics import DatasetStatistics, Distribution
 from src.transforms.sample import Transform
 
 log = logging.getLogger(__name__)
@@ -146,6 +147,7 @@ class DataModule:
         self._cache_options = cache_options
         self._cache: ArrayCache | None = None
         self._datasets: dict[Stage, Dataset] = {}
+        self._frames: dict[Stage, pd.DataFrame] = {}
         self._input_bindings: list[InputBinding] = []
         self._setup_done = False
 
@@ -164,6 +166,30 @@ class DataModule:
             self._setup_from_source()
         self._setup_done = True
 
+    def statistics(self) -> DatasetStatistics:
+        """Per-task target distributions across stages, for the pre-training report.
+
+        Computed from the fitted encoders and the per-stage frames: each encoder
+        summarizes its own column (it already knows the class vocabulary). A task whose
+        encoder has no distribution (``summarize`` → ``None``, e.g. segmentation today)
+        is omitted. Requires ``setup`` to have run.
+
+        Returns:
+            DatasetStatistics: ``{task_name: {stage: distribution}}``.
+        """
+        if not self._setup_done:
+            raise RuntimeError("DataModule.statistics() requires setup() to have run.")
+        statistics: DatasetStatistics = {}
+        for binding in self._target_bindings:
+            per_stage: dict[Stage, Distribution] = {}
+            for stage, frame in self._frames.items():
+                distribution = binding.encoder.summarize(frame[binding.column])
+                if distribution is not None:
+                    per_stage[stage] = distribution
+            if per_stage:
+                statistics[binding.name] = per_stage
+        return statistics
+
     def _setup_from_source(self) -> None:
         """Split mode: read the single source, fit encoders on all data, split by ratio."""
         assert self._source is not None and self._split is not None, "unreachable: validated in __init__"
@@ -171,6 +197,7 @@ class DataModule:
         self._input_bindings = _build_input_bindings(self._inputs_config, frame)
         self._fit_encoders(frame)
         parts = split_dataframe(frame, self._split, self._seed, self._split_stratify)
+        self._frames = parts
         self._setup_cache(parts)
         for stage, part in parts.items():
             self._build_dataset(stage, part)
@@ -185,6 +212,7 @@ class DataModule:
         for stage, source in self._staged_sources.items():
             if stage != Stage.TRAIN:
                 frames[stage] = _apply_max_samples(source.read(), self._max_samples, self._seed)
+        self._frames = frames
         self._setup_cache(frames)
         for stage, frame in frames.items():
             self._build_dataset(stage, frame)

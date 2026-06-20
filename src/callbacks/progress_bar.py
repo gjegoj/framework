@@ -15,12 +15,19 @@ from rich.table import Table
 from rich.text import Text
 
 from src.core.enums import Stage
-from src.core.keys import LOSS
+from src.core.keys import LOSS, MEAN
 from src.core.ports import MetricDirectionProvider
 
 _MetricMode = Literal["min", "max"]
 
-_TRAINING_STAGES: frozenset[str] = frozenset({Stage.TRAIN, Stage.VAL})
+# Stages shown in the table. Test is a single post-fit pass, so it gets a value column but
+# no running "best" — that only makes sense for stages repeated across epochs (train/val).
+_DISPLAY_STAGES: frozenset[str] = frozenset({Stage.TRAIN, Stage.VAL, Stage.TEST})
+_BEST_STAGES: frozenset[str] = frozenset({Stage.TRAIN, Stage.VAL})
+
+# Vector metrics (average=none) log a per-class value plus an aggregate under ``.../mean``
+# (see ``VectorMetricHandler``); the table surfaces only that aggregate (``MEAN`` leaf,
+# from ``core.keys``) and drops the per-class noise.
 
 _REFRESH_RATE = 4  # Hz — how often the Live display redraws
 
@@ -35,7 +42,7 @@ def _mode_from_flag(higher_is_better: bool | None) -> _MetricMode | None:
 def _split_stage(metric_name: str) -> tuple[str, str | None]:
     """Separate a ``task/metric/stage`` key into ``(task/metric, stage)``."""
     parts = metric_name.split("/")
-    for stage in _TRAINING_STAGES:
+    for stage in _DISPLAY_STAGES:
         if stage in parts:
             stage_index = parts.index(stage)
             base_name = "/".join(parts[:stage_index] + parts[stage_index + 1 :])
@@ -46,9 +53,10 @@ def _split_stage(metric_name: str) -> tuple[str, str | None]:
 class MetricsProgressBar(RichProgressBar):
     """RichProgressBar with a live metrics table rendered below the progress bar.
 
-    Each row shows a metric's current Train/Val values alongside its best
-    observed values. Color-coded directional deltas (▲▼) indicate whether the
-    latest change is an improvement. Improvement direction is the metric's own
+    Each row shows a metric's current Train/Val/Test values alongside its best
+    observed Train/Val values (Test runs once post-fit, so it has no "best").
+    Color-coded directional deltas (▲▼) indicate whether the latest change is an
+    improvement. Improvement direction is the metric's own
     declared ``higher_is_better`` flag, bound once at ``setup`` from the module's
     tasks; losses (which are not metrics) default to "lower is better".
 
@@ -72,6 +80,7 @@ class MetricsProgressBar(RichProgressBar):
         self._loss_key = loss_key
         self._metric_filters = metric_filters
 
+        self._live: Live | None = None  # the progress + metrics-table group; created in _init_progress
         self._direction_by_key: dict[str, _MetricMode | None] = {}
         self._current_values: dict[str, float] = {}
         self._step_deltas: dict[str, float] = {}
@@ -99,13 +108,25 @@ class MetricsProgressBar(RichProgressBar):
             return "min"
         return None
 
-    def _is_displayed(self, metric_name: str) -> bool:
-        if self._loss_key and metric_name.split("/", 1)[0] == self._loss_key:
-            return True
+    def _displayed_key(self, metric_name: str) -> str | None:
+        """Normalize a logged key to the ``task/metric/stage`` row key, or ``None`` to skip.
+
+        Collapses a vector metric's ``task/metric/stage/mean`` aggregate to the plain
+        ``task/metric/stage`` key (so the row shows the mean) and drops its per-class leaves.
+        Loss keys (``loss/stage/total``) pass through; scalar metrics stay as-is.
+        """
         parts = metric_name.split("/")
-        if self._metric_filters is None:
-            return len(parts) == 3 and parts[-1] in _TRAINING_STAGES
-        return any(filter_substring in metric_name for filter_substring in self._metric_filters)
+        if self._loss_key and parts[0] == self._loss_key:
+            normalized = metric_name if len(parts) == 3 else None
+        else:
+            if len(parts) == 4 and parts[-1] == MEAN:
+                parts = parts[:-1]  # vector aggregate: drop the "/mean" leaf
+            normalized = "/".join(parts) if len(parts) == 3 and parts[-1] in _DISPLAY_STAGES else None
+        if normalized is None:
+            return None
+        if self._metric_filters is not None and not any(token in metric_name for token in self._metric_filters):
+            return None
+        return normalized
 
     def _track(self, metric_name: str, value: float) -> None:
         """Record a new observation: update step delta and best-value tracking."""
@@ -158,18 +179,19 @@ class MetricsProgressBar(RichProgressBar):
         table.add_column("Best (train)", justify="right")
         table.add_column("Val", justify="right")
         table.add_column("Best (val)", justify="right")
+        table.add_column("Test", justify="right")
 
         rows: dict[str, dict[str, Text]] = {}
 
         for name, value in displayed_metrics.items():
             base, stage = _split_stage(name)
-            if stage not in _TRAINING_STAGES:
+            if stage not in _DISPLAY_STAGES:
                 continue
             rows.setdefault(base, {})[stage] = self._format_cell(name, value, self._step_deltas)
 
         for name, best_value in self._best_values.items():
             base, stage = _split_stage(name)
-            if stage not in _TRAINING_STAGES:
+            if stage not in _BEST_STAGES:
                 continue
             rows.setdefault(base, {})[f"{stage}_best"] = self._format_cell(name, best_value, self._best_deltas)
 
@@ -181,6 +203,7 @@ class MetricsProgressBar(RichProgressBar):
                 row.get("train_best"),
                 row.get("val"),
                 row.get("val_best"),
+                row.get("test"),
             )
 
         return table
@@ -233,13 +256,41 @@ class MetricsProgressBar(RichProgressBar):
 
         displayed: dict[str, float] = {}
         for name, raw_value in raw_metrics.items():
-            if not self._is_displayed(name) or isinstance(raw_value, dict):
+            key = self._displayed_key(name)
+            if key is None or isinstance(raw_value, dict):
                 continue
             try:
                 value = float(raw_value)
             except (TypeError, ValueError):
                 continue
-            self._track(name, value)
-            displayed[name] = value
+            self._track(key, value)
+            displayed[key] = value
 
         self._live.update(Group(self.progress, self._build_table(displayed)))
+
+    def on_test_end(self, trainer: Any, pl_module: Any) -> None:
+        """Render the table once more after the test metrics are finalized.
+
+        ``RichProgressBar`` refreshes on validation/train epoch ends but has no
+        post-test refresh, so the just-computed test metrics would never reach the
+        table. The progress display is still live here (the base ``on_test_end`` does
+        not stop it), so a final refresh fills the Test column before teardown.
+        """
+        self.refresh(hard=True)
+        super().on_test_end(trainer, pl_module)
+
+    def teardown(self, trainer: Any, pl_module: Any, stage: str) -> None:
+        """Stop our Live group cleanly and leave a trailing blank line.
+
+        The base ``RichProgressBar`` only stops its own ``progress``; our ``_live`` (the
+        progress + metrics-table group) would otherwise be torn down by interpreter exit,
+        which leaves the cursor glued to the table's bottom border so the next output (a
+        log line or the shell prompt) starts on the same line. Stopping it here and printing
+        a blank line separates the table from whatever follows.
+        """
+        if self._live is not None:
+            self._live.stop()
+            if self._console is not None:
+                self._console.print()
+            self._live = None
+        super().teardown(trainer, pl_module, stage)

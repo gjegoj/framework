@@ -50,3 +50,4 @@ ENCODER_LAST = "encoder_last"
 # names can be changed in one place and referenced from YAML via ``${key:LOSS}``.
 LOSS = "loss"  # namespace prefix for loss scalars
 TOTAL = "total"  # the aggregate (weighted-sum) loss component
+MEAN = "mean"  # leaf token for a vector metric's averaged value (``{task}/{metric}/{stage}/mean``)

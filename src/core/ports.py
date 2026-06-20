@@ -18,6 +18,7 @@ Each ``nn.Module`` port re-declares a typed ``__call__`` that delegates to
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
 
 import torch.nn as nn
@@ -153,12 +154,13 @@ class LossAggregator(ABC):
 
 
 class PlotLogger(ABC):
-    """A logger backend that can render non-scalar plots (matrices, curves).
+    """A logger backend for artifacts the time-series scalar path cannot express.
 
-    Scalars already reach the backend via Lightning's ``self.log`` →
-    ``Logger.log_metrics``; this port adds the verbs that the scalar path cannot
-    express. A concrete logger (e.g. ``ClearMLLogger``) implements both
-    Lightning's ``Logger`` and this port — one object, one backend Task.
+    Per-step scalars already reach the backend via Lightning's ``self.log`` →
+    ``Logger.log_metrics``; this port adds the verbs that path cannot express —
+    matrices, curves, HTML, and end-of-run summary single-values. A concrete
+    logger (e.g. ``ClearMLLogger``) implements both Lightning's ``Logger`` and
+    this port — one object, one backend Task.
     """
 
     @abstractmethod
@@ -213,6 +215,39 @@ class PlotLogger(ABC):
             title (str): Display title / metric key.
             html (str): Full HTML string to ship to the backend.
             iteration (int): Current training step (epoch or global step).
+        """
+
+    @abstractmethod
+    def log_single_value(self, name: str, value: float) -> None:
+        """Report one final constant scalar to a summary table (no iteration axis).
+
+        Distinct from per-step scalars: backends like ClearML collect these in a
+        dedicated "Single Values" summary, suited to end-of-run headline metrics.
+
+        Parameters:
+            name (str): Display name / key for the value.
+            value (float): The scalar to record.
+        """
+
+    @abstractmethod
+    def log_histogram(
+        self,
+        title: str,
+        series: str,
+        values: Sequence[float],
+        labels: list[str] | None = None,
+    ) -> None:
+        """Log a bar histogram. Calls sharing a ``title`` group as one plot.
+
+        Used for dataset distributions: one ``series`` per stage (train/val/test)
+        groups them as side-by-side bars, making class imbalance and train/test
+        skew visible at a glance.
+
+        Parameters:
+            title (str): Plot title; shared across series to group them.
+            series (str): Series name within the plot (e.g. the stage).
+            values (Sequence[float]): Bar heights (per class or per bin).
+            labels (list[str] | None): Category label per bar (x-axis ticks).
         """
 
 

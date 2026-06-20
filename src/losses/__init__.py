@@ -15,6 +15,7 @@ from src.losses.criterion import (
     MSECriterion,
     WeightedSumCriterion,
 )
+from src.losses.focal import FocalCriterion, FocalLoss
 from src.losses.ranking import MarginRankingCriterion, TripletMarginCriterion
 from src.losses.registry import criteria
 
@@ -23,6 +24,8 @@ __all__ = [
     "BCEWithLogitsCriterion",
     "CrossEntropyCriterion",
     "DiceCriterion",
+    "FocalCriterion",
+    "FocalLoss",
     "InfoNCECriterion",
     "L1Criterion",
     "MSECriterion",

@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import logging
 from argparse import Namespace
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from io import StringIO
 from typing import TYPE_CHECKING, Any
 
@@ -179,6 +179,27 @@ class ClearMLLogger(Logger, PlotLogger):
             file_extension="html",
         )
 
+    @rank_zero_only
+    def log_single_value(self, name: str, value: float) -> None:
+        self._clearml_logger.report_single_value(name, _round_value(value))
+
+    @rank_zero_only
+    def log_histogram(
+        self,
+        title: str,
+        series: str,
+        values: Sequence[float],
+        labels: list[str] | None = None,
+    ) -> None:
+        self._clearml_logger.report_histogram(
+            title=title,
+            series=series,
+            values=list(values),
+            iteration=0,
+            xlabels=labels,  # x-axis tick per bar (classes / bin centers); ``labels`` is the series legend
+            mode="group",  # series (stages) shown as side-by-side bars
+        )
+
     # ---------------------------------------------------------------- utils
 
     @staticmethod
@@ -202,12 +223,21 @@ class ClearMLLogger(Logger, PlotLogger):
         return "/".join(parts[:-1]), parts[-1]
 
 
-def _round_matrix(matrix: Tensor) -> np.ndarray:
-    """Round a matrix to 3 decimals for display.
+# Display precision for values shown verbatim in ClearML cells (matrices, single values).
+# Long floats like ``0.333333…`` read as ``0.333``; ``0.001`` precision is plenty.
+_DISPLAY_DECIMALS = 3
 
-    A normalized confusion matrix is full of long floats (e.g. ``0.333333…``); 3
-    decimals (``0.001`` precision) is plenty and keeps the ClearML cells readable.
-    Integer (count) matrices are unaffected by rounding.
+
+def _round_matrix(matrix: Tensor) -> np.ndarray:
+    """Round a matrix to ``_DISPLAY_DECIMALS`` for display.
+
+    A normalized confusion matrix is full of long floats; rounding keeps the ClearML
+    cells readable. Integer (count) matrices are unaffected by rounding.
     """
-    rounded: np.ndarray = np.round(matrix.cpu().float().numpy(), 3)
+    rounded: np.ndarray = np.round(matrix.cpu().float().numpy(), _DISPLAY_DECIMALS)
     return rounded
+
+
+def _round_value(value: float) -> float:
+    """Round one scalar to ``_DISPLAY_DECIMALS`` for the single-value summary table."""
+    return round(float(value), _DISPLAY_DECIMALS)

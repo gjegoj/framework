@@ -13,6 +13,7 @@ PyTorch Lightning · Hydra · Pydantic · timm / smp · albumentations · torchm
 - [Quick start](#quick-start)
 - [Core concepts](#core-concepts)
 - [Configuration guide](#configuration-guide)
+  - [Config reference](#config-reference)
   - [How components are built](#how-components-are-built)
   - [Data](#data)
   - [DataLoader & cache](#dataloader--cache)
@@ -29,7 +30,8 @@ PyTorch Lightning · Hydra · Pydantic · timm / smp · albumentations · torchm
 - [Extending the framework](#extending-the-framework)
 - [Internals](#internals)
 
-> Section bodies are collapsed by default — click a heading's summary to expand it.
+> The [Config reference](#config-reference) is always visible; the deeper section bodies are
+> collapsed — click a heading's summary to expand it.
 
 ---
 
@@ -81,6 +83,52 @@ them freely; override any key via CLI without touching shared config files.
 ---
 
 ## Configuration guide
+
+### Config reference
+
+Every YAML key is defined and validated in [`src/config/schema.py`](src/config/schema.py) — the
+single source of truth. Each field there carries its own type, default, constraints, and a
+one-line description, so the schema doubles as the authoritative reference; the tables below are
+a map of the surface. The **root** model rejects unknown keys (`extra="forbid"`), while the
+**component sections** (`backbone` · `optimizer` · `scheduler` · `data` · `dataloader` ·
+`logger` · `trainer`) allow extras and forward them verbatim to the underlying constructor.
+
+**Top-level keys** (`ExperimentConfig` root):
+
+| Key | Type | Default | Sets |
+|---|---|---|---|
+| `project` | `str` | — *required* | Project name for tracking. |
+| `run_name` | `str` | `null` | Human-readable run name → logger task. `${now:%Y-%m-%d_%H-%M-%S}` for an auto-timestamp. |
+| `save_dir` | `str` | `null` | Root for run outputs; `checkpoint.dirpath` defaults to `{save_dir}/checkpoints`. Use `${hydra:run.dir}` to follow Hydra's run dir. |
+| `seed` | `int` | `42` | Global random seed. |
+| `epochs` | `int` | — *required* | Number of training epochs. |
+| `batch_size` | `int` | — *required* | Batch size. |
+| `image_size` | `[int, int]` | — *required* | Image `[height, width]` in pixels. |
+| `lr` | `float` | — *required* | Global learning rate; referenced as `${lr}`. Override per task via `tasks.<name>.optimizer.lr`. |
+| `mean` / `std` | `list[float]` | ImageNet | Normalization statistics (must be equal length). |
+| `run_train` / `run_test` / `run_export` | `bool` | `true` | Gate `fit` / `test` / `export` (at least one must be true). |
+| `ckpt_path` | `str` | `null` | Checkpoint for `test` — a `.ckpt` path or alias `best` / `last`. Required for eval-only (`run_train: false`). |
+| `init_ckpt_path` | `str` | `null` | Load weights before `fit` (pretrain / fine-tune, **not** resume). Requires `run_train: true`. |
+
+**Sections** (each a nested model — full fields in the schema, deep dives linked):
+
+| Section | Required | Configures | Schema | Details |
+|---|---|---|---|---|
+| `data` | ✓ | `sources`, `inputs`, `split`, `split_stratify`, `cache`, `max_samples`, `root_path` | `DataConfig` | [Data](#data) |
+| `dataloader` | default | `num_workers`, `pin_memory`, `persistent_workers`, `drop_last`, `prefetch_factor` | `DataLoaderConfig` | [DataLoader & cache](#dataloader--cache) |
+| `backbone` | ✓ | encoder selection (`kind`, `name`, `pretrained`, …) | `BackboneConfig` | [Backbone](#backbone) |
+| `optimizer` | ✓ | `name`, `lr`, `weight_decay`, … | `OptimizerConfig` | [Optimizer, LR & scheduler](#optimizer-lr--scheduler) |
+| `scheduler` | `null` | LR schedule (`name`, `interval`, `monitor`, `runtime_kwargs`, …); `null` = constant LR | `SchedulerConfig` | [Optimizer, LR & scheduler](#optimizer-lr--scheduler) |
+| `tasks` | ✓ (≥1) | per task: `preset`, `target`, `objective`, `head`, `feature_key`, `class_mapping`, `loss`, `metrics`, `weight`, per-head `optimizer` | `TaskConfig` | [Tasks & presets](#tasks--presets) |
+| `transforms` | `null` | per-stage Albumentations pipelines (`_target_` graphs) | dict | [How components are built](#how-components-are-built) |
+| `logger` | default | tracking backend (`none` / `clearml`) | `LoggerConfig` | [Logger](#logger) |
+| `callbacks` | `null` | callbacks by registry key / `_target_` | dict | [Callbacks](#callbacks) |
+| `trainer` | default | Lightning `Trainer` knobs (`accelerator`, `devices`, `precision`, `log_every_n_steps`, `profiler`) | `TrainerConfig` | [How components are built](#how-components-are-built) |
+| `export` | default | deployment export (per-format `targets`) | `ExportConfig` ([`export.py`](src/config/export.py)) | [Export](#export) |
+
+> Field-level constraints (`lr > 0`, `cache.ram_fraction ∈ [0, 1]`, split ratios summing to
+> 1.0, mutually exclusive split / pre-split modes, …) are enforced in the schema's validators —
+> open [`src/config/schema.py`](src/config/schema.py) for the exact contract behind any key.
 
 ### How components are built
 
@@ -213,6 +261,15 @@ data:
   max_samples: 0.1       # float → 10% of data
 ```
 
+**Dataset distribution report.** The `dataset_stats` callback (in the `default` stack) reports,
+before the first stage, each task's target distribution per stage — class counts for
+classification / multilabel, numeric stats for regression — rendered two ways: a compact table
+in the terminal and a grouped-bar histogram per task to the logger (ClearML), with one series
+per stage so train/val/test skew is visible at a glance. The data module *computes* the
+distributions (`DataModule.statistics()`, each `TargetEncoder` summarizing its own column), so
+segmentation (pixel counts) drops in later without touching the report; the callback only
+*presents* them. Logging is a no-op without a plot-capable logger.
+
 </details>
 
 ### DataLoader & cache
@@ -320,7 +377,7 @@ tasks:
 Available objectives: `multiclass` · `multilabel` · `binary` · `continuous` · `metric`
 (metric learning — see [Embeddings & metric learning](#embeddings--metric-learning)).
 
-**Custom loss** (registry keys: `cross_entropy` · `bce` · `mse` · `l1` · `dice` ·
+**Custom loss** (registry keys: `cross_entropy` · `bce` · `mse` · `l1` · `dice` · `focal` ·
 `weighted_sum` · `arcface` · metric-learning losses):
 
 ```yaml
@@ -603,6 +660,8 @@ defaults:
 | `sample_log` | `SampleLogCallback` | Renders a GT-vs-prediction HTML grid (see [Sample visualization](#sample-visualization)) |
 | `progress_bar` | `MetricsProgressBar` | Rich progress bar with live metrics & directions |
 | `batch_transform` | `BatchTransformCallback` | Schedules MixUp / CutMix / Mosaic |
+| `metric_summary` | `MetricSummaryCallback` | After test, reports headline metrics to the logger's single-value summary (see [Logger](#logger)) |
+| `dataset_stats` | `DatasetStatsCallback` | Before the first stage, prints target distributions + logs histograms (see [Data](#data)) |
 
 **Disable a callback at runtime** — delete its key with the `~` prefix:
 
@@ -661,6 +720,14 @@ Override at runtime:
 ```bash
 uv run python main.py 'defaults=[{override /logger: clearml}]'
 ```
+
+**End-of-run summary.** The `metric_summary` callback (in the `default` stack) reports the
+headline **test** metrics — scalars plus each vector metric's mean, no per-class noise — to the
+logger's single-value summary table (ClearML's "Single Values") via `PlotLogger.log_single_value`,
+so the final numbers are visible at a glance. Entries are named as in the live training table
+(`species/f1`, `breed/recall`, `mask/iou`, `loss/total` — stage and the `mean` leaf stripped) and
+rounded for readability. It is a no-op when the logger does not support it (e.g. `logger: none`);
+the detailed per-step scalars and per-class values still log as usual.
 
 </details>
 

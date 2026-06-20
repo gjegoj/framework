@@ -17,6 +17,7 @@ from typing import Any
 
 import torch
 
+from src.core.keys import MEAN
 from src.core.ports import PlotLogger
 
 
@@ -97,7 +98,7 @@ class VectorMetricHandler(MetricHandler):
         return isinstance(value, torch.Tensor) and value.ndim == 1
 
     def handle(self, key: str, value: Any, context: MetricLogContext) -> None:
-        context.log_scalar(f"{key}/mean", value.float().mean())
+        context.log_scalar(f"{key}/{MEAN}", value.float().mean())
         for i, class_value in enumerate(value):
             context.log_scalar(f"{key}/{_class_label(i, context.class_names)}", class_value.float())
 

@@ -521,3 +521,24 @@ class TestSchedulerWiring:
         model = build_composite_model(TimmBackbone("resnet18", pretrained=False), {"label": task.head_spec})
         lit = LitModule(model=model, tasks=[task], optimizer_builder=OptimizerBuilder(base_lr=1e-3))
         assert isinstance(lit.configure_optimizers(), torch.optim.Optimizer)
+
+
+class TestTestVerbose:
+    """``trainer.test`` should print Lightning's own table only when our bar is absent."""
+
+    def test_suppressed_when_metrics_progress_bar_present(self) -> None:
+        from types import SimpleNamespace
+
+        from src.callbacks.progress_bar import MetricsProgressBar
+        from src.composition.wiring.training import _lightning_prints_test_results
+
+        trainer: Any = SimpleNamespace(callbacks=[MetricsProgressBar()])
+        assert _lightning_prints_test_results(trainer) is False
+
+    def test_kept_without_metrics_progress_bar(self) -> None:
+        from types import SimpleNamespace
+
+        from src.composition.wiring.training import _lightning_prints_test_results
+
+        trainer: Any = SimpleNamespace(callbacks=[object()])
+        assert _lightning_prints_test_results(trainer) is True

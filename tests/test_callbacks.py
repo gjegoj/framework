@@ -11,8 +11,10 @@ import torch.nn as nn
 
 from src.callbacks.ema import EmaCallback
 from src.callbacks.freeze import FreezeCallback
+from src.callbacks.metric_summary import MetricSummaryCallback
 from src.callbacks.model_summary import TreeModelSummary, tree_names
 from src.callbacks.registry import callback_registry
+from tests.test_metrics import FakePlotLogger
 
 # ---------------------------------------------------------------- helpers
 
@@ -172,6 +174,45 @@ class TestTreeModelSummary:
                 total_flops=0,
             )
         output = capture.get()
+        assert "Model summary" in output  # blue title above the table
         assert "├─ backbone" in output and "└─ heads" in output  # tree connectors in Name column
         assert "Trainable params" in output and "Modules in train mode" in output  # footer kept
         assert "Total FLOPs" in output
+
+
+# ---------------------------------------------------------------- MetricSummaryCallback
+
+
+def _summary_trainer(logger: object, *, global_zero: bool = True) -> MagicMock:
+    trainer = MagicMock()
+    trainer.is_global_zero = global_zero
+    trainer.logger = logger
+    trainer.callback_metrics = {
+        "species/f1/test": torch.tensor(0.75),
+        "breed/f1/test/mean": torch.tensor(0.16),
+        "breed/f1/test/Abyssinian": torch.tensor(0.22),
+        "loss/test/total": torch.tensor(4.87),
+    }
+    return trainer
+
+
+class TestMetricSummaryCallback:
+    def test_registered(self) -> None:
+        assert "metric_summary" in callback_registry
+
+    def test_reports_headline_metrics_to_plot_logger(self) -> None:
+        logger = FakePlotLogger()
+        MetricSummaryCallback().on_test_end(_summary_trainer(logger), MagicMock())
+        # Names match the training table rows: stage and the "mean" leaf are stripped.
+        assert set(logger.single_values) == {"species/f1", "breed/f1", "loss/total"}
+        assert logger.single_values["species/f1"] == pytest.approx(0.75, abs=1e-4)
+
+    def test_noop_without_plot_logger(self) -> None:
+        """A logger lacking the single-value capability is skipped, not crashed."""
+        cb = MetricSummaryCallback()
+        cb.on_test_end(_summary_trainer(object()), MagicMock())  # object() is not a PlotLogger
+
+    def test_skips_non_global_zero(self) -> None:
+        logger = FakePlotLogger()
+        MetricSummaryCallback().on_test_end(_summary_trainer(logger, global_zero=False), MagicMock())
+        assert logger.single_values == {}

@@ -19,18 +19,28 @@ from src.data.loaders import EmbeddingLoader, ImageLoader, InputLoader, TextLoad
 from src.data.registry import data_sources, input_loaders, target_encoders
 from src.data.sources import CsvDataSource, DataSource, FileDataSource, JsonDataSource
 from src.data.split import split_dataframe
+from src.data.statistics import (
+    CategoricalDistribution,
+    ContinuousDistribution,
+    DatasetStatistics,
+    Histogram,
+)
 from src.transforms.sample import AlbumentationsTransform, Transform
 
 __all__ = [
     "AlbumentationsTransform",
     "CacheOptions",
+    "CategoricalDistribution",
+    "ContinuousDistribution",
     "CsvDataSource",
     "DataLoaderOptions",
     "DataModule",
     "DataSource",
     "Dataset",
+    "DatasetStatistics",
     "EmbeddingLoader",
     "FileDataSource",
+    "Histogram",
     "ImageLoader",
     "InputBinding",
     "InputLoader",

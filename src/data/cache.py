@@ -18,7 +18,7 @@ from collections.abc import Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from threading import Lock
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 from rich.progress import BarColumn, MofNCompleteColumn, Progress, TextColumn
@@ -26,6 +26,9 @@ from torch import Tensor
 
 from src.data.encoders import TargetEncoder
 from src.data.loaders import InputLoader
+
+if TYPE_CHECKING:
+    from src.data.statistics import Distribution
 
 log = logging.getLogger(__name__)
 
@@ -125,8 +128,8 @@ class CachingLoader(InputLoader):
 class CachingTargetEncoder(TargetEncoder):
     """Decorator: serve a spatial target encoder's ``load`` from an ``ArrayCache``.
 
-    Delegates ``fit`` / ``to_tensor`` / ``num_classes`` / ``spatial`` to the inner
-    encoder; only ``load`` (the file read) is cached.
+    Delegates ``fit`` / ``to_tensor`` / ``num_classes`` / ``spatial`` / ``summarize`` to
+    the inner encoder; only ``load`` (the file read) is cached.
 
     Parameters:
         inner (TargetEncoder): The wrapped encoder (e.g. ``MaskEncoder``).
@@ -152,3 +155,6 @@ class CachingTargetEncoder(TargetEncoder):
     @property
     def num_classes(self) -> int | None:
         return self.inner.num_classes
+
+    def summarize(self, values: Iterable[Any]) -> Distribution | None:
+        return self.inner.summarize(values)

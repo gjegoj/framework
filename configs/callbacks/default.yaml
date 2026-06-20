@@ -5,6 +5,9 @@
 lr_monitor:
   logging_interval: epoch
 
+# Before the first stage, print per-task target distributions and log them as histograms.
+dataset_stats: null
+
 # Startup parameter breakdown, rendered as a module tree (backbone / heads / their
 # children). max_depth=3 shows each head separately; 2 collapses heads into one row.
 # TreeModelSummary subclasses RichModelSummary, so Lightning skips its auto-added summary.
@@ -23,3 +26,7 @@ checkpoint:
   save_weights_only: true
 
 progress_bar: null
+
+# After test, report the headline test metrics (scalars + vector means) to the logger's
+# single-value summary table (e.g. ClearML "Single Values"). No-op without such a logger.
+metric_summary: null

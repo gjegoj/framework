@@ -58,6 +58,9 @@ class TestSplitStage:
     def test_extracts_val_stage(self) -> None:
         assert _split_stage("seg/iou/val") == ("seg/iou", "val")
 
+    def test_extracts_test_stage(self) -> None:
+        assert _split_stage("label/accuracy/test") == ("label/accuracy", "test")
+
     def test_stage_in_the_middle(self) -> None:
         assert _split_stage("loss/val/total") == ("loss/total", "val")
 
@@ -105,30 +108,49 @@ class TestDirectionFor:
         assert bar._direction_for("label/perplexity/val") is None
 
 
-# ---------------------------------------------------------------- _is_displayed
+# ---------------------------------------------------------------- _displayed_key
 
 
-class TestIsDisplayed:
-    def test_loss_namespace_is_always_displayed(self) -> None:
-        bar = _bar(loss_key="loss", metric_filters=["iou"])
-        assert bar._is_displayed("loss/train/total")
+class TestDisplayedKey:
+    def test_loss_total_passes_through(self) -> None:
+        bar = _bar(loss_key="loss", metric_filters=None)
+        assert bar._displayed_key("loss/train/total") == "loss/train/total"
 
-    def test_three_part_metric_displayed_by_default(self) -> None:
+    def test_loss_component_is_skipped(self) -> None:
+        """Only the 3-part loss total is shown, not 4-part per-component losses."""
+        bar = _bar(loss_key="loss")
+        assert bar._displayed_key("loss/train/breed/cross_entropy") is None
+
+    def test_three_part_scalar_kept(self) -> None:
         bar = _bar()
-        assert bar._is_displayed("label/accuracy/val")
+        assert bar._displayed_key("label/accuracy/val") == "label/accuracy/val"
 
-    def test_non_stage_metric_not_displayed_by_default(self) -> None:
+    def test_test_stage_kept(self) -> None:
         bar = _bar()
-        assert not bar._is_displayed("label/accuracy/epoch")
+        assert bar._displayed_key("label/accuracy/test") == "label/accuracy/test"
 
-    def test_two_part_metric_not_displayed_by_default(self) -> None:
+    def test_vector_mean_collapses_to_three_parts(self) -> None:
+        """A vector metric's ``.../mean`` aggregate becomes the plain task/metric/stage row."""
         bar = _bar()
-        assert not bar._is_displayed("label/accuracy")
+        assert bar._displayed_key("breed/f1/test/mean") == "breed/f1/test"
+        assert bar._displayed_key("breed/recall/val/mean") == "breed/recall/val"
+
+    def test_per_class_vector_leaf_is_skipped(self) -> None:
+        bar = _bar()
+        assert bar._displayed_key("breed/f1/test/Abyssinian") is None
+
+    def test_non_stage_metric_skipped(self) -> None:
+        bar = _bar()
+        assert bar._displayed_key("label/accuracy/epoch") is None
+
+    def test_two_part_metric_skipped(self) -> None:
+        bar = _bar()
+        assert bar._displayed_key("label/accuracy") is None
 
     def test_filters_restrict_to_substrings(self) -> None:
         bar = _bar(loss_key="", metric_filters=["iou"])
-        assert bar._is_displayed("seg/iou/val")
-        assert not bar._is_displayed("label/accuracy/val")
+        assert bar._displayed_key("seg/iou/val") == "seg/iou/val"
+        assert bar._displayed_key("label/accuracy/val") is None
 
 
 # ---------------------------------------------------------------- _track
@@ -239,4 +261,62 @@ class TestBuildTable:
             "Best (train)",
             "Val",
             "Best (val)",
+            "Test",
         ]
+
+    def test_test_stage_value_is_rendered(self) -> None:
+        """Test-stage metrics land in the Test column (regression: they used to be dropped)."""
+        bar = _bar()
+        table = bar._build_table({"label/accuracy/test": 0.88})
+        assert table.row_count == 1
+        # Cell content lives in the rendered column data; the Test column is the last one.
+        test_column = table.columns[-1]
+        assert test_column.header == "Test"
+        assert any("0.88" in str(cell) for cell in test_column.cells)
+
+    def test_vector_mean_renders_one_row_named_by_base(self) -> None:
+        """A collapsed vector-mean key (task/metric/stage) renders a single task/metric row."""
+        bar = _bar()
+        table = bar._build_table({"breed/f1/test": 0.158})
+        assert table.row_count == 1
+        assert any("breed/f1" in str(cell) for cell in table.columns[0].cells)
+        assert any("0.158" in str(cell) for cell in table.columns[-1].cells)
+
+
+# ---------------------------------------------------------------- on_test_end
+
+
+class TestOnTestEnd:
+    def test_refreshes_so_test_metrics_reach_the_table(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """RichProgressBar has no post-test refresh; our override must force one."""
+        bar = _bar()
+        refreshed: list[bool] = []
+        monkeypatch.setattr(bar, "refresh", lambda hard=False: refreshed.append(hard))
+        bar.on_test_end(trainer=object(), pl_module=object())
+        assert refreshed == [True]
+
+
+# ---------------------------------------------------------------- teardown
+
+
+class TestTeardown:
+    def test_stops_live_and_prints_separator(self) -> None:
+        """The Live group is stopped and a blank line printed, so output isn't glued to the table."""
+        from unittest.mock import MagicMock
+
+        bar = _bar()
+        bar._console = MagicMock()
+        bar._live = MagicMock()
+        live = bar._live
+        bar.teardown(MagicMock(), MagicMock(), "fit")
+        live.stop.assert_called_once_with()
+        bar._console.print.assert_called_once_with()
+        assert bar._live is None
+
+    def test_noop_without_live(self) -> None:
+        from unittest.mock import MagicMock
+
+        bar = _bar()
+        bar._console = MagicMock()
+        bar.teardown(MagicMock(), MagicMock(), "fit")  # _live is None → nothing printed, no crash
+        bar._console.print.assert_not_called()
