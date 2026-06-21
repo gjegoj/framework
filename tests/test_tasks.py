@@ -89,6 +89,27 @@ class TestBricks:
         assert view.loss.dtype == torch.long
         assert torch.equal(view.loss, view.metric)
 
+    def test_binary_adapter_hard_target(self) -> None:
+        view = BinaryTargetAdapter().adapt(torch.tensor([0, 1, 1]))
+        assert view.loss.shape == (3, 1) and view.loss.dtype == torch.float
+        assert view.metric.shape == (3, 1) and view.metric.dtype == torch.long
+
+    def test_binary_adapter_soft_target_from_mixup(self) -> None:
+        """MixUp one-hots binary to ``[B, 2]``; the adapter feeds the single-logit head P(positive)."""
+        soft = torch.tensor([[0.3, 0.7], [0.9, 0.1]])  # one-hot over 2 classes, mixed
+        view = BinaryTargetAdapter().adapt(soft)
+        assert view.loss.shape == (2, 1) and view.loss.dtype == torch.float
+        assert torch.allclose(view.loss, torch.tensor([[0.7], [0.1]]))  # P(positive) = column 1
+        assert torch.equal(view.metric, torch.tensor([[1], [0]]))  # dominant class, [B, 1] long
+
+    def test_binary_bce_accepts_mixup_soft_target(self) -> None:
+        """Regression: BCE on ``[B, 1]`` logits must accept the adapter's ``[B, 1]`` soft target."""
+        logits = torch.randn(4, 1, requires_grad=True)
+        soft = torch.tensor([[0.3, 0.7], [0.9, 0.1], [0.5, 0.5], [0.2, 0.8]])
+        loss_target = BinaryTargetAdapter().adapt(soft).loss
+        BCEWithLogitsCriterion()(logits, loss_target).total.backward()
+        assert logits.grad is not None
+
     def test_cross_entropy_backprops(self) -> None:
         logits = torch.randn(4, 3, requires_grad=True)
         target = torch.randint(0, 3, (4,))

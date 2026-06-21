@@ -115,8 +115,11 @@ def render_chip(
     shown = text if len(text) <= max_chars else text[: max_chars - 1] + "…"
     css_kind = "gt" if filled else "pred"
     style = f"background:{color}" if filled else f"border-color:{color};color:{color}"
+    # ``data-full`` holds the untruncated text; the lightbox swaps it in so the zoomed
+    # view shows full names, while the grid keeps the compact truncated chip.
     return (
         f'<span class="layer chip {css_kind}" data-key="{html.escape(data_key, quote=True)}" '
+        f'data-full="{html.escape(text, quote=True)}" '
         f'style="{style}" title="{html.escape(title or text, quote=True)}">{html.escape(shown)}</span>'
     )
 
@@ -242,6 +245,29 @@ def _encode_image(image: np.ndarray) -> str:
     return f"data:image/png;base64,{encoded}"
 
 
+def _source_link(source: str | None) -> str:
+    """A corner control for a cell's source image (shows the file name, full path on hover).
+
+    A URL opens in a new tab (``🔗``); a local path can't be opened from the browser, so the
+    button copies the path to the clipboard instead (``📋``, with a brief "copied" flash).
+    Empty string when no source is known. ``stopPropagation`` keeps the click from triggering
+    the cell's lightbox zoom.
+    """
+    if not source:
+        return ""
+    escaped = html.escape(source, quote=True)
+    name = html.escape(Path(source).name or source)
+    if source.startswith(("http://", "https://")):
+        return (
+            f'<a class="src" href="{escaped}" target="_blank" rel="noopener" '
+            f'title="{escaped}" onclick="event.stopPropagation()">🔗 {name}</a>'
+        )
+    return (
+        f'<button class="src copy" type="button" data-copy="{escaped}" '
+        f'title="copy path: {escaped}" onclick="copySource(this, event)">📋 {name}</button>'
+    )
+
+
 class Renderer(ABC):
     """Turns a list of ``SampleView`` into one self-contained HTML document."""
 
@@ -301,7 +327,7 @@ class HtmlRenderer(Renderer):
                 collected.append((task, kind, item))
         image_uri = _encode_image(sample.image)
         cell_html = (
-            f'<div class="cell"><img src="{image_uri}">'
+            f'<div class="cell"><img src="{image_uri}">{_source_link(sample.source)}'
             f'<div class="cover">{"".join(zones["cover"])}</div>'
             f'<div class="chips">{"".join(zones["chips"])}</div></div>'
         )

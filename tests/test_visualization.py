@@ -470,6 +470,22 @@ class TestPipeline:
         assert isinstance(pred, Classification)
         assert samples[1].tags == ["species:wrong"]
 
+    def test_build_sample_views_threads_sources(self) -> None:
+        import numpy as np
+
+        from src.visualization.pipeline import build_sample_views
+
+        images = np.zeros((2, 4, 4, 3), dtype=np.uint8)
+        samples = build_sample_views(images, [], {}, sources=["a.jpg", "b.jpg"])
+        assert [sample.source for sample in samples] == ["a.jpg", "b.jpg"]
+
+    def test_build_sample_views_source_none_by_default(self) -> None:
+        import numpy as np
+
+        from src.visualization.pipeline import build_sample_views
+
+        assert build_sample_views(np.zeros((1, 4, 4, 3), dtype=np.uint8), [], {})[0].source is None
+
 
 class TestPipelineRegression:
     def test_regression_task_is_annotated_not_skipped(self) -> None:
@@ -542,6 +558,14 @@ class TestFieldHelpers:
         chip = render_chip("t::gt::x", "a" * 40, "#000000", filled=True, max_chars=10)
         assert "…" in chip
         assert "a" * 40 in chip  # full text preserved in title
+
+    def test_render_chip_data_full_carries_untruncated_text(self) -> None:
+        """The lightbox swaps in ``data-full``; it must hold the full (untruncated) name."""
+        from src.visualization.renderer import render_chip
+
+        chip = render_chip("t::gt::x", "staffordshire_bull_terrier", "#000000", filled=True, max_chars=10)
+        assert 'data-full="staffordshire_bull_terrier"' in chip
+        assert "…" in chip  # the visible text is still the compact truncated form
 
 
 class TestLabelRenderers:
@@ -730,6 +754,36 @@ class TestHtmlRenderer:
 
         out = HtmlRenderer().render([self._sample()], title="t")
         assert '<div class="cover">' in out
+
+    def test_cell_path_source_is_copy_button(self) -> None:
+        import numpy as np
+
+        from src.visualization.entities import SampleView
+        from src.visualization.renderer import HtmlRenderer
+
+        sample = SampleView(image=np.zeros((8, 8, 3), dtype=np.uint8), source="data/images/42.jpg")
+        out = HtmlRenderer().render([sample], title="t")
+        assert 'class="src copy"' in out  # a local path copies, not opens
+        assert 'data-copy="data/images/42.jpg"' in out  # full path copied to clipboard
+        assert ">📋 42.jpg</button>" in out  # basename shown, clipboard icon
+        assert 'onclick="copySource(this, event)"' in out
+
+    def test_cell_url_source_is_open_link(self) -> None:
+        import numpy as np
+
+        from src.visualization.entities import SampleView
+        from src.visualization.renderer import HtmlRenderer
+
+        sample = SampleView(image=np.zeros((8, 8, 3), dtype=np.uint8), source="https://files.x/img/42.jpg")
+        out = HtmlRenderer().render([sample], title="t")
+        assert 'class="src" href="https://files.x/img/42.jpg" target="_blank"' in out  # a URL opens
+        assert ">🔗 42.jpg</a>" in out  # link icon, basename
+        assert 'onclick="event.stopPropagation()"' in out  # click opens, but doesn't zoom
+
+    def test_cell_omits_source_link_when_absent(self) -> None:
+        from src.visualization.renderer import HtmlRenderer
+
+        assert 'class="src"' not in HtmlRenderer().render([self._sample()], title="t")
 
     def test_includes_lightbox_scaffold(self) -> None:
         from src.visualization.renderer import HtmlRenderer

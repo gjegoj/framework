@@ -103,9 +103,12 @@ class SampleView:
         fields (dict[str, Label]): Named labels (e.g. ``"species_gt"``).
         tags (list[str]): Free-form tags (e.g. ``"species:correct"``).
         metadata (dict[str, Any]): Free-form scalars (index, id, ...).
+        source (str | None): Source file path / URL of the displayed image, for a
+            "open original" link in the cell (``None`` when the input is not file-based).
     """
 
     image: np.ndarray
     fields: dict[str, Label] = field(default_factory=dict)
     tags: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
+    source: str | None = None

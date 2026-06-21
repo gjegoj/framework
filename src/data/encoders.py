@@ -1,17 +1,17 @@
-"""Target encoders (data-layer I/O): encode a raw target value into a tensor.
+"""Target encoders (data-layer I/O): turn a raw target value into a model-ready tensor.
 
-All encoders follow the same two-step interface:
-  1. ``load(value)``    — pre-transform: return a representation that can ride
-                          through the transform pipeline. For scalar encoders this
-                          is an identity (returns the raw column value); for
-                          spatial encoders (masks) it reads the file into an array.
-  2. ``to_tensor(val)`` — post-transform: convert whatever ``load`` (and the
-                          transform) produced into a final model-ready tensor.
-                          For scalar encoders this is where the encoding happens
-                          (label lookup, float cast, etc.).
+Two steps, uniform across every encoder, straddling the per-sample transform:
+  1. ``load(value)``    — pre-transform: return the *encoded, transform-ready*
+                          representation (label → class index, multi-label → multi-hot
+                          vector, mask → array). Because it rides through the transform
+                          pipeline, the same augmentation that resizes/flips a mask can
+                          also update a label — e.g. a rotation aug that bumps the
+                          rotation class via its ``apply_to_<task>`` hook.
+  2. ``to_tensor(val)`` — post-transform: tensorize the (possibly transform-modified)
+                          value into a final model-ready tensor (fixing dtype).
 
-Keeping both steps uniform means ``Dataset.__getitem__`` has a single clean
-loop for each stage instead of branching on encoder type.
+Keeping both steps uniform means ``Dataset.__getitem__`` has a single clean loop for
+each stage instead of branching on encoder type.
 """
 
 from __future__ import annotations
@@ -34,11 +34,10 @@ _REGRESSION_HISTOGRAM_BINS = 20
 
 
 class TargetEncoder(ABC):
-    """Two-step encoder: ``load`` (pre-transform) → ``to_tensor`` (post-transform).
+    """Two-step encoder: ``load`` (pre-transform, encodes) → ``to_tensor`` (post-transform, tensorizes).
 
-    ``spatial`` marks encoders whose ``load`` returns a numpy array (a mask) that
-    must ride through the same geometric transform as the image. Scalar encoders
-    have ``spatial = False`` and their ``load`` is a no-op identity.
+    ``spatial`` marks encoders whose ``load`` returns a numpy array (a mask) that must
+    ride through the same geometric transform as the image.
     """
 
     spatial: bool = False
@@ -49,19 +48,16 @@ class TargetEncoder(ABC):
 
     @abstractmethod
     def load(self, value: Any) -> Any:
-        """Pre-transform step.
+        """Pre-transform step: return the encoded, transform-ready representation.
 
-        Scalar encoders: return ``value`` unchanged (identity).
-        Spatial encoders: read the file at ``value`` into a raw numpy array.
+        Labels → the class index; multi-label → a multi-hot vector; masks (spatial) →
+        the array read from disk. The result rides through the transform pipeline, so the
+        same augmentation that resizes/flips a mask can also update a label.
         """
 
     @abstractmethod
     def to_tensor(self, value: Any) -> Tensor:
-        """Post-transform step: convert to a final model-ready tensor.
-
-        Scalar encoders: do the full encoding here (label lookup, float cast, ...).
-        Spatial encoders: fix the dtype of the (already-transformed) array/tensor.
-        """
+        """Post-transform step: tensorize the (possibly transform-modified) value into a model-ready tensor."""
 
     @property
     def num_classes(self) -> int | None:
@@ -88,9 +84,8 @@ class TargetEncoder(ABC):
 class _CategoricalEncoder(TargetEncoder):
     """Shared vocabulary handling for label encoders: the index⇄label maps + validation.
 
-    Subclasses supply only the encoding (``to_tensor``) and pick which labels each row
-    contributes to ``fit`` (a single label, or many for multi-label). ``load`` is identity —
-    the raw string rides through the transform pipeline unchanged.
+    Subclasses supply the encoding (``load`` → class index / multi-hot) and pick which
+    labels each row contributes to ``fit`` (a single label, or many for multi-label).
 
     Parameters:
         class_mapping (dict[int, str] | None): Fixed index→label map; if provided ``fit`` only
@@ -128,9 +123,6 @@ class _CategoricalEncoder(TargetEncoder):
         except KeyError as error:
             raise KeyError(f"Unknown label {label!r}. Known labels: {sorted(self._label_to_index)}.") from error
 
-    def load(self, value: Any) -> Any:
-        return value  # identity — the raw label string passes through the transform
-
     @property
     def num_classes(self) -> int | None:
         return len(self._index_to_label) or None
@@ -148,14 +140,21 @@ class _CategoricalEncoder(TargetEncoder):
 
 @target_encoders.register("label")
 class LabelEncoder(_CategoricalEncoder):
-    """Maps a single categorical label to its integer class index (multiclass/binary)."""
+    """Maps a single categorical label to its integer class index (multiclass/binary).
+
+    ``load`` resolves the label to its index, so it rides through the transform as an int
+    — letting a label-aware augmentation update it (e.g. a rotation aug: ``(index + k) % 4``).
+    """
 
     def fit(self, values: Iterable[Any]) -> None:
         self._require_mapping()
         self._check_known(str(value) for value in values)
 
+    def load(self, value: Any) -> int:
+        return self._index_of(str(value))
+
     def to_tensor(self, value: Any) -> Tensor:
-        return torch.tensor(self._index_of(str(value)), dtype=torch.long)
+        return torch.tensor(int(value), dtype=torch.long)
 
     def summarize(self, values: Iterable[Any]) -> Distribution:
         return self._distribution_from_counts(Counter(str(value) for value in values))
@@ -181,11 +180,14 @@ class MultiLabelEncoder(_CategoricalEncoder):
         self._require_mapping()
         self._check_known(label for value in values for label in self._split(value))
 
-    def to_tensor(self, value: Any) -> Tensor:
-        multi_hot = torch.zeros(len(self._index_to_label), dtype=torch.float)
+    def load(self, value: Any) -> np.ndarray:
+        multi_hot = np.zeros(len(self._index_to_label), dtype=np.float32)
         for label in self._split(value):
             multi_hot[self._index_of(label)] = 1.0
         return multi_hot
+
+    def to_tensor(self, value: Any) -> Tensor:
+        return torch.as_tensor(value, dtype=torch.float)
 
     def summarize(self, values: Iterable[Any]) -> Distribution:
         # Each row contributes one count per active label (multi-hot), so the per-class
@@ -200,8 +202,8 @@ class ScalarEncoder(TargetEncoder):
     def fit(self, values: Iterable[Any]) -> None:
         pass
 
-    def load(self, value: Any) -> Any:
-        return value  # identity
+    def load(self, value: Any) -> float:
+        return float(value)
 
     def to_tensor(self, value: Any) -> Tensor:
         return torch.tensor(float(value), dtype=torch.float)

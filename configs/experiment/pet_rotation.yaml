@@ -1,0 +1,51 @@
+# @package _global_
+# Rotation prediction on the pet dataset: classify each image's orientation
+# (0 / 90 / 180 / 270° CCW). The label is generated online by Rotate90WithLabel — the
+# `rotation` column seeds every sample at class 0 and the aug bumps it by the applied
+# quarter-turns — so one all-0° dataset yields a balanced 4-class task with no extra data.
+defaults:
+  - override /backbone: resnet18      # timm classifier on the pooled stream
+  - override /transforms: rotation
+  - override /logger: clearml
+  - override /callbacks: default
+  - override /scheduler: onecycle
+  - override /dataloader: debug       # num_workers=0 → one RNG stream for the rotation aug
+
+project: pet-rotation
+seed: 0
+epochs: 10
+batch_size: 32
+image_size: [128, 128]
+lr: 1.0e-3
+
+run_train: true
+run_test: true
+run_export: false
+
+# Show rotated samples with their ground-truth vs predicted angle.
+callbacks:
+  sample_log:
+    num_images: 8
+    every_n_epochs: 5
+    batch_index: 0
+    mean: ${mean}
+    std: ${std}
+
+  mixup:
+    name: batch_transform
+    disable_after_fraction: 0.5   # clean data for the second half of training
+    transform:
+      name: mixup                 # or: cutmix — both GLOBAL-only (classification heads)
+      alpha: 1.0
+
+data:
+  sources: data/pet/data.csv
+  inputs: image_path
+  cache: {ram_fraction: 0.5}
+  split: {train: 0.7, val: 0.2, test: 0.1}
+
+tasks:
+  rotation:
+    preset: classification            # multiclass (4 classes) → cross-entropy + argmax metrics
+    target: rotation                  # all-0 seed column; the aug bumps the index online
+    class_mapping: {0: "0", 1: "90", 2: "180", 3: "270"}   # display names AND the encoding

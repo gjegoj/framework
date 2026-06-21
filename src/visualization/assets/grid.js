@@ -1,3 +1,24 @@
+// Copy a local source path to the clipboard (URLs use a plain link instead) and flash the
+// pill. Inline-bound via onclick so cloned lightbox cells keep it; stopPropagation avoids zoom.
+function copySource(el, event) {
+  event.stopPropagation();
+  var text = el.dataset.copy || '';
+  var original = el.textContent;
+  function flash() {
+    el.textContent = 'copied';
+    el.classList.add('copied');
+    setTimeout(function () { el.textContent = original; el.classList.remove('copied'); }, 1200);
+  }
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(flash, function () {});
+  } else {
+    var ta = document.createElement('textarea');
+    ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); flash(); } catch (err) { /* ignore */ }
+    document.body.removeChild(ta);
+  }
+}
 function setHidden(key, hidden) {
   document.querySelectorAll('.layer[data-key="' + key + '"]').forEach(function (c) {
     c.classList.toggle('hidden', hidden);
@@ -43,7 +64,12 @@ document.querySelectorAll('.caret, .title').forEach(function (el) {
   function show(i) {
     idx = (i + cells.length) % cells.length;
     holder.innerHTML = '';
-    holder.appendChild(cells[idx].cloneNode(true));
+    var clone = cells[idx].cloneNode(true);
+    // Swap each chip's compact text for its full name in the zoomed view.
+    clone.querySelectorAll('.chip').forEach(function (chip) {
+      if (chip.dataset.full) { chip.textContent = chip.dataset.full; }
+    });
+    holder.appendChild(clone);
     count.textContent = (idx + 1) + ' / ' + cells.length;
     lb.classList.remove('hidden');
   }

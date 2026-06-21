@@ -270,3 +270,43 @@ class TestCacheConfig:
     def test_cache_unknown_key_rejected(self) -> None:
         with pytest.raises(ConfigError):
             load_config(_raw(data={**_raw()["data"], "cache": {"ram_fraction": 0.5, "bogus": 1}}))
+
+
+class TestRotationExperiment:
+    """The online-rotation experiment needs no custom encoder — the default label encoder
+    yields the class index in ``load`` and the Rotate90WithLabel aug bumps it."""
+
+    def test_rotation_task_validates_with_default_encoder(self) -> None:
+        raw = _raw(
+            tasks={
+                "rotation": {
+                    "preset": "classification",
+                    "target": "rotation",
+                    "class_mapping": {0: "0", 1: "90", 2: "180", 3: "270"},
+                }
+            }
+        )
+        task = load_config(raw).tasks["rotation"]
+        assert task.preset == "classification"
+        assert task.target == "rotation"
+        assert task.class_mapping == {0: "0", 1: "90", 2: "180", 3: "270"}
+        assert task.target_encoder is None  # default label encoder; the index lives in encoder.load
+
+    def test_rotation_transforms_config_wires_the_aug(self) -> None:
+        from omegaconf import OmegaConf
+
+        from src.core.instantiate import instantiate
+        from src.transforms import Rotate90WithLabel
+
+        context = OmegaConf.create(
+            {
+                "seed": 0,
+                "image_size": [128, 128],
+                "mean": [0.0, 0.0, 0.0],
+                "std": [1.0, 1.0, 1.0],
+                "transforms": OmegaConf.load("configs/transforms/rotation.yaml"),
+            }
+        )
+        train_pipeline = OmegaConf.to_container(context.transforms.train, resolve=True)
+        compose = instantiate(train_pipeline)
+        assert any(isinstance(step, Rotate90WithLabel) for step in compose.transforms)

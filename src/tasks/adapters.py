@@ -33,19 +33,23 @@ class MulticlassTargetAdapter(TargetAdapter):
 class BinaryTargetAdapter(TargetAdapter):
     """Binary target: ``[B, 1]`` float for BCE loss; ``[B, 1]`` long for metrics.
 
-    BCEWithLogitsLoss needs float targets matching the logit shape ``[B, 1]``.
-    torchmetrics binary metrics require preds and targets to have the same
-    shape — since logits/predictions are ``[B, 1]``, metric target stays
-    ``[B, 1]`` as well (torchmetrics treats ``[N, 1]`` the same as ``[N]``
-    for binary tasks as long as both shapes match).
+    BCEWithLogitsLoss needs float targets matching the single-logit shape ``[B, 1]``.
+    torchmetrics binary metrics require preds and targets to have the same shape — since
+    logits/predictions are ``[B, 1]``, the metric target stays ``[B, 1]`` (torchmetrics
+    treats ``[N, 1]`` the same as ``[N]`` for binary as long as both shapes match).
+
+    Also accepts *soft* targets ``[B, 2]`` float (one-hot then mixed by MixUp/CutMix): the
+    loss keeps the soft probability of the positive class (index 1) as ``[B, 1]``, while the
+    metric target collapses to the dominant class via argmax.
     """
 
     def adapt(self, target: Tensor) -> TargetView:
+        if target.is_floating_point() and target.ndim == 2 and target.size(-1) == 2:
+            positive = target[:, 1:2]  # soft P(positive) for the single-logit head, [B, 1]
+            return TargetView(loss=positive, metric=target.argmax(dim=-1, keepdim=True))
         if target.ndim == 1:
             target = target.unsqueeze(-1)
-        loss_target = target.float()
-        metric_target = target.long()
-        return TargetView(loss=loss_target, metric=metric_target)
+        return TargetView(loss=target.float(), metric=target.long())
 
 
 class MultilabelTargetAdapter(TargetAdapter):

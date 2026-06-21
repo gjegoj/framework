@@ -132,14 +132,20 @@ class TestLabelEncoder:
         assert tensor.item() == 1
         assert tensor.dtype.is_floating_point is False
 
-    def test_load_is_identity(self) -> None:
+    def test_load_returns_class_index(self) -> None:
         codec = LabelEncoder(class_mapping={0: "cat", 1: "dog"})
-        assert codec.load("cat") == "cat"
+        assert codec.load("dog") == 1  # encoding happens in load (a transform-ready int)
 
-    def test_to_tensor_unknown_label_raises(self) -> None:
+    def test_load_unknown_label_raises(self) -> None:
         codec = LabelEncoder(class_mapping={0: "cat", 1: "dog"})
         with pytest.raises(KeyError, match="Unknown label"):
-            codec.to_tensor("cow")
+            codec.load("cow")
+
+    def test_load_index_is_transform_ready_for_an_aug(self) -> None:
+        """load() yields the int index, so a label-aware aug can bump it; to_tensor wraps it."""
+        codec = LabelEncoder(class_mapping={0: "0", 1: "90", 2: "180", 3: "270"})
+        bumped = (codec.load("0") + 3) % 4  # e.g. a rotation aug applying 270° CCW
+        assert codec.to_tensor(bumped).item() == 3
 
     def test_fit_validates_known_labels(self) -> None:
         codec = LabelEncoder(class_mapping={0: "cat", 1: "dog"})
@@ -167,19 +173,18 @@ class TestMultiLabelEncoder:
         assert vec.dtype == torch.float
         assert vec.shape == (3,)
 
-    def test_to_tensor_correct_positions(self) -> None:
+    def test_load_builds_multihot_at_correct_positions(self) -> None:
         codec = MultiLabelEncoder(class_mapping={0: "a", 1: "b", 2: "c"})
-        vec = codec.to_tensor("a,c")
-        assert vec.tolist() == [1.0, 0.0, 1.0]
+        assert codec.load("a,c").tolist() == [1.0, 0.0, 1.0]  # multi-hot built in load
 
     def test_separator_param(self) -> None:
         codec = MultiLabelEncoder(separator="|", class_mapping={0: "x", 1: "y", 2: "z"})
         assert codec.num_classes == 3
 
-    def test_to_tensor_unknown_label_raises(self) -> None:
+    def test_load_unknown_label_raises(self) -> None:
         codec = MultiLabelEncoder(class_mapping={0: "cat", 1: "dog"})
         with pytest.raises(KeyError, match="Unknown label"):
-            codec.to_tensor("cat,fish")
+            codec.load("cat,fish")
 
     def test_fit_validates_known_labels(self) -> None:
         codec = MultiLabelEncoder(class_mapping={0: "cat", 1: "cow", 2: "dog"})
@@ -209,6 +214,53 @@ class TestScalarEncoder:
         codec = ScalarEncoder()
         codec.fit([1, 2, 3])
         assert codec.num_classes is None
+
+
+class TestRotate90WithLabel:
+    def test_image_and_label_share_the_same_k(self) -> None:
+        """The sampled quarter-turn drives both the image and the label, so they always agree."""
+        from src.transforms import Rotate90WithLabel
+
+        transform = Rotate90WithLabel(label_key="rotation", p=1.0)
+        image = np.arange(2 * 3 * 3, dtype=np.uint8).reshape(2, 3, 3)  # asymmetric → rotation observable
+        for k in range(4):
+            assert np.array_equal(transform.apply(image, k=k), np.rot90(image, k))
+            assert transform.apply_to_label(0, k=k) == k
+
+    def test_label_wraps_modulo_four(self) -> None:
+        from src.transforms import Rotate90WithLabel
+
+        transform = Rotate90WithLabel(label_key="rotation", p=1.0)
+        assert transform.apply_to_label(2, k=3) == 1  # (2 + 3) % 4
+        assert transform.apply_to_label(3, k=1) == 0  # wraps
+
+    def test_compose_threads_rotation_label_as_int(self) -> None:
+        from src.transforms import Rotate90WithLabel
+
+        compose = A.Compose([Rotate90WithLabel(label_key="rotation", p=1.0)], seed=0)
+        result = compose(image=np.zeros((4, 4, 3), np.uint8), rotation=0)
+        assert isinstance(result["rotation"], int)
+        assert result["rotation"] in {0, 1, 2, 3}
+
+    def test_label_key_is_configurable(self) -> None:
+        """The bound data key is a parameter, so the transform is not tied to a task named 'rotation'."""
+        from src.transforms import Rotate90WithLabel
+
+        compose = A.Compose([Rotate90WithLabel(label_key="orientation", p=1.0)], seed=0)
+        result = compose(image=np.zeros((4, 4, 3), np.uint8), orientation=0)
+        assert "orientation" in result
+        assert result["orientation"] in {0, 1, 2, 3}
+
+    def test_end_to_end_label_encoder_index_is_bumped_then_tensorized(self) -> None:
+        """Encoder.load yields the class index, the aug bumps it, to_tensor wraps the result."""
+        from src.transforms import Rotate90WithLabel
+
+        encoder = LabelEncoder(class_mapping={0: "0", 1: "90", 2: "180", 3: "270"})
+        transform = AlbumentationsTransform(A.Compose([Rotate90WithLabel(label_key="rotation", p=1.0)], seed=1))
+        sample = Sample(inputs={"image": np.zeros((4, 4, 3), np.uint8)}, targets={"rotation": encoder.load("0")})
+        index = transform.apply(sample).targets["rotation"]
+        assert index in {0, 1, 2, 3}
+        assert encoder.to_tensor(index).item() == index
 
 
 class TestTargetAdapters:

@@ -9,9 +9,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 import torch
 
-from src.callbacks.sample_log import SampleLogCallback, _denormalize_to_uint8
+from src.callbacks.sample_log import SampleLogCallback, _denormalize_to_uint8, _image_sources
 from src.core.constants import IMAGENET_MEAN, IMAGENET_STD
-from src.core.entities import Batch, StepOutput, TaskStepView, is_step_output
+from src.core.entities import Batch, BatchMeta, StepOutput, TaskStepView, is_step_output
 from src.core.keys import IMAGE
 from src.core.ports import PlotLogger
 from src.models.assembly import build_composite_model
@@ -95,6 +95,21 @@ class TestDenormalize:
         result = _denormalize_to_uint8(tensor, num_images=2, mean=mean, std=std)
         assert result.shape == (2, 16, 16, 3)
         assert result.dtype == torch.uint8
+
+
+class TestImageSources:
+    def test_extracts_first_input_paths_capped_to_count(self) -> None:
+        batch = Batch(
+            inputs={IMAGE: torch.randn(3, 3, 8, 8)},
+            targets={},
+            meta=BatchMeta(input_sources={IMAGE: ["a.jpg", "b.jpg", "c.jpg"]}),
+        )
+        assert _image_sources(batch, count=2) == ["a.jpg", "b.jpg"]
+
+    def test_none_when_input_not_file_based(self) -> None:
+        """No ``input_sources`` recorded (e.g. text/embedding input) → no source links."""
+        batch = Batch(inputs={IMAGE: torch.randn(2, 3, 8, 8)}, targets={})
+        assert _image_sources(batch, count=2) is None
 
 
 class TestSampleLogCallback:

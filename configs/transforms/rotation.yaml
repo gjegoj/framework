@@ -1,0 +1,35 @@
+# @package transforms
+# Online rotation task: Resize → random 90° rotation (which bumps the `rotation` label)
+# → normalize → to-tensor. Applied to every stage (val/test included) so there are
+# non-zero angles to learn and evaluate on; missing stages fall back to `val`.
+train:
+  _target_: albumentations.Compose
+  seed: ${seed}
+  telemetry: false
+  transforms:
+    - _target_: albumentations.Resize
+      height: ${image_size[0]}
+      width: ${image_size[1]}
+    - _target_: src.transforms.Rotate90WithLabel
+      label_key: rotation        # the task's target column — bound explicitly, not by method name
+      p: 1.0
+    - _target_: albumentations.Normalize
+      mean: ${mean}
+      std: ${std}
+    - _target_: albumentations.pytorch.ToTensorV2
+
+val:
+  _target_: albumentations.Compose
+  seed: ${seed}
+  telemetry: false
+  transforms:
+    - _target_: albumentations.Resize
+      height: ${image_size[0]}
+      width: ${image_size[1]}
+    - _target_: src.transforms.Rotate90WithLabel
+      label_key: rotation
+      p: 1.0
+    - _target_: albumentations.Normalize
+      mean: ${mean}
+      std: ${std}
+    - _target_: albumentations.pytorch.ToTensorV2

@@ -34,6 +34,16 @@ input[type=checkbox] { margin: 0; cursor: pointer; }
 .chip.pred { background: rgba(255,255,255,.93); border: 1.5px solid; }
 .layer.hidden { display: none; }
 
+/* Source pill (corner of each cell): a URL opens; a local path copies to the clipboard.
+   Styles both the <a> and the <button> identically (button reset: border/font/margin). */
+.src { position: absolute; top: 6px; right: 6px; z-index: 6; pointer-events: auto;
+       max-width: 78%; font-size: 11px; line-height: 1.15; padding: 3px 8px; border-radius: 999px;
+       background: rgba(0,0,0,.58); color: #fff; text-decoration: none; white-space: nowrap;
+       overflow: hidden; text-overflow: ellipsis; box-shadow: 0 1px 3px rgba(0,0,0,.4);
+       border: none; margin: 0; cursor: pointer; font-family: inherit; }
+.src:hover { background: rgba(0,0,0,.85); }
+.src.copied { background: rgba(38,160,85,.95); }   /* brief flash after a path is copied */
+
 /* Lightbox: click a cell to inspect it large; overlays only the main area so the
    sidebar checkboxes stay live and toggle the zoomed clone via shared data-keys. */
 .lb { position: fixed; top: 0; right: 0; bottom: 0; left: 250px; z-index: 100;
@@ -44,6 +54,9 @@ input[type=checkbox] { margin: 0; cursor: pointer; }
                    height: min(88vh, calc(100vw - 250px - 56px)); aspect-ratio: 1 / 1;
                    cursor: default; box-shadow: 0 10px 48px rgba(0,0,0,.6); }
 .lb .stage .cell .chips { font-size: 13px; gap: 6px; }
+/* Zoomed view: show full (un-truncated) chip names — wrap rather than overflow. */
+.lb .stage .cell .chip { white-space: normal; word-break: break-word; }
+.lb .stage .cell .src { font-size: 13px; top: 10px; right: 10px; }
 .lb .nav { position: absolute; top: 50%; transform: translateY(-50%); width: 46px; height: 74px;
            border: none; border-radius: 9px; background: rgba(255,255,255,.14); color: #fff;
            font-size: 30px; cursor: pointer; }

@@ -130,11 +130,24 @@ class SampleLogCallback(L.Callback):
             return
 
         images = _denormalize_to_uint8(first_tensor, self._num_images, self._mean, self._std).numpy()
-        samples = build_sample_views(images, pl_module.tasks, outputs["task_views"])
+        sources = _image_sources(batch_obj, count=images.shape[0])
+        samples = build_sample_views(images, pl_module.tasks, outputs["task_views"], sources=sources)
         title = f"{self._title_prefix}/{stage}"
         html = self._renderer.render(samples, title=title)
         trainer.logger.log_html(title=title, html=html, iteration=trainer.current_epoch)
         log.debug("Logged sample grid for %s epoch %s.", stage, trainer.current_epoch)
+
+
+def _image_sources(batch: Batch, count: int) -> list[str] | None:
+    """Per-sample source path of the displayed (first) input, if it was file-based.
+
+    The grid shows the first input's image; its provenance lives in
+    ``batch.meta["input_sources"][alias]`` (only file-based inputs are recorded), so a
+    non-file input (text/embedding) simply yields ``None`` and no source links.
+    """
+    first_alias = next(iter(batch.inputs))
+    paths = batch.meta.get("input_sources", {}).get(first_alias)
+    return paths[:count] if paths else None
 
 
 def _denormalize_to_uint8(tensor: Tensor, num_images: int, mean: Tensor, std: Tensor) -> Tensor:

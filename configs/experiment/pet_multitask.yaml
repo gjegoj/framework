@@ -2,13 +2,13 @@
 defaults:
   - override /backbone: smp_unet
   - override /logger: clearml
-  - override /callbacks: default
+  - override /callbacks: augmented
   - override /scheduler: onecycle
   - override /dataloader: debug
 
 project: pet-multitask
 seed: 0
-epochs: 6
+epochs: 10
 batch_size: 8
 image_size: [128, 128]
 
@@ -38,14 +38,14 @@ data:
 tasks:
   # GLOBAL × binary — cat vs dog. smp has no pooled stream, so classify off the raw
   # encoder output (native smp ClassificationHead pools internally).
-  species:
-    preset: classification
-    objective: binary
-    target: species
-    class_mapping: {0: cat, 1: dog}
-    feature_key: encoder_last
-    optimizer:
-      lr: 1.0e-4
+  # species:
+  #   preset: classification
+  #   objective: binary
+  #   target: species
+  #   class_mapping: {0: cat, 1: dog}
+  #   feature_key: encoder_last
+  #   optimizer:
+  #     lr: 1.0e-4
 
   breed:
     preset: classification
@@ -90,8 +90,8 @@ tasks:
       35: wheaten_terrier
       36: yorkshire_terrier
 
-  mask:
-    preset: segmentation
-    target: mask_path
-    class_mapping: {0: pet, 1: background, 2: boundary}
-    loss: {name: weighted_sum, losses: {cross_entropy: 1.0, dice: 1.0}}
+  # mask:
+  #   preset: segmentation
+  #   target: mask_path
+  #   class_mapping: {0: pet, 1: background, 2: boundary}
+  #   loss: {name: weighted_sum, losses: {cross_entropy: 1.0, dice: 1.0}}

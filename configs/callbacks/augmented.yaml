@@ -13,18 +13,38 @@
 #       name: mosaic
 #       center_ratio: [0.3, 0.7]
 
-mixup:
-  name: batch_transform
-  disable_after_fraction: 0.5   # clean data for the second half of training
-  transform:
-    name: mixup                 # or: cutmix — both GLOBAL-only (classification heads)
-    alpha: 1.0
-
 lr_monitor:
   logging_interval: epoch
+
+# Before the first stage, print per-task target distributions and log them as histograms.
+dataset_stats: null
+
+# Startup parameter breakdown, rendered as a module tree (backbone / heads / their
+# children). max_depth=3 shows each head separately; 2 collapses heads into one row.
+# TreeModelSummary subclasses RichModelSummary, so Lightning skips its auto-added summary.
+model_summary:
+  max_depth: 3
+
+# ema:
+#   decay: 0.999
+#   warmup_fraction: 0.1   # start EMA after 10% of steps (avoids noisy early average)
+#   use_buffers: true      # include BatchNorm running stats
 
 checkpoint:
   monitor: ${key:LOSS}/val/${key:TOTAL}
   mode: min
   save_top_k: 1
   save_weights_only: true
+
+progress_bar: null
+
+# After test, report the headline test metrics (scalars + vector means) to the logger's
+# single-value summary table (e.g. ClearML "Single Values"). No-op without such a logger.
+metric_summary: null
+
+mixup:
+  name: batch_transform
+  disable_after_fraction: 0.5   # clean data for the second half of training
+  transform:
+    name: mixup                 # or: cutmix — both GLOBAL-only (classification heads)
+    alpha: 1.0
