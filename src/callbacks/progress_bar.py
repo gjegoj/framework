@@ -16,6 +16,7 @@ from rich.text import Text
 
 from src.core.enums import Stage
 from src.core.keys import LOSS, MEAN
+from src.core.metric_key import MetricKey
 from src.core.ports import MetricDirectionProvider
 
 _MetricMode = Literal["min", "max"]
@@ -39,15 +40,14 @@ def _mode_from_flag(higher_is_better: bool | None) -> _MetricMode | None:
     return "max" if higher_is_better else "min"
 
 
-def _split_stage(metric_name: str) -> tuple[str, str | None]:
-    """Separate a ``task/metric/stage`` key into ``(task/metric, stage)``."""
-    parts = metric_name.split("/")
-    for stage in _DISPLAY_STAGES:
-        if stage in parts:
-            stage_index = parts.index(stage)
-            base_name = "/".join(parts[:stage_index] + parts[stage_index + 1 :])
-            return base_name, stage
-    return metric_name, None
+def _split_stage(metric_name: str) -> tuple[str, Stage | None]:
+    """Separate a ``task/metric/stage`` key into ``(stage-stripped key, stage)``.
+
+    Grammar parsing is delegated to :class:`MetricKey`; ``without_stage`` removes
+    only the stage segment (any vector leaf is kept).
+    """
+    key = MetricKey.parse(metric_name)
+    return key.without_stage(), key.stage
 
 
 class MetricsProgressBar(RichProgressBar):
@@ -113,15 +113,18 @@ class MetricsProgressBar(RichProgressBar):
 
         Collapses a vector metric's ``task/metric/stage/mean`` aggregate to the plain
         ``task/metric/stage`` key (so the row shows the mean) and drops its per-class leaves.
-        Loss keys (``loss/stage/total``) pass through; scalar metrics stay as-is.
+        Loss keys (``loss/stage/total``) pass through; scalar metrics stay as-is. Grammar
+        parsing is delegated to :class:`MetricKey`.
         """
-        parts = metric_name.split("/")
-        if self._loss_key and parts[0] == self._loss_key:
-            normalized = metric_name if len(parts) == 3 else None
+        key = MetricKey.parse(metric_name)
+        if key.is_loss:
+            normalized = key.raw if "/" not in key.name else None  # aggregate (loss/stage/total) only
+        elif key.stage is None:
+            normalized = None  # no stage segment (2-part key, or an unknown 3rd segment)
+        elif key.leaf is None or key.leaf == MEAN:
+            normalized = key.without_leaf()  # scalar metric as-is; vector mean → drop the "/mean" leaf
         else:
-            if len(parts) == 4 and parts[-1] == MEAN:
-                parts = parts[:-1]  # vector aggregate: drop the "/mean" leaf
-            normalized = "/".join(parts) if len(parts) == 3 and parts[-1] in _DISPLAY_STAGES else None
+            normalized = None  # per-class vector leaf
         if normalized is None:
             return None
         if self._metric_filters is not None and not any(token in metric_name for token in self._metric_filters):

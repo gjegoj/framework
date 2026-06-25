@@ -1,0 +1,37 @@
+# @package transforms
+# Multi-view (SHARED): applies ONE sampling of the Albumentations pipeline jointly to every image
+# input key — same crop / flip / jitter for all views, via additional_targets. Use for pairwise
+# quality ranking, where differential augmentation between the two views would inject a spurious
+# signal into the comparison. (configs/transforms/multiview.yaml is the independent-per-view
+# variant, for triplet metric learning.)
+train:
+  _target_: src.transforms.sample.MultiViewTransform
+  shared: true
+  compose:
+    _target_: albumentations.Compose
+    seed: ${seed}
+    telemetry: false
+    transforms:
+      - _target_: albumentations.Resize
+        height: ${image_size[0]}
+        width: ${image_size[1]}
+      - _target_: albumentations.Normalize
+        mean: ${mean}
+        std: ${std}
+      - _target_: albumentations.pytorch.ToTensorV2
+
+val:
+  _target_: src.transforms.sample.MultiViewTransform
+  shared: true
+  compose:
+    _target_: albumentations.Compose
+    seed: ${seed}
+    telemetry: false
+    transforms:
+      - _target_: albumentations.Resize
+        height: ${image_size[0]}
+        width: ${image_size[1]}
+      - _target_: albumentations.Normalize
+        mean: ${mean}
+        std: ${std}
+      - _target_: albumentations.pytorch.ToTensorV2

@@ -8,11 +8,15 @@ their own backbones, heads, losses, metrics, etc.
 
 from __future__ import annotations
 
-from collections.abc import Callable, KeysView
+from collections.abc import Callable, Hashable, KeysView
 
 
 class Registry[T]:
-    """Maps string keys to constructors so components plug in by name.
+    """Maps hashable keys to constructors so components plug in by key.
+
+    Keys are usually short strings, but any ``Hashable`` works — e.g. a
+    ``(topology, objective)`` tuple for the visualization annotators, so a composite
+    key needs no string encoding.
 
     Parameters:
         name (str): Human-readable registry name, used in error messages.
@@ -26,9 +30,9 @@ class Registry[T]:
 
     def __init__(self, name: str) -> None:
         self._name = name
-        self._factories: dict[str, Callable[..., T]] = {}
+        self._factories: dict[Hashable, Callable[..., T]] = {}
 
-    def register(self, key: str) -> Callable[[Callable[..., T]], Callable[..., T]]:
+    def register(self, key: Hashable) -> Callable[[Callable[..., T]], Callable[..., T]]:
         """Return a decorator that registers a class/factory under ``key``.
 
         Parameters:
@@ -46,7 +50,7 @@ class Registry[T]:
 
         return decorator
 
-    def register_instance(self, key: str, instance: T) -> None:
+    def register_instance(self, key: Hashable, instance: T) -> None:
         """Register a ready-made singleton (a value/strategy registry).
 
         Unlike ``register`` (which stores a *factory*), this stores a single
@@ -64,7 +68,7 @@ class Registry[T]:
             raise ValueError(f"{self._name}: key {key!r} is already registered.")
         self._factories[key] = lambda *_args, **_kwargs: instance
 
-    def get(self, key: str) -> Callable[..., T]:
+    def get(self, key: Hashable) -> Callable[..., T]:
         """Return the constructor registered under ``key``.
 
         Raises:
@@ -73,16 +77,16 @@ class Registry[T]:
         try:
             return self._factories[key]
         except KeyError as error:
-            available = sorted(self._factories)
+            available = sorted(self._factories, key=repr)  # key=repr: keys may be non-orderable (e.g. tuples)
             raise KeyError(f"{self._name}: unknown key {key!r}. Available: {available}.") from error
 
-    def create(self, key: str, *args: object, **kwargs: object) -> T:
+    def create(self, key: Hashable, *args: object, **kwargs: object) -> T:
         """Construct the component registered under ``key`` with the given arguments."""
         return self.get(key)(*args, **kwargs)
 
-    def __contains__(self, key: str) -> bool:
+    def __contains__(self, key: Hashable) -> bool:
         return key in self._factories
 
-    def keys(self) -> KeysView[str]:
+    def keys(self) -> KeysView[Hashable]:
         """Return the registered keys."""
         return self._factories.keys()

@@ -193,6 +193,72 @@ class TestMarginRankingCriterion:
         with pytest.raises(ValueError, match="2"):
             crit(torch.randn(4, 3, 8), torch.ones(4))  # n_views=3, not 2
 
+    def test_scalar_head_uses_raw_signed_score(self) -> None:
+        """D=1: the raw signed scalar is the score, not its magnitude (norm would flip the order)."""
+        from src.losses.ranking import MarginRankingCriterion
+
+        crit = MarginRankingCriterion(margin=0.0)
+        logits = torch.zeros(4, 2, 1)
+        logits[:, 0, 0] = -5.0  # first view's scalar score is negative → it ranks lower than 0
+        result = crit(logits, -torch.ones(4))  # -1: second should rank higher (0 > -5) → correct
+        assert result.total.item() < 1e-3  # with norm: |−5| = 5 > 0 → wrong order → large loss
+
+
+class TestRankNetCriterion:
+    def test_confident_correct_low_loss(self) -> None:
+        """score_first >> score_second and target=1 → P≈1 → loss ≈ 0."""
+        from src.losses.ranking import RankNetCriterion
+
+        crit = RankNetCriterion()
+        B, D = 4, 8
+        logits = torch.stack([torch.ones(B, D) * 5.0, torch.zeros(B, D)], dim=1)  # [B, 2, D]
+        result = crit(logits, torch.ones(B))  # 1: first preferred
+        assert result.total.item() < 1e-3
+
+    def test_confident_wrong_high_loss(self) -> None:
+        from src.losses.ranking import RankNetCriterion
+
+        crit = RankNetCriterion()
+        B, D = 4, 8
+        logits = torch.stack([torch.ones(B, D) * 5.0, torch.zeros(B, D)], dim=1)
+        result = crit(logits, torch.zeros(B))  # 0: second preferred, but first scores far higher
+        assert result.total.item() > 1.0
+
+    def test_tie_target_is_log_two(self) -> None:
+        """Equal scores + tie target 0.5 → BCE(gap=0, 0.5) = log 2."""
+        from math import log
+
+        from src.losses.ranking import RankNetCriterion
+
+        crit = RankNetCriterion()
+        logits = torch.zeros(4, 2, 8)  # equal scores → gap 0
+        result = crit(logits, torch.full((4,), 0.5))
+        assert abs(result.total.item() - log(2)) < 1e-5
+
+    def test_loss_components_key(self) -> None:
+        from src.losses.ranking import RankNetCriterion
+
+        crit = RankNetCriterion()
+        result = crit(torch.randn(2, 2, 8), torch.ones(2))
+        assert "ranknet" in result.components
+
+    def test_wrong_n_views_raises(self) -> None:
+        from src.losses.ranking import RankNetCriterion
+
+        crit = RankNetCriterion()
+        with pytest.raises(ValueError, match="2"):
+            crit(torch.randn(4, 3, 8), torch.ones(4))  # n_views=3, not 2
+
+    def test_scalar_head_uses_raw_signed_score(self) -> None:
+        """D=1: the raw signed scalar is the score (norm would drop the sign)."""
+        from src.losses.ranking import RankNetCriterion
+
+        crit = RankNetCriterion()
+        logits = torch.zeros(4, 2, 1)
+        logits[:, 0, 0] = -10.0  # first score −10 → P(first≻second) = sigmoid(−10) ≈ 0
+        result = crit(logits, torch.zeros(4))  # target 0: second preferred → correct → loss ≈ 0
+        assert result.total.item() < 1e-3  # with norm: sigmoid(|−10|−0) = sigmoid(10) ≈ 1, BCE(·, 0) huge
+
 
 # ---------------------------------------------------------------------------
 # Objective strategy

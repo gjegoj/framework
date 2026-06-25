@@ -174,10 +174,10 @@ class TestAnnotators:
 
     def test_registry_keyed_by_axes(self) -> None:
         from src.tasks.taxonomy import Objective, Topology
-        from src.visualization.annotators import annotators, axes_key
+        from src.visualization.annotators import annotators
 
-        assert axes_key(Topology.GLOBAL, Objective.MULTICLASS) in annotators
-        assert axes_key(Topology.GLOBAL, Objective.MULTILABEL) in annotators
+        assert (Topology.GLOBAL, Objective.MULTICLASS) in annotators
+        assert (Topology.GLOBAL, Objective.MULTILABEL) in annotators
 
     def test_classification_annotator_adds_gt_pred_and_tag(self) -> None:
         import numpy as np
@@ -251,9 +251,9 @@ class TestAnnotators:
 
     def test_binary_registered_for_global_binary(self) -> None:
         from src.tasks.taxonomy import Objective, Topology
-        from src.visualization.annotators import annotators, axes_key
+        from src.visualization.annotators import annotators
 
-        assert axes_key(Topology.GLOBAL, Objective.BINARY) in annotators
+        assert (Topology.GLOBAL, Objective.BINARY) in annotators
 
     def test_multilabel_annotator_builds_classifications(self) -> None:
         import numpy as np
@@ -290,9 +290,9 @@ class TestRegressionAnnotator:
 
     def test_registered_for_global_continuous(self) -> None:
         from src.tasks.taxonomy import Objective, Topology
-        from src.visualization.annotators import annotators, axes_key
+        from src.visualization.annotators import annotators
 
-        assert axes_key(Topology.GLOBAL, Objective.CONTINUOUS) in annotators
+        assert (Topology.GLOBAL, Objective.CONTINUOUS) in annotators
 
     def test_scalar_gt_pred_and_signed_error(self) -> None:
         import numpy as np
@@ -329,9 +329,9 @@ class TestSegmentationAnnotator:
 
     def test_registered_for_dense_multiclass(self) -> None:
         from src.tasks.taxonomy import Objective, Topology
-        from src.visualization.annotators import annotators, axes_key
+        from src.visualization.annotators import annotators
 
-        assert axes_key(Topology.DENSE, Objective.MULTICLASS) in annotators
+        assert (Topology.DENSE, Objective.MULTICLASS) in annotators
 
     def test_builds_per_class_masks_from_logits_and_label_map(self) -> None:
         import numpy as np
@@ -395,9 +395,9 @@ class TestMultilabelSegmentationAnnotator:
 
     def test_registered_for_dense_multilabel(self) -> None:
         from src.tasks.taxonomy import Objective, Topology
-        from src.visualization.annotators import annotators, axes_key
+        from src.visualization.annotators import annotators
 
-        assert axes_key(Topology.DENSE, Objective.MULTILABEL) in annotators
+        assert (Topology.DENSE, Objective.MULTILABEL) in annotators
 
     def test_overlapping_masks_from_per_channel_threshold(self) -> None:
         import numpy as np

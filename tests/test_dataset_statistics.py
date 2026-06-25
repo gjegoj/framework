@@ -9,7 +9,6 @@ from unittest.mock import MagicMock
 import pandas as pd
 import pytest
 
-from src.callbacks.dataset_stats import report_dataset_statistics
 from src.core.enums import Stage
 from src.core.runtime import RuntimeContext
 from src.data import (
@@ -25,6 +24,7 @@ from src.data import (
     TargetBinding,
 )
 from src.data.statistics import Histogram
+from src.reporting import report_dataset_statistics
 from tests.test_data import _make_transform
 from tests.test_metrics import FakePlotLogger
 
@@ -73,16 +73,20 @@ class TestEncoderSummarize:
     def test_scalar_empty_is_none(self) -> None:
         assert ScalarEncoder().summarize(pd.Series([], dtype=float)) is None
 
-    def test_mask_summarize_is_deferred_none(self) -> None:
-        """Segmentation is deferred: MaskEncoder.summarize returns None (omitted from the report)."""
-        assert MaskEncoder(class_mapping={0: "bg", 1: "fg"}).summarize(pd.Series(["m.png"])) is None
+    def test_mask_encoder_is_not_summarizable(self) -> None:
+        """Segmentation is deferred: MaskEncoder does not implement SupportsSummary (omitted from the report)."""
+        from src.data.statistics import SupportsSummary
+
+        assert not isinstance(MaskEncoder(class_mapping={0: "bg", 1: "fg"}), SupportsSummary)
 
     def test_caching_wrapper_forwards_summarize(self) -> None:
         """A cached (spatial) encoder must keep its distribution — so segmentation drops in later."""
-        from src.data.cache import ArrayCache, CachingTargetEncoder
+        from src.data.cache import ArrayCache, caching_target_encoder
+        from src.data.statistics import SupportsSummary
 
         inner = LabelEncoder(class_mapping={0: "cat", 1: "dog"})
-        wrapped = CachingTargetEncoder(inner=inner, cache=ArrayCache(max_bytes=1024))
+        wrapped = caching_target_encoder(inner, ArrayCache(max_bytes=1024))
+        assert isinstance(wrapped, SupportsSummary)
         distribution = wrapped.summarize(pd.Series(["cat", "dog", "cat"]))
         assert isinstance(distribution, CategoricalDistribution)
         assert distribution.counts == {"cat": 2, "dog": 1}
@@ -162,11 +166,13 @@ class TestReporter:
     def test_logs_one_histogram_per_task_and_stage(self) -> None:
         logger = FakePlotLogger()
         report_dataset_statistics(self._statistics(), logger)  # type: ignore[arg-type]
-        # Categorical: one grouped plot (series per stage). Continuous: one plot per stage
-        # (bins differ per stage, so grouping would misalign them).
-        assert {call["title"] for call in logger.histogram_calls} == {"dataset/label", "dataset/score/train"}
+        # Categorical: one grouped plot (series per stage); continuous: one box plot via log_plot.
+        assert {call["title"] for call in logger.histogram_calls} == {"dataset/label"}
         label_series = {call["series"] for call in logger.histogram_calls if call["title"] == "dataset/label"}
         assert label_series == {"train", "test"}
+        # Continuous task emits a box plot instead of histograms.
+        assert len(logger.plot_calls) == 1
+        assert logger.plot_calls[0].title == "dataset/score"
 
     def test_categorical_histogram_values_and_labels(self) -> None:
         logger = FakePlotLogger()
@@ -175,12 +181,22 @@ class TestReporter:
         assert train["values"] == [6.0, 4.0]
         assert train["labels"] == ["cat", "dog"]
 
-    def test_continuous_histogram_uses_bin_centers(self) -> None:
+    def test_continuous_box_plot_quartiles(self) -> None:
+        # Continuous distributions now log a box plot instead of per-stage histograms.
+        from src.core.plotting import BoxPlot
+
         logger = FakePlotLogger()
         report_dataset_statistics(self._statistics(), logger)  # type: ignore[arg-type]
-        score = next(c for c in logger.histogram_calls if c["title"] == "dataset/score/train")
-        assert score["values"] == [4.0, 6.0]
-        assert score["labels"] == ["1.00", "3.00"]
+        assert len(logger.plot_calls) == 1
+        box_plot = logger.plot_calls[0]
+        assert isinstance(box_plot, BoxPlot)
+        assert box_plot.categories == ["train"]
+        assert box_plot.boxes[0].minimum == 0.0
+        assert box_plot.boxes[0].q25 == 1.0
+        assert box_plot.boxes[0].median == 2.0
+        assert box_plot.boxes[0].q75 == 3.0
+        assert box_plot.boxes[0].maximum == 4.0
+        assert box_plot.boxes[0].mean == 2.0
 
     def test_noop_without_plot_logger(self) -> None:
         report_dataset_statistics(self._statistics(), object())  # type: ignore[arg-type]  # prints, no logging

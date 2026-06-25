@@ -36,10 +36,19 @@ _REGRESSION_HISTOGRAM_BINS = 20
 class TargetEncoder(ABC):
     """Two-step encoder: ``load`` (pre-transform, encodes) → ``to_tensor`` (post-transform, tensorizes).
 
-    ``spatial`` marks encoders whose ``load`` returns a numpy array (a mask) that must
-    ride through the same geometric transform as the image.
+    Two orthogonal flags describe what ``load`` consumes / produces:
+
+    - ``file_based`` — the column value is a file path: the caller prepends ``root_path``
+      before ``load``, records it as the target's source, and caches the file read. Mirrors
+      ``InputLoader.file_based`` on the input side.
+    - ``spatial`` — ``load`` returns a numpy array (a mask) that must ride through the same
+      geometric transform as the image (registered as an Albumentations ``mask`` target).
+
+    They coincide for ``MaskEncoder`` (a mask is both a file and spatial) but are independent:
+    a target read from a file yet not transformed geometrically would be ``file_based`` only.
     """
 
+    file_based: bool = False
     spatial: bool = False
 
     @abstractmethod
@@ -62,22 +71,6 @@ class TargetEncoder(ABC):
     @property
     def num_classes(self) -> int | None:
         """Number of classes if categorical, else ``None``."""
-        return None
-
-    def summarize(self, values: Iterable[Any]) -> Distribution | None:
-        """Describe the distribution of a raw target column, for the dataset report.
-
-        The base returns ``None`` (no distribution); categorical and scalar encoders
-        override. ``MaskEncoder`` will later return a ``CategoricalDistribution`` of
-        pixel counts — the reporter already handles that shape, so segmentation drops
-        in without touching the report path.
-
-        Parameters:
-            values (Iterable[Any]): Raw column values for one stage.
-
-        Returns:
-            Distribution | None: The distribution, or ``None`` when unsupported.
-        """
         return None
 
 
@@ -233,11 +226,12 @@ class ScalarEncoder(TargetEncoder):
 
 @target_encoders.register("mask")
 class MaskEncoder(TargetEncoder):
-    """Spatial encoder for index masks: a single-channel PNG of class indices.
+    """File-based, spatial encoder for index masks: a single-channel PNG of class indices.
 
-    ``load`` reads the PNG into a ``[H, W]`` uint8 array before the transform so
-    Albumentations can resize/flip it together with the image. ``to_tensor``
-    casts the result to a ``[H, W]`` long tensor for the criterion.
+    ``load`` reads the PNG (``file_based`` → resolved against ``root_path``) into a ``[H, W]``
+    uint8 array before the transform so Albumentations can resize/flip it together with the
+    image (``spatial`` → registered as a ``mask`` target). ``to_tensor`` casts the result to a
+    ``[H, W]`` long tensor for the criterion.
 
     When ``class_mapping`` is provided, ``num_classes`` is inferred from it —
     consistent with the categorical encoders. Otherwise ``num_classes`` stays ``None``
@@ -248,6 +242,7 @@ class MaskEncoder(TargetEncoder):
             ``{0: "background", 1: "defect"}``. Determines class count.
     """
 
+    file_based = True
     spatial = True
 
     def __init__(self, class_mapping: dict[int, str] | None = None) -> None:
@@ -270,12 +265,24 @@ class MaskEncoder(TargetEncoder):
         tensor = value if isinstance(value, torch.Tensor) else torch.from_numpy(np.asarray(value))
         return tensor.long()
 
-    def summarize(self, values: Iterable[Any]) -> Distribution | None:
-        """Pixel-class distribution is not computed yet (segmentation deferred).
 
-        When implemented, this will read the masks and return a
-        ``CategoricalDistribution`` of pixel counts — the reporter already renders
-        that shape, so no other code changes. Until then, segmentation tasks are
-        simply omitted from the dataset report.
-        """
-        return None
+@target_encoders.register("null")
+class NullTargetEncoder(TargetEncoder):
+    """Placeholder encoder for target-less tasks — needs no annotation column (Null Object).
+
+    Metric-learning tasks supervised purely by batch / triplet structure (triplet,
+    contrastive) carry no per-sample label, yet the training step still indexes
+    ``batch.targets[task]``. This encoder satisfies that contract without a data column:
+    ``load`` ignores its input and ``to_tensor`` yields a ``[]`` zero scalar, which the
+    metric criteria ignore. Pair it with ``TargetBinding(column=None)`` (the wiring does
+    this automatically when a task config omits ``target``).
+    """
+
+    def fit(self, values: Iterable[Any]) -> None:
+        pass
+
+    def load(self, value: Any) -> float:
+        return 0.0
+
+    def to_tensor(self, value: Any) -> Tensor:
+        return torch.tensor(0.0, dtype=torch.float)

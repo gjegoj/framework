@@ -6,11 +6,17 @@ multilabel, and, later, segmentation pixel counts) and a **continuous**
 distribution (numeric summary + histogram — regression). The reporter renders
 whichever shape it is handed, so a new producer (e.g. ``MaskEncoder.summarize``)
 needs no reporter change.
+
+``SupportsSummary`` is an optional-capability Protocol: encoders that can produce
+a distribution declare it by implementing ``summarize``; the base ``TargetEncoder``
+ABC does not.  Use ``isinstance(encoder, SupportsSummary)`` to guard before calling.
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
+from typing import Any, Protocol, runtime_checkable
 
 from src.core.enums import Stage
 
@@ -76,6 +82,26 @@ class ContinuousDistribution:
 
 
 type Distribution = CategoricalDistribution | ContinuousDistribution
+
+
+@runtime_checkable
+class SupportsSummary(Protocol):
+    """Optional-capability Protocol for target encoders that can describe their column's distribution.
+
+    Encoders implementing this Protocol return a ``Distribution`` from ``summarize``; the
+    base ``TargetEncoder`` ABC does not declare it.  Callers must gate on
+    ``isinstance(encoder, SupportsSummary)`` before calling ``summarize``.
+
+    Parameters:
+        values (Iterable[Any]): Raw column values for one stage, as stored in the CSV / source frame.
+
+    Returns:
+        Distribution | None: The distribution, or ``None`` when the encoder cannot summarize
+            (e.g. empty data, deferred implementation).
+    """
+
+    def summarize(self, values: Iterable[Any]) -> Distribution | None: ...
+
 
 # Per-task distributions across stages: ``{task_name: {stage: distribution}}``.
 type DatasetStatistics = dict[str, dict[Stage, Distribution]]

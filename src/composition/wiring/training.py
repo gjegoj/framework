@@ -177,7 +177,7 @@ def build_logger(config: ExperimentConfig) -> Any:
 
     kind = config.logger.kind
     if kind not in logger_builders:
-        known = ", ".join(sorted(logger_builders.keys()))
+        known = ", ".join(sorted(str(key) for key in logger_builders.keys()))
         raise ValueError(f"Unknown logger kind: {kind!r}. Known kinds: {known}.")
     return logger_builders.create(kind, config)
 

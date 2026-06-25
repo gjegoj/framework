@@ -23,6 +23,8 @@ from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
 
 import torch.nn as nn
 
+from src.core.plotting import Plot
+
 if TYPE_CHECKING:
     from torch import Tensor
 
@@ -153,15 +155,19 @@ class LossAggregator(ABC):
         """
 
 
-class PlotLogger(ABC):
-    """A logger backend for artifacts the time-series scalar path cannot express.
+# ------------------------------------------------------------ artifact-logger ports
+#
+# The per-step scalar path (Lightning's ``self.log`` → ``Logger.log_metrics``) cannot
+# express matrices, curves, HTML, histograms, end-of-run single values, or rich plot
+# DTOs. Each artifact has its own one-method port below — named ``{Artifact}Logger`` with
+# a single ``log_{artifact}`` method — so a consumer depends only on the verb it actually
+# calls (Interface Segregation) and a backend implements only the artifacts it supports.
+# A backend that supports several (e.g. ``ClearMLLogger``) inherits several ports; a
+# consumer narrows the active logger to the one port it needs via ``isinstance``.
 
-    Per-step scalars already reach the backend via Lightning's ``self.log`` →
-    ``Logger.log_metrics``; this port adds the verbs that path cannot express —
-    matrices, curves, HTML, and end-of-run summary single-values. A concrete
-    logger (e.g. ``ClearMLLogger``) implements both Lightning's ``Logger`` and
-    this port — one object, one backend Task.
-    """
+
+class MatrixLogger(ABC):
+    """Logs a 2-D matrix (e.g. a confusion matrix) — consumed by ``MatrixMetricHandler``."""
 
     @abstractmethod
     def log_matrix(
@@ -183,6 +189,10 @@ class PlotLogger(ABC):
             xaxis (str | None): X-axis label (e.g. ``"Predicted"``).
             yaxis (str | None): Y-axis label (e.g. ``"True"``).
         """
+
+
+class CurveLogger(ABC):
+    """Logs a 2-D curve (PR / ROC) — consumed by ``CurveMetricHandler``."""
 
     @abstractmethod
     def log_curve(
@@ -207,6 +217,10 @@ class PlotLogger(ABC):
             yaxis (str | None): Y-axis label.
         """
 
+
+class HtmlLogger(ABC):
+    """Logs a self-contained HTML document — consumed by ``SampleLogCallback``."""
+
     @abstractmethod
     def log_html(self, title: str, html: str, iteration: int) -> None:
         """Log a self-contained HTML document (e.g. an interactive Plotly grid).
@@ -216,6 +230,10 @@ class PlotLogger(ABC):
             html (str): Full HTML string to ship to the backend.
             iteration (int): Current training step (epoch or global step).
         """
+
+
+class SingleValueLogger(ABC):
+    """Logs one final constant scalar to a summary table — consumed by ``MetricSummaryCallback``."""
 
     @abstractmethod
     def log_single_value(self, name: str, value: float) -> None:
@@ -228,6 +246,10 @@ class PlotLogger(ABC):
             name (str): Display name / key for the value.
             value (float): The scalar to record.
         """
+
+
+class HistogramLogger(ABC):
+    """Logs a grouped bar histogram — consumed by ``CategoricalDistributionRenderer``."""
 
     @abstractmethod
     def log_histogram(
@@ -248,6 +270,22 @@ class PlotLogger(ABC):
             series (str): Series name within the plot (e.g. the stage).
             values (Sequence[float]): Bar heights (per class or per bin).
             labels (list[str] | None): Category label per bar (x-axis ticks).
+        """
+
+
+class PlotLogger(ABC):
+    """Logs a backend-agnostic ``Plot`` DTO — consumed by ``ContinuousDistributionRenderer``."""
+
+    @abstractmethod
+    def log_plot(self, plot: Plot) -> None:
+        """Log a rich plot described by a backend-agnostic ``Plot`` DTO.
+
+        The concrete backend (e.g. ``ClearMLLogger``) translates the DTO into a
+        native figure via the ``plot_builders`` registry in ``src/loggers/plotly.py``
+        and ships it to the experiment tracker.
+
+        Parameters:
+            plot (Plot): Backend-agnostic plot data object (e.g. ``BoxPlot``).
         """
 
 

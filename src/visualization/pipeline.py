@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 
 from src.core.entities import Task, TaskStepView
-from src.visualization.annotators import annotators, axes_key
+from src.visualization.annotators import annotators
 from src.visualization.entities import SampleView
 
 
@@ -38,7 +38,7 @@ def build_sample_views(
             view = task_views.get(task.name)
             if view is None:
                 continue
-            key = axes_key(task.topology, task.objective)
+            key = (task.topology, task.objective)
             if key not in annotators:
                 continue
             annotators.create(key).annotate(sample, task, view, index)

@@ -25,15 +25,21 @@ from src.core.entities import (
     is_step_output,
 )
 from src.core.enums import Stage
+from src.core.metric_key import MetricKey
 from src.core.ports import (
     Activation,
     Backbone,
     Criterion,
+    CurveLogger,
     Head,
+    HistogramLogger,
+    HtmlLogger,
     LossAggregator,
+    MatrixLogger,
     MetricDirectionProvider,
     MetricSet,
     PlotLogger,
+    SingleValueLogger,
     TargetAdapter,
 )
 from src.core.registry import Registry
@@ -45,15 +51,21 @@ __all__ = [
     "Batch",
     "BatchMeta",
     "Criterion",
+    "CurveLogger",
     "FeatureBundle",
     "Head",
     "HeadSpec",
+    "HistogramLogger",
+    "HtmlLogger",
     "LossAggregator",
     "LossResult",
+    "MatrixLogger",
     "MetricDirectionProvider",
+    "MetricKey",
     "MetricSet",
     "ModelOutput",
     "PlotLogger",
+    "SingleValueLogger",
     "Registry",
     "RuntimeContext",
     "Sample",

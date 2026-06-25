@@ -13,7 +13,7 @@ from src.callbacks.sample_log import SampleLogCallback, _denormalize_to_uint8, _
 from src.core.constants import IMAGENET_MEAN, IMAGENET_STD
 from src.core.entities import Batch, BatchMeta, StepOutput, TaskStepView, is_step_output
 from src.core.keys import IMAGE
-from src.core.ports import PlotLogger
+from src.core.ports import HtmlLogger
 from src.models.assembly import build_composite_model
 from src.models.backbones import EmbeddingBackbone
 from src.tasks import classification
@@ -64,8 +64,9 @@ class _RecordingRenderer(Renderer):
 
 
 class TestFakePlotLoggerContract:
-    def test_fake_plot_logger_satisfies_plot_logger(self) -> None:
-        assert isinstance(FakePlotLogger(), PlotLogger)
+    def test_fake_plot_logger_satisfies_html_logger(self) -> None:
+        # SampleLogCallback narrows the active logger to HtmlLogger (log_html).
+        assert isinstance(FakePlotLogger(), HtmlLogger)
 
 
 class TestSampleLogCallbackGating:

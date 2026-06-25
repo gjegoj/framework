@@ -22,14 +22,14 @@ from torch.utils.data import DataLoader
 from src.core.enums import Stage
 from src.core.runtime import RuntimeContext
 from src.data.bindings import InputBinding, TargetBinding
-from src.data.cache import BYTES_PER_GIB, ArrayCache, CachingLoader, CachingTargetEncoder
+from src.data.cache import BYTES_PER_GIB, ArrayCache, CachingLoader, caching_target_encoder
 from src.data.collate import collate_samples
 from src.data.dataset import Dataset, resolve_path
 from src.data.loaders import infer_loader_key, normalize_inputs
 from src.data.registry import input_loaders
 from src.data.sources import DataSource
 from src.data.split import split_dataframe
-from src.data.statistics import DatasetStatistics, Distribution
+from src.data.statistics import DatasetStatistics, Distribution, SupportsSummary
 from src.transforms.sample import Transform
 
 log = logging.getLogger(__name__)
@@ -171,8 +171,8 @@ class DataModule:
 
         Computed from the fitted encoders and the per-stage frames: each encoder
         summarizes its own column (it already knows the class vocabulary). A task whose
-        encoder has no distribution (``summarize`` → ``None``, e.g. segmentation today)
-        is omitted. Requires ``setup`` to have run.
+        encoder does not implement ``SupportsSummary`` (e.g. ``MaskEncoder``) is omitted.
+        Requires ``setup`` to have run.
 
         Returns:
             DatasetStatistics: ``{task_name: {stage: distribution}}``.
@@ -181,6 +181,8 @@ class DataModule:
             raise RuntimeError("DataModule.statistics() requires setup() to have run.")
         statistics: DatasetStatistics = {}
         for binding in self._target_bindings:
+            if not isinstance(binding.encoder, SupportsSummary):
+                continue
             per_stage: dict[Stage, Distribution] = {}
             for stage, frame in self._frames.items():
                 distribution = binding.encoder.summarize(frame[binding.column])
@@ -239,7 +241,7 @@ class DataModule:
             candidates.update(keys)
             cache.warm(keys, input_binding.loader.load, self._cache_options.workers)
         for target_binding in self._target_bindings:
-            if not target_binding.encoder.spatial:
+            if not target_binding.encoder.file_based:
                 continue
             keys = [resolve_path(root, value) for frame in warm_frames for value in frame[target_binding.column]]
             candidates.update(keys)
@@ -255,8 +257,8 @@ class DataModule:
         ]
         self._target_bindings = [
             (
-                replace(target_binding, encoder=CachingTargetEncoder(target_binding.encoder, cache))
-                if target_binding.encoder.spatial
+                replace(target_binding, encoder=caching_target_encoder(target_binding.encoder, cache))
+                if target_binding.encoder.file_based
                 else target_binding
             )
             for target_binding in self._target_bindings
@@ -289,7 +291,8 @@ class DataModule:
 
     def _fit_encoders(self, frame: pd.DataFrame) -> None:
         for binding in self._target_bindings:
-            binding.encoder.fit(frame[binding.column])
+            if binding.column is not None:  # target-less tasks (column None) have nothing to fit
+                binding.encoder.fit(frame[binding.column])
             num_classes = binding.encoder.num_classes
             if num_classes is not None:
                 self._runtime.num_classes[binding.name] = num_classes

@@ -10,7 +10,7 @@ defaults:
   - transforms: default      # swap to augmented or your own transforms config
   - export: torchscript             # swap to torchscript, tensorrt, or all
   - _self_
-  - experiment: pet_multitask        # experiment overrides go last → highest priority
+  - experiment: imagereward_ranking        # experiment overrides go last → highest priority
 
 project: my-project
 run_name: ${now:%Y-%m-%d}/${now:%H-%M-%S}

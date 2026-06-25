@@ -176,14 +176,20 @@ def _multilabel_split(
     stratify_column: str,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     labels = _to_multihot(frame[stratify_column])
-    # IterativeStratification uses numpy's global random state internally.
+    # IterativeStratification draws from numpy's *global* RNG. Seed it for a reproducible
+    # split, but snapshot and restore the prior global state so we don't perturb any other
+    # caller that relies on numpy's global RNG (a hidden side effect otherwise).
+    state = np.random.get_state()
     np.random.seed(seed)
-    stratifier = IterativeStratification(
-        n_splits=2,
-        order=2,
-        sample_distribution_per_fold=[1.0 - left_size, left_size],
-    )
-    left_indices, right_indices = next(stratifier.split(np.arange(len(frame)).reshape(-1, 1), labels))
+    try:
+        stratifier = IterativeStratification(
+            n_splits=2,
+            order=2,
+            sample_distribution_per_fold=[1.0 - left_size, left_size],
+        )
+        left_indices, right_indices = next(stratifier.split(np.arange(len(frame)).reshape(-1, 1), labels))
+    finally:
+        np.random.set_state(state)
     return frame.iloc[left_indices], frame.iloc[right_indices]
 
 

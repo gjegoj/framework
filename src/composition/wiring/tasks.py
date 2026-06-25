@@ -21,9 +21,11 @@ from src.tasks.taxonomy import Topology
 def _resolve_encoder(task_config: TaskConfig) -> TargetEncoder:
     """Build the data-layer target encoder for one task.
 
-    Priority: explicit ``target_encoder:`` spec > the objective's ``default_encoder``.
-    The objective is the authority on label encoding, so the default follows from
-    the resolved objective (preset default unless overridden in config).
+    Priority: no ``target`` (target-less task) > explicit ``target_encoder:`` spec >
+    the objective's ``default_encoder``. A task that omits ``target`` (triplet /
+    contrastive, supervised by structure) gets the ``null`` encoder and needs no column.
+    Otherwise the objective is the authority on label encoding, so the default follows
+    from the resolved objective (preset default unless overridden in config).
 
     Parameters:
         task_config (TaskConfig): Validated task config.
@@ -31,6 +33,8 @@ def _resolve_encoder(task_config: TaskConfig) -> TargetEncoder:
     Returns:
         TargetEncoder: An un-fitted encoder ready for ``DataModule.setup``.
     """
+    if task_config.target is None:
+        return target_encoders.create("null")  # target-less task: structure-only supervision
     if task_config.target_encoder is not None:
         return instantiate(task_config.target_encoder, target_encoders)
 

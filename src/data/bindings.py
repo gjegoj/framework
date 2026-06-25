@@ -33,10 +33,11 @@ class TargetBinding:
 
     Parameters:
         name (str): Task name; also the key under which the target is stored.
-        column (str): Source column in the DataFrame.
+        column (str | None): Source column in the DataFrame, or ``None`` for a
+            target-less task (e.g. triplet/contrastive) whose encoder needs no column.
         encoder (TargetEncoder): Encoder that turns the raw column value into a tensor.
     """
 
     name: str
-    column: str
+    column: str | None
     encoder: TargetEncoder

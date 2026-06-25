@@ -199,7 +199,9 @@ class MetricObjective(ObjectiveStrategy):
     kind = Objective.METRIC
     supported_topologies = frozenset({Topology.RANKING, Topology.MULTISTREAM})
     default_loss = "triplet_margin"  # fallback only; presets set the real default
-    default_encoder = "scalar"  # dummy/structural target; the loss ignores its values
+    # Used only when a task *does* supply a target column (e.g. pairwise ranking's ±1 label).
+    # Structure-only tasks (triplet/contrastive) omit ``target`` and get the ``null`` encoder.
+    default_encoder = "scalar"
 
     def out_features(self, num_classes: int) -> int:
         return num_classes  # num_classes = embedding_dim for metric tasks

@@ -28,17 +28,10 @@ from src.visualization.entities import (
     SegmentationClass,
 )
 
+# Keyed by the ``(topology, objective)`` tuple — the task's two composition axes — so the
+# annotator is selected the same way ``TaskBuilder`` selects bricks (``Registry`` accepts any
+# ``Hashable`` key, so no string encoding is needed). New task types = new annotator (OCP).
 annotators: Registry[Annotator] = Registry("annotator")
-
-
-def axes_key(topology: Topology, objective: Objective) -> str:
-    """Compose the ``annotators`` registry key from a task's composition axes.
-
-    The key is string-encoded (e.g. ``"global:multiclass"``) so the shared
-    ``Registry`` stays ``str``-keyed — avoiding a ``Hashable`` widening that would
-    ripple into its ``keys()`` consumers. Still "keyed by (topology, objective)".
-    """
-    return f"{topology}:{objective}"
 
 
 class Annotator(ABC):
@@ -76,7 +69,7 @@ class _SingleLabelAnnotator(Annotator):
         sample.tags.append(f"{task.name}:{'correct' if prediction_index == ground_truth_index else 'wrong'}")
 
 
-@annotators.register(axes_key(Topology.GLOBAL, Objective.MULTICLASS))
+@annotators.register((Topology.GLOBAL, Objective.MULTICLASS))
 class ClassificationAnnotator(_SingleLabelAnnotator):
     """Multiclass single-label: argmax prediction with its probability vs the target index."""
 
@@ -85,7 +78,7 @@ class ClassificationAnnotator(_SingleLabelAnnotator):
         return prediction_index, float(probabilities[prediction_index].item())
 
 
-@annotators.register(axes_key(Topology.GLOBAL, Objective.BINARY))
+@annotators.register((Topology.GLOBAL, Objective.BINARY))
 class BinaryClassificationAnnotator(_SingleLabelAnnotator):
     """Binary single-label: threshold the single positive-class probability.
 
@@ -106,7 +99,7 @@ class BinaryClassificationAnnotator(_SingleLabelAnnotator):
         return prediction_index, confidence
 
 
-@annotators.register(axes_key(Topology.GLOBAL, Objective.MULTILABEL))
+@annotators.register((Topology.GLOBAL, Objective.MULTILABEL))
 class MultilabelAnnotator(Annotator):
     """Multilabel: sigmoid scores thresholded vs a multi-hot target.
 
@@ -145,7 +138,7 @@ def _component_names(class_names: list[str] | None, dim: int) -> list[str]:
     return [""] if dim == 1 else [f"dim{i}" for i in range(dim)]
 
 
-@annotators.register(axes_key(Topology.GLOBAL, Objective.CONTINUOUS))
+@annotators.register((Topology.GLOBAL, Objective.CONTINUOUS))
 class RegressionAnnotator(Annotator):
     """Continuous: per-dimension value chips; pred carries the signed ``pred - gt`` error."""
 
@@ -196,7 +189,7 @@ def _mean_iou(ious: list[float | None]) -> float:
     return float(np.mean(present)) if present else 0.0
 
 
-@annotators.register(axes_key(Topology.DENSE, Objective.MULTICLASS))
+@annotators.register((Topology.DENSE, Objective.MULTICLASS))
 class SegmentationAnnotator(Annotator):
     """Dense semantic segmentation (mutually-exclusive classes): per-class masks from the
     argmax of the prediction and the ground-truth label map.
@@ -231,7 +224,7 @@ class SegmentationAnnotator(Annotator):
         sample.tags.append(f"{task.name}:miou={_mean_iou(ious):.2f}")
 
 
-@annotators.register(axes_key(Topology.DENSE, Objective.MULTILABEL))
+@annotators.register((Topology.DENSE, Objective.MULTILABEL))
 class MultilabelSegmentationAnnotator(Annotator):
     """Dense multilabel segmentation (independent classes): per-class masks from sigmoid
     scores thresholded per channel — classes may overlap spatially.

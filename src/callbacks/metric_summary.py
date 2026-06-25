@@ -13,7 +13,7 @@ import logging
 import lightning as L
 
 from src.core.enums import Stage
-from src.core.ports import PlotLogger
+from src.core.ports import SingleValueLogger
 from src.metrics.summary import summary_metrics
 
 log = logging.getLogger(__name__)
@@ -26,7 +26,7 @@ class MetricSummaryCallback(L.Callback):
         if not trainer.is_global_zero:
             return
         logger = trainer.logger
-        if not isinstance(logger, PlotLogger):
+        if not isinstance(logger, SingleValueLogger):
             return
         values = summary_metrics(trainer.callback_metrics, Stage.TEST)
         for name, value in values.items():

@@ -63,8 +63,8 @@ class Dataset(TorchDataset[Sample]):
     def __getitem__(self, index: int) -> Sample:
         row = self._frame.iloc[index]
         # ``input_sources``/``target_sources`` record the resolved source path of each
-        # file-based input / spatial (mask) target, keyed by binding name — so a prediction
-        # can be traced back to its file (collate transposes these to per-sample lists).
+        # file-based input / file-based target (e.g. a mask), keyed by binding name — so a
+        # prediction can be traced back to its file (collate transposes these to per-sample lists).
         sample = Sample(inputs={}, meta=SampleMeta(index=index, input_sources={}, target_sources={}))
 
         # 1. Load all inputs (file-based → resolved path, also kept as a source; raw-value → as-is).
@@ -76,10 +76,14 @@ class Dataset(TorchDataset[Sample]):
                 value = str(row[input_binding.column])
             sample.inputs[input_binding.name] = input_binding.loader.load(value)
 
-        # 2. Load all targets (spatial → resolved path, also kept as a source; scalar → raw value).
+        # 2. Load all targets (file-based → resolved path, also kept as a source; raw-value → as-is;
+        #    None column → a target-less task, e.g. triplet — the encoder ignores the value).
         for target_binding in self._target_bindings:
+            if target_binding.column is None:
+                sample.targets[target_binding.name] = target_binding.encoder.load(None)
+                continue
             column_value = row[target_binding.column]
-            if target_binding.encoder.spatial:
+            if target_binding.encoder.file_based:
                 raw = self._resolve(column_value)
                 sample.meta["target_sources"][target_binding.name] = raw
             else:

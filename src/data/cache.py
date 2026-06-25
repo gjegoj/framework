@@ -18,7 +18,7 @@ from collections.abc import Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from threading import Lock
-from typing import TYPE_CHECKING, Any
+from typing import Any, cast
 
 import numpy as np
 from rich.progress import BarColumn, MofNCompleteColumn, Progress, TextColumn
@@ -26,9 +26,7 @@ from torch import Tensor
 
 from src.data.encoders import TargetEncoder
 from src.data.loaders import InputLoader
-
-if TYPE_CHECKING:
-    from src.data.statistics import Distribution
+from src.data.statistics import Distribution, SupportsSummary
 
 log = logging.getLogger(__name__)
 
@@ -126,10 +124,15 @@ class CachingLoader(InputLoader):
 
 @dataclass
 class CachingTargetEncoder(TargetEncoder):
-    """Decorator: serve a spatial target encoder's ``load`` from an ``ArrayCache``.
+    """Decorator: serve a file-based target encoder's ``load`` from an ``ArrayCache``.
 
-    Delegates ``fit`` / ``to_tensor`` / ``num_classes`` / ``spatial`` / ``summarize`` to
-    the inner encoder; only ``load`` (the file read) is cached.
+    Delegates ``fit`` / ``to_tensor`` / ``num_classes`` / ``file_based`` / ``spatial``
+    to the inner encoder; only ``load`` (the file read) is cached. This base does **not**
+    forward ``summarize``: an inner encoder implementing ``SupportsSummary`` is wrapped by
+    :class:`SummarizableCachingTargetEncoder` instead (chosen by
+    :func:`caching_target_encoder`). So ``isinstance(wrapper, SupportsSummary)`` mirrors
+    the inner encoder's capability through ordinary subclassing — no per-instance method
+    injection.
 
     Parameters:
         inner (TargetEncoder): The wrapped encoder (e.g. ``MaskEncoder``).
@@ -140,6 +143,7 @@ class CachingTargetEncoder(TargetEncoder):
     cache: ArrayCache
 
     def __post_init__(self) -> None:
+        self.file_based = self.inner.file_based
         self.spatial = self.inner.spatial
 
     def fit(self, values: Iterable[Any]) -> None:
@@ -156,5 +160,32 @@ class CachingTargetEncoder(TargetEncoder):
     def num_classes(self) -> int | None:
         return self.inner.num_classes
 
+
+class SummarizableCachingTargetEncoder(CachingTargetEncoder):
+    """A :class:`CachingTargetEncoder` whose inner encoder also implements ``SupportsSummary``.
+
+    Forwards ``summarize`` to the inner encoder so a cached label/scalar encoder keeps its
+    distribution for the dataset report. Built only by :func:`caching_target_encoder`, so
+    ``isinstance(wrapper, SupportsSummary)`` is ``True`` exactly when the inner supports it.
+    """
+
     def summarize(self, values: Iterable[Any]) -> Distribution | None:
-        return self.inner.summarize(values)
+        return cast(SupportsSummary, self.inner).summarize(values)
+
+
+def caching_target_encoder(inner: TargetEncoder, cache: ArrayCache) -> CachingTargetEncoder:
+    """Wrap ``inner`` in a cache decorator, preserving its ``SupportsSummary`` capability.
+
+    Returns :class:`SummarizableCachingTargetEncoder` when ``inner`` implements
+    ``SupportsSummary`` (so ``summarize`` is forwarded and the Protocol check holds),
+    else the plain :class:`CachingTargetEncoder`.
+
+    Parameters:
+        inner (TargetEncoder): The encoder to wrap.
+        cache (ArrayCache): Shared cache, keyed by the resolved path.
+
+    Returns:
+        CachingTargetEncoder: The summarizable subclass or the base, matching ``inner``.
+    """
+    wrapper = SummarizableCachingTargetEncoder if isinstance(inner, SupportsSummary) else CachingTargetEncoder
+    return wrapper(inner=inner, cache=cache)

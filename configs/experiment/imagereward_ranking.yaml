@@ -1,0 +1,42 @@
+# @package _global_
+# Pairwise image ranking on ImageRewardDB: which of two generated images humans preferred.
+# Two views (image_a, image_b) go through ONE shared backbone → embeddings; RankNet scores each by
+# its norm and trains P(A≻B) = sigmoid(||A|| − ||B||) against the binary preference label.
+#
+# Prepare data first (Apache-2.0, no HF login):
+#   uv run python scripts/prepare_imagereward.py --max-prompts 150
+# Run:
+#   uv run python main.py experiment=imagereward_ranking
+defaults:
+  - override /backbone: resnet18            # shared image backbone over both views
+  - override /transforms: multiview_shared  # ONE augmentation sampling applied to both views (fair pair)
+  - override /scheduler: onecycle
+  - override /callbacks: default
+  - override /dataloader: debug
+  - override /logger: clearml
+
+project: imagereward-ranking
+seed: 0
+epochs: 10
+batch_size: 32
+image_size: [224, 224]
+lr: 1.0e-3
+
+run_train: true
+run_test: true
+run_export: false                          # export not wired for ranking embeddings
+
+data:
+  sources: data/imagereward/pairs.csv
+  inputs:
+    a: image_a                             # → image loader (.webp), view 0
+    b: image_b                             # view 1
+  cache: {ram_fraction: 0.5}
+  split: {train: 0.8, val: 0.1, test: 0.1}
+
+tasks:
+  preference:
+    preset: pairwise_ranking               # RANKING topology + metric objective (scalar target → criterion)
+    target: binary_label                   # 1 = A preferred, 0 = B preferred (consumed by RankNet)
+    num_classes: 1                         # scalar relevance head f(x): backbone D=512 → 1 (raw RankNet score)
+    loss: ranknet                          # smooth logistic pairwise loss on the score gap

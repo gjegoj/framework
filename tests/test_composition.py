@@ -223,6 +223,16 @@ class TestBuildBindings:
         bindings = build_bindings(config)
         assert isinstance(bindings[0].encoder, ScalarEncoder)
 
+    def test_targetless_task_gets_null_encoder_and_no_column(self) -> None:
+        from src.data.encoders import NullTargetEncoder
+
+        raw = _minimal_config()
+        raw["tasks"] = {"rank": {"preset": "triplet"}}  # no 'target' → structure-only supervision
+        config = load_config(raw)
+        bindings = build_bindings(config)
+        assert isinstance(bindings[0].encoder, NullTargetEncoder)
+        assert bindings[0].column is None
+
     def test_multilabel_gets_binarize_codec(self) -> None:
         raw = _minimal_config()
         raw["tasks"] = {
@@ -579,13 +589,20 @@ class TestBuildLogger:
         assert config.logger.project == "ml-tests"
 
     def test_clearml_logger_is_both_instances(self) -> None:
-        """ClearMLLogger must satisfy both Lightning Logger and PlotLogger."""
+        """ClearMLLogger must satisfy Lightning's Logger and every artifact-logger port."""
         pytest.importorskip("clearml")
         from unittest.mock import MagicMock, patch
 
         import lightning as L
 
-        from src.core.ports import PlotLogger
+        from src.core.ports import (
+            CurveLogger,
+            HistogramLogger,
+            HtmlLogger,
+            MatrixLogger,
+            PlotLogger,
+            SingleValueLogger,
+        )
         from src.loggers.clearml import ClearMLLogger
 
         mock_task = MagicMock()
@@ -596,8 +613,9 @@ class TestBuildLogger:
         with patch("clearml.Task.init", return_value=mock_task):
             logger = ClearMLLogger(project_name="test-proj", task_name="test-task")
 
-        assert isinstance(logger, PlotLogger)
         assert isinstance(logger, L.pytorch.loggers.Logger)
+        for port in (MatrixLogger, CurveLogger, HtmlLogger, SingleValueLogger, HistogramLogger, PlotLogger):
+            assert isinstance(logger, port)
 
     def test_clearml_log_html_reports_media(self) -> None:
         pytest.importorskip("clearml")

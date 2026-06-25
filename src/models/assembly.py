@@ -23,7 +23,7 @@ from src.core.entities import FeatureBundle, HeadSpec, ModelOutput
 from src.core.instantiate import instantiate
 from src.core.keys import IMAGE
 from src.core.ports import Backbone, Head
-from src.models.heads import _AsHead
+from src.models.heads import AsHead
 from src.models.registry import head_builders
 
 
@@ -220,13 +220,13 @@ def _build_head(backbone: Backbone, spec: HeadSpec, in_features: int) -> Head:
             out_features=spec.out_features,
             out_channels=spec.out_features,
         )
-        return _AsHead(raw)
+        return AsHead(raw)
 
     # 2. Native mode: ask the backbone for its architecture-appropriate head.
     if spec.prefer_native:
         raw = backbone.native_head(spec.feature_key, in_features, spec.out_features)
         if raw is not None:
-            return _AsHead(raw)
+            return AsHead(raw)
         # Backbone returned None — fall through to the registry.
 
     # 3. Registry mode.

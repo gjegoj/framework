@@ -117,12 +117,13 @@ class IdentityHead(Head):
         return features
 
 
-class _AsHead(Head):
+class AsHead(Head):
     """Adapts any ``nn.Module`` into the ``Head`` port.
 
     Used to wrap backbone-native heads (e.g. smp ``SegmentationHead``, timm
     classifier) and ``_target_``-instantiated custom heads so they satisfy the
-    ``Head`` ABC without inheritance.
+    ``Head`` ABC without inheritance. Public because model assembly imports it
+    across the module boundary.
     """
 
     def __init__(self, module: nn.Module) -> None:

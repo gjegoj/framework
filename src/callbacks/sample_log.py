@@ -3,7 +3,7 @@
 The producer of the visualization pipeline: it gates by epoch/batch index,
 denormalizes the input image, builds one ``SampleView`` per batch element by
 delegating to per-task ``Annotator`` strategies, hands them to an injected
-``Renderer`` (HTML by default), and ships the HTML through ``PlotLogger.log_html``.
+``Renderer`` (HTML by default), and ships the HTML through ``HtmlLogger.log_html``.
 Knows nothing about ClearML or Plotly — both live behind boundaries.
 
 Replaces the MVP ``ImageGridLogCallback``.
@@ -22,7 +22,7 @@ from torch import Tensor
 from src.core.constants import IMAGENET_MEAN, IMAGENET_STD
 from src.core.entities import Batch, is_step_output
 from src.core.enums import Stage
-from src.core.ports import PlotLogger
+from src.core.ports import HtmlLogger
 from src.training.modules import LitModule
 from src.visualization.pipeline import build_sample_views
 from src.visualization.renderer import HtmlRenderer, Renderer
@@ -116,7 +116,7 @@ class SampleLogCallback(L.Callback):
             return
         if not is_step_output(outputs):
             return
-        if not isinstance(trainer.logger, PlotLogger):
+        if not isinstance(trainer.logger, HtmlLogger):
             return
         if not isinstance(pl_module, LitModule):
             return

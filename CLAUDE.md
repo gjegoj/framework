@@ -55,7 +55,10 @@ albumentations are details** kept behind ABC ports. Layers:
   references it (e.g. `Task.adapter: TargetAdapter` → so `Criterion`/`Activation`/
   `MetricSet`/`TargetAdapter`), when it is a foundational model-graph port
   (`Backbone`/`Head`), or when it is a genuinely cross-cutting abstraction
-  (`LossAggregator`, `PlotLogger`, `MetricDirectionProvider`). Leaf-specific ports stay
+  (`LossAggregator`, `MetricDirectionProvider`, and the **artifact-logger port family** —
+  one verb each, per ISP: `MatrixLogger`/`CurveLogger`/`HtmlLogger`/`SingleValueLogger`/
+  `HistogramLogger`/`PlotLogger`; a backend like `ClearMLLogger` implements several, a
+  consumer narrows to the one it calls). Leaf-specific ports stay
   in their own subsystem — `ModelExporter` + `ExportRequest` in `export/`,
   `BatchTransform` in `transforms/batch/`, data-only ABCs (`TargetEncoder`,
   `InputLoader`, `DataSource`) in the data layer.
@@ -66,14 +69,21 @@ albumentations are details** kept behind ABC ports. Layers:
 - `data/`, `models/`, `tasks/`, `losses/`, `metrics/`, `training/`, `transforms/` —
   adapters/use cases implementing the core ports. `transforms/sample.py` holds the
   per-sample `Transform`/`AlbumentationsTransform`; `transforms/batch/` holds batch
-  transforms (MixUp/CutMix/Mosaic). `data/cache.py` is the in-RAM image/mask cache;
-  `data/encoders.py` the raw-value→tensor `TargetEncoder`s (label/mask/scalar);
+  transforms (MixUp/CutMix/Mosaic). `data/cache.py` is the in-RAM image/mask cache (its
+  warm-up progress bar is the one sanctioned use of `rich` in the data layer — an infra
+  affordance, not presentation of domain data);
+  `data/encoders.py` the raw-value→tensor `TargetEncoder`s (label/mask/scalar/null — `null` is
+  the target-less Null Object for structure-only tasks);
   `models/backbones/` the four backbones (timm/smp/embedding/multi); `losses/` the criteria
   incl. metric-learning (`angular.py`=ArcFace, `contrastive.py`=InfoNCE/SigLIP, `ranking.py`).
   `training/` groups its Lightning humble objects under `modules/` (`base.py`=`BaseLitModule`,
   `lit_module.py`, `lit_datamodule.py`) and the optimizer+scheduler+their registry under `optim/`.
-  Each layer's registries live in `<layer>/registry.py` (`losses`, `data`, `models`, `metrics`,
-  `export`, `callbacks`, `training/optim`).
+  Two registry-placement conventions coexist by intent: **brick-layer registries** live in
+  `<layer>/registry.py` (`losses`, `data`, `models`, `metrics`, `export`, `callbacks`,
+  `training/optim`); a **strategy/renderer registry** that owns a single ABC plus its built-in
+  implementations sits beside that ABC instead (`topology_strategies`/`objective_strategies`,
+  `task_presets`, `annotators`/`label_renderers`, `distribution_renderers`, `plot_builders`,
+  `callback_builders`). Pick by which case a new registry is.
 - `export/` — deployment-export subsystem behind the `ModelExporter` port (`ports.py`,
   `entities.py`; `onnx.py`/`torchscript.py`/`tensorrt.py` backends, `pipeline.py`,
   `verify.py` parity checks, `wrapper.py`/`tracing.py` trace helpers). `visualization/` — sample-debug subsystem: `Annotator`/`LabelRenderer`
@@ -162,9 +172,12 @@ class in a registry (OCP).
   `MetricSet.directions()` → `LitModule.metric_directions()` (the `MetricDirectionProvider`
   Protocol) lets consumers (the progress bar) bind direction without parsing metric names.
 - Canonical input/feature keys (`IMAGE`, `POOLED`, `DECODER`, `ENCODER_LAST`) and the
-  logged-scalar tokens (`LOSS`, `TOTAL`) live in `core/keys.py` — use them instead of literal
-  strings. The full key is composed inline where logged (losses `f"{LOSS}/{stage}/{TOTAL}"`,
-  task metrics `f"{task}/{metric}/{stage}"`); no `*_key` builder functions. YAML references the
+  logged-scalar tokens (`LOSS`, `TOTAL`, `MEAN`) live in `core/keys.py` — use them instead of
+  literal strings. The full key is composed inline where logged (losses `f"{LOSS}/{stage}/{TOTAL}"`,
+  task metrics `f"{task}/{metric}/{stage}"`); no `*_key` builder functions. The inverse — parsing a
+  logged key back into its `(task, metric, stage, leaf)` / loss components — is centralized in the
+  `MetricKey` value object (`core/metric_key.py`), the single owner of the key grammar; the metrics
+  summary, progress bar and ClearML logger all parse through it (never re-`split("/")`). YAML references the
   same tokens via the `${key:NAME}` OmegaConf resolver (`config/resolvers.py`, registered as a
   `src.config` import side-effect), e.g. `monitor: ${key:LOSS}/val/${key:TOTAL}` → `loss/val/total`.
   Other backbone-specific streams (e.g. future FPN levels `p3`/`p4`) are documented in each
@@ -224,7 +237,9 @@ class in a registry (OCP).
   `context` (not `ctx`), `config`/`task_config`/`backbone_config` (not `cfg`/`*_cfg`),
   `target_binding`/`input_binding` (not `tb`/`ib`), `for task in self.tasks` (not `for t`),
   `for key, value in mapping.items()` (not `k, v`), `for param in params` (not `p`),
-  `ground_truth`/`prediction` (not `gt`/`pred`). Registry string keys are the concept,
+  `ground_truth`/`prediction` (not `gt`/`pred`) — **except** serialization/wire-format tokens that
+  are *values*, not identifiers (the `{task}_gt`/`{task}_pred` visualization field suffixes and
+  `KINDS = ("gt", "pred")`), which are stable string keys and stay terse. Registry string keys are the concept,
   matching their class (`label`/`multilabel`/`scalar`/`mask` → `LabelEncoder` etc.) — no
   redundant/encoding-detail suffixes. **Allowed** (these *are* meaningful by convention,
   do not "expand" them): tensor-dim letters `B`/`C`/`H`/`W`, a pure-math tensor arg `x`,
@@ -245,7 +260,7 @@ class in a registry (OCP).
   `TargetEncoder.summarize(values) -> Distribution | None` (base → `None`; label/multilabel →
   `CategoricalDistribution`, scalar → `ContinuousDistribution`; `MaskEncoder` deferred → `None`).
   `DataModule.statistics()` assembles `{task: {stage: Distribution}}` (data *computes*); the
-  `dataset_stats` callback *presents* — terminal tables + `PlotLogger.log_histogram` — keeping
+  `dataset_stats` callback *presents* — terminal tables + `HistogramLogger.log_histogram` — keeping
   `rich`/logger out of the data layer (gated via the `callbacks` group, like `metric_summary`).
   Segmentation drops in by implementing `MaskEncoder.summarize` — no reporter change (renders any shape).
 
@@ -269,6 +284,10 @@ class in a registry (OCP).
   encoder) — the modality for embedding/ranking tasks on cached features. `MultiEncoderBackbone`
   (kind `multi`) holds N named sub-encoders producing N `POOLED` streams for MULTISTREAM tasks;
   the encoder name == the `data.inputs` alias == the stream name (wiring derives stream order).
+  It is deliberately *not* in the `backbones` registry — its sub-encoders are themselves recursive
+  backbone specs — so `build_backbone` special-cases `kind: multi`; that single `if` is the
+  sanctioned exception to the otherwise-flat registry dispatch (a 2-case strategy registry would be
+  shallower than the branch it replaces).
   RANKING instead stacks N input *views* through one shared backbone (`view_keys` from `data.inputs`).
 - The reference dataset `old/data/classification.csv` points at remote URLs with empty
   local placeholder images; tests use synthetic images generated in a tmp dir, and the

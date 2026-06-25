@@ -47,7 +47,7 @@ class MetricReporter:
             task (Task): Task whose metric set to report.
             stage (Stage): Lifecycle stage selecting the metric set.
             log_scalar (Callable[[str, Any], None]): Sink for scalar values (bound ``self.log``).
-            logger (object): Active logger; plot handlers use it only if it is a ``PlotLogger``.
+            logger (object): Active logger; plot handlers use it only if it implements the artifact port they need.
             step (int): Iteration counter for plot backends (the current epoch).
         """
         metric_set = task.metrics[stage]

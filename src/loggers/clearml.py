@@ -24,29 +24,33 @@ import numpy as np
 from lightning.pytorch.loggers import Logger
 from lightning.pytorch.utilities.rank_zero import rank_zero_only
 
-from src.core.enums import Stage
-from src.core.keys import LOSS
-from src.core.ports import PlotLogger
+from src.core.metric_key import MetricKey
+from src.core.ports import (
+    CurveLogger,
+    HistogramLogger,
+    HtmlLogger,
+    MatrixLogger,
+    PlotLogger,
+    SingleValueLogger,
+)
+from src.loggers.plotly import build_plot
 
 log = logging.getLogger(__name__)
-
-# Stage tokens (train/val/test/predict) — pulled out of a *loss* key as the ClearML
-# *series* so the train/val/test curves of one loss share a single graph. Metrics are
-# left untouched (their stage already trails, so averaged metrics group by stage).
-_STAGE_TOKENS = frozenset(Stage)
 
 if TYPE_CHECKING:
     from clearml import Task
     from clearml.logger import Logger as ClearMLBackendLogger
     from torch import Tensor
 
+    from src.core.plotting import Plot
 
-class ClearMLLogger(Logger, PlotLogger):
-    """Lightning + PlotLogger backed by ClearML.
 
-    Inherits Lightning's ``Logger`` (for ``self.log`` scalar path) and our
-    ``PlotLogger`` port (for ``MatrixMetricHandler`` matrix path). A single
-    ClearML ``Task`` handles both.
+class ClearMLLogger(Logger, MatrixLogger, CurveLogger, HtmlLogger, SingleValueLogger, HistogramLogger, PlotLogger):
+    """Lightning logger plus every artifact-logger port, backed by ClearML.
+
+    Inherits Lightning's ``Logger`` (for the ``self.log`` scalar path) and all six
+    artifact-logger ports (matrix / curve / HTML / single-value / histogram / plot);
+    consumers narrow to the one they need. A single ClearML ``Task`` handles them all.
 
     Metric name splitting: ``a/b/c`` → title ``a/b``, series ``c`` (last segment),
     so averaged metrics group their stages on one graph and per-class metrics keep
@@ -200,6 +204,20 @@ class ClearMLLogger(Logger, PlotLogger):
             mode="group",  # series (stages) shown as side-by-side bars
         )
 
+    @rank_zero_only
+    def log_plot(self, plot: "Plot") -> None:
+        """Render ``plot`` via the ``plot_builders`` registry and ship to ClearML.
+
+        Parameters:
+            plot (Plot): Backend-agnostic plot descriptor (e.g. ``BoxPlot``).
+        """
+        self._clearml_logger.report_plotly(
+            title=plot.title,
+            series="",
+            figure=build_plot(plot),
+            iteration=0,
+        )
+
     # ---------------------------------------------------------------- utils
 
     @staticmethod
@@ -210,17 +228,16 @@ class ClearMLLogger(Logger, PlotLogger):
         averaged metric groups its stages (``species/f1/val``) and a per-class metric
         keeps its class series on one graph (``breed/f1/train/Abyssinian``).
 
-        **Losses only** are regrouped: ``loss/{stage}/...`` pulls the stage out as the
-        series so a task's train/val/test losses share one graph
+        **Losses only** are regrouped (via :class:`MetricKey`): ``loss/{stage}/...`` pulls
+        the stage out as the series so a task's train/val/test losses share one graph
         (``loss/train/total`` & ``loss/val/total`` → title ``loss/total``).
         A single-segment name → ``(name, "value")``.
         """
-        parts = name.split("/")
-        if len(parts) == 1:
-            return name, "value"
-        if parts[0] == LOSS and len(parts) >= 3 and parts[1] in _STAGE_TOKENS:
-            return f"{LOSS}/" + "/".join(parts[2:]), parts[1]
-        return "/".join(parts[:-1]), parts[-1]
+        key = MetricKey.parse(name)
+        if key.is_loss:
+            return key.display_name, str(key.stage)
+        title, _, series = name.rpartition("/")
+        return (title, series) if title else (name, "value")
 
 
 # Display precision for values shown verbatim in ClearML cells (matrices, single values).

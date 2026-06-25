@@ -10,7 +10,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from src.core.keys import LOSS, MEAN, TOTAL
+from src.core.keys import MEAN, TOTAL
+from src.core.metric_key import MetricKey
 
 
 def summary_metrics(metrics: Mapping[str, Any], stage: str) -> dict[str, float]:
@@ -19,8 +20,9 @@ def summary_metrics(metrics: Mapping[str, Any], stage: str) -> dict[str, float]:
     Keeps, for the given stage: scalar task metrics ``task/metric/{stage}``, each vector
     metric's averaged value ``task/metric/{stage}/mean``, and the aggregate loss
     ``loss/{stage}/total``. Drops per-class vector leaves and per-component losses. The
-    stage and the ``mean`` leaf are stripped from the key, so names match the training
-    table's rows (``species/f1``, ``breed/recall``, ``mask/iou``, ``loss/total``).
+    key grammar is parsed once by :class:`MetricKey`; ``display_name`` strips the stage
+    and the ``mean`` leaf, so names match the training table's rows (``species/f1``,
+    ``breed/recall``, ``mask/iou``, ``loss/total``).
 
     Parameters:
         metrics (Mapping[str, Any]): Logged values keyed ``task/metric/stage`` etc.
@@ -32,12 +34,12 @@ def summary_metrics(metrics: Mapping[str, Any], stage: str) -> dict[str, float]:
     """
     selected: dict[str, float] = {}
     for key, value in metrics.items():
-        parts = key.split("/")
-        if parts[0] == LOSS:
-            if len(parts) == 3 and parts[1] == stage and parts[2] == TOTAL:
-                selected[f"{parts[0]}/{parts[2]}"] = float(value)  # loss/<stage>/total -> loss/total
-        elif len(parts) == 3 and parts[2] == stage:
-            selected[f"{parts[0]}/{parts[1]}"] = float(value)  # task/metric/<stage> -> task/metric
-        elif len(parts) == 4 and parts[2] == stage and parts[3] == MEAN:
-            selected[f"{parts[0]}/{parts[1]}"] = float(value)  # task/metric/<stage>/mean -> task/metric
+        metric_key = MetricKey.parse(key)
+        if metric_key.stage != stage:
+            continue
+        if metric_key.is_loss:
+            if metric_key.name == TOTAL:  # aggregate loss only; drop per-component terms
+                selected[metric_key.display_name] = float(value)
+        elif metric_key.leaf is None or metric_key.leaf == MEAN:  # scalar metric or vector mean
+            selected[metric_key.display_name] = float(value)
     return selected

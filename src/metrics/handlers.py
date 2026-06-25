@@ -18,7 +18,7 @@ from typing import Any
 import torch
 
 from src.core.keys import MEAN
-from src.core.ports import PlotLogger
+from src.core.ports import CurveLogger, MatrixLogger
 
 
 @dataclass(frozen=True)
@@ -27,7 +27,7 @@ class MetricLogContext:
 
     Parameters:
         log_scalar (Callable): Bound ``self.log`` from ``LitModule``.
-        logger (object): Active logger; plot handlers narrow it to ``PlotLogger`` at use.
+        logger (object): Active logger; plot handlers narrow it to the artifact port they need at use.
         step (int): Current epoch, used as iteration counter for plot backends.
         class_names (list[str] | None): Maps class index → display name.
             ``None`` falls back to ``class{i}`` keys.
@@ -104,9 +104,9 @@ class VectorMetricHandler(MetricHandler):
 
 
 class MatrixMetricHandler(MetricHandler):
-    """Logs 2-D tensors via ``PlotLogger.log_matrix``.
+    """Logs 2-D tensors via ``MatrixLogger.log_matrix``.
 
-    Silently skips when the active logger does not implement ``PlotLogger``.
+    Silently skips when the active logger does not implement ``MatrixLogger``.
 
     Parameters:
         axes (dict | None): ``{metric_name: (xaxis_label, yaxis_label)}``.
@@ -119,7 +119,7 @@ class MatrixMetricHandler(MetricHandler):
         return isinstance(value, torch.Tensor) and value.ndim == 2
 
     def handle(self, key: str, value: Any, context: MetricLogContext) -> None:
-        if not isinstance(context.logger, PlotLogger):
+        if not isinstance(context.logger, MatrixLogger):
             return
         xaxis, yaxis = self._axes.get(context.metric_name or "", (None, None))
         context.logger.log_matrix(
@@ -141,7 +141,7 @@ class CurveMetricHandler(MetricHandler):
     — necessary because metric families disagree on ordering (PR: precision first;
     ROC: fpr first).
 
-    Silently skips when the active logger does not implement ``PlotLogger``.
+    Silently skips when the active logger does not implement ``CurveLogger``.
 
     Parameters:
         specs (dict | None): ``{metric_name: CurveSpec}``.
@@ -154,7 +154,7 @@ class CurveMetricHandler(MetricHandler):
         return isinstance(value, tuple) and len(value) == 3
 
     def handle(self, key: str, value: Any, context: MetricLogContext) -> None:
-        if not isinstance(context.logger, PlotLogger):
+        if not isinstance(context.logger, CurveLogger):
             return
         spec = self._specs.get(context.metric_name or "", CurveSpec(xaxis="x", yaxis="y"))
         first_output, second_output, _ = value

@@ -11,7 +11,15 @@ import torch
 
 from src.core.entities import Task
 from src.core.enums import Stage
-from src.core.ports import PlotLogger
+from src.core.plotting import Plot
+from src.core.ports import (
+    CurveLogger,
+    HistogramLogger,
+    HtmlLogger,
+    MatrixLogger,
+    PlotLogger,
+    SingleValueLogger,
+)
 from src.metrics.directions import task_metric_directions
 from src.metrics.handlers import (
     CURVE_SPECS,
@@ -31,8 +39,8 @@ from src.tasks.presets import classification, regression
 # ------------------------------------------------------------------ fixtures
 
 
-class FakePlotLogger(PlotLogger):
-    """Test double recording ``log_matrix`` / ``log_curve`` / ``log_html`` / ``log_single_value`` calls."""
+class FakePlotLogger(MatrixLogger, CurveLogger, HtmlLogger, SingleValueLogger, HistogramLogger, PlotLogger):
+    """Full-contract test double recording every artifact-logger call (matrix/curve/html/single_value/histogram/plot)."""
 
     def __init__(self) -> None:
         self.matrix_calls: list[dict[str, Any]] = []
@@ -40,6 +48,7 @@ class FakePlotLogger(PlotLogger):
         self.html_calls: list[dict[str, Any]] = []
         self.single_values: dict[str, float] = {}
         self.histogram_calls: list[dict[str, Any]] = []
+        self.plot_calls: list[Plot] = []
 
     def log_matrix(
         self,
@@ -76,6 +85,9 @@ class FakePlotLogger(PlotLogger):
 
     def log_histogram(self, title: str, series: str, values: Sequence[float], labels: list[str] | None = None) -> None:
         self.histogram_calls.append({"title": title, "series": series, "values": list(values), "labels": labels})
+
+    def log_plot(self, plot: Plot) -> None:
+        self.plot_calls.append(plot)
 
 
 def _ctx(
@@ -414,8 +426,10 @@ class TestDispatch:
         dispatch("x", torch.tensor(1.0), ctx, handlers=(custom,))
         custom.handle.assert_called_once()
 
-    def test_fake_plot_logger_is_plot_logger_instance(self) -> None:
-        assert isinstance(FakePlotLogger(), PlotLogger)
+    def test_fake_plot_logger_implements_every_artifact_port(self) -> None:
+        fake = FakePlotLogger()
+        for port in (MatrixLogger, CurveLogger, HtmlLogger, SingleValueLogger, HistogramLogger, PlotLogger):
+            assert isinstance(fake, port)
 
 
 # ------------------------------------------------------------- MetricReporter

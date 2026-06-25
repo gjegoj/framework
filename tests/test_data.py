@@ -1,6 +1,8 @@
 """Unit tests for the data layer on a synthetic, offline image dataset."""
 
+from collections.abc import Iterable
 from pathlib import Path
+from typing import Any
 
 import albumentations as A
 import cv2
@@ -120,11 +122,55 @@ class TestIdentityTransform:
         assert result.targets["label"] is target
 
 
+class TestMultiViewTransform:
+    @staticmethod
+    def _aug() -> A.Compose:
+        # a randomized geometric op makes independent-vs-shared sampling observable
+        return A.Compose([A.Affine(rotate=(-45, 45), p=1.0), A.Resize(8, 8), A.Normalize(), ToTensorV2()], seed=0)
+
+    @staticmethod
+    def _two_views() -> Sample:
+        image = np.random.default_rng(0).integers(0, 255, (16, 16, 3), dtype=np.uint8)
+        return Sample(inputs={"a": image.copy(), "b": image.copy()})  # identical content in both views
+
+    def test_shared_applies_identical_params_to_all_views(self) -> None:
+        from src.transforms.sample import MultiViewTransform
+
+        result = MultiViewTransform(self._aug(), shared=True).apply(self._two_views())
+        assert torch.equal(result.inputs["a"], result.inputs["b"])  # one sampling → identical tensors
+
+    def test_independent_samples_each_view_separately(self) -> None:
+        from src.transforms.sample import MultiViewTransform
+
+        result = MultiViewTransform(self._aug(), shared=False).apply(self._two_views())
+        assert not torch.equal(result.inputs["a"], result.inputs["b"])  # per-view sampling → differ
+
+    def test_every_view_is_tensorized(self) -> None:
+        from src.transforms.sample import MultiViewTransform
+
+        for shared in (True, False):
+            result = MultiViewTransform(self._aug(), shared=shared).apply(self._two_views())
+            assert result.inputs["a"].shape == (3, 8, 8)
+            assert result.inputs["b"].shape == (3, 8, 8)
+
+    def test_shared_single_input_does_not_break(self) -> None:
+        from src.transforms.sample import MultiViewTransform
+
+        sample = Sample(inputs={"image": np.zeros((16, 16, 3), dtype=np.uint8)})
+        result = MultiViewTransform(self._aug(), shared=True).apply(sample)
+        assert result.inputs["image"].shape == (3, 8, 8)
+
+
 class TestLabelEncoder:
     def test_class_mapping_sets_vocab(self) -> None:
         codec = LabelEncoder(class_mapping={0: "cat", 1: "cow", 2: "dog"})
         assert codec.num_classes == 3
         assert codec.class_mapping == {0: "cat", 1: "cow", 2: "dog"}
+
+    def test_is_neither_file_based_nor_spatial(self) -> None:
+        codec = LabelEncoder(class_mapping={0: "cat", 1: "dog"})
+        assert codec.file_based is False  # raw column value — no root_path / source / cache
+        assert codec.spatial is False  # not a mask — does not enter the geometric transform
 
     def test_to_tensor_returns_long_index(self) -> None:
         codec = LabelEncoder(class_mapping={0: "cat", 1: "dog"})
@@ -214,6 +260,110 @@ class TestScalarEncoder:
         codec = ScalarEncoder()
         codec.fit([1, 2, 3])
         assert codec.num_classes is None
+
+
+class TestSupportsSummary:
+    """Capability Protocol: encoders that can summarize declare it; others stay silent."""
+
+    def test_label_encoder_satisfies_protocol(self) -> None:
+        from src.data.statistics import SupportsSummary
+
+        codec = LabelEncoder(class_mapping={0: "cat", 1: "dog"})
+        assert isinstance(codec, SupportsSummary)
+
+    def test_scalar_encoder_satisfies_protocol(self) -> None:
+        from src.data.statistics import SupportsSummary
+
+        assert isinstance(ScalarEncoder(), SupportsSummary)
+
+    def test_bare_target_encoder_stub_does_not_satisfy_protocol(self) -> None:
+        from src.data.encoders import TargetEncoder
+        from src.data.statistics import SupportsSummary
+
+        class _StubEncoder(TargetEncoder):
+            def fit(self, values: Iterable[Any]) -> None:
+                pass
+
+            def load(self, value: Any) -> Any:
+                return value
+
+            def to_tensor(self, value: Any) -> torch.Tensor:
+                return torch.tensor(0)
+
+        assert not isinstance(_StubEncoder(), SupportsSummary)
+
+    def test_mask_encoder_does_not_satisfy_protocol(self) -> None:
+        from src.data import MaskEncoder
+        from src.data.statistics import SupportsSummary
+
+        assert not isinstance(MaskEncoder(), SupportsSummary)
+
+    def test_caching_encoder_over_summarizing_inner_satisfies_protocol(self) -> None:
+        from src.data.cache import ArrayCache, caching_target_encoder
+        from src.data.statistics import CategoricalDistribution, SupportsSummary
+
+        cache = ArrayCache(max_bytes=10**6)
+        inner = LabelEncoder(class_mapping={0: "cat", 1: "dog"})
+        inner.fit(["cat", "dog"])
+        cached = caching_target_encoder(inner, cache)
+        assert isinstance(cached, SupportsSummary)
+        # Delegation must produce the same distribution as the inner encoder directly.
+        values = ["cat", "dog", "cat"]
+        result = cached.summarize(values)
+        assert isinstance(result, CategoricalDistribution)
+        assert result.counts == {"cat": 2, "dog": 1}
+
+    def test_caching_encoder_over_mask_encoder_does_not_satisfy_protocol(self) -> None:
+        from src.data import MaskEncoder
+        from src.data.cache import ArrayCache, caching_target_encoder
+        from src.data.statistics import SupportsSummary
+
+        cache = ArrayCache(max_bytes=10**6)
+        cached = caching_target_encoder(MaskEncoder(class_mapping={0: "bg", 1: "fg"}), cache)
+        assert not isinstance(cached, SupportsSummary)
+
+
+class TestNullTargetEncoder:
+    def test_load_and_to_tensor_produce_scalar_ignoring_value(self) -> None:
+        from src.data.encoders import NullTargetEncoder
+
+        encoder = NullTargetEncoder()
+        encoder.fit([1, 2, 3])  # no-op
+        tensor = encoder.to_tensor(encoder.load("ignored"))
+        assert tensor.shape == ()
+        assert encoder.num_classes is None
+
+    def test_is_not_file_based_spatial_or_summarizable(self) -> None:
+        from src.data.encoders import NullTargetEncoder
+        from src.data.statistics import SupportsSummary
+
+        encoder = NullTargetEncoder()
+        assert encoder.file_based is False
+        assert encoder.spatial is False
+        assert not isinstance(encoder, SupportsSummary)
+
+    def test_registered_under_null_key(self) -> None:
+        from src.data.encoders import NullTargetEncoder
+        from src.data.registry import target_encoders
+
+        assert isinstance(target_encoders.create("null"), NullTargetEncoder)
+
+    def test_dataset_target_with_none_column_needs_no_data_column(self, csv_path: Path) -> None:
+        # A structure-only task (triplet/contrastive) declares no target column; the
+        # dataset still yields a target so the step can index batch.targets[name].
+        from src.data.encoders import NullTargetEncoder
+
+        frame = pd.read_csv(csv_path)  # image_path + label, but no column for 'rank'
+        dataset = Dataset(
+            frame=frame,
+            input_bindings=_build_input_bindings("image_path", frame),
+            target_bindings=[TargetBinding("rank", None, NullTargetEncoder())],
+            transform=_make_transform((16, 16)),
+        )
+        sample = dataset[0]
+        assert "rank" in sample.targets
+        assert sample.targets["rank"].shape == ()
+        assert "rank" not in sample.meta["target_sources"]  # not file-based → no recorded source
 
 
 class TestRotate90WithLabel:
@@ -473,7 +623,8 @@ class TestMaskEncoderAndDensePipeline:
         path = tmp_path / "m.png"
         cv2.imwrite(str(path), mask)
         codec = MaskEncoder()
-        assert codec.spatial is True
+        assert codec.file_based is True  # read from a file (resolved against root_path)
+        assert codec.spatial is True  # and rides through the geometric transform
         arr = codec.load(str(path))
         assert arr.shape == (2, 2)
         tensor = codec.to_tensor(arr)
@@ -629,6 +780,68 @@ class TestDataModule:
         batch = next(iter(datamodule.train_dataloader()))
         assert batch.inputs["image"].shape[1:] == (3, 16, 16)
 
+    def test_statistics_returns_per_task_distributions(self, csv_path: Path) -> None:
+        """statistics() skips encoders that lack SupportsSummary (behavior matches the old None-skipping)."""
+        from src.data.statistics import CategoricalDistribution, SupportsSummary
+
+        runtime = RuntimeContext()
+        transforms = {stage: _make_transform((16, 16)) for stage in Stage}
+        datamodule = DataModule(
+            target_bindings=[_binding()],
+            inputs_config="image_path",
+            transforms=transforms,
+            runtime=runtime,
+            batch_size=4,
+            seed=0,
+            source=CsvDataSource(str(csv_path)),
+            split={Stage.TRAIN: 0.6, Stage.VAL: 0.2, Stage.TEST: 0.2},
+        )
+        datamodule.setup()
+        stats = datamodule.statistics()
+
+        # The label encoder supports summarization → the task appears in the output.
+        assert "label" in stats
+        assert isinstance(datamodule._target_bindings[0].encoder, SupportsSummary)
+        for stage, distribution in stats["label"].items():
+            assert isinstance(distribution, CategoricalDistribution)
+            # All three classes present across every stage.
+            assert set(distribution.counts.keys()) == {"cat", "cow", "dog"}
+
+    def test_statistics_skips_non_summarizable_encoders(self, csv_path: Path) -> None:
+        """An encoder without SupportsSummary (e.g. a stub) is silently omitted."""
+        from src.data.encoders import TargetEncoder
+        from src.data.statistics import SupportsSummary
+
+        class _PassthroughEncoder(TargetEncoder):
+            def fit(self, values: Iterable[Any]) -> None:
+                pass
+
+            def load(self, value: Any) -> Any:
+                return value
+
+            def to_tensor(self, value: Any) -> torch.Tensor:
+                return torch.tensor(0)
+
+        runtime = RuntimeContext()
+        transforms = {stage: _make_transform((16, 16)) for stage in Stage}
+        passthrough_binding = TargetBinding(name="extra", column="label", encoder=_PassthroughEncoder())
+        datamodule = DataModule(
+            target_bindings=[_binding(), passthrough_binding],
+            inputs_config="image_path",
+            transforms=transforms,
+            runtime=runtime,
+            batch_size=4,
+            seed=0,
+            source=CsvDataSource(str(csv_path)),
+            split={Stage.TRAIN: 0.6, Stage.VAL: 0.2, Stage.TEST: 0.2},
+        )
+        datamodule.setup()
+        stats = datamodule.statistics()
+
+        assert "label" in stats  # summarizable encoder is present
+        assert "extra" not in stats  # non-summarizable encoder is absent
+        assert not isinstance(passthrough_binding.encoder, SupportsSummary)
+
 
 def _binding_fitted(frame: pd.DataFrame) -> TargetBinding:
     binding = _binding()
@@ -700,6 +913,7 @@ class TestCachingDecorators:
         cached = np.array([[1, 2], [3, 4]], np.uint8)
         cache.warm(["/m.png"], lambda _: cached, workers=1)
         codec = CachingTargetEncoder(MaskEncoder(class_mapping={0: "bg", 1: "fg"}), cache)
+        assert codec.file_based is True  # both file flags delegated to the inner encoder
         assert codec.spatial is True
         assert codec.num_classes == 2  # delegated
         assert np.array_equal(codec.load("/m.png"), cached)  # served from cache

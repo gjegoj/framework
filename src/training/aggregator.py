@@ -18,7 +18,9 @@ class WeightedSumAggregator(LossAggregator):
     """
 
     def combine(self, losses: dict[str, LossResult], weights: dict[str, float]) -> LossResult:
-        total = torch.zeros((), device=next(iter(losses.values())).total.device)
+        # Match the dtype/device of the first task's loss (mirrors ``logits.new_zeros(())``
+        # used in WeightedSumCriterion) — one zero-scalar idiom across the loss layer.
+        total = next(iter(losses.values())).total.new_zeros(())
         components: dict[str, torch.Tensor] = {}
         for task_name, result in losses.items():
             weight = weights.get(task_name, 1.0)

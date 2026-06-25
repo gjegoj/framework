@@ -1,14 +1,17 @@
-"""Unit tests for the ClearML logger adapter's metric-name → (title, series) split.
+"""Unit tests for the ClearML logger adapter.
 
-``_split_metric_name`` is a pure static method; it needs no ClearML Task (the
-``clearml`` import is lazy, inside ``__init__``), so these run without the optional
-dependency installed.
+- ``_split_metric_name``: pure static method; runs without clearml installed.
+- ``log_plot``: verified via a stub logger; runs without clearml installed.
 """
 
 from __future__ import annotations
 
+from unittest.mock import MagicMock, patch
+
+import plotly.graph_objects as go
 import pytest
 
+from src.core.plotting import BoxPlot, BoxStats
 from src.loggers.clearml import ClearMLLogger
 
 split = ClearMLLogger._split_metric_name
@@ -52,3 +55,40 @@ class TestSplitMetricName:
         """The whole point: a loss's train/val/test land on the same graph (title)."""
         titles = {split(f"loss/{stage}/total")[0] for stage in ("train", "val", "test")}
         assert titles == {"loss/total"}
+
+
+class TestClearMLLoggerLogPlot:
+    """Verify ClearMLLogger.log_plot delegates to report_plotly exactly once."""
+
+    def _make_logger_with_stub(self) -> tuple[ClearMLLogger, MagicMock]:
+        """Construct a ``ClearMLLogger`` with a stub ClearML logger (no real Task)."""
+        stub_backend_logger = MagicMock()
+        stub_task = MagicMock()
+        stub_task.get_logger.return_value = stub_backend_logger
+
+        with patch("clearml.Task.init", return_value=stub_task):
+            logger = ClearMLLogger.__new__(ClearMLLogger)
+            logger._task = stub_task
+            logger._clearml_logger = stub_backend_logger
+
+        return logger, stub_backend_logger
+
+    def test_log_plot_calls_report_plotly_once(self) -> None:
+        logger, stub_backend_logger = self._make_logger_with_stub()
+
+        plot = BoxPlot(
+            title="score_regression",
+            categories=["train", "val"],
+            boxes=[
+                BoxStats(minimum=0.0, q25=1.0, median=2.0, q75=3.0, maximum=4.0, mean=2.0),
+                BoxStats(minimum=0.5, q25=1.5, median=2.5, q75=3.5, maximum=4.5, mean=2.5),
+            ],
+        )
+        logger.log_plot(plot)
+
+        stub_backend_logger.report_plotly.assert_called_once()
+        call_kwargs = stub_backend_logger.report_plotly.call_args
+        assert call_kwargs.kwargs["title"] == "score_regression"
+        assert call_kwargs.kwargs["series"] == ""
+        assert isinstance(call_kwargs.kwargs["figure"], go.Figure)
+        assert call_kwargs.kwargs["iteration"] == 0

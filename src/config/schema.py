@@ -259,7 +259,14 @@ class TaskConfig(BaseModel):
     """
 
     preset: str = Field(..., description="Task preset, e.g. 'classification'.")
-    target: str = Field(..., description="Target column in the data source.")
+    target: str | None = Field(
+        None,
+        description=(
+            "Target column in the data source. Omit (``None``) for a target-less task "
+            "(triplet / contrastive) supervised purely by structure — no column required; "
+            "the wiring then uses the ``null`` target encoder."
+        ),
+    )
     objective: str | None = Field(None, description="Override: binary/multiclass/multilabel/continuous.")
     head: str | dict[str, Any] | None = Field(
         None,
