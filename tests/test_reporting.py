@@ -13,7 +13,6 @@ from src.core.ports import HistogramLogger, PlotLogger
 from src.data.statistics import (
     CategoricalDistribution,
     ContinuousDistribution,
-    Histogram,
 )
 from src.reporting import report_dataset_statistics
 from src.reporting.renderers import (
@@ -69,7 +68,6 @@ def _continuous_per_stage() -> dict[Stage, ContinuousDistribution]:
             median=2.0,
             q75=3.0,
             maximum=4.0,
-            histogram=Histogram(counts=(4, 6), edges=(0.0, 2.0, 4.0)),
         ),
         Stage.VAL: ContinuousDistribution(
             count=5,
@@ -80,7 +78,6 @@ def _continuous_per_stage() -> dict[Stage, ContinuousDistribution]:
             median=3.0,
             q75=3.5,
             maximum=5.0,
-            histogram=Histogram(counts=(2, 3), edges=(1.0, 3.0, 5.0)),
         ),
     }
 

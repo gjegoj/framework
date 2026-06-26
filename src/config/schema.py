@@ -38,6 +38,65 @@ class CacheConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class SourceConfig(BaseModel):
+    """One source in a ``data.sources`` list: path(s) plus optional per-stage transforms.
+
+    Gives a source its own augmentation pipeline. Override is **replace** semantics: a
+    per-stage override fully replaces the global stage transform for this source's rows;
+    an unset stage falls back to the global ``transforms`` group. A plain string in the
+    ``sources`` list is shorthand for ``SourceConfig(path=...)`` with no override.
+
+    Parameters:
+        path (str | list[str]): Annotation file(s) for this source.
+        transforms (dict[str, Any] | None): Per-stage transform spec
+            (``{train|val|test: <_target_ spec>}``); ``None`` → use the global ``transforms``.
+    """
+
+    path: str | list[str] = Field(..., description="Annotation file(s) for this source.")
+    transforms: dict[str, Any] | None = Field(
+        None,
+        description=(
+            "Per-source transform override (replace semantics; a per-source pipeline must itself end "
+            "in Normalize + ToTensorV2). Two forms by mode: in split mode a per-stage dict "
+            "{train|val|test: spec} (the source spans all stages); in pre-split mode a single transform "
+            "spec {_target_: ...} (the source is already pinned to its stage). None → global transforms."
+        ),
+    )
+
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("transforms")
+    @classmethod
+    def _validate_transforms_form(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
+        """Reject anything that is neither a single transform spec nor a clean per-stage dict."""
+        if value is None:
+            return value
+        stage_names = {stage.value for stage in Stage}
+        has_target = "_target_" in value
+        if has_target and not any(key in stage_names for key in value):
+            return value  # single transform spec
+        if value and not has_target and all(key in stage_names for key in value):
+            return value  # per-stage dict
+        raise ValueError(
+            "source 'transforms' must be EITHER a single transform spec ({_target_: ...}) OR a per-stage "
+            f"dict ({{train|val|test: spec}}); got keys {sorted(value)} (mixed / unknown keys are not allowed)."
+        )
+
+    @property
+    def is_single_transform(self) -> bool:
+        """True when ``transforms`` is a single transform spec (``_target_``), not a per-stage dict."""
+        return self.transforms is not None and "_target_" in self.transforms
+
+
+def _source_configs(value: object) -> list[SourceConfig]:
+    """The ``SourceConfig`` entries within one ``sources`` value (string / ``SourceConfig`` / list)."""
+    if isinstance(value, SourceConfig):
+        return [value]
+    if isinstance(value, list):
+        return [item for item in value if isinstance(item, SourceConfig)]
+    return []
+
+
 class DataConfig(BaseModel):
     """Where data comes from and how it is divided into stages.
 
@@ -72,12 +131,14 @@ class DataConfig(BaseModel):
     ``source_type`` (csv/json) is inferred from the file extension when omitted.
     """
 
-    sources: str | list[str] | dict[str, str | list[str]] = Field(
+    sources: str | list[str | SourceConfig] | dict[str, str | SourceConfig | list[str | SourceConfig]] = Field(
         ...,
         description=(
             "Annotation path(s) or per-stage dict. "
             "str/list[str] → split mode (requires 'split'). "
-            "dict[stage, paths] → pre-split mode ('train'/'val'/'test' keys)."
+            "A list item may be a SourceConfig ({path, transforms}) to give that source its own "
+            "augmentations — a per-stage dict in split mode, a single transform under a stage in pre-split. "
+            "dict[stage, paths|SourceConfig|list] → pre-split mode ('train'/'val'/'test' keys)."
         ),
     )
     split: dict[Stage, float] | None = Field(None, description="Train/val/test ratios summing to 1.0 (split mode).")
@@ -140,9 +201,7 @@ class DataConfig(BaseModel):
 
     @model_validator(mode="after")
     def _validate_mode(self) -> DataConfig:
-        is_presplit = isinstance(self.sources, dict)
-        if is_presplit:
-            assert isinstance(self.sources, dict)
+        if isinstance(self.sources, dict):
             valid = {"train", "val", "test"}
             invalid = set(self.sources) - valid
             if invalid:
@@ -151,9 +210,24 @@ class DataConfig(BaseModel):
                 raise ValueError("sources dict must include 'train'.")
             if self.split is not None:
                 raise ValueError("'split' cannot be used when sources is a dict (pre-split mode).")
+            # A pre-split source is already pinned to its stage → its transform must be a single spec.
+            for stage_key, value in self.sources.items():
+                for source in _source_configs(value):
+                    if source.transforms is not None and not source.is_single_transform:
+                        raise ValueError(
+                            f"pre-split source under '{stage_key}' must use a single transform spec "
+                            "({_target_: ...}), not a per-stage dict — it is already pinned to this stage."
+                        )
         else:
             if self.split is None:
                 raise ValueError("'split' is required when sources is a path (split mode).")
+            # A split-mode source spans every stage → its transform must be a per-stage dict.
+            for source in _source_configs(self.sources):
+                if source.transforms is not None and source.is_single_transform:
+                    raise ValueError(
+                        "split-mode source 'transforms' must be a per-stage dict ({train|val|test: spec}), "
+                        "not a single transform — the source spans all stages."
+                    )
         return self
 
 

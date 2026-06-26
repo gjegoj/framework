@@ -4,7 +4,7 @@ Interface-adapter layer: turns external data (CSV/JSON, image files) into the
 core ``Sample``/``Batch`` entities. Depends on core, never the reverse.
 """
 
-from src.data.bindings import InputBinding, TargetBinding
+from src.data.bindings import InputBinding, SourceBinding, TargetBinding
 from src.data.collate import collate_samples
 from src.data.datamodule import CacheOptions, DataLoaderOptions, DataModule
 from src.data.dataset import Dataset
@@ -23,7 +23,6 @@ from src.data.statistics import (
     CategoricalDistribution,
     ContinuousDistribution,
     DatasetStatistics,
-    Histogram,
 )
 from src.transforms.sample import AlbumentationsTransform, Transform
 
@@ -40,7 +39,6 @@ __all__ = [
     "DatasetStatistics",
     "EmbeddingLoader",
     "FileDataSource",
-    "Histogram",
     "ImageLoader",
     "InputBinding",
     "InputLoader",
@@ -49,6 +47,7 @@ __all__ = [
     "MaskEncoder",
     "MultiLabelEncoder",
     "ScalarEncoder",
+    "SourceBinding",
     "TargetBinding",
     "TargetEncoder",
     "TextLoader",

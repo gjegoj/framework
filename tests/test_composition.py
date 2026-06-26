@@ -62,6 +62,154 @@ def _minimal_config(**overrides: Any) -> dict[str, Any]:
     return base
 
 
+class TestSourceConfigGrammar:
+    def test_plain_string_source_unchanged(self) -> None:
+        config = load_config(_minimal_config())  # sources: "data.csv"
+        assert config.data.sources == "data.csv"
+
+    def test_list_mixes_plain_paths_and_per_source_objects(self) -> None:
+        from src.config.schema import SourceConfig
+
+        raw = _minimal_config()
+        raw["data"] = {
+            "sources": [
+                "data/a.csv",
+                {"path": "data/b.csv", "transforms": {"train": {"_target_": "albumentations.HorizontalFlip"}}},
+            ],
+            "inputs": "image_path",
+            "split": {"train": 0.8, "val": 0.1, "test": 0.1},
+        }
+        sources = load_config(raw).data.sources
+        assert isinstance(sources, list)
+        assert sources[0] == "data/a.csv"
+        assert isinstance(sources[1], SourceConfig)
+        assert sources[1].path == "data/b.csv"
+        assert sources[1].transforms == {"train": {"_target_": "albumentations.HorizontalFlip"}}
+
+    def test_source_config_forbids_unknown_keys(self) -> None:
+        from pydantic import ValidationError
+
+        from src.config.schema import SourceConfig
+
+        with pytest.raises(ValidationError):
+            SourceConfig(path="a.csv", bogus=1)  # type: ignore[call-arg]
+
+    def test_presplit_dict_still_accepted(self) -> None:
+        raw = _minimal_config()
+        raw["data"] = {"sources": {"train": "tr.csv", "val": "va.csv"}, "inputs": "image_path"}
+        config = load_config(raw)
+        assert config.data.sources == {"train": "tr.csv", "val": "va.csv"}
+
+    def test_split_source_rejects_single_transform(self) -> None:
+        from src.config import ConfigError
+
+        raw = _minimal_config()
+        raw["data"] = {
+            "sources": ["a.csv", {"path": "b.csv", "transforms": {"_target_": "albumentations.HorizontalFlip"}}],
+            "inputs": "image_path",
+            "split": {"train": 0.8, "val": 0.1, "test": 0.1},
+        }
+        with pytest.raises(ConfigError, match="per-stage dict"):
+            load_config(raw)  # split source spans stages → needs per-stage dict, not a single transform
+
+    def test_presplit_source_rejects_per_stage_transform(self) -> None:
+        from src.config import ConfigError
+
+        raw = _minimal_config()
+        raw["data"] = {
+            "sources": {
+                "train": [{"path": "a.csv", "transforms": {"train": {"_target_": "albumentations.HorizontalFlip"}}}],
+                "val": "v.csv",
+            },
+            "inputs": "image_path",
+        }
+        with pytest.raises(ConfigError, match="single transform"):
+            load_config(raw)  # pre-split source is pinned to its stage → needs a single transform
+
+    def test_presplit_source_accepts_single_transform(self) -> None:
+        from src.config.schema import SourceConfig
+
+        raw = _minimal_config()
+        raw["data"] = {
+            "sources": {
+                "train": ["a.csv", {"path": "b.csv", "transforms": {"_target_": "albumentations.HorizontalFlip"}}],
+                "val": "v.csv",
+            },
+            "inputs": "image_path",
+        }
+        sources = load_config(raw).data.sources
+        assert isinstance(sources, dict)
+        train_value = sources["train"]
+        assert isinstance(train_value, list)
+        train_entry = train_value[1]
+        assert isinstance(train_entry, SourceConfig)
+        assert train_entry.is_single_transform is True
+
+    def test_malformed_transforms_rejected(self) -> None:
+        from pydantic import ValidationError
+
+        from src.config.schema import SourceConfig
+
+        with pytest.raises(ValidationError):
+            SourceConfig(path="a.csv", transforms={"trai": {"_target_": "x"}})  # typo'd stage key, no _target_ at top
+
+
+class TestBuildSourceBindings:
+    def _config(self, sources: Any) -> Any:
+        raw = _minimal_config()
+        raw["data"] = {"sources": sources, "inputs": "image_path", "split": {"train": 0.8, "val": 0.1, "test": 0.1}}
+        return load_config(raw)
+
+    def test_plain_list_collapses_to_one_binding(self) -> None:
+        from src.composition.wiring import build_source_bindings
+
+        config = self._config(["a.csv", "b.csv"])
+        global_transforms = build_transforms(config, [])
+        bindings = build_source_bindings(config, global_transforms, [])
+        assert len(bindings) == 1  # one source over all paths → current behaviour (global split)
+        assert bindings[0].transforms[Stage.TRAIN] is global_transforms[Stage.TRAIN]
+
+    def test_per_source_override_resolves_with_global_fallback(self) -> None:
+        from src.composition.wiring import build_source_bindings
+
+        override = {"train": {"_target_": "albumentations.Compose", "transforms": _RESIZE_NORMALIZE_TOTENSOR}}
+        config = self._config(["a.csv", {"path": "b.csv", "transforms": override}])
+        global_transforms = build_transforms(config, [])
+        bindings = build_source_bindings(config, global_transforms, [])
+        assert len(bindings) == 2
+        assert bindings[0].transforms[Stage.TRAIN] is global_transforms[Stage.TRAIN]  # plain source: all global
+        # overridden source: train is its own transform, val/test fall back to global
+        assert bindings[1].transforms[Stage.TRAIN] is not global_transforms[Stage.TRAIN]
+        assert bindings[1].transforms[Stage.VAL] is global_transforms[Stage.VAL]
+
+
+class TestBuildStagedSources:
+    def test_returns_none_in_split_mode(self) -> None:
+        from src.composition.wiring import build_staged_sources
+
+        config = load_config(_minimal_config())  # split mode
+        assert build_staged_sources(config, build_transforms(config, []), []) is None
+
+    def test_per_stage_bindings_with_single_override_and_fallback(self) -> None:
+        from src.composition.wiring import build_staged_sources
+
+        single = {"_target_": "albumentations.Compose", "transforms": _RESIZE_NORMALIZE_TOTENSOR}
+        raw = _minimal_config()
+        raw["data"] = {
+            "sources": {"train": ["a.csv", {"path": "b.csv", "transforms": single}], "val": "v.csv"},
+            "inputs": "image_path",
+        }
+        config = load_config(raw)
+        global_transforms = build_transforms(config, [])
+        staged = build_staged_sources(config, global_transforms, [])
+        assert staged is not None
+        train = staged[Stage.TRAIN]
+        assert len(train) == 2
+        assert train[0].transforms[Stage.TRAIN] is global_transforms[Stage.TRAIN]  # source a → global
+        assert train[1].transforms[Stage.TRAIN] is not global_transforms[Stage.TRAIN]  # source b → its override
+        assert staged[Stage.VAL][0].transforms[Stage.VAL] is global_transforms[Stage.VAL]  # val → global
+
+
 class TestInstantiateNested:
     def test_builds_albumentations_resize(self) -> None:
         import albumentations as A

@@ -17,11 +17,11 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
-from torch.utils.data import DataLoader
+from torch.utils.data import ConcatDataset, DataLoader
 
 from src.core.enums import Stage
 from src.core.runtime import RuntimeContext
-from src.data.bindings import InputBinding, TargetBinding
+from src.data.bindings import InputBinding, SourceBinding, TargetBinding
 from src.data.cache import BYTES_PER_GIB, ArrayCache, CachingLoader, caching_target_encoder
 from src.data.collate import collate_samples
 from src.data.dataset import Dataset, resolve_path
@@ -79,15 +79,22 @@ class DataModule:
 
     Two construction modes (mutually exclusive):
 
-    **Split mode** — one source, DataModule splits it by ratio::
+    **Split mode** — one or more sources, DataModule splits each by ratio::
 
-        DataModule(source=csv_source, split={Stage.TRAIN: 0.8, ...}, ...)
+        DataModule(source=csv_source, split={Stage.TRAIN: 0.8, ...}, ...)        # single source
+        DataModule(source_bindings=[SourceBinding(src, transforms), ...], split={...}, ...)  # per-source
+
+    Each source is read and split independently by the same ratios; a stage is the
+    ``ConcatDataset`` of one ``Dataset`` per source, each carrying its own transform. The
+    ``source`` argument is the single-source shorthand for one ``SourceBinding`` over the
+    global ``transforms``.
 
     **Pre-split mode** — caller provides one ``DataSource`` per stage::
 
         DataModule(staged_sources={Stage.TRAIN: train_src, Stage.VAL: val_src}, ...)
 
-    In pre-split mode encoders are fitted on train data only (no leakage).
+    In pre-split mode encoders are fitted on train data only (no leakage); in split mode
+    they are fitted on the combined train data across all sources.
     ``InputBinding`` loaders are auto-detected from column values at ``setup()``
     time when not explicitly specified in ``inputs_config``.
 
@@ -95,15 +102,19 @@ class DataModule:
         target_bindings (list[TargetBinding]): Per-task target column + encoder.
         inputs_config: Input column(s) and optional loader keys.
             ``str`` → single image input; ``dict`` → multiple inputs.
-        transforms (dict[Stage, Transform]): Per-stage input transforms.
+        transforms (dict[Stage, Transform]): Global per-stage transforms (used by pre-split
+            mode and the single-source ``source`` shorthand).
         runtime (RuntimeContext): Populated with num_classes and dataset sizes.
         batch_size (int): Batch size for all stages.
         seed (int): Split seed (split mode only).
-        source (DataSource | None): Full annotation table (split mode).
+        source (DataSource | None): Single-source split-mode shorthand (→ one ``SourceBinding``).
+        source_bindings (list[SourceBinding] | None): Per-source split-mode sources, each with
+            its own resolved per-stage transforms.
         split (dict[Stage, float] | None): Split ratios (split mode).
         split_stratify (str | None): Column to stratify by (split mode only).
         max_samples (int | float | None): Cap dataset size.
-        staged_sources (dict[Stage, DataSource] | None): Per-stage sources (pre-split mode).
+        staged_sources (dict[Stage, list[SourceBinding]] | None): Per-stage source bindings
+            (pre-split mode) — each stage's sources with their per-stage transforms.
         dataloader_options (DataLoaderOptions): DataLoader knobs shared across all stages.
         root_path (str | None): Optional prefix prepended to file-based input paths.
         cache_options (CacheOptions): In-RAM image/mask cache budget (disabled by default).
@@ -119,19 +130,27 @@ class DataModule:
         seed: int = 0,
         *,
         source: DataSource | None = None,
+        source_bindings: list[SourceBinding] | None = None,
         split: dict[Stage, float] | None = None,
         split_stratify: str | None = None,
         max_samples: int | float | None = None,
-        staged_sources: dict[Stage, DataSource] | None = None,
+        staged_sources: dict[Stage, list[SourceBinding]] | None = None,
         dataloader_options: DataLoaderOptions = DataLoaderOptions(),
         root_path: str | None = None,
         cache_options: CacheOptions = CacheOptions(),
     ) -> None:
-        if (source is None) == (staged_sources is None):
-            raise ValueError("Provide exactly one of: source+split (split mode) or staged_sources (pre-split mode).")
-        if source is not None and split is None:
-            raise ValueError("split is required when using source.")
-        self._source = source
+        modes = sum(value is not None for value in (source, source_bindings, staged_sources))
+        if modes != 1:
+            raise ValueError(
+                "Provide exactly one of: source or source_bindings (split mode) or staged_sources (pre-split mode)."
+            )
+        if staged_sources is None and split is None:
+            raise ValueError("split is required in split mode (source / source_bindings).")
+        # ``source`` is the single-source shorthand for ``[SourceBinding(source, transforms)]``; both
+        # forms normalize to a list of per-source bindings the split-mode setup iterates over.
+        if source is not None:
+            source_bindings = [SourceBinding(source=source, transforms=transforms)]
+        self._source_bindings = source_bindings
         self._split = split
         self._split_stratify = split_stratify
         self._max_samples = max_samples
@@ -146,7 +165,7 @@ class DataModule:
         self._root_path = root_path
         self._cache_options = cache_options
         self._cache: ArrayCache | None = None
-        self._datasets: dict[Stage, Dataset] = {}
+        self._datasets: dict[Stage, list[Dataset]] = {}
         self._frames: dict[Stage, pd.DataFrame] = {}
         self._input_bindings: list[InputBinding] = []
         self._setup_done = False
@@ -163,7 +182,7 @@ class DataModule:
         if self._staged_sources is not None:
             self._setup_from_staged_sources()
         else:
-            self._setup_from_source()
+            self._setup_from_source_bindings()
         self._setup_done = True
 
     def statistics(self) -> DatasetStatistics:
@@ -192,32 +211,60 @@ class DataModule:
                 statistics[binding.name] = per_stage
         return statistics
 
-    def _setup_from_source(self) -> None:
-        """Split mode: read the single source, fit encoders on all data, split by ratio."""
-        assert self._source is not None and self._split is not None, "unreachable: validated in __init__"
-        frame = _apply_max_samples(self._source.read(), self._max_samples, self._seed)
-        self._input_bindings = _build_input_bindings(self._inputs_config, frame)
-        self._fit_encoders(frame)
-        parts = split_dataframe(frame, self._split, self._seed, self._split_stratify)
-        self._frames = parts
-        self._setup_cache(parts)
-        for stage, part in parts.items():
-            self._build_dataset(stage, part)
+    def _setup_from_source_bindings(self) -> None:
+        """Split mode: read each source, fit encoders on combined train, split each by ratio.
+
+        Each source is read and split independently by the same ratios — so it is
+        proportionally represented in every stage — and a stage is the ``ConcatDataset`` of
+        one ``Dataset`` per source, each carrying that source's transform. A single-source /
+        no-override run is one binding (identical to splitting one combined frame).
+        """
+        assert self._source_bindings is not None and self._split is not None, "unreachable: validated in __init__"
+        source_frames = [
+            _apply_max_samples(binding.source.read(), self._max_samples, self._seed)
+            for binding in self._source_bindings
+        ]
+        # Input loaders are auto-detected from the first source's columns (all sources share them).
+        self._input_bindings = _build_input_bindings(self._inputs_config, source_frames[0])
+        splits = [split_dataframe(frame, self._split, self._seed, self._split_stratify) for frame in source_frames]
+        # Fit encoders on the combined train data so the vocabulary spans every source.
+        self._fit_encoders(pd.concat([parts[Stage.TRAIN] for parts in splits], ignore_index=True))
+        stages = list(splits[0])
+        self._frames = {stage: pd.concat([parts[stage] for parts in splits], ignore_index=True) for stage in stages}
+        self._setup_cache(self._frames)
+        for stage in stages:
+            self._datasets[stage] = [
+                self._build_dataset(parts[stage], binding.transforms[stage])
+                for parts, binding in zip(splits, self._source_bindings, strict=True)
+            ]
 
     def _setup_from_staged_sources(self) -> None:
-        """Pre-split mode: fit encoders on train data only, build datasets from each source."""
+        """Pre-split mode: read each stage's sources, fit encoders on combined train, one Dataset per source.
+
+        Each stage may carry several sources, each with its own transform for that stage; a stage is
+        the ``ConcatDataset`` of one ``Dataset`` per source. Encoders are fitted on the combined train
+        data only (no leakage).
+        """
         assert self._staged_sources is not None, "unreachable: validated in __init__"
-        train_frame = _apply_max_samples(self._staged_sources[Stage.TRAIN].read(), self._max_samples, self._seed)
-        self._input_bindings = _build_input_bindings(self._inputs_config, train_frame)
-        self._fit_encoders(train_frame)
-        frames: dict[Stage, pd.DataFrame] = {Stage.TRAIN: train_frame}
-        for stage, source in self._staged_sources.items():
+        train_frames = [
+            _apply_max_samples(binding.source.read(), self._max_samples, self._seed)
+            for binding in self._staged_sources[Stage.TRAIN]
+        ]
+        self._input_bindings = _build_input_bindings(self._inputs_config, train_frames[0])
+        self._fit_encoders(pd.concat(train_frames, ignore_index=True))
+        stage_frames: dict[Stage, list[pd.DataFrame]] = {Stage.TRAIN: train_frames}
+        for stage, bindings in self._staged_sources.items():
             if stage != Stage.TRAIN:
-                frames[stage] = _apply_max_samples(source.read(), self._max_samples, self._seed)
-        self._frames = frames
-        self._setup_cache(frames)
-        for stage, frame in frames.items():
-            self._build_dataset(stage, frame)
+                stage_frames[stage] = [
+                    _apply_max_samples(binding.source.read(), self._max_samples, self._seed) for binding in bindings
+                ]
+        self._frames = {stage: pd.concat(frames, ignore_index=True) for stage, frames in stage_frames.items()}
+        self._setup_cache(self._frames)
+        for stage, bindings in self._staged_sources.items():
+            self._datasets[stage] = [
+                self._build_dataset(frame, binding.transforms[stage])
+                for frame, binding in zip(stage_frames[stage], bindings, strict=True)
+            ]
 
     def _setup_cache(self, frames: dict[Stage, pd.DataFrame]) -> None:
         """Warm the cache (parent process) and wrap cacheable loaders/encoders.
@@ -297,12 +344,12 @@ class DataModule:
             if num_classes is not None:
                 self._runtime.num_classes[binding.name] = num_classes
 
-    def _build_dataset(self, stage: Stage, frame: pd.DataFrame) -> None:
-        self._datasets[stage] = Dataset(
+    def _build_dataset(self, frame: pd.DataFrame, transform: Transform) -> Dataset:
+        return Dataset(
             frame=frame,
             input_bindings=self._input_bindings,
             target_bindings=self._target_bindings,
-            transform=self._transforms[stage],
+            transform=transform,
             root_path=self._root_path,
         )
 
@@ -320,7 +367,8 @@ class DataModule:
         if options.prefetch_factor is not None and options.num_workers > 0:
             kwargs["prefetch_factor"] = options.prefetch_factor
         # User extras fill gaps; framework-owned keys (batch_size/shuffle/collate_fn/...) always win.
-        return DataLoader(self._datasets[stage], **{**options.extra_kwargs, **kwargs})
+        # A stage is one Dataset per source (one for the common single-source case), combined here.
+        return DataLoader(ConcatDataset(self._datasets[stage]), **{**options.extra_kwargs, **kwargs})
 
     def train_dataloader(self) -> DataLoader:
         return self._dataloader(Stage.TRAIN, shuffle=True, drop_last=self._dataloader_options.drop_last)

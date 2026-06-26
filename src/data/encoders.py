@@ -27,10 +27,7 @@ import torch
 from torch import Tensor
 
 from src.data.registry import target_encoders
-from src.data.statistics import CategoricalDistribution, ContinuousDistribution, Distribution, Histogram
-
-# Number of bins for the regression value histogram (capped by the sample count).
-_REGRESSION_HISTOGRAM_BINS = 20
+from src.data.statistics import CategoricalDistribution, ContinuousDistribution, Distribution
 
 
 class TargetEncoder(ABC):
@@ -207,7 +204,6 @@ class ScalarEncoder(TargetEncoder):
         if numbers.size == 0:
             return None
         minimum, q25, median, q75, maximum = (float(x) for x in np.percentile(numbers, [0, 25, 50, 75, 100]))
-        bin_counts, bin_edges = np.histogram(numbers, bins=min(_REGRESSION_HISTOGRAM_BINS, numbers.size))
         return ContinuousDistribution(
             count=int(numbers.size),
             mean=float(numbers.mean()),
@@ -217,10 +213,6 @@ class ScalarEncoder(TargetEncoder):
             median=median,
             q75=q75,
             maximum=maximum,
-            histogram=Histogram(
-                counts=tuple(int(count) for count in bin_counts),
-                edges=tuple(float(edge) for edge in bin_edges),
-            ),
         )
 
 

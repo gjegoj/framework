@@ -10,7 +10,7 @@ defaults:
   - transforms: default      # swap to augmented or your own transforms config
   - export: torchscript             # swap to torchscript, tensorrt, or all
   - _self_
-  - experiment: imagereward_ranking        # experiment overrides go last → highest priority
+  - experiment: null        # experiment overrides go last → highest priority
 
 project: my-project
 run_name: ${now:%Y-%m-%d}/${now:%H-%M-%S}
@@ -30,11 +30,7 @@ run_export: true
 
 data:
   sources: ???         # str/list → split mode; {train: ..., val: ...} → pre-split mode
-  inputs: image_path
-  split:
-    train: 0.8
-    val: 0.1
-    test: 0.1
+  split: null
 
 
 tasks: {}              # override in experiment config

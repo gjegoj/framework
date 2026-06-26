@@ -7,9 +7,17 @@ single-responsibility data modules (``sources`` / ``encoders`` / ``transforms``)
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from src.data.encoders import TargetEncoder
 from src.data.loaders import InputLoader
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+    from src.core.enums import Stage
+    from src.data.sources import DataSource
+    from src.transforms.sample import Transform
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,3 +49,24 @@ class TargetBinding:
     name: str
     column: str | None
     encoder: TargetEncoder
+
+
+@dataclass(frozen=True, slots=True)
+class SourceBinding:
+    """Binds a data source to the per-stage transforms applied to its samples (split mode).
+
+    The source-side counterpart of ``InputBinding``/``TargetBinding``: where those bind a
+    ``Sample`` key to its loader/encoder, this binds one source to its own augmentation
+    pipeline. ``transforms`` is already resolved (the source's per-stage override merged
+    with the global stage transform as fallback), so the ``DataModule`` builds one
+    ``Dataset`` per source with ``transform=transforms[stage]`` and combines them with
+    ``ConcatDataset``. A single-source / no-override run is one binding whose ``transforms``
+    are the global ones.
+
+    Parameters:
+        source (DataSource): The built source for this group.
+        transforms (Mapping[Stage, Transform]): Resolved per-stage transforms.
+    """
+
+    source: DataSource
+    transforms: Mapping[Stage, Transform]

@@ -23,7 +23,6 @@ from src.data import (
     ScalarEncoder,
     TargetBinding,
 )
-from src.data.statistics import Histogram
 from src.reporting import report_dataset_statistics
 from tests.test_data import _make_transform
 from tests.test_metrics import FakePlotLogger
@@ -39,9 +38,6 @@ class TestEntities:
     def test_categorical_relative_zero_total(self) -> None:
         assert CategoricalDistribution(counts={"a": 0}).relative["a"] == 0.0
 
-    def test_histogram_centers(self) -> None:
-        assert Histogram(counts=(1, 2), edges=(0.0, 1.0, 2.0)).centers == (0.5, 1.5)
-
 
 class TestEncoderSummarize:
     def test_label_counts_in_class_order_with_zeros(self) -> None:
@@ -56,14 +52,13 @@ class TestEncoderSummarize:
         assert isinstance(distribution, CategoricalDistribution)
         assert distribution.counts == {"a": 2, "b": 3, "c": 2}
 
-    def test_scalar_summary_and_histogram(self) -> None:
+    def test_scalar_summary(self) -> None:
         distribution = ScalarEncoder().summarize(pd.Series([1.0, 2.0, 3.0, 4.0, 5.0]))
         assert isinstance(distribution, ContinuousDistribution)
         assert distribution.count == 5
         assert distribution.mean == pytest.approx(3.0)
         assert distribution.median == pytest.approx(3.0)
         assert (distribution.minimum, distribution.maximum) == (1.0, 5.0)
-        assert sum(distribution.histogram.counts) == 5
 
     def test_scalar_drops_nan(self) -> None:
         distribution = ScalarEncoder().summarize(pd.Series([1.0, float("nan"), 3.0]))
@@ -158,7 +153,6 @@ class TestReporter:
                     median=2.0,
                     q75=3.0,
                     maximum=4.0,
-                    histogram=Histogram(counts=(4, 6), edges=(0.0, 2.0, 4.0)),
                 ),
             },
         }

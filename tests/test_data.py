@@ -26,6 +26,7 @@ from src.data import (
     LabelEncoder,
     MultiLabelEncoder,
     ScalarEncoder,
+    SourceBinding,
     TargetBinding,
     collate_samples,
     split_dataframe,
@@ -451,7 +452,7 @@ class TestMaxSamples:
             max_samples=6,
         )
         dm.setup()
-        total = sum(len(dm._datasets[s]) for s in dm._datasets)
+        total = sum(len(ds) for datasets in dm._datasets.values() for ds in datasets)
         assert total == 6
 
     def test_float_caps_fraction(self, csv_path: Path) -> None:
@@ -467,7 +468,7 @@ class TestMaxSamples:
             max_samples=0.5,
         )
         dm.setup()
-        total = sum(len(dm._datasets[s]) for s in dm._datasets)
+        total = sum(len(ds) for datasets in dm._datasets.values() for ds in datasets)
         assert total == 8  # 50% of 15 rows = 7.5 → 8 (pandas rounds up)
 
     def test_none_keeps_all_rows(self, csv_path: Path) -> None:
@@ -482,7 +483,7 @@ class TestMaxSamples:
             split={Stage.TRAIN: 0.8, Stage.VAL: 0.2},
         )
         dm.setup()
-        assert sum(len(dm._datasets[s]) for s in dm._datasets) == 15
+        assert sum(len(ds) for datasets in dm._datasets.values() for ds in datasets) == 15
 
 
 class TestDataLoaderKwargs:
@@ -509,6 +510,81 @@ class TestDataLoaderKwargs:
         dm = self._dm(csv_path, batch_size=999)
         dm.setup()
         assert dm.train_dataloader().batch_size == 4
+
+
+class TestPerSourceTransforms:
+    @staticmethod
+    def _make_csv(tmp_path: Path, name: str, count: int) -> Path:
+        image_dir = tmp_path / name
+        image_dir.mkdir()
+        rng = np.random.default_rng(0)
+        rows = []
+        for index in range(count):
+            array = rng.integers(0, 256, size=(32, 32, 3), dtype=np.uint8)
+            path = image_dir / f"{index}.jpg"
+            cv2.imwrite(str(path), array)
+            rows.append({"image_path": str(path), "label": LABELS[index % 3]})
+        csv = tmp_path / f"{name}.csv"
+        pd.DataFrame(rows).to_csv(csv, index=False)
+        return csv
+
+    def test_override_applies_per_source_and_stage(self, tmp_path: Path) -> None:
+        """Source 2's train override (8x8) hits only its train rows; source 1 and every
+        val/test row keep the global 16x16 transform."""
+        csv1 = self._make_csv(tmp_path, "a", 6)
+        csv2 = self._make_csv(tmp_path, "b", 6)
+        global_transforms = {stage: _make_transform((16, 16)) for stage in Stage}
+        override = {**global_transforms, Stage.TRAIN: _make_transform((8, 8))}  # train differs; val/test global
+        dm = DataModule(
+            target_bindings=[_binding()],
+            inputs_config="image_path",
+            transforms=global_transforms,
+            runtime=RuntimeContext(),
+            batch_size=2,
+            seed=0,
+            source_bindings=[
+                SourceBinding(source=CsvDataSource(str(csv1)), transforms=global_transforms),
+                SourceBinding(source=CsvDataSource(str(csv2)), transforms=override),
+            ],
+            split={Stage.TRAIN: 0.5, Stage.VAL: 0.5},
+        )
+        dm.setup()
+
+        train = dm._datasets[Stage.TRAIN]
+        assert len(train) == 2  # one Dataset per source, combined via ConcatDataset
+        assert train[0][0].inputs["image"].shape == (3, 16, 16)  # source 1 train → global
+        assert train[1][0].inputs["image"].shape == (3, 8, 8)  # source 2 train → override
+        assert dm._datasets[Stage.VAL][1][0].inputs["image"].shape == (3, 16, 16)  # source 2 val → global fallback
+
+    def test_presplit_override_applies_per_source(self, tmp_path: Path) -> None:
+        """Pre-split: one train source with its own transform (8x8) applies only to that source;
+        the other train source and val keep the global 16x16."""
+        csv_a = self._make_csv(tmp_path, "train_a", 4)
+        csv_b = self._make_csv(tmp_path, "train_b", 4)
+        csv_val = self._make_csv(tmp_path, "val", 4)
+        t16, t8 = _make_transform((16, 16)), _make_transform((8, 8))
+        dm = DataModule(
+            target_bindings=[_binding()],
+            inputs_config="image_path",
+            transforms={stage: t16 for stage in Stage},
+            runtime=RuntimeContext(),
+            batch_size=2,
+            seed=0,
+            staged_sources={
+                Stage.TRAIN: [
+                    SourceBinding(CsvDataSource(str(csv_a)), {Stage.TRAIN: t16}),
+                    SourceBinding(CsvDataSource(str(csv_b)), {Stage.TRAIN: t8}),  # this source → 8x8
+                ],
+                Stage.VAL: [SourceBinding(CsvDataSource(str(csv_val)), {Stage.VAL: t16})],
+            },
+        )
+        dm.setup()
+
+        train = dm._datasets[Stage.TRAIN]
+        assert len(train) == 2  # one Dataset per train source
+        assert train[0][0].inputs["image"].shape == (3, 16, 16)  # source a → global
+        assert train[1][0].inputs["image"].shape == (3, 8, 8)  # source b → its override
+        assert dm._datasets[Stage.VAL][0][0].inputs["image"].shape == (3, 16, 16)  # val → global
 
 
 class TestSplitDataframe:
@@ -742,7 +818,7 @@ class TestDataModule:
         datamodule.setup()
 
         assert runtime.num_classes == {"label": 3}
-        assert sum(len(datamodule._datasets[s]) for s in datamodule._datasets) == 15
+        assert sum(len(ds) for datasets in datamodule._datasets.values() for ds in datasets) == 15
 
         batch = next(iter(datamodule.train_dataloader()))
         assert batch.inputs["image"].shape[1:] == (3, 16, 16)
@@ -767,15 +843,15 @@ class TestDataModule:
             batch_size=4,
             seed=0,
             staged_sources={
-                Stage.TRAIN: CsvDataSource(str(train_csv)),
-                Stage.VAL: CsvDataSource(str(val_csv)),
+                Stage.TRAIN: [SourceBinding(CsvDataSource(str(train_csv)), {Stage.TRAIN: transforms[Stage.TRAIN]})],
+                Stage.VAL: [SourceBinding(CsvDataSource(str(val_csv)), {Stage.VAL: transforms[Stage.VAL]})],
             },
         )
         datamodule.setup()
 
         assert runtime.num_classes == {"label": 3}
-        assert len(datamodule._datasets[Stage.TRAIN]) == 10
-        assert len(datamodule._datasets[Stage.VAL]) == 5
+        assert len(datamodule._datasets[Stage.TRAIN][0]) == 10
+        assert len(datamodule._datasets[Stage.VAL][0]) == 5
 
         batch = next(iter(datamodule.train_dataloader()))
         assert batch.inputs["image"].shape[1:] == (3, 16, 16)
@@ -938,9 +1014,9 @@ class TestDataModuleCache:
         dm.setup()
         assert isinstance(dm._input_bindings[0].loader, CachingLoader)
         assert dm._cache is not None and dm._cache.nbytes > 0
-        first_path = str(dm._datasets[Stage.TRAIN]._frame.iloc[0]["image_path"])
+        first_path = str(dm._datasets[Stage.TRAIN][0]._frame.iloc[0]["image_path"])
         assert dm._cache.get(first_path) is not None  # warmed (no root_path → key == path)
-        sample = dm._datasets[Stage.TRAIN][0]  # end-to-end getitem still works
+        sample = dm._datasets[Stage.TRAIN][0][0]  # end-to-end getitem still works (first source, first sample)
         assert "image" in sample.inputs
 
     def test_cache_disabled_leaves_plain_loader(self, csv_path: Path) -> None:

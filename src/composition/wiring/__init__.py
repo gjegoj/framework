@@ -26,6 +26,7 @@ from src.composition.wiring.common import WiringContext, forward_extras
 from src.composition.wiring.data import (
     build_data_module,
     build_data_source,
+    build_source_bindings,
     build_staged_sources,
     build_transforms,
 )
@@ -51,6 +52,7 @@ __all__ = [
     "build_data_module",
     "build_data_source",
     "build_lit_data_module",
+    "build_source_bindings",
     "build_lit_module",
     "build_logger",
     "build_optimizer_builder",

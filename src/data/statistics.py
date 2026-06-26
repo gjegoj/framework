@@ -22,24 +22,6 @@ from src.core.enums import Stage
 
 
 @dataclass(frozen=True, slots=True)
-class Histogram:
-    """Binned counts of a numeric column — the input to a bar plot.
-
-    Parameters:
-        counts (tuple[int, ...]): Sample count per bin.
-        edges (tuple[float, ...]): Bin edges; ``len(edges) == len(counts) + 1``.
-    """
-
-    counts: tuple[int, ...]
-    edges: tuple[float, ...]
-
-    @property
-    def centers(self) -> tuple[float, ...]:
-        """Midpoint of each bin, for labelling the bars."""
-        return tuple((low + high) / 2 for low, high in zip(self.edges, self.edges[1:], strict=False))
-
-
-@dataclass(frozen=True, slots=True)
 class CategoricalDistribution:
     """Count of samples per class label, in class-index order.
 
@@ -62,12 +44,11 @@ class CategoricalDistribution:
 
 @dataclass(frozen=True, slots=True)
 class ContinuousDistribution:
-    """Summary statistics and a histogram of a numeric target.
+    """Summary statistics of a numeric target.
 
     Parameters:
         count (int): Number of non-null values.
         mean, std, minimum, q25, median, q75, maximum (float): Summary statistics.
-        histogram (Histogram): Binned value counts for plotting.
     """
 
     count: int
@@ -78,7 +59,6 @@ class ContinuousDistribution:
     median: float
     q75: float
     maximum: float
-    histogram: Histogram
 
 
 type Distribution = CategoricalDistribution | ContinuousDistribution
