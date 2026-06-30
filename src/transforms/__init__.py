@@ -9,6 +9,16 @@ that pulling the per-sample transform into the data layer does not drag in torch
 the batch package.
 """
 
-from src.transforms.augmentations import LabelAwareDualTransform, Rotate90WithLabel
+from src.transforms.augmentations import (
+    LabelAwareDualTransform,
+    LabelAwareMixin,
+    RandomBorderCropWithLabel,
+    Rotate90WithLabel,
+)
 
-__all__ = ["LabelAwareDualTransform", "Rotate90WithLabel"]
+__all__ = [
+    "LabelAwareDualTransform",
+    "LabelAwareMixin",
+    "RandomBorderCropWithLabel",
+    "Rotate90WithLabel",
+]

@@ -6,7 +6,13 @@ label. Importing names from here is a convenience — configs reference the conc
 (e.g. ``src.transforms.augmentations.rotate.Rotate90WithLabel``) directly.
 """
 
-from src.transforms.augmentations.base import LabelAwareDualTransform
+from src.transforms.augmentations.base import LabelAwareDualTransform, LabelAwareMixin
+from src.transforms.augmentations.border_crop import RandomBorderCropWithLabel
 from src.transforms.augmentations.rotate import Rotate90WithLabel
 
-__all__ = ["LabelAwareDualTransform", "Rotate90WithLabel"]
+__all__ = [
+    "LabelAwareDualTransform",
+    "LabelAwareMixin",
+    "RandomBorderCropWithLabel",
+    "Rotate90WithLabel",
+]

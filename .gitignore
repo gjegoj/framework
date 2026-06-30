@@ -4,6 +4,7 @@
 runs/
 docs/
 .claude/settings.local.json
+.claude/settings.json
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
