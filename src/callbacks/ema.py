@@ -1,18 +1,27 @@
 """EMA callback — a thin facade over Lightning's ``EMAWeightAveraging``.
 
 Lightning's built-in already handles the hard parts correctly: EMA weights are
-swapped in for validation, persisted into checkpoints (and restored on resume)
-via ``on_save_checkpoint``/``on_load_checkpoint``, and copied into the model at
-``on_train_end``. We add one ergonomic on top: ``warmup_fraction`` expresses the
-update-start point as a fraction of total training steps (resolution-independent
-of the schedule, which isn't known at config time), resolved to Lightning's
-absolute ``update_starting_at_step`` once the step count is known at ``setup``.
+persisted into checkpoints (and restored on resume) via
+``on_save_checkpoint``/``on_load_checkpoint`` and copied into the model at
+``on_train_end``. We add two things on top:
+
+* ``warmup_fraction`` expresses the update-start point as a fraction of total
+  training steps (resolution-independent of the schedule, which isn't known at
+  config time), resolved to Lightning's absolute ``update_starting_at_step`` once
+  the step count is known at ``setup``.
+* A guard so the averaged weights are only swapped in for validation (and copied
+  into the model at train end) **after averaging has actually begun**. Until the
+  first EMA update the averaged model is a frozen copy of the initial (random)
+  weights; Lightning swaps it in unconditionally, which makes validation during
+  warmup evaluate the untrained model (flat, meaningless val loss). With the guard,
+  validation uses the live training weights throughout warmup and the EMA weights
+  afterwards.
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, override
 
 import lightning as L
 from lightning.pytorch.callbacks import EMAWeightAveraging
@@ -57,3 +66,33 @@ class EmaCallback(EMAWeightAveraging):
                 self._decay,
                 self.update_starting_at_step,
             )
+
+    def _averaging_has_started(self) -> bool:
+        """Whether at least one EMA update has run — before that the averaged model is just init weights.
+
+        ``_latest_update_step`` (owned by the parent) starts at ``0`` and is set to the global step of
+        the first averaging update, so ``> 0`` marks the moment the averaged model becomes meaningful.
+        """
+        return self._latest_update_step > 0
+
+    @override
+    def on_validation_epoch_start(self, trainer: L.Trainer, pl_module: L.LightningModule) -> None:
+        """Swap the averaged weights in for validation only once averaging has started (else use live weights)."""
+        if self._averaging_has_started():
+            super().on_validation_epoch_start(trainer, pl_module)
+
+    @override
+    def on_validation_epoch_end(self, trainer: L.Trainer, pl_module: L.LightningModule) -> None:
+        """Swap the live weights back after validation — kept symmetric with ``on_validation_epoch_start``."""
+        if self._averaging_has_started():
+            super().on_validation_epoch_end(trainer, pl_module)
+
+    @override
+    def on_train_end(self, trainer: L.Trainer, pl_module: L.LightningModule) -> None:
+        """Copy the EMA weights into the model at the end — but only if averaging ever ran.
+
+        Guards the degenerate case (warmup so long that averaging never started) where the parent would
+        otherwise overwrite the trained model with the frozen initial weights.
+        """
+        if self._averaging_has_started():
+            super().on_train_end(trainer, pl_module)

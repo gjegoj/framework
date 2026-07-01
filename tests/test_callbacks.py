@@ -96,6 +96,51 @@ class TestEmaCallbackSetup:
         assert cb.update_starting_at_step == 0
 
 
+# ---------------------------------------------------------------- EmaCallback: warmup validation guard
+#
+# Until the first EMA update the averaged model is a frozen copy of the initial weights.
+# Lightning swaps it in for every validation unconditionally, so validation during warmup
+# would evaluate the untrained model. The guard skips the swap until averaging has started.
+
+
+class TestEmaWarmupValidationGuard:
+    @staticmethod
+    def _prepared(latest_update_step: int) -> tuple[EmaCallback, _TinyModule]:
+        """Averaged model captures the init weights (ones); the live model is then diverged to twos."""
+        module = _TinyModule()  # linear.weight initialised to ones -> AveragedModel copies ones
+        cb = EmaCallback(decay=0.999, warmup_fraction=0.5)
+        cb.setup(_trainer(estimated_stepping_batches=200), module, stage="fit")
+        with torch.no_grad():
+            module.linear.weight.copy_(torch.full_like(module.linear.weight, 2.0))
+        cb._latest_update_step = latest_update_step
+        return cb, module
+
+    def test_no_swap_during_warmup(self) -> None:
+        """Before any EMA update, validation keeps the live (training) weights — no swap to init."""
+        cb, module = self._prepared(latest_update_step=0)
+        cb.on_validation_epoch_start(_trainer(), module)
+        assert torch.allclose(module.linear.weight, torch.full_like(module.linear.weight, 2.0))
+
+    def test_swap_after_averaging_started(self) -> None:
+        """Once averaging has begun, the averaged weights (ones) are swapped in for validation."""
+        cb, module = self._prepared(latest_update_step=5)
+        cb.on_validation_epoch_start(_trainer(), module)
+        assert torch.allclose(module.linear.weight, torch.ones_like(module.linear.weight))
+
+    def test_validation_swap_is_symmetric_after_start(self) -> None:
+        """start then end restores the live weights (averaged swapped in, then back out)."""
+        cb, module = self._prepared(latest_update_step=5)
+        cb.on_validation_epoch_start(_trainer(), module)
+        cb.on_validation_epoch_end(_trainer(), module)
+        assert torch.allclose(module.linear.weight, torch.full_like(module.linear.weight, 2.0))
+
+    def test_train_end_keeps_trained_weights_if_averaging_never_ran(self) -> None:
+        """The degenerate no-averaging case must not overwrite the trained model with init weights."""
+        cb, module = self._prepared(latest_update_step=0)
+        cb.on_train_end(_trainer(), module)
+        assert torch.allclose(module.linear.weight, torch.full_like(module.linear.weight, 2.0))
+
+
 # ---------------------------------------------------------------- FreezeCallback: init
 
 
