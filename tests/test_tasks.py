@@ -261,14 +261,14 @@ class TestRegressionPreset:
         assert {"mae"} <= set(task.metrics[Stage.TRAIN].compute())
 
     def test_preset_carries_topology_and_default_objective(self) -> None:
-        from src.tasks.taxonomy import Objective, Topology
+        from src.core.taxonomy import Objective, Topology
 
         preset = task_presets.create("regression")
         assert preset.topology == Topology.GLOBAL
         assert preset.default_objective == Objective.CONTINUOUS
 
     def test_preset_resolves_objective_override(self) -> None:
-        from src.tasks.taxonomy import Objective
+        from src.core.taxonomy import Objective
 
         preset = task_presets.create("classification")
         assert preset.resolve_objective(None) == Objective.MULTICLASS
@@ -393,8 +393,8 @@ class TestFeatureKeyOverride:
 
 class TestTaskCarriesAxes:
     def test_classification_task_has_global_multiclass_axes(self) -> None:
+        from src.core.taxonomy import Objective, Topology
         from src.tasks.presets import classification
-        from src.tasks.taxonomy import Objective, Topology
 
         task = classification("label", num_classes=3)
         assert task.topology == Topology.GLOBAL

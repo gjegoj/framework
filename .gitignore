@@ -5,6 +5,7 @@ runs/
 docs/
 .claude/settings.local.json
 .claude/settings.json
+AUDIT.md
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

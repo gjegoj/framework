@@ -8,7 +8,7 @@ the builder's own config (passed in once), so callers just hand it the model.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -100,7 +100,7 @@ class OptimizerBuilder:
             task_lr_overrides=task_lr_overrides,
         )
 
-    def build(self, model: nn.Module) -> torch.optim.Optimizer:
+    def build(self, model: nn.Module, extra_params: Iterable[nn.Parameter] | None = None) -> torch.optim.Optimizer:
         """Construct an optimizer with per-head param-groups.
 
         The backbone (everything not inside ``model.heads``) always forms a single
@@ -109,16 +109,20 @@ class OptimizerBuilder:
 
         Parameters:
             model (nn.Module): The ``CompositeModel`` (must have a ``heads`` attribute).
+            extra_params (Iterable[nn.Parameter] | None): Trainable parameters that live outside
+                the model — e.g. a criterion's learnable ``logit_scale``/``bias``. They join the
+                backbone group at ``base_lr`` (they are not heads and take no per-head override).
 
         Returns:
             torch.optim.Optimizer: Configured optimizer.
         """
         overrides = self._task_lr_overrides
+        extra = list(extra_params or [])
 
         heads: nn.ModuleDict | None = getattr(model, "heads", None)
         if heads is None or not overrides:
             return self._optimizer_cls(
-                model.parameters(),
+                [*model.parameters(), *extra],
                 lr=self._base_lr,
                 weight_decay=self._base_weight_decay,
                 **self._extra_kwargs,
@@ -141,7 +145,7 @@ class OptimizerBuilder:
                 )
             )
 
-        backbone_params = [param for param in model.parameters() if id(param) not in head_param_ids]
+        backbone_params = [param for param in model.parameters() if id(param) not in head_param_ids] + extra
         groups: list[dict[str, object]] = [
             ParamGroupSpec(
                 name="backbone",

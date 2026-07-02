@@ -4,6 +4,7 @@ Importing this package registers the built-in topology/objective strategies and
 task presets so they are resolvable by key.
 """
 
+from src.core.taxonomy import Objective, Topology
 from src.tasks.activations import IdentityActivation, SigmoidActivation, SoftmaxActivation
 from src.tasks.adapters import (
     BinaryTargetAdapter,
@@ -40,7 +41,6 @@ from src.tasks.strategies.topology import (
     TopologyStrategy,
     topology_strategies,
 )
-from src.tasks.taxonomy import Objective, Topology
 
 __all__ = [
     "BinaryObjective",

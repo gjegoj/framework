@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-import cv2
 import numpy as np
-import pandas as pd
 import pytest
 import torch
 
@@ -658,19 +657,8 @@ class TestFullWiringSmoke:
     """Wires all components from a config dict (no Hydra, no Trainer)."""
 
     @pytest.fixture
-    def csv_path(self, tmp_path: Path) -> Path:
-        image_dir = tmp_path / "images"
-        image_dir.mkdir()
-        rng = np.random.default_rng(2)
-        rows = []
-        for i in range(20):
-            arr = rng.integers(0, 256, (64, 64, 3), dtype=np.uint8)
-            p = image_dir / f"{i}.jpg"
-            cv2.imwrite(str(p), arr)
-            rows.append({"image_path": str(p), "label": ["cat", "dog", "cow"][i % 3]})
-        csv = tmp_path / "data.csv"
-        pd.DataFrame(rows).to_csv(csv, index=False)
-        return csv
+    def csv_path(self, make_image_csv: Callable[..., Path]) -> Path:
+        return make_image_csv(count=20, size=64, seed=2)
 
     def test_end_to_end_wiring(self, csv_path: Path) -> None:
         from src.data import CsvDataSource, DataModule

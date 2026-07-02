@@ -38,7 +38,7 @@ def _outputs() -> StepOutput:
         "loss": torch.tensor(1.0),
         "task_views": {
             "species": TaskStepView(
-                preds=torch.tensor([[0.7, 0.2, 0.1], [0.1, 0.8, 0.1], [0.1, 0.1, 0.8], [0.6, 0.3, 0.1]]),
+                predictions=torch.tensor([[0.7, 0.2, 0.1], [0.1, 0.8, 0.1], [0.1, 0.1, 0.8], [0.6, 0.3, 0.1]]),
                 metric_target=torch.tensor([0, 1, 2, 0]),
             )
         },

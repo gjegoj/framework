@@ -24,8 +24,8 @@ class TorchMetricsAdapter(MetricSet):
         super().__init__()
         self.collection = collection
 
-    def update(self, preds: Any, target: Any) -> None:
-        self.collection.update(preds, target)
+    def update(self, predictions: Any, target: Any) -> None:
+        self.collection.update(predictions, target)  # torchmetrics takes (preds, target) positionally
 
     def compute(self) -> dict[str, Any]:
         return dict(self.collection.compute())

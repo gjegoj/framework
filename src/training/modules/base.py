@@ -13,6 +13,7 @@ from abc import ABC, abstractmethod
 from typing import Any
 
 import lightning as L
+import torch.nn as nn
 from lightning.pytorch.loggers import Logger as LightningLogger
 from lightning.pytorch.utilities.types import OptimizerLRScheduler, OptimizerLRSchedulerConfig
 
@@ -54,6 +55,10 @@ class BaseLitModule(L.LightningModule, ABC):
         super().__init__()
         self.model = model
         self.tasks = tasks
+        # Criteria can carry learnable parameters (e.g. InfoNCE/SigLIP logit_scale/bias). Register
+        # them as a submodule (keyed by task name, mirroring the head ModuleDict) so they are moved
+        # to the device, saved in the checkpoint, and — via configure_optimizers — actually trained.
+        self._criteria = nn.ModuleDict({task.name: task.criterion for task in tasks})
         self._task_weights: dict[str, float] = {task.name: task.weight for task in tasks}
         self._optimizer_builder = optimizer_builder
         self._scheduler_builder = scheduler_builder
@@ -117,10 +122,10 @@ class BaseLitModule(L.LightningModule, ABC):
     # ----------------------------------------------------------- optimizer
 
     def configure_optimizers(self) -> OptimizerLRScheduler:
-        optimizer = self._optimizer_builder.build(self.model)
+        optimizer = self._optimizer_builder.build(self.model, extra_params=self._criteria.parameters())
         if self._scheduler_builder is None:
             return optimizer
-        trainer_facts = {name: getattr(self.trainer, attr) for name, attr in TRAINER_FACTS.items()}
+        trainer_facts = {name: getattr(self.trainer, attribute) for name, attribute in TRAINER_FACTS.items()}
         config: OptimizerLRSchedulerConfig = {
             "optimizer": optimizer,
             "lr_scheduler": self._scheduler_builder.build(optimizer, trainer_facts),

@@ -12,7 +12,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from src.tasks.taxonomy import Topology
+from src.core.taxonomy import Topology
 
 if TYPE_CHECKING:
     from src.core.entities import Batch

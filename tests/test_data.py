@@ -1,6 +1,6 @@
 """Unit tests for the data layer on a synthetic, offline image dataset."""
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any
 
@@ -48,20 +48,9 @@ LABELS = ["cat", "dog", "cow"]
 
 
 @pytest.fixture
-def csv_path(tmp_path: Path) -> Path:
-    """Create 15 synthetic 32x32 RGB jpgs across 3 classes and a CSV indexing them."""
-    image_dir = tmp_path / "images"
-    image_dir.mkdir()
-    rng = np.random.default_rng(0)
-    rows = []
-    for index in range(15):
-        array = rng.integers(0, 256, size=(32, 32, 3), dtype=np.uint8)
-        path = image_dir / f"{index}.jpg"
-        cv2.imwrite(str(path), array)
-        rows.append({"image_path": str(path), "label": LABELS[index % 3]})
-    csv = tmp_path / "data.csv"
-    pd.DataFrame(rows).to_csv(csv, index=False)
-    return csv
+def csv_path(make_image_csv: Callable[..., Path]) -> Path:
+    """15 synthetic 32x32 RGB jpgs across 3 classes and a CSV indexing them."""
+    return make_image_csv(count=15, size=32, seed=0, labels=LABELS)
 
 
 _LABEL_MAPPING: dict[int, str] = {0: "cat", 1: "cow", 2: "dog"}

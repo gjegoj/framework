@@ -9,13 +9,13 @@ from src.config.schema import ExperimentConfig, TaskConfig
 from src.core.entities import Task
 from src.core.instantiate import instantiate
 from src.core.runtime import RuntimeContext
+from src.core.taxonomy import Topology
 from src.data.bindings import TargetBinding
 from src.data.encoders import TargetEncoder
 from src.data.loaders import input_aliases
 from src.data.registry import target_encoders
 from src.tasks.presets import task_presets
 from src.tasks.strategies.objective import objective_strategies
-from src.tasks.taxonomy import Topology
 
 
 def _resolve_encoder(task_config: TaskConfig) -> TargetEncoder:

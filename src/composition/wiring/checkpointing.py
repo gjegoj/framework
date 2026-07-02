@@ -56,7 +56,10 @@ def load_init_weights(lit_module: LitModule, ckpt_path: str) -> None:
     if not path.is_file():
         raise FileNotFoundError(f"init_ckpt_path not found: {ckpt_path}")
 
-    checkpoint = torch.load(path, map_location="cpu", weights_only=False)
+    # weights_only=True refuses to unpickle arbitrary objects — loading an untrusted .ckpt must
+    # never run code. Our checkpoints hold only tensors + primitives (no save_hyperparameters), so
+    # the safe loader reads them cleanly; a file smuggling a custom object is rejected instead.
+    checkpoint = torch.load(path, map_location="cpu", weights_only=True)
     state_dict = extract_model_state_dict(checkpoint)
     lit_module.load_state_dict(state_dict, strict=True)
     log.info("Loaded init weights from %s (%d tensors).", ckpt_path, len(state_dict))

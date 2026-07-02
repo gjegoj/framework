@@ -2,6 +2,11 @@
 
 Users pick a familiar preset (``classification``, ``segmentation``, ...); under
 the hood each preset is a point in the ``Topology x Objective`` grid.
+
+These enums are the domain vocabulary a ``Task`` is typed by (``core/entities.py``),
+so they live in the center: the task use-case layer, the batch transforms, the
+visualization annotators and the export guard all consume them, and none of those
+outer layers should own a word the core entity references.
 """
 
 from __future__ import annotations

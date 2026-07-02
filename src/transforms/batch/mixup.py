@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from src.core.entities import Batch
 from src.core.keys import IMAGE
-from src.tasks.taxonomy import Topology
+from src.core.taxonomy import Topology
 from src.transforms.batch.multihead import CutMixMultiHead, MixUpMultiHead, _MultiHeadMix
 from src.transforms.batch.registry import batch_transforms
 from src.transforms.batch.spec import BatchTransform, TargetSpec

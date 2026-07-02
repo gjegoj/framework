@@ -130,6 +130,20 @@ class TestInvalidConfig:
         with pytest.raises(ConfigError):
             load_config(_raw(unexpected="oops"))
 
+    def test_unknown_data_key_rejected(self) -> None:
+        """A typo in a data field (e.g. ``split_stratifi``) must fail loudly, not be swallowed."""
+        with pytest.raises(ConfigError):
+            load_config(
+                _raw(
+                    data={
+                        "sources": "d.csv",
+                        "inputs": "p",
+                        "split": {"train": 0.8, "val": 0.1, "test": 0.1},
+                        "split_stratifi": "label",  # typo of split_stratify
+                    }
+                )
+            )
+
     def test_non_positive_lr_rejected(self) -> None:
         with pytest.raises(ConfigError):
             load_config(_raw(optimizer={"lr": 0.0}))

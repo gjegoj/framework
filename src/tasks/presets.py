@@ -22,11 +22,11 @@ from typing import Any
 from src.core.entities import Task
 from src.core.instantiate import BrickSpec
 from src.core.registry import Registry
+from src.core.taxonomy import Objective, Topology
 from src.metrics.builders import MetricsSpec
 from src.tasks.builder import TaskBuilder
 from src.tasks.strategies.objective import objective_strategies
 from src.tasks.strategies.topology import topology_strategies
-from src.tasks.taxonomy import Objective, Topology
 
 
 @dataclass(frozen=True, slots=True)

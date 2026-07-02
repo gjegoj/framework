@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any, TypedDict, TypeGuard
 from torch import Tensor
 
 from src.core.keys import POOLED
+from src.core.taxonomy import Objective, Topology
 
 if TYPE_CHECKING:
     from collections.abc import KeysView
@@ -22,7 +23,6 @@ if TYPE_CHECKING:
 
     from src.core.enums import Stage
     from src.core.ports import Activation, Criterion, MetricSet, TargetAdapter
-    from src.tasks.taxonomy import Objective, Topology
 
 
 class SampleMeta(TypedDict, total=False):
@@ -232,11 +232,11 @@ class TaskStepView:
     """Per-task view after a step — shared by metrics and visualization.
 
     Parameters:
-        preds (Tensor): Post-activation predictions (same tensor passed to ``MetricSet.update``).
+        predictions (Tensor): Post-activation predictions (same tensor passed to ``MetricSet.update``).
         metric_target (Tensor): The metric target from ``TargetAdapter.adapt`` (``TargetView.metric``).
     """
 
-    preds: Tensor
+    predictions: Tensor
     metric_target: Tensor
 
 
@@ -245,7 +245,7 @@ class StepOutput(TypedDict):
 
     Lightning extracts ``loss`` for backprop; the whole dict flows to
     ``on_*_batch_end(outputs, ...)``. ``task_views`` carries everything a
-    visualization callback needs (post-activation preds + metric targets per
+    visualization callback needs (post-activation predictions + metric targets per
     task) — the raw ``ModelOutput`` is intentionally not returned, so no autograd
     graph is held past the step.
     """

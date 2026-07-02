@@ -50,8 +50,10 @@ albumentations are details** kept behind ABC ports. Layers:
 - `core/` — framework-agnostic center. Entities (`Sample`, `Batch`, `FeatureBundle`,
   `ModelOutput`, `LossResult`, `TargetView`, `Task`, `HeadSpec`), ABC ports
   (`Backbone`, `Head`, `Criterion`, `Activation`, `MetricSet`, `TargetAdapter`,
-  `LossAggregator`), the `Registry`, `RuntimeContext`, and canonical string keys
-  (`core/keys.py`). Imports only torch + stdlib. A port lives here when a core entity
+  `LossAggregator`), the `Registry`, `RuntimeContext`, canonical string keys
+  (`core/keys.py`), and the task taxonomy (`Topology`/`Objective` StrEnums in
+  `core/taxonomy.py` — domain vocabulary the `Task` entity is typed by, so it lives at
+  the center rather than in the `tasks` use-case layer). Imports only torch + stdlib. A port lives here when a core entity
   references it (e.g. `Task.adapter: TargetAdapter` → so `Criterion`/`Activation`/
   `MetricSet`/`TargetAdapter`), when it is a foundational model-graph port
   (`Backbone`/`Head`), or when it is a genuinely cross-cutting abstraction
@@ -111,11 +113,13 @@ orthogonal axes**:
 - **Modality** (input side): image / text / embedding / multimodal — lives in
   `data` + `backbone`. The task does not know the modality; it consumes a feature
   stream.
-- **Topology** (`tasks/strategies/topology.py`, internal): output structure — GLOBAL
+- **Topology** (the `Topology` enum is domain vocabulary in `core/taxonomy.py`; its
+  `TopologyStrategy` lives in `tasks/strategies/topology.py`): output structure — GLOBAL
   (per-sample), DENSE (per-pixel), RANKING (Siamese: N views stacked through one shared
   backbone → `[B,N,D]`), MULTISTREAM (N separate encoders, e.g. CLIP/SigLIP). Picks the
   head + which `FeatureBundle` stream it consumes (`feature_key`, overridable per task).
-- **Objective** (internal): label semantics — multiclass / binary / multilabel /
+- **Objective** (the `Objective` enum in `core/taxonomy.py`; its `ObjectiveStrategy` in
+  `tasks/strategies/objective.py`): label semantics — multiclass / binary / multilabel /
   continuous / **metric** (metric learning: target implicit, supervision from pair/triplet
   structure or the batch diagonal). Picks the target adapter, criterion, activation, metric
   mode, out-features (for `metric`, `num_classes` is reinterpreted as `embedding_dim`).

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import dataclasses
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
 
@@ -12,10 +14,14 @@ import numpy as np
 import pandas as pd
 import pytest
 import torch
+import torch.nn as nn
+import torch.nn.functional as F
 from albumentations.pytorch import ToTensorV2
+from torch import Tensor
 
-from src.core.entities import LossResult
+from src.core.entities import LossResult, Task
 from src.core.enums import Stage
+from src.core.ports import Criterion
 from src.core.runtime import RuntimeContext
 from src.data import (
     AlbumentationsTransform,
@@ -53,21 +59,9 @@ def _loss(value: float, name: str = "ce") -> LossResult:
 
 
 @pytest.fixture
-def csv_path(tmp_path: Path) -> Path:
+def csv_path(make_image_csv: Callable[..., Path]) -> Path:
     """15 synthetic 32x32 images, 3 classes."""
-    image_dir = tmp_path / "images"
-    image_dir.mkdir()
-    rng = np.random.default_rng(1)
-    rows = []
-    labels = ["cat", "dog", "cow"]
-    for i in range(15):
-        arr = rng.integers(0, 256, (32, 32, 3), dtype=np.uint8)
-        p = image_dir / f"{i}.jpg"
-        cv2.imwrite(str(p), arr)
-        rows.append({"image_path": str(p), "label": labels[i % 3]})
-    csv = tmp_path / "data.csv"
-    pd.DataFrame(rows).to_csv(csv, index=False)
-    return csv
+    return make_image_csv(count=15, size=32, seed=1)
 
 
 # ---------------------------------------------------------- aggregator
@@ -162,6 +156,58 @@ class TestOptimizerBuilder:
         assert lrs["backbone"] == pytest.approx(1e-3)
 
 
+# ------------------------------------ criterion with learnable parameters (InfoNCE/SigLIP)
+
+
+class _ScaledCrossEntropy(Criterion):
+    """A criterion carrying one learnable scalar — stands in for InfoNCE/SigLIP's logit_scale."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.logit_scale = nn.Parameter(torch.zeros(()))
+
+    def forward(self, logits: Tensor, target: Tensor) -> LossResult:
+        value = F.cross_entropy(logits * self.logit_scale.exp(), target.long())
+        return LossResult(total=value, components={"scaled_ce": value})
+
+
+class TestCriterionParametersAreTrainable:
+    """A criterion with learnable parameters must be optimized, checkpointed, and moved to device.
+
+    Metric-learning losses (InfoNCE/SigLIP) hold learnable ``logit_scale``/``bias``; because the
+    optimizer is built from ``self.model`` and the criteria live only on the plain ``self.tasks``
+    list, those parameters were silently frozen and absent from checkpoints.
+    """
+
+    @staticmethod
+    def _task_with_parametric_criterion() -> tuple[Task, nn.Parameter]:
+        criterion = _ScaledCrossEntropy()
+        task = classification("label", num_classes=3)
+        return dataclasses.replace(task, criterion=criterion), criterion.logit_scale
+
+    def _lit(self, task: Task) -> LitModule:
+        from src.models.backbones import EmbeddingBackbone
+
+        model = build_composite_model(EmbeddingBackbone(embedding_dim=8), {"label": task.head_spec})
+        return LitModule(model=model, tasks=[task], optimizer_builder=OptimizerBuilder(base_lr=1e-3))
+
+    def test_criterion_parameter_is_in_the_optimizer(self) -> None:
+        task, scale = self._task_with_parametric_criterion()
+        optimizer = cast("torch.optim.Optimizer", self._lit(task).configure_optimizers())
+        optimized_ids = {id(param) for group in optimizer.param_groups for param in group["params"]}
+        assert id(scale) in optimized_ids
+
+    def test_criterion_parameter_is_a_registered_submodule(self) -> None:
+        task, scale = self._task_with_parametric_criterion()
+        lit = self._lit(task)
+        assert id(scale) in {id(param) for param in lit.parameters()}  # → device move + checkpoint
+
+    def test_criterion_parameter_is_saved_in_the_state_dict(self) -> None:
+        task, _ = self._task_with_parametric_criterion()
+        lit = self._lit(task)
+        assert any(key.endswith("logit_scale") for key in lit.state_dict())
+
+
 # ------------------------------------------------ LitModule smoke
 
 
@@ -242,13 +288,13 @@ class TestStepOutputContract:
         assert "output" not in result  # vestigial raw ModelOutput dropped — task_views covers viz
         view = result["task_views"]["label"]
         assert isinstance(view, TaskStepView)
-        assert view.preds.shape == (4, 3)
+        assert view.predictions.shape == (4, 3)
         assert view.metric_target.shape == (4,)
 
     def test_task_view_preds_are_detached(self) -> None:
-        """preds feed metrics + visualization only (never backprop), so they carry no graph."""
+        """predictions feed metrics + visualization only (never backprop), so they carry no graph."""
         result = self._lit()._shared_step(self._batch(), Stage.TRAIN)
-        assert result["task_views"]["label"].preds.requires_grad is False
+        assert result["task_views"]["label"].predictions.requires_grad is False
 
     def test_validation_step_returns_task_views_for_callbacks(self) -> None:
         """validation_step must return outputs (was None) so on_validation_batch_end gets them."""

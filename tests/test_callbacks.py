@@ -140,6 +140,50 @@ class TestEmaWarmupValidationGuard:
         cb.on_train_end(_trainer(), module)
         assert torch.allclose(module.linear.weight, torch.full_like(module.linear.weight, 2.0))
 
+    def test_checkpoint_during_warmup_keeps_live_weights(self) -> None:
+        """A checkpoint saved before averaging starts must store the live (training) weights.
+
+        Without the guard the parent replaces state_dict with the averaged model — during warmup
+        that is the frozen init weights, while the monitored metric came from the live weights, so
+        a 'best' checkpoint would silently hold random weights.
+        """
+        cb, module = self._prepared(latest_update_step=0)
+        checkpoint = {"state_dict": {key: value.clone() for key, value in module.state_dict().items()}}
+        cb.on_save_checkpoint(_trainer(), module, checkpoint)
+        assert torch.allclose(checkpoint["state_dict"]["linear.weight"], torch.full((2, 2), 2.0))
+        assert "current_model_state" not in checkpoint
+
+    def test_checkpoint_after_averaging_started_stores_averaged_weights(self) -> None:
+        """Once averaging runs, the parent behaviour applies: state_dict = EMA, live kept aside."""
+        cb, module = self._prepared(latest_update_step=5)
+        checkpoint = {"state_dict": {key: value.clone() for key, value in module.state_dict().items()}}
+        cb.on_save_checkpoint(_trainer(), module, checkpoint)
+        assert torch.allclose(checkpoint["state_dict"]["linear.weight"], torch.ones(2, 2))
+        assert torch.allclose(checkpoint["current_model_state"]["linear.weight"], torch.full((2, 2), 2.0))
+
+
+# --------------------------- EmaCallback: private-API canary (Lightning coupling)
+#
+# Our guard reads Lightning's private ``_latest_update_step``. The tests above SET that
+# attribute themselves, so they would not notice if Lightning renamed it (assigning an
+# unknown attribute is not an error in Python). This canary instead drives the parent's
+# real ``on_train_batch_end`` and asserts the guard flips — so a rename on a version bump
+# fails loudly here instead of silently validating init weights in production.
+
+
+class TestEmaPrivateApiCanary:
+    def test_real_update_path_flips_the_guard(self) -> None:
+        module = _TinyModule()
+        cb = EmaCallback(decay=0.999, warmup_fraction=0.0)  # update_starting_at_step == 0
+        trainer = _trainer(global_step=1, estimated_stepping_batches=100)
+        cb.setup(trainer, module, stage="fit")
+        assert not cb._averaging_has_started()  # nothing averaged yet
+
+        cb.on_train_batch_end(trainer, module, outputs=None, batch=None, batch_idx=0)
+
+        # The parent's real code set _latest_update_step via the exact name our guard reads.
+        assert cb._averaging_has_started()
+
 
 # ---------------------------------------------------------------- FreezeCallback: init
 

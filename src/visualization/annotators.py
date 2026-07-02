@@ -17,7 +17,7 @@ from torch import Tensor
 
 from src.core.entities import Task, TaskStepView
 from src.core.registry import Registry
-from src.tasks.taxonomy import Objective, Topology
+from src.core.taxonomy import Objective, Topology
 from src.visualization.entities import (
     Classification,
     Classifications,
@@ -58,7 +58,7 @@ class _SingleLabelAnnotator(Annotator):
 
     def annotate(self, sample: SampleView, task: Task, view: TaskStepView, index: int) -> None:
         names = task.class_names or []
-        probabilities: Tensor = view.preds[index].detach().cpu().reshape(-1).float()
+        probabilities: Tensor = view.predictions[index].detach().cpu().reshape(-1).float()
         prediction_index, confidence = self._predict(probabilities)
         ground_truth_index = int(view.metric_target[index].detach().cpu().reshape(-1)[0].item())
 
@@ -112,18 +112,18 @@ class MultilabelAnnotator(Annotator):
 
     def annotate(self, sample: SampleView, task: Task, view: TaskStepView, index: int) -> None:
         names = task.class_names or []
-        probs: Tensor = view.preds[index].detach().cpu().reshape(-1).float()
+        probabilities: Tensor = view.predictions[index].detach().cpu().reshape(-1).float()
         target: Tensor = view.metric_target[index].detach().cpu().reshape(-1).float()
 
         ground_truth_indices = torch.nonzero(target > 0.5, as_tuple=False).reshape(-1).tolist()
-        prediction_indices = torch.nonzero(probs >= self._threshold, as_tuple=False).reshape(-1).tolist()
+        prediction_indices = torch.nonzero(probabilities >= self._threshold, as_tuple=False).reshape(-1).tolist()
 
         sample.fields[f"{task.name}_gt"] = Classifications(
             items=[Classification(label=_class_name(names, i)) for i in ground_truth_indices]
         )
         sample.fields[f"{task.name}_pred"] = Classifications(
             items=[
-                Classification(label=_class_name(names, i), confidence=float(probs[i].item()))
+                Classification(label=_class_name(names, i), confidence=float(probabilities[i].item()))
                 for i in prediction_indices
             ]
         )
@@ -143,20 +143,22 @@ class RegressionAnnotator(Annotator):
     """Continuous: per-dimension value chips; pred carries the signed ``pred - gt`` error."""
 
     def annotate(self, sample: SampleView, task: Task, view: TaskStepView, index: int) -> None:
-        preds: Tensor = view.preds[index].detach().cpu().reshape(-1).float()
+        predictions: Tensor = view.predictions[index].detach().cpu().reshape(-1).float()
         target: Tensor = view.metric_target[index].detach().cpu().reshape(-1).float()
-        names = _component_names(task.class_names, preds.numel())
+        names = _component_names(task.class_names, predictions.numel())
 
         sample.fields[f"{task.name}_gt"] = Regression(
-            components=[RegressionComponent(names[i], float(target[i].item())) for i in range(preds.numel())]
+            components=[RegressionComponent(names[i], float(target[i].item())) for i in range(predictions.numel())]
         )
         sample.fields[f"{task.name}_pred"] = Regression(
             components=[
-                RegressionComponent(names[i], float(preds[i].item()), error=float((preds[i] - target[i]).item()))
-                for i in range(preds.numel())
+                RegressionComponent(
+                    names[i], float(predictions[i].item()), error=float((predictions[i] - target[i]).item())
+                )
+                for i in range(predictions.numel())
             ]
         )
-        mae = float((preds - target).abs().mean().item())
+        mae = float((predictions - target).abs().mean().item())
         sample.tags.append(f"{task.name}:mae={mae:.2f}")
 
 
@@ -203,7 +205,7 @@ class SegmentationAnnotator(Annotator):
         self._ignore_index = ignore_index
 
     def annotate(self, sample: SampleView, task: Task, view: TaskStepView, index: int) -> None:
-        prediction_map = view.preds[index].detach().cpu().argmax(dim=0).numpy()  # [H, W] class indices
+        prediction_map = view.predictions[index].detach().cpu().argmax(dim=0).numpy()  # [H, W] class indices
         ground_truth_map = view.metric_target[index].detach().cpu().long().numpy()  # [H, W] class indices
         class_names = task.class_names
         ground_truth_masks: list[ClassMask] = [
@@ -239,7 +241,7 @@ class MultilabelSegmentationAnnotator(Annotator):
         self._ignore_index = ignore_index
 
     def annotate(self, sample: SampleView, task: Task, view: TaskStepView, index: int) -> None:
-        class_scores = view.preds[index].detach().cpu().numpy()  # [C, H, W] sigmoid scores
+        class_scores = view.predictions[index].detach().cpu().numpy()  # [C, H, W] sigmoid scores
         ground_truth = view.metric_target[index].detach().cpu().numpy()  # [C, H, W] multi-hot
         class_names = task.class_names
         ground_truth_masks: list[ClassMask] = [

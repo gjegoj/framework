@@ -115,7 +115,7 @@ class MetricSet(nn.Module, ABC):
     """A stateful collection of metrics for one task and stage."""
 
     @abstractmethod
-    def update(self, preds: Tensor, target: Tensor) -> None:
+    def update(self, predictions: Tensor, target: Tensor) -> None:
         """Accumulate one batch of predictions against targets."""
 
     @abstractmethod

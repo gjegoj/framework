@@ -9,10 +9,14 @@ from typing import Any, cast
 import torch
 from torch import Tensor
 
+from src.config.export import OnnxOptions
 from src.export.entities import ExportRequest
 from src.export.ports import ModelExporter
 from src.export.registry import exporters
 from src.export.tracing import as_output_tuple, trace_args
+
+# Alias of the schema default (single home) — used only if options omits opset_version.
+_DEFAULT_OPSET_VERSION: int = OnnxOptions.model_fields["opset_version"].default
 
 
 @dataclass
@@ -79,7 +83,7 @@ class OnnxExporter(ModelExporter):
             with torch.no_grad():
                 outputs = as_output_tuple(request.module(*args))
             dynamic_axes = _dynamic_axes(request.input_names, request.output_names, outputs)
-        opset_version = int(request.options.get("opset_version", 17))
+        opset_version = int(request.options.get("opset_version", _DEFAULT_OPSET_VERSION))
         with torch.no_grad():
             torch.onnx.export(
                 request.module,

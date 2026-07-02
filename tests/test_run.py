@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pickle
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -17,6 +18,10 @@ from src.tasks import classification
 from src.training.modules import LitModule
 from src.training.optim import OptimizerBuilder
 from tests.test_config import _raw
+
+
+class _ArbitraryPayload:
+    """A non-tensor object; module-level so it is picklable into a test checkpoint."""
 
 
 class TestResolveTestCkptPath:
@@ -132,6 +137,18 @@ class TestLoadInitWeights:
     def test_missing_file_raises(self) -> None:
         with pytest.raises(FileNotFoundError, match="init_ckpt_path not found"):
             load_init_weights(self._lit_module(), "/no/such/checkpoint.ckpt")
+
+    def test_rejects_checkpoint_smuggling_arbitrary_object(self, tmp_path: Path) -> None:
+        """weights_only=True: a ckpt carrying a non-tensor pickled object is refused (RCE guard).
+
+        With weights_only=False torch happily unpickles the object and the state_dict loads; the
+        safe loader must instead reject the file before any arbitrary code can run.
+        """
+        source = self._lit_module()
+        ckpt_path = tmp_path / "smuggled.ckpt"
+        torch.save({"state_dict": source.state_dict(), "payload": _ArbitraryPayload()}, ckpt_path)
+        with pytest.raises(pickle.UnpicklingError):
+            load_init_weights(self._lit_module(), str(ckpt_path))
 
 
 class TestRunModeValidation:

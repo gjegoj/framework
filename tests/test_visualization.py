@@ -165,15 +165,15 @@ class TestAnnotators:
         assert isinstance(task, Task)
         return task
 
-    def _view(self, preds: list[list[float]], target: list[object]) -> "TaskStepView":
+    def _view(self, predictions: list[list[float]], target: list[object]) -> "TaskStepView":
         import torch
 
         from src.core.entities import TaskStepView
 
-        return TaskStepView(preds=torch.tensor(preds), metric_target=torch.tensor(target))
+        return TaskStepView(predictions=torch.tensor(predictions), metric_target=torch.tensor(target))
 
     def test_registry_keyed_by_axes(self) -> None:
-        from src.tasks.taxonomy import Objective, Topology
+        from src.core.taxonomy import Objective, Topology
         from src.visualization.annotators import annotators
 
         assert (Topology.GLOBAL, Objective.MULTICLASS) in annotators
@@ -186,7 +186,7 @@ class TestAnnotators:
         from src.visualization.entities import Classification, SampleView
 
         sample = SampleView(image=np.zeros((2, 2, 3), dtype=np.uint8))
-        view = self._view(preds=[[0.1, 0.2, 0.7]], target=[2])  # softmax-like, pred=dog, gt=dog
+        view = self._view(predictions=[[0.1, 0.2, 0.7]], target=[2])  # softmax-like, pred=dog, gt=dog
         ClassificationAnnotator().annotate(sample, self._task(), view, index=0)
 
         gt = sample.fields["species_gt"]
@@ -203,7 +203,7 @@ class TestAnnotators:
         from src.visualization.entities import SampleView
 
         sample = SampleView(image=np.zeros((2, 2, 3), dtype=np.uint8))
-        view = self._view(preds=[[0.8, 0.1, 0.1]], target=[2])  # pred=cat, gt=dog
+        view = self._view(predictions=[[0.8, 0.1, 0.1]], target=[2])  # pred=cat, gt=dog
         ClassificationAnnotator().annotate(sample, self._task(), view, index=0)
         assert "species:wrong" in sample.tags
 
@@ -219,7 +219,7 @@ class TestAnnotators:
         task = replace(classification("species", num_classes=2, objective="binary"), class_names=["cat", "dog"])
         sample = SampleView(image=np.zeros((2, 2, 3), dtype=np.uint8))
         # sigmoid P(positive=dog) = 0.8 → pred dog; gt = 1 (dog)
-        view = self._view(preds=[[0.8]], target=[[1]])
+        view = self._view(predictions=[[0.8]], target=[[1]])
         BinaryClassificationAnnotator().annotate(sample, task, view, index=0)
 
         gt = sample.fields["species_gt"]
@@ -241,7 +241,7 @@ class TestAnnotators:
         task = replace(classification("species", num_classes=2, objective="binary"), class_names=["cat", "dog"])
         sample = SampleView(image=np.zeros((2, 2, 3), dtype=np.uint8))
         # P(dog) = 0.3 → pred cat with confidence 0.7; gt = 1 (dog) → wrong
-        view = self._view(preds=[[0.3]], target=[[1]])
+        view = self._view(predictions=[[0.3]], target=[[1]])
         BinaryClassificationAnnotator().annotate(sample, task, view, index=0)
 
         pred = sample.fields["species_pred"]
@@ -250,7 +250,7 @@ class TestAnnotators:
         assert "species:wrong" in sample.tags
 
     def test_binary_registered_for_global_binary(self) -> None:
-        from src.tasks.taxonomy import Objective, Topology
+        from src.core.taxonomy import Objective, Topology
         from src.visualization.annotators import annotators
 
         assert (Topology.GLOBAL, Objective.BINARY) in annotators
@@ -262,8 +262,8 @@ class TestAnnotators:
         from src.visualization.entities import Classifications, SampleView
 
         sample = SampleView(image=np.zeros((2, 2, 3), dtype=np.uint8))
-        # sigmoid preds: cat=0.9, cow=0.1, dog=0.8 ; gt multi-hot: cat=1, dog=1
-        view = self._view(preds=[[0.9, 0.1, 0.8]], target=[[1.0, 0.0, 1.0]])
+        # sigmoid predictions: cat=0.9, cow=0.1, dog=0.8 ; gt multi-hot: cat=1, dog=1
+        view = self._view(predictions=[[0.9, 0.1, 0.8]], target=[[1.0, 0.0, 1.0]])
         MultilabelAnnotator(threshold=0.5).annotate(sample, self._task("multilabel"), view, index=0)
 
         gt = sample.fields["species_gt"]
@@ -281,15 +281,15 @@ class TestRegressionAnnotator:
         assert isinstance(task, Task)
         return task
 
-    def _view(self, preds: list[list[float]], target: list[list[float]]) -> "TaskStepView":
+    def _view(self, predictions: list[list[float]], target: list[list[float]]) -> "TaskStepView":
         import torch
 
         from src.core.entities import TaskStepView
 
-        return TaskStepView(preds=torch.tensor(preds), metric_target=torch.tensor(target))
+        return TaskStepView(predictions=torch.tensor(predictions), metric_target=torch.tensor(target))
 
     def test_registered_for_global_continuous(self) -> None:
-        from src.tasks.taxonomy import Objective, Topology
+        from src.core.taxonomy import Objective, Topology
         from src.visualization.annotators import annotators
 
         assert (Topology.GLOBAL, Objective.CONTINUOUS) in annotators
@@ -301,7 +301,7 @@ class TestRegressionAnnotator:
         from src.visualization.entities import Regression, SampleView
 
         sample = SampleView(image=np.zeros((2, 2, 3), dtype=np.uint8))
-        view = self._view(preds=[[3.51]], target=[[3.42]])
+        view = self._view(predictions=[[3.51]], target=[[3.42]])
         RegressionAnnotator().annotate(sample, self._task(), view, index=0)
 
         gt = sample.fields["age_gt"]
@@ -322,13 +322,13 @@ class TestSegmentationAnnotator:
         assert isinstance(task, Task)
         return task
 
-    def _view(self, preds: object, target: object) -> "TaskStepView":
+    def _view(self, predictions: object, target: object) -> "TaskStepView":
         from src.core.entities import TaskStepView
 
-        return TaskStepView(preds=preds, metric_target=target)  # type: ignore[arg-type]
+        return TaskStepView(predictions=predictions, metric_target=target)  # type: ignore[arg-type]
 
     def test_registered_for_dense_multiclass(self) -> None:
-        from src.tasks.taxonomy import Objective, Topology
+        from src.core.taxonomy import Objective, Topology
         from src.visualization.annotators import annotators
 
         assert (Topology.DENSE, Objective.MULTICLASS) in annotators
@@ -340,7 +340,7 @@ class TestSegmentationAnnotator:
         from src.visualization.annotators import SegmentationAnnotator
         from src.visualization.entities import SampleView, Segmentation
 
-        # preds [B, C=3, H=4, W=4] softmax-ish; argmax over C gives the pred label map
+        # predictions [B, C=3, H=4, W=4] softmax-ish; argmax over C gives the pred label map
         probs = torch.zeros(1, 3, 4, 4)
         probs[0, 0, :2, :] = 0.9  # top half class 0
         probs[0, 1, 2:, :] = 0.9  # bottom half class 1
@@ -388,13 +388,13 @@ class TestMultilabelSegmentationAnnotator:
         assert isinstance(task, Task)
         return task
 
-    def _view(self, preds: object, target: object) -> "TaskStepView":
+    def _view(self, predictions: object, target: object) -> "TaskStepView":
         from src.core.entities import TaskStepView
 
-        return TaskStepView(preds=preds, metric_target=target)  # type: ignore[arg-type]
+        return TaskStepView(predictions=predictions, metric_target=target)  # type: ignore[arg-type]
 
     def test_registered_for_dense_multilabel(self) -> None:
-        from src.tasks.taxonomy import Objective, Topology
+        from src.core.taxonomy import Objective, Topology
         from src.visualization.annotators import annotators
 
         assert (Topology.DENSE, Objective.MULTILABEL) in annotators
@@ -406,7 +406,7 @@ class TestMultilabelSegmentationAnnotator:
         from src.visualization.annotators import MultilabelSegmentationAnnotator
         from src.visualization.entities import SampleView, Segmentation
 
-        # preds [B, C=2, H=4, W=4] sigmoid; gt [B, C=2, H=4, W=4] multi-hot (classes overlap)
+        # predictions [B, C=2, H=4, W=4] sigmoid; gt [B, C=2, H=4, W=4] multi-hot (classes overlap)
         probs = torch.zeros(1, 2, 4, 4)
         probs[0, 0] = 0.9  # class 0 active everywhere
         probs[0, 1, :2, :2] = 0.9  # class 1 active only top-left → overlaps class 0
@@ -456,7 +456,7 @@ class TestPipeline:
         task = annotator_tests._task()
         views = {
             "species": annotator_tests._view(
-                preds=[[0.1, 0.2, 0.7], [0.8, 0.1, 0.1]],
+                predictions=[[0.1, 0.2, 0.7], [0.8, 0.1, 0.1]],
                 target=[2, 2],
             )
         }
@@ -499,7 +499,9 @@ class TestPipelineRegression:
 
         task = regression("age", num_classes=1)
         assert isinstance(task, Task)
-        views = {"age": TaskStepView(preds=torch.tensor([[3.51], [7.0]]), metric_target=torch.tensor([[3.42], [5.0]]))}
+        views = {
+            "age": TaskStepView(predictions=torch.tensor([[3.51], [7.0]]), metric_target=torch.tensor([[3.42], [5.0]]))
+        }
         images = np.zeros((2, 4, 4, 3), dtype=np.uint8)
 
         samples = build_sample_views(images, [task], views)

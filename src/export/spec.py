@@ -9,9 +9,9 @@ from torch import Tensor
 
 from src.config.schema import ExperimentConfig
 from src.core.entities import Task
+from src.core.taxonomy import EXPORTABLE_TOPOLOGIES
 from src.data.loaders import input_aliases
 from src.models.assembly import CompositeModel
-from src.tasks.taxonomy import EXPORTABLE_TOPOLOGIES
 
 
 @dataclass(frozen=True)

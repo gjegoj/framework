@@ -23,6 +23,9 @@ log = logging.getLogger(__name__)
 # File extension → data_sources registry key, for inferring the source format.
 _EXTENSION_TO_SOURCE: dict[str, str] = {".csv": "csv", ".json": "json"}
 
+# Alias of the schema default (single home) — used only when caching is disabled, so workers is inert.
+_DEFAULT_CACHE_WORKERS: int = CacheConfig.model_fields["workers"].default
+
 # DataLoader knobs the builder passes explicitly; every other (extra) key is forwarded
 # verbatim to torch.utils.data.DataLoader (the reserved keys are rejected in the schema).
 _DATALOADER_CORE_FIELDS = frozenset({"num_workers", "pin_memory", "persistent_workers", "drop_last", "prefetch_factor"})
@@ -310,7 +313,7 @@ def build_data_module(
         root_path=config.data.root_path,
         cache_options=CacheOptions(
             max_bytes=_resolve_cache_bytes(config.data.cache),
-            workers=config.data.cache.workers if config.data.cache is not None else 8,
+            workers=config.data.cache.workers if config.data.cache is not None else _DEFAULT_CACHE_WORKERS,
         ),
     )
 

@@ -9,13 +9,16 @@ persisted into checkpoints (and restored on resume) via
   training steps (resolution-independent of the schedule, which isn't known at
   config time), resolved to Lightning's absolute ``update_starting_at_step`` once
   the step count is known at ``setup``.
-* A guard so the averaged weights are only swapped in for validation (and copied
-  into the model at train end) **after averaging has actually begun**. Until the
-  first EMA update the averaged model is a frozen copy of the initial (random)
-  weights; Lightning swaps it in unconditionally, which makes validation during
-  warmup evaluate the untrained model (flat, meaningless val loss). With the guard,
-  validation uses the live training weights throughout warmup and the EMA weights
-  afterwards.
+* A guard so the averaged weights are only swapped in for validation, written
+  into checkpoints, and copied into the model at train end **after averaging has
+  actually begun**. Until the first EMA update the averaged model is a frozen copy
+  of the initial (random) weights; Lightning uses it unconditionally, which makes
+  validation during warmup evaluate the untrained model (flat, meaningless val
+  loss) and — worse — makes every checkpoint saved during warmup store those
+  initial weights as its ``state_dict`` while its monitored metric came from the
+  live weights (a "best" checkpoint holding random weights). With the guard,
+  warmup validation and checkpoints use the live training weights; the EMA weights
+  take over once averaging starts.
 """
 
 from __future__ import annotations
@@ -86,6 +89,19 @@ class EmaCallback(EMAWeightAveraging):
         """Swap the live weights back after validation — kept symmetric with ``on_validation_epoch_start``."""
         if self._averaging_has_started():
             super().on_validation_epoch_end(trainer, pl_module)
+
+    @override
+    def on_save_checkpoint(self, trainer: L.Trainer, pl_module: L.LightningModule, checkpoint: dict[str, Any]) -> None:
+        """Write the averaged weights into the checkpoint only once averaging has started.
+
+        The parent unconditionally replaces ``checkpoint["state_dict"]`` with the averaged model —
+        during warmup that would persist the frozen initial weights under a checkpoint whose
+        monitored metric was produced by the live weights. Until averaging starts, the checkpoint
+        keeps the plain (live) ``state_dict``; the parent's ``on_load_checkpoint`` handles that
+        format via its no-averaging-state branch, so resume works from either kind.
+        """
+        if self._averaging_has_started():
+            super().on_save_checkpoint(trainer, pl_module, checkpoint)
 
     @override
     def on_train_end(self, trainer: L.Trainer, pl_module: L.LightningModule) -> None:

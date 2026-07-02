@@ -174,7 +174,9 @@ class DataConfig(BaseModel):
     root_path: str | None = Field(None, description="Optional prefix prepended to file-based input paths.")
     cache: CacheConfig | None = Field(None, description="In-RAM image/mask cache; None disables.")
 
-    model_config = ConfigDict(extra="allow")
+    # Closed field set (no per-brick overrides / _target_ escape hatch here, unlike the component
+    # sections), so forbid extras — a typo like `split_stratifi` fails loudly instead of being swallowed.
+    model_config = ConfigDict(extra="forbid")
 
     @field_validator("split")
     @classmethod

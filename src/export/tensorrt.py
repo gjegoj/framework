@@ -18,6 +18,7 @@ from typing import Any
 import torch
 from torch import Tensor
 
+from src.config.export import TensorRtOptions
 from src.export.entities import ExportRequest
 from src.export.ports import ModelExporter
 from src.export.registry import exporters
@@ -25,6 +26,9 @@ from src.export.registry import exporters
 # Default batch profile when no explicit ``shapes`` is given: min / opt / max batch over the
 # example input's own C, H, W (themselves derived from config image_size / mean).
 _DEFAULT_BATCH = (1, 4, 8)
+
+# Alias of the schema default (single home) — used only if options omits min_block_size.
+_DEFAULT_MIN_BLOCK_SIZE: int = TensorRtOptions.model_fields["min_block_size"].default
 
 
 def _profile_shapes(options: dict[str, Any], example: Tensor) -> tuple[list[int], list[int], list[int]]:
@@ -117,7 +121,7 @@ class TensorRtExporter(ModelExporter):
             kwargs: dict[str, Any] = {
                 "inputs": [trt_input],
                 "enabled_precisions": enabled,
-                "min_block_size": int(options.get("min_block_size", 5)),
+                "min_block_size": int(options.get("min_block_size", _DEFAULT_MIN_BLOCK_SIZE)),
             }
             workspace = options.get("workspace_size")
             if workspace:

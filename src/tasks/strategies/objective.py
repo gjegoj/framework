@@ -12,6 +12,7 @@ from abc import ABC, abstractmethod
 from src.core.instantiate import BrickSpec, instantiate
 from src.core.ports import Activation, Criterion, MetricSet, TargetAdapter
 from src.core.registry import Registry
+from src.core.taxonomy import Objective, Topology
 from src.losses.registry import criteria
 from src.metrics.builders import MetricsSpec, build_metric_set
 from src.tasks.activations import IdentityActivation, SigmoidActivation, SoftmaxActivation
@@ -22,7 +23,6 @@ from src.tasks.adapters import (
     MulticlassTargetAdapter,
     MultilabelTargetAdapter,
 )
-from src.tasks.taxonomy import Objective, Topology
 
 _REGRESSION_METRICS: MetricsSpec = {"mse": None, "mae": None}
 

@@ -17,7 +17,7 @@ class CombinedExportModel(nn.Module):
     """Single image in → per-task predictions out (tuple, fixed task order).
 
     Each output is ``task.activation(head_logits)`` — ready for deployment inference,
-    matching the post-activation preds used in metrics and visualization.
+    matching the post-activation predictions used in metrics and visualization.
 
     Parameters:
         model (CompositeModel): Assembled backbone + heads.

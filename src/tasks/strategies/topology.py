@@ -12,7 +12,7 @@ from abc import ABC, abstractmethod
 from src.core.entities import HeadSpec
 from src.core.keys import DECODER, POOLED
 from src.core.registry import Registry
-from src.tasks.taxonomy import Topology
+from src.core.taxonomy import Topology
 
 
 class TopologyStrategy(ABC):
