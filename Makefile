@@ -24,8 +24,8 @@ clean: ## Clean cache and temporary files
 test: ## Run all tests
 	uv run pytest tests/ -v
 
-test-unit: ## Run unit tests (exclude slow)
-	uv run pytest tests/ -v -m "not slow"
+test-unit: ## Run unit tests only (tests/unit — the pre-commit gate)
+	uv run pytest tests/unit -v -m "not slow"
 
 typecheck: ## Run mypy static analysis
 	uv run mypy src tests

@@ -33,11 +33,20 @@ do not bypass them:
 
 - `uv add <pkg>` / `uv add --dev <pkg>` — add a dependency (never pip; it must land
   in `pyproject.toml`). PyPI is pinned as the default index there.
-- `make test` — run the full pytest suite. Single test:
-  `uv run pytest tests/test_tasks.py::TestTaskBuilder -v` (or append `::method`).
+- `make test` — run the full pytest suite (unit + e2e). Single test:
+  `uv run pytest tests/unit/tasks/test_builder.py::TestTaskBuilder -v` (or append `::method`).
+- `make test-unit` — `tests/unit` only (the pre-commit gate; excludes the `e2e` smokes).
 - `make typecheck` — run mypy over `src` and `tests` (must stay green).
-- `make check` — typecheck + tests.
+- `make check` — typecheck + full tests.
 - `make pre-commit` — run pre-commit hooks. `make clean` — remove caches.
+
+Tests layout: `tests/unit/<layer>/` mirrors the `src/` layers; `tests/e2e/` holds the
+full-flow smokes (training fits, export round-trips, full wiring) and is auto-marked
+`e2e` by the root conftest. Shared pure builders/fakes live in `tests/support/`
+(`raw_config`/`minimal_config`/`make_transform`/`make_task`/`make_view`, `FakePlotLogger`);
+importing from another `tests.test_*` module is forbidden — only `tests.support`. A
+per-layer `conftest.py` is added only when ≥2 files of that layer share a fixture.
+Clone tests that differ only in data are parametrized (`pytest.param(..., id=...)`).
 
 mypy is configured strict-ish (untyped defs disallowed). Line length is 120 (ruff).
 

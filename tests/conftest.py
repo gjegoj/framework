@@ -1,9 +1,13 @@
-"""Shared pytest fixtures.
+"""Shared pytest fixtures and suite-wide collection hooks.
 
-Currently one: ``make_image_csv``, a factory for the synthetic image + label CSV that several
+Fixtures: ``make_image_csv``, a factory for the synthetic image + label CSV that several
 test modules built with near-identical private ``csv_path`` fixtures. Each caller passes its own
 ``count``/``size``/``seed`` (the values its assertions depend on), so the data is byte-identical to
 the old inline fixtures — only the duplicated body is gone.
+
+Hooks: every test under ``tests/e2e/`` is auto-marked ``e2e`` (single source of truth — no
+per-file ``pytestmark`` boilerplate), so ``-m "not e2e"`` and the ``tests/unit`` path selection
+stay equivalent.
 """
 
 from __future__ import annotations
@@ -15,6 +19,15 @@ import cv2
 import numpy as np
 import pandas as pd
 import pytest
+
+_E2E_DIRECTORY = Path(__file__).parent / "e2e"
+
+
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    """Mark every test collected from ``tests/e2e/`` with the ``e2e`` marker."""
+    for item in items:
+        if _E2E_DIRECTORY in Path(item.fspath).parents:
+            item.add_marker(pytest.mark.e2e)
 
 
 @pytest.fixture

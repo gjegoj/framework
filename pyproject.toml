@@ -44,6 +44,10 @@ default = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "e2e: full-flow integration (training smoke, export round-trip, full wiring); auto-applied to tests/e2e/",
+    "slow: long-running tests excluded from the pre-commit gate",
+]
 
 [tool.ruff]
 line-length = 120
