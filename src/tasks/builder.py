@@ -8,12 +8,13 @@ own accumulating state).
 from __future__ import annotations
 
 import dataclasses
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from typing import Any
 
 from src.core.entities import HeadSpec, Task
 from src.core.enums import Stage
 from src.core.instantiate import BrickSpec
+from src.core.ports import Activation, CriterionDimensions
 from src.metrics.builders import MetricsSpec
 from src.tasks.strategies.objective import ObjectiveStrategy
 from src.tasks.strategies.topology import TopologyStrategy
@@ -43,6 +44,8 @@ class TaskBuilder:
         metrics_spec: MetricsSpec | None = None,
         head_override: str | dict[str, Any] | None = None,
         feature_key_override: str | None = None,
+        class_count: int | None = None,
+        activation_factory: Callable[[], Activation] | None = None,
     ) -> Task:
         """Build a task; raise if the topology/objective combination is invalid.
 
@@ -60,6 +63,12 @@ class TaskBuilder:
             feature_key_override (str | None): Override the topology-default
                 stream key (e.g. ``"encoder_last"`` for smp classification).
                 Applied before ``head_override`` so the key is visible to it.
+            class_count (int | None): Runtime-inferred label-vocabulary size; differs from
+                ``num_classes`` only for embedding tasks, where ``num_classes`` carries
+                ``embedding_dim``.
+            activation_factory (Callable[[], Activation] | None): Preset-supplied activation
+                override (e.g. ``NormalizeActivation`` for embedding presets); ``None`` →
+                the objective's own activation.
 
         Returns:
             Task: The assembled task bundle.
@@ -79,12 +88,13 @@ class TaskBuilder:
         if head_override is not None:
             head_spec = _apply_head_override(head_spec, head_override)
         metrics = {stage: self._objective.build_metrics(num_classes, metrics_spec) for stage in stages}
+        dimensions = CriterionDimensions(num_classes=class_count, embedding_dim=out_features)
         return Task(
             name=name,
             head_spec=head_spec,
             adapter=self._objective.build_target_adapter(),
-            criterion=self._objective.build_criterion(loss_spec),
-            activation=self._objective.build_activation(),
+            criterion=self._objective.build_criterion(loss_spec, dimensions=dimensions),
+            activation=activation_factory() if activation_factory is not None else self._objective.build_activation(),
             metrics=metrics,
             topology=self._topology.kind,
             objective=self._objective.kind,

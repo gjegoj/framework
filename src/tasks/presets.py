@@ -16,14 +16,17 @@ needed.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
 from src.core.entities import Task
 from src.core.instantiate import BrickSpec
+from src.core.ports import Activation
 from src.core.registry import Registry
 from src.core.taxonomy import Objective, Topology
 from src.metrics.builders import MetricsSpec
+from src.tasks.activations import NormalizeActivation
 from src.tasks.builder import TaskBuilder
 from src.tasks.strategies.objective import objective_strategies
 from src.tasks.strategies.topology import topology_strategies
@@ -46,6 +49,13 @@ class TaskPreset:
             ``loss:``, overriding the objective's default.  This is where the
             *method* is pinned for objectives whose loss varies (metric learning:
             triplet vs margin-ranking vs InfoNCE).  ``None`` → objective default.
+        default_head (str | dict[str, Any] | None): Head override used when the task
+            config omits ``head:`` (e.g. ArcFace's ``"cosine"`` head).  ``None`` →
+            backbone native. The task config's own ``head:`` always wins over this.
+        default_activation (Callable[[], Activation] | None): Activation factory used
+            when the objective's own activation isn't the right fit (e.g. embedding
+            presets need L2-normalized output instead of the objective default).
+            ``None`` → the objective's ``build_activation()``.
         topology_kwargs (dict[str, Any]): Extra constructor kwargs forwarded to
             ``topology_strategies.create(topology, **topology_kwargs)`` for
             parameterised topologies.  Empty dict for all fixed topologies.
@@ -56,6 +66,8 @@ class TaskPreset:
     default_encoder: str | None = None
     default_metrics: MetricsSpec | None = None
     default_loss: str | None = None
+    default_head: str | dict[str, Any] | None = None
+    default_activation: Callable[[], Activation] | None = None
     topology_kwargs: dict[str, Any] = field(default_factory=dict)
 
     def resolve_objective(self, override: str | None) -> Objective:
@@ -72,6 +84,7 @@ class TaskPreset:
         metrics: MetricsSpec | None = None,
         head: str | dict[str, Any] | None = None,
         feature_key: str | None = None,
+        class_count: int | None = None,
     ) -> Task:
         """Assemble the task from this preset's topology and the resolved objective.
 
@@ -86,6 +99,8 @@ class TaskPreset:
                 ``str`` → registry key. ``dict`` → ``{kind?, _target_?, ...}``.
             feature_key (str | None): Override the backbone stream this head reads.
                 ``None`` → topology default (``pooled`` / ``decoder``).
+            class_count (int | None): Runtime-inferred label-vocabulary size for
+                dimension-aware criteria; forwarded to ``TaskBuilder.build``.
 
         Returns:
             Task: The assembled task.
@@ -100,8 +115,10 @@ class TaskPreset:
             weight=weight,
             loss_spec=loss if loss is not None else self.default_loss,
             metrics_spec=metrics if metrics is not None else self.default_metrics,
-            head_override=head,
+            head_override=head if head is not None else self.default_head,
             feature_key_override=feature_key,
+            class_count=class_count,
+            activation_factory=self.default_activation,
         )
 
     def __call__(
@@ -114,9 +131,10 @@ class TaskPreset:
         metrics: MetricsSpec | None = None,
         head: str | dict[str, Any] | None = None,
         feature_key: str | None = None,
+        class_count: int | None = None,
     ) -> Task:
         """Shorthand for ``build`` — lets preset instances be used as functions."""
-        return self.build(name, num_classes, objective, weight, loss, metrics, head, feature_key)
+        return self.build(name, num_classes, objective, weight, loss, metrics, head, feature_key, class_count)
 
 
 task_presets: Registry[TaskPreset] = Registry("task_preset")
@@ -126,16 +144,18 @@ task_presets: Registry[TaskPreset] = Registry("task_preset")
 # at {key}/<class_name> (falling back to class{i}).
 _PER_CLASS: dict[str, str] = {"average": "none"}
 
+_CLASSIFICATION_METRICS: MetricsSpec = {
+    "precision": _PER_CLASS,
+    "recall": _PER_CLASS,
+    "f1": _PER_CLASS,
+    "confusion_matrix": {"normalize": "true"},
+    "precision_recall_curve": None,
+}
+
 classification = TaskPreset(
     topology=Topology.GLOBAL,
     default_objective=Objective.MULTICLASS,
-    default_metrics={
-        "precision": _PER_CLASS,
-        "recall": _PER_CLASS,
-        "f1": _PER_CLASS,
-        "confusion_matrix": {"normalize": "true"},
-        "precision_recall_curve": None,
-    },
+    default_metrics=_CLASSIFICATION_METRICS,
 )
 task_presets.register_instance("classification", classification)
 
@@ -161,14 +181,14 @@ segmentation = TaskPreset(
 task_presets.register_instance("segmentation", segmentation)
 
 triplet = TaskPreset(
-    topology=Topology.RANKING,
+    topology=Topology.MULTIVIEW,
     default_objective=Objective.METRIC,
     default_loss="triplet_margin",  # 3 views: anchor / positive / negative
 )
 task_presets.register_instance("triplet", triplet)
 
 pairwise_ranking = TaskPreset(
-    topology=Topology.RANKING,
+    topology=Topology.MULTIVIEW,
     default_objective=Objective.METRIC,
     default_loss="margin_ranking",  # 2 views ranked against each other
 )
@@ -180,3 +200,22 @@ contrastive = TaskPreset(
     default_loss="info_nce",  # N separate encoders aligned (InfoNCE / SigLIP)
 )
 task_presets.register_instance("contrastive", contrastive)
+
+arcface = TaskPreset(
+    topology=Topology.GLOBAL,
+    default_objective=Objective.MULTICLASS,
+    default_loss="arcface",
+    default_head="cosine",
+    default_metrics=_CLASSIFICATION_METRICS,
+)
+task_presets.register_instance("arcface", arcface)
+
+arcface_embedding = TaskPreset(
+    topology=Topology.GLOBAL,
+    default_objective=Objective.METRIC,
+    default_loss="arcface_proxy",
+    default_encoder="label",
+    default_head="linear",
+    default_activation=NormalizeActivation,
+)
+task_presets.register_instance("arcface_embedding", arcface_embedding)

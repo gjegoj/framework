@@ -1,4 +1,4 @@
-"""Ranking loss criteria for RANKING topology (M7a).
+"""Ranking loss criteria for MULTIVIEW topology (M7a).
 
 Each criterion receives ``logits: [B, N, D]`` — N embedding vectors per sample —
 and a ``target: [B]`` label tensor (see notes below for each criterion).

@@ -19,6 +19,7 @@ _NOISY_WARNINGS = (
     r".*LeafSpec.* is deprecated",  # torch pytree deprecation fired inside Lightning
     r".*does not have many workers.*bottleneck",  # DataLoader num_workers tip
     r".*infer the .batch_size. from an ambiguous",  # multi-head batch_size guess
+    r".*Precision bf16-mixed is not supported by the model summary.*",  # model summary precision warning
 )
 
 

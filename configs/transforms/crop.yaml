@@ -1,0 +1,107 @@
+# @package transforms
+train:
+  _target_: albumentations.Compose
+  seed: ${seed}
+  telemetry: false
+  transforms:
+    - _target_: albumentations.SafeRotate
+      angle_range: [-15, 15]
+      border_mode: 1
+      p: 0.1
+    - _target_: albumentations.OneOf
+      p: 1.0
+      transforms:
+        - _target_: src.transforms.RandomBorderCropWithLabel
+          crop_left: 0.35
+          crop_right: 0.35
+          crop_top: 0.35
+          crop_bottom: 0.35
+          min_crop_threshold: 0.2
+          label_key: label
+          p: 0.5
+        - _target_: albumentations.RandomCropFromBorders
+          crop_left: 0.035
+          crop_right: 0.035
+          crop_top: 0.035
+          crop_bottom: 0.035
+          p: 0.5
+    - _target_: albumentations.OneOf
+      p: 1.0
+      transforms:
+        - _target_: albumentations.Resize
+          height: ${image_size[0]}
+          width: ${image_size[1]}
+          interpolation: 0
+          p: 1.0
+        - _target_: albumentations.Resize
+          height: ${image_size[0]}
+          width: ${image_size[1]}
+          interpolation: 1
+          p: 1.0
+        - _target_: albumentations.Resize
+          height: ${image_size[0]}
+          width: ${image_size[1]}
+          interpolation: 2
+          p: 1.0
+        - _target_: albumentations.Resize
+          height: ${image_size[0]}
+          width: ${image_size[1]}
+          interpolation: 3
+          p: 1.0
+        - _target_: albumentations.Resize
+          height: ${image_size[0]}
+          width: ${image_size[1]}
+          interpolation: 4
+          p: 1.0
+    - _target_: albumentations.HorizontalFlip
+      p: 0.1
+    - _target_: albumentations.PhotoMetricDistort
+      brightness_range: [0.8, 1.2]
+      contrast_range: [0.5, 1.5]
+      saturation_range: [0.5, 1.5]
+      hue_range: [-0.05, 0.05]
+      distort_p: 0.5
+      p: 0.1
+    - _target_: albumentations.AdvancedBlur
+      blur_range: [3, 3]
+      sigma_x_range: [0.2, 1]
+      sigma_y_range: [0.2, 1]
+      rotate_range: [-90, 90]
+      beta_range: [0.5, 8]
+      noise_range: [0.9, 1.1]
+      p: 0.1
+    - _target_: albumentations.OneOf
+      transforms:
+        - _target_: albumentations.GaussNoise
+          std_range: [0.05, 0.1]
+          mean_range: [0, 0]
+          per_channel: true
+          p: 0.5
+        - _target_: albumentations.ISONoise
+          color_shift_range: [0.01, 0.1]
+          intensity_range: [0.1, 0.3]
+          p: 0.5
+        - _target_: albumentations.MultiplicativeNoise
+          multiplier: [0.9, 1.1]
+          elementwise: true
+          per_channel: false
+          p: 0.5
+      p: 0.1
+    - _target_: albumentations.Normalize
+      mean: ${mean}
+      std: ${std}
+    - _target_: albumentations.ToTensorV2
+
+val:
+  _target_: albumentations.Compose
+  seed: ${seed}
+  telemetry: false
+  transforms:
+    - _target_: albumentations.Resize
+      height: ${image_size[0]}
+      width: ${image_size[1]}
+      interpolation: 1
+    - _target_: albumentations.Normalize
+      mean: ${mean}
+      std: ${std}
+    - _target_: albumentations.ToTensorV2

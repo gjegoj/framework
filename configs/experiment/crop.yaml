@@ -1,0 +1,48 @@
+# @package _global_
+defaults:
+  - override /backbone: resnet18
+  - override /transforms: crop
+  - override /logger: clearml
+  - override /callbacks: default
+  - override /scheduler: onecycle
+  - override /dataloader: default
+
+project: crop-classification
+seed: 1234
+epochs: 30
+batch_size: 128
+image_size: [128, 128]
+lr: 1.0e-3
+
+run_train: true
+run_test: true
+run_export: false
+
+# Show rotated samples with their ground-truth vs predicted angle.
+callbacks:
+  sample_log:
+    num_images: 8
+    every_n_epochs: 5
+    batch_index: 0
+    mean: ${mean}
+    std: ${std}
+
+  ema:
+    decay: 0.999
+    warmup_fraction: 0.2
+    use_buffers: true
+
+
+data:
+  sources:
+    train: /home/zaharov.aleksey64/wb/datasets/classification/crop_classification/splits/v2/train.csv
+    val: /home/zaharov.aleksey64/wb/datasets/classification/crop_classification/splits/v2/val.csv
+    test: /home/zaharov.aleksey64/wb/datasets/classification/crop_classification/splits/v2/test.csv
+  inputs: image
+  cache: {ram_fraction: 0.}
+
+tasks:
+  crop:
+    preset: classification
+    target: label
+    class_mapping: {0: "non_cropped", 1: "cropped"}

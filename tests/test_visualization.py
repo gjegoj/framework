@@ -509,6 +509,22 @@ class TestPipelineRegression:
         assert isinstance(samples[1].fields["age_pred"], Regression)
 
 
+class TestMetricTaskAnnotation:
+    def test_global_metric_task_is_skipped_gracefully(self) -> None:
+        import dataclasses
+
+        from src.core.taxonomy import Objective, Topology
+        from src.visualization.pipeline import build_sample_views
+
+        annotator_tests = TestAnnotators()
+        task = dataclasses.replace(annotator_tests._task(), topology=Topology.GLOBAL, objective=Objective.METRIC)
+        views = {task.name: annotator_tests._view([[0.1, 0.2]], [[0.1, 0.2]])}
+
+        samples = build_sample_views(np.zeros((1, 4, 4, 3), np.uint8), [task], views)
+
+        assert samples[0].fields == {}  # no annotator for (GLOBAL, METRIC): task silently skipped
+
+
 class TestAssets:
     def test_css_generalizes_overlay_toggle_and_cover_zone(self) -> None:
         from pathlib import Path

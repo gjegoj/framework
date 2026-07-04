@@ -104,23 +104,46 @@ def _build_batch_transform(spec: Any, context: WiringContext) -> Any:
     """Build a ``BatchTransform``, injecting every task's ``TargetSpec``.
 
     A batch transform changes the shared image, so it must rewrite *every* task's
-    target. We inject the ``TargetSpec`` for all tasks and reject (fail fast) any
-    transform whose ``supported_topologies`` cannot cover some head — e.g. MixUp
-    (GLOBAL only) with a segmentation head.
+    target. We inject the ``TargetSpec`` for all tasks; the topology/objective
+    compatibility checks live in ``_instantiate_guarded`` (split out so they can be
+    exercised directly against a hand-built ``TargetSpec`` list in tests).
+    """
+    targets = [_target_spec(task_name, context) for task_name in context.config.tasks]
+    return _instantiate_guarded(spec, targets)
+
+
+def _instantiate_guarded(spec: Any, targets: list[TargetSpec]) -> Any:
+    """Resolve, guard, and instantiate a batch transform against explicit ``TargetSpec``s.
+
+    Rejects (fails fast) a transform whose ``supported_topologies`` cannot cover some
+    task's topology (e.g. MixUp — GLOBAL only — with a segmentation head), and one whose
+    ``supported_objectives`` excludes some task's objective (e.g. label-mixing transforms
+    with a METRIC/metric-learning task — mixed soft labels break proxy/margin losses).
     """
     from src.transforms.batch import batch_transforms
 
-    targets = [_target_spec(task_name, context) for task_name in context.config.tasks]
-
     transform_cls = _resolve_transform_class(spec, batch_transforms)
-    supported: frozenset[Any] = getattr(transform_cls, "supported_topologies", frozenset())
     name = getattr(transform_cls, "__name__", spec)
+
+    supported_topologies: frozenset[Any] = getattr(transform_cls, "supported_topologies", frozenset())
     for target in targets:
-        if target.topology not in supported:
+        if target.topology not in supported_topologies:
             raise ValueError(
                 f"batch transform {name!r} changes the shared image but cannot produce a coherent "
-                f"target for task '{target.key}' ({target.topology}). It supports {sorted(supported)}. "
-                f"Use a compatible transform or remove the incompatible head."
+                f"target for task '{target.key}' ({target.topology}). It supports "
+                f"{sorted(supported_topologies)}. Use a compatible transform or remove the incompatible head."
+            )
+
+    supported_objectives: frozenset[Any] | None = getattr(transform_cls, "supported_objectives", None)
+    if supported_objectives is not None:
+        excluded = [target for target in targets if target.objective not in supported_objectives]
+        if excluded:
+            excluded_keys = [target.key for target in excluded]
+            offending_objectives = sorted({target.objective for target in excluded})
+            raise ValueError(
+                f"batch transform {name!r} changes the shared target but cannot support task(s) "
+                f"{excluded_keys} (objective(s) {offending_objectives}). It supports objectives "
+                f"{sorted(supported_objectives)}. Use a compatible transform or remove the incompatible head."
             )
 
     if isinstance(spec, str):
@@ -138,8 +161,9 @@ def _resolve_transform_class(spec: Any, registry: Registry[Any]) -> Any:
 
 
 def _target_spec(task_name: str, context: WiringContext) -> TargetSpec:
-    """Build the ``TargetSpec`` (key, topology, num_classes) for one task."""
+    """Build the ``TargetSpec`` (key, topology, num_classes, objective) for one task."""
     task_config = context.config.tasks[task_name]
-    topology = task_presets.create(task_config.preset).topology
+    preset = task_presets.create(task_config.preset)
     num_classes = resolve_num_classes(task_name, task_config, context.runtime)
-    return TargetSpec(key=task_name, topology=topology, num_classes=num_classes)
+    objective = preset.resolve_objective(task_config.objective)
+    return TargetSpec(key=task_name, topology=preset.topology, num_classes=num_classes, objective=objective)

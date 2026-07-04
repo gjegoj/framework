@@ -12,7 +12,7 @@ design walkthrough and the "How components are built" guide.
 
 Status: the scope below is implemented and covered by the test suite. Tasks: classification + every objective
 (multiclass/binary/multilabel/continuous), DENSE segmentation, and **metric learning** —
-RANKING (Siamese: N views through one shared backbone) and MULTISTREAM (dual/multi-encoder,
+MULTIVIEW (Siamese: N views through one shared backbone) and MULTISTREAM (dual/multi-encoder,
 CLIP/SigLIP-style) topologies with triplet / margin-ranking / InfoNCE / SigLIP / ArcFace
 losses. Backbones: `TimmBackbone`, multi-stream `SmpBackbone` (`ENCODER_LAST`/`DECODER`,
 per-task `feature_key`), precomputed-`EmbeddingBackbone`, and multi-encoder `MultiEncoderBackbone`.
@@ -115,7 +115,7 @@ orthogonal axes**:
   stream.
 - **Topology** (the `Topology` enum is domain vocabulary in `core/taxonomy.py`; its
   `TopologyStrategy` lives in `tasks/strategies/topology.py`): output structure — GLOBAL
-  (per-sample), DENSE (per-pixel), RANKING (Siamese: N views stacked through one shared
+  (per-sample), DENSE (per-pixel), MULTIVIEW (Siamese: N views stacked through one shared
   backbone → `[B,N,D]`), MULTISTREAM (N separate encoders, e.g. CLIP/SigLIP). Picks the
   head + which `FeatureBundle` stream it consumes (`feature_key`, overridable per task).
 - **Objective** (the `Objective` enum in `core/taxonomy.py`; its `ObjectiveStrategy` in
@@ -125,14 +125,17 @@ orthogonal axes**:
   mode, out-features (for `metric`, `num_classes` is reinterpreted as `embedding_dim`).
 
 `TaskBuilder` is the Bridge that combines a `TopologyStrategy` and an
-`ObjectiveStrategy`, validating the combination (invalid pairs raise; e.g. `metric` only
-pairs with RANKING/MULTISTREAM). Familiar **presets** are thin facades over the builder and
-the only user-facing names: `classification`, `segmentation`, `regression`, `triplet`,
-`pairwise_ranking`, `contrastive`. The loss *method* that varies within an objective lives
-on the preset (`triplet`→`triplet_margin`, `pairwise_ranking`→`margin_ranking`,
+`ObjectiveStrategy`, validating the combination (invalid pairs raise; e.g. `metric` never
+pairs with DENSE — on GLOBAL it works via proxy classification (`arcface_embedding`)). Familiar **presets** are thin facades over the builder and
+the only user-facing names: `classification`, `segmentation`, `regression`, `arcface`, `triplet`,
+`pairwise_ranking`, `contrastive`, `arcface_embedding`. The loss *method* that varies within an
+objective lives on the preset (`triplet`→`triplet_margin`, `pairwise_ranking`→`margin_ranking`,
 `contrastive`→`info_nce`), not the objective. This is why e.g. `segmentation` +
 `objective="multilabel"` needs no new type. New topology/objective/modality = one new
-class in a registry (OCP).
+class in a registry (OCP). Criteria that need runtime sizes declare `requires_dimensions = True`
+and receive `num_classes`/`embedding_dim` at build (`ObjectiveStrategy.build_criterion`);
+prototypes for ArcFace-as-embedder live inside `arcface_proxy` (training-only), while the
+classifier flavor keeps them in the `cosine` head.
 
 ## Cross-cutting conventions
 
@@ -292,7 +295,7 @@ class in a registry (OCP).
   backbone specs — so `build_backbone` special-cases `kind: multi`; that single `if` is the
   sanctioned exception to the otherwise-flat registry dispatch (a 2-case strategy registry would be
   shallower than the branch it replaces).
-  RANKING instead stacks N input *views* through one shared backbone (`view_keys` from `data.inputs`).
+  MULTIVIEW instead stacks N input *views* through one shared backbone (`view_keys` from `data.inputs`).
 - The reference dataset `old/data/classification.csv` points at remote URLs with empty
   local placeholder images; tests use synthetic images generated in a tmp dir, and the
   offline smoke should use a synthetic local dataset.

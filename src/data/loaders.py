@@ -152,7 +152,7 @@ def input_aliases(inputs: str | dict[str, str | dict[str, str]]) -> tuple[str, .
     """Ordered input alias names from the ``data.inputs`` config.
 
     ``str`` shorthand → the single ``image`` alias; a dict → its keys in declaration
-    order. The single source of truth shared by task wiring (RANKING/MULTISTREAM key
+    order. The single source of truth shared by task wiring (MULTIVIEW/MULTISTREAM key
     derivation) and export planning (the traced input alias).
     """
     return tuple(normalize_inputs(inputs).keys())

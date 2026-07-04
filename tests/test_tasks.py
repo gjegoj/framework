@@ -3,8 +3,9 @@
 import pytest
 import torch
 
-from src.core.entities import HeadSpec, Task
+from src.core.entities import HeadSpec, LossResult, Task
 from src.core.enums import Stage
+from src.core.ports import Criterion, CriterionDimensions
 from src.losses.criterion import (
     BCEWithLogitsCriterion,
     CrossEntropyCriterion,
@@ -13,6 +14,7 @@ from src.losses.criterion import (
     MSECriterion,
     WeightedSumCriterion,
 )
+from src.losses.registry import criteria
 from src.metrics.builders import build_metric_set
 from src.tasks import (
     BinaryObjective,
@@ -32,6 +34,7 @@ from src.tasks import (
     task_presets,
     topology_strategies,
 )
+from src.tasks.strategies.objective import ObjectiveStrategy
 from src.tasks.strategies.topology import TopologyStrategy
 
 
@@ -45,7 +48,7 @@ class TestTaxonomyAndStrategies:
         objective = MulticlassObjective()
         assert objective.out_features(5) == 5
         assert objective.supports(Topology.GLOBAL)
-        assert not objective.supports(Topology.RANKING)
+        assert not objective.supports(Topology.MULTIVIEW)
         assert isinstance(objective.build_target_adapter(), MulticlassTargetAdapter)
 
     def test_binary_objective_bricks(self) -> None:
@@ -233,14 +236,14 @@ class TestTaskBuilder:
         assert isinstance(task.adapter, MulticlassTargetAdapter)  # objective bricks unchanged
 
     def test_invalid_combination_raises(self) -> None:
-        class _RankingTopology(TopologyStrategy):
-            kind = Topology.RANKING
+        class _MultiViewTopology(TopologyStrategy):
+            kind = Topology.MULTIVIEW
 
             def head_spec(self, out_features: int) -> HeadSpec:
                 return HeadSpec(kind="linear", out_features=out_features)
 
-        with pytest.raises(ValueError, match="not supported on topology 'ranking'"):
-            TaskBuilder(_RankingTopology(), MulticlassObjective()).build("x", num_classes=2)
+        with pytest.raises(ValueError, match="not supported on topology 'multiview'"):
+            TaskBuilder(_MultiViewTopology(), MulticlassObjective()).build("x", num_classes=2)
 
 
 class TestRegressionPreset:
@@ -399,3 +402,120 @@ class TestTaskCarriesAxes:
         task = classification("label", num_classes=3)
         assert task.topology == Topology.GLOBAL
         assert task.objective == Objective.MULTICLASS
+
+
+class TestNormalizeActivation:
+    def test_output_is_unit_norm(self) -> None:
+        from src.tasks.activations import NormalizeActivation
+
+        embedding = torch.randn(4, 16) * 7.0
+        normalized = NormalizeActivation()(embedding)
+        assert normalized.shape == embedding.shape
+        assert torch.allclose(normalized.norm(dim=-1), torch.ones(4), atol=1e-6)
+
+
+@criteria.register("dimension_probe")
+class _DimensionProbeCriterion(Criterion):
+    """Test-only: records the injected dimensions."""
+
+    requires_dimensions = True
+
+    def __init__(self, num_classes: int, embedding_dim: int) -> None:
+        super().__init__()
+        self.received = (num_classes, embedding_dim)
+
+    def forward(self, logits: torch.Tensor, target: torch.Tensor) -> LossResult:
+        value = logits.sum() * 0.0
+        return LossResult(total=value, components={"probe": value})
+
+
+class TestCriterionDimensionSeam:
+    def _metric_objective(self) -> ObjectiveStrategy:
+        from src.core.taxonomy import Objective
+        from src.tasks.strategies.objective import objective_strategies
+
+        return objective_strategies.create(Objective.METRIC)
+
+    def test_dimension_aware_criterion_receives_both_numbers(self) -> None:
+        criterion = self._metric_objective().build_criterion(
+            "dimension_probe", dimensions=CriterionDimensions(num_classes=7, embedding_dim=32)
+        )
+        assert criterion.received == (7, 32)
+
+    def test_stateless_criterion_gets_no_injection(self) -> None:
+        # cross_entropy's __init__ accepts no num_classes — success proves nothing was injected.
+        from src.core.taxonomy import Objective
+        from src.tasks.strategies.objective import objective_strategies
+
+        objective = objective_strategies.create(Objective.MULTICLASS)
+        criterion = objective.build_criterion(None, dimensions=CriterionDimensions(num_classes=3, embedding_dim=3))
+        assert criterion is not None
+
+    def test_missing_dimensions_raise_with_target_hint(self) -> None:
+        with pytest.raises(ValueError, match="target"):
+            self._metric_objective().build_criterion("dimension_probe", dimensions=None)
+
+    def test_missing_class_count_raises_with_target_hint(self) -> None:
+        with pytest.raises(ValueError, match="target"):
+            self._metric_objective().build_criterion(
+                "dimension_probe", dimensions=CriterionDimensions(num_classes=None, embedding_dim=32)
+            )
+
+
+class TestTaskBuilderClassCount:
+    def test_class_count_flows_into_criterion(self) -> None:
+        from src.core.taxonomy import Objective, Topology
+        from src.tasks.builder import TaskBuilder
+        from src.tasks.strategies.objective import objective_strategies
+        from src.tasks.strategies.topology import topology_strategies
+
+        # METRIC pairs with GLOBAL (proxy classification, e.g. arcface_embedding) as well as
+        # MULTIVIEW/MULTISTREAM; GLOBAL is used here — the class_count plumbing under test
+        # is independent of which valid topology is chosen.
+        builder = TaskBuilder(
+            topology=topology_strategies.create(Topology.GLOBAL),
+            objective=objective_strategies.create(Objective.METRIC),
+        )
+        task = builder.build("embed", num_classes=32, loss_spec="dimension_probe", class_count=7)
+        assert task.criterion.received == (7, 32)  # num_classes=labels, embedding_dim=out_features
+
+
+class TestArcFacePresets:
+    def test_arcface_classifier_defaults(self) -> None:
+        from src.losses.angular import ArcFaceCriterion
+        from src.tasks.presets import task_presets
+
+        task = task_presets.create("arcface")("species", num_classes=3)
+        assert task.head_spec.kind == "cosine"
+        assert task.head_spec.prefer_native is False
+        assert isinstance(task.criterion, ArcFaceCriterion)
+
+    def test_arcface_user_head_override_wins(self) -> None:
+        from src.tasks.presets import task_presets
+
+        task = task_presets.create("arcface")("species", num_classes=3, head="linear")
+        assert task.head_spec.kind == "linear"
+
+    def test_arcface_embedding_defaults(self) -> None:
+        from src.losses.angular import ProxyAngularCriterion
+        from src.tasks.activations import NormalizeActivation
+        from src.tasks.presets import task_presets
+
+        task = task_presets.create("arcface_embedding")("embed", num_classes=32, class_count=5)
+        assert task.head_spec.kind == "linear"
+        assert task.head_spec.prefer_native is False
+        assert task.head_spec.out_features == 32
+        assert isinstance(task.activation, NormalizeActivation)
+        assert isinstance(task.criterion, ProxyAngularCriterion)
+        assert task.criterion.prototypes.shape == (32, 5)
+
+    def test_arcface_embedding_encoder_default_is_label(self) -> None:
+        from src.tasks.presets import task_presets
+
+        assert task_presets.create("arcface_embedding").default_encoder == "label"
+
+    def test_arcface_embedding_without_class_count_raises(self) -> None:
+        from src.tasks.presets import task_presets
+
+        with pytest.raises(ValueError, match="target"):
+            task_presets.create("arcface_embedding")("embed", num_classes=32)

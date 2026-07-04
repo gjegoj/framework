@@ -361,6 +361,68 @@ class TestEmbeddingSmoke:
         assert "label/f1/val/mean" in trainer.logged_metrics
 
 
+class TestArcFaceEmbeddingSmoke:
+    """End-to-end GLOBAL x METRIC proxy classification (arcface_embedding preset)."""
+
+    @pytest.fixture
+    def emb_csv(self, tmp_path: Path) -> Path:
+        """15 synthetic 8-dim embedding vectors as .npy files, 3 integer classes."""
+        emb_dir = tmp_path / "emb"
+        emb_dir.mkdir()
+        rng = np.random.default_rng(4)
+        labels = torch.randint(0, 3, (15,), generator=torch.Generator().manual_seed(4))
+        rows = []
+        for i in range(15):
+            path = emb_dir / f"{i}.npy"
+            np.save(path, rng.standard_normal(8).astype(np.float32))
+            rows.append({"emb_path": str(path), "label": int(labels[i])})
+        csv = tmp_path / "emb.csv"
+        pd.DataFrame(rows).to_csv(csv, index=False)
+        return csv
+
+    def test_fit_one_epoch_arcface_embedder(self, emb_csv: Path) -> None:
+        from src.losses.angular import ProxyAngularCriterion
+        from src.models.backbones import EmbeddingBackbone
+        from src.tasks.presets import task_presets
+        from src.transforms.sample import IdentityTransform
+
+        runtime = RuntimeContext()
+        transforms = {s: IdentityTransform() for s in Stage}
+        plain_dm = DataModule(
+            target_bindings=[TargetBinding("embed", "label", LabelEncoder(class_mapping={0: "0", 1: "1", 2: "2"}))],
+            inputs_config={"embedding": "emb_path"},  # .npy paths → "embedding" loader auto-detected
+            transforms=transforms,
+            runtime=runtime,
+            batch_size=4,
+            seed=0,
+            source=CsvDataSource(str(emb_csv)),
+            split={Stage.TRAIN: 0.6, Stage.VAL: 0.2, Stage.TEST: 0.2},
+            dataloader_options=DataLoaderOptions(drop_last=True),
+        )
+        plain_dm.setup()
+
+        task = task_presets.create("arcface_embedding")("embed", num_classes=8, class_count=3)
+        backbone = EmbeddingBackbone(embedding_dim=8, input_key="embedding")
+        model = build_composite_model(backbone, {"embed": task.head_spec})
+
+        lit_module = LitModule(model=model, tasks=[task], optimizer_builder=OptimizerBuilder(base_lr=1e-3))
+        trainer = L.Trainer(
+            max_epochs=1,
+            accelerator="cpu",
+            logger=False,
+            enable_checkpointing=False,
+            enable_progress_bar=False,
+            enable_model_summary=False,
+        )
+
+        criterion = cast(ProxyAngularCriterion, task.criterion)
+        prototypes_before = criterion.prototypes.detach().clone()
+        trainer.fit(lit_module, LitDataModule(plain_dm))
+        prototypes_after = criterion.prototypes.detach().clone()
+
+        assert not torch.allclose(prototypes_before, prototypes_after)
+
+
 class TestSegmentationSmoke:
     """End-to-end DENSE segmentation: smp backbone + mask pipeline + trainer.fit."""
 

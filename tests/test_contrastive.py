@@ -193,14 +193,14 @@ class TestMetricObjective:
         assert Objective.METRIC in objective_strategies
 
     def test_supports_multistream_and_ranking(self) -> None:
-        """One metric objective covers both embedding topologies; not the supervised ones."""
+        """One metric objective covers both embedding topologies plus GLOBAL proxy classification."""
         from src.tasks import Topology
         from src.tasks.strategies.objective import MetricObjective
 
         obj = MetricObjective()
         assert obj.supports(Topology.MULTISTREAM)
-        assert obj.supports(Topology.RANKING)
-        assert not obj.supports(Topology.GLOBAL)
+        assert obj.supports(Topology.MULTIVIEW)
+        assert obj.supports(Topology.GLOBAL)  # arcface_embedding: one image -> one embedding
         assert not obj.supports(Topology.DENSE)
 
     def test_out_features_passthrough(self) -> None:

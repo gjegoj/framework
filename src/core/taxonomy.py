@@ -22,7 +22,7 @@ class Topology(StrEnum):
 
     GLOBAL = "global"  # one prediction per sample (classification / regression / arcface)
     DENSE = "dense"  # one prediction per pixel (segmentation)
-    RANKING = "ranking"  # N views through ONE shared backbone → [B, N, D] (Siamese / triplet)
+    MULTIVIEW = "multiview"  # N views through ONE shared backbone → [B, N, D] (Siamese / triplet)
     MULTISTREAM = "multistream"  # N streams from N SEPARATE encoders → [B, N, D] (CLIP / SIGLIP)
 
 

@@ -1,4 +1,4 @@
-"""Tests for M7a: shared-encoder ranking (RANKING topology, Siamese).
+"""Tests for M7a: shared-encoder ranking (MULTIVIEW topology, Siamese).
 
 TDD order: RED → GREEN → REFACTOR.
 All classes/functions imported here must exist after the GREEN phase.
@@ -17,27 +17,27 @@ from src.models.assembly import CompositeModel
 # ---------------------------------------------------------------------------
 
 
-class TestRankingTopology:
-    def test_ranking_topology_registered(self) -> None:
+class TestMultiViewTopology:
+    def test_multiview_topology_registered(self) -> None:
         from src.tasks import Topology, topology_strategies
 
-        assert Topology.RANKING in topology_strategies
+        assert Topology.MULTIVIEW in topology_strategies
 
-    def test_ranking_topology_head_spec_with_explicit_view_keys(self) -> None:
-        from src.tasks.strategies.topology import RankingTopology
+    def test_multiview_topology_head_spec_with_explicit_view_keys(self) -> None:
+        from src.tasks.strategies.topology import MultiViewTopology
 
-        topo = RankingTopology(view_keys=("anchor", "positive", "negative"))
+        topo = MultiViewTopology(view_keys=("anchor", "positive", "negative"))
         spec = topo.head_spec(out_features=64)
         assert spec.kind == "linear"
         assert spec.out_features == 64
         assert spec.feature_key == POOLED
         assert spec.view_keys == ("anchor", "positive", "negative")
 
-    def test_ranking_topology_default_has_no_view_keys(self) -> None:
+    def test_multiview_topology_default_has_no_view_keys(self) -> None:
         """view_keys=None by default — wiring derives them from data.inputs."""
-        from src.tasks.strategies.topology import RankingTopology
+        from src.tasks.strategies.topology import MultiViewTopology
 
-        topo = RankingTopology()
+        topo = MultiViewTopology()
         assert topo.view_keys is None
         assert topo.head_spec(out_features=32).view_keys is None
 
@@ -51,20 +51,20 @@ class TestMultiViewForward:
     def _triplet_model(self, emb_dim: int = 32) -> "CompositeModel":
         from src.models.assembly import build_composite_model
         from src.models.backbones import EmbeddingBackbone
-        from src.tasks.strategies.topology import RankingTopology
+        from src.tasks.strategies.topology import MultiViewTopology
 
         backbone = EmbeddingBackbone(embedding_dim=emb_dim)
-        topo = RankingTopology(view_keys=("anchor", "positive", "negative"))
+        topo = MultiViewTopology(view_keys=("anchor", "positive", "negative"))
         specs = {"sim": topo.head_spec(out_features=emb_dim)}
         return build_composite_model(backbone, specs)
 
     def _pair_model(self, emb_dim: int = 32) -> "CompositeModel":
         from src.models.assembly import build_composite_model
         from src.models.backbones import EmbeddingBackbone
-        from src.tasks.strategies.topology import RankingTopology
+        from src.tasks.strategies.topology import MultiViewTopology
 
         backbone = EmbeddingBackbone(embedding_dim=emb_dim)
-        topo = RankingTopology(view_keys=("query", "doc"))
+        topo = MultiViewTopology(view_keys=("query", "doc"))
         specs = {"sim": topo.head_spec(out_features=emb_dim)}
         return build_composite_model(backbone, specs)
 
@@ -93,7 +93,7 @@ class TestMultiViewForward:
         assert torch.allclose(embeddings[:, 0], embeddings[:, 1], atol=1e-5)
 
     def test_single_view_path_unchanged(self) -> None:
-        """Non-ranking tasks still work exactly as before."""
+        """Non-multiview tasks still work exactly as before."""
         from src.models.assembly import build_composite_model
         from src.models.backbones import EmbeddingBackbone
         from src.tasks import classification
@@ -271,13 +271,13 @@ class TestMetricObjective:
 
         assert Objective.METRIC in objective_strategies
 
-    def test_metric_objective_supports_ranking(self) -> None:
+    def test_metric_objective_supports_multiview(self) -> None:
         from src.tasks import Topology
         from src.tasks.strategies.objective import MetricObjective
 
         obj = MetricObjective()
-        assert obj.supports(Topology.RANKING)
-        assert not obj.supports(Topology.GLOBAL)
+        assert obj.supports(Topology.MULTIVIEW)
+        assert obj.supports(Topology.GLOBAL)  # arcface_embedding: one image -> one embedding
         assert not obj.supports(Topology.DENSE)
 
     def test_metric_objective_out_features_passthrough(self) -> None:
@@ -291,28 +291,28 @@ class TestMetricObjective:
 # ---------------------------------------------------------------------------
 
 
-class TestRankingTaskBuilder:
-    def test_metric_x_ranking_valid(self) -> None:
+class TestMultiViewTaskBuilder:
+    def test_metric_x_multiview_valid(self) -> None:
         from src.tasks import TaskBuilder
         from src.tasks.strategies.objective import MetricObjective
-        from src.tasks.strategies.topology import RankingTopology
+        from src.tasks.strategies.topology import MultiViewTopology
 
         task = TaskBuilder(
-            topology=RankingTopology(view_keys=("anchor", "positive", "negative")),
+            topology=MultiViewTopology(view_keys=("anchor", "positive", "negative")),
             objective=MetricObjective(),
         ).build("sim", num_classes=32)
         assert task.name == "sim"
         assert task.head_spec.view_keys == ("anchor", "positive", "negative")
 
-    def test_non_ranking_objective_on_ranking_topology_raises(self) -> None:
+    def test_non_metric_objective_on_multiview_topology_raises(self) -> None:
         from src.tasks import MulticlassObjective, TaskBuilder
-        from src.tasks.strategies.topology import RankingTopology
+        from src.tasks.strategies.topology import MultiViewTopology
 
         builder = TaskBuilder(
-            topology=RankingTopology(view_keys=("a", "b")),
+            topology=MultiViewTopology(view_keys=("a", "b")),
             objective=MulticlassObjective(),
         )
-        with pytest.raises(ValueError, match="ranking"):
+        with pytest.raises(ValueError, match="multiview"):
             builder.build("sim", num_classes=3)
 
 
@@ -373,14 +373,14 @@ class TestRankingPresets:
         )
         assert input_aliases("image_path") == (IMAGE,)
 
-    def test_ranking_task_head_spec_gets_view_keys_after_wiring(self) -> None:
-        """After build_tasks the RANKING head_spec carries view_keys from data.inputs."""
+    def test_multiview_task_head_spec_gets_view_keys_after_wiring(self) -> None:
+        """After build_tasks the MULTIVIEW head_spec carries view_keys from data.inputs."""
         import dataclasses
 
         from src.data.loaders import input_aliases
         from src.tasks.presets import triplet
 
-        # Simulate what build_tasks does for a single RANKING task.
+        # Simulate what build_tasks does for a single MULTIVIEW task.
         task = triplet("sim", num_classes=64)
         assert task.head_spec.view_keys is None  # pre-wiring
 

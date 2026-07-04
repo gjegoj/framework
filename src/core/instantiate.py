@@ -52,6 +52,42 @@ def resolve_target(path: str) -> Any:
     return getattr(module, attribute_name)
 
 
+def resolve_spec_class[T](spec: Any, registry: Registry[T] | None = None) -> Any:
+    """Return the class/factory a brick spec names, without constructing it.
+
+    Mirrors :func:`instantiate`'s grammar (``str`` / ``{name}`` / ``{_target_}``) so
+    callers can inspect declared class attributes (e.g. ``Criterion.requires_dimensions``)
+    before deciding which kwargs to inject.
+
+    Parameters:
+        spec (Any): A brick spec — string key, ``{name: ...}`` or ``{_target_: ...}``
+            mapping.
+        registry (Registry | None): Registry for the string / ``name`` forms.
+
+    Returns:
+        Any: The class (or registered factory) the spec resolves to.
+
+    Raises:
+        ValueError: If the spec form cannot name a class, or a registry form is used
+            without one.
+    """
+    if isinstance(spec, str):
+        if registry is None:
+            raise ValueError(f"A registry is required to resolve the string spec {spec!r}.")
+        return registry.get(spec)
+    if isinstance(spec, Mapping):
+        target = spec.get("_target_")
+        if target is not None:
+            return resolve_target(str(target))
+        name = spec.get("name")
+        if name is None:
+            raise ValueError(f"Brick spec mapping needs a 'name' or '_target_' key: {dict(spec)!r}.")
+        if registry is None:
+            raise ValueError(f"A registry is required to resolve the name spec {name!r}.")
+        return registry.get(str(name))
+    raise ValueError(f"Cannot resolve a class from spec {spec!r}.")
+
+
 def instantiate[T](
     spec: Any,
     registry: Registry[T] | None = None,

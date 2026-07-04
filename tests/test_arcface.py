@@ -141,3 +141,56 @@ class TestArcFaceComposition:
         assert logits.shape == (4, 10)
         loss = task.criterion(logits, torch.randint(0, 10, (4,)))
         assert loss.total.item() > 0
+
+
+# ---------------------------------------------------------------------------
+# Proxy Angular Criterion (learnable class prototypes)
+# ---------------------------------------------------------------------------
+
+
+class TestProxyAngularCriterion:
+    def test_registered(self) -> None:
+        from src.losses.registry import criteria
+
+        assert "arcface_proxy" in criteria
+
+    def test_prototypes_shape_and_trainable(self) -> None:
+        from src.losses.angular import ProxyAngularCriterion
+
+        criterion = ProxyAngularCriterion(num_classes=5, embedding_dim=16)
+        assert criterion.prototypes.shape == (16, 5)
+        assert criterion.prototypes.requires_grad
+        assert criterion.requires_dimensions is True
+
+    def test_loss_decreases_as_prototypes_train(self) -> None:
+        from src.losses.angular import ProxyAngularCriterion
+
+        torch.manual_seed(0)
+        criterion = ProxyAngularCriterion(num_classes=3, embedding_dim=8)
+        embeddings = torch.randn(30, 8)
+        labels = torch.arange(30) % 3
+        optimizer = torch.optim.SGD(criterion.parameters(), lr=0.5)
+        first = criterion(embeddings, labels).total.item()
+        for _ in range(50):
+            optimizer.zero_grad()
+            loss = criterion(embeddings, labels).total
+            loss.backward()
+            optimizer.step()
+        assert criterion(embeddings, labels).total.item() < first
+
+    def test_inner_margin_spec_is_forwarded(self) -> None:
+        from src.losses.angular import ProxyAngularCriterion
+
+        torch.manual_seed(0)
+        no_margin = ProxyAngularCriterion(3, 8, inner={"name": "arcface", "margin": 0.0})
+        big_margin = ProxyAngularCriterion(3, 8, inner={"name": "arcface", "margin": 0.5})
+        with torch.no_grad():
+            big_margin.prototypes.copy_(no_margin.prototypes)
+        embeddings, labels = torch.randn(16, 8), torch.arange(16) % 3
+        assert big_margin(embeddings, labels).total.item() > no_margin(embeddings, labels).total.item()
+
+    def test_components_carry_inner_name(self) -> None:
+        from src.losses.angular import ProxyAngularCriterion
+
+        result = ProxyAngularCriterion(3, 8)(torch.randn(4, 8), torch.tensor([0, 1, 2, 0]))
+        assert "arcface" in result.components

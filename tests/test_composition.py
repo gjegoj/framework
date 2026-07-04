@@ -256,6 +256,33 @@ class TestInstantiateNested:
         assert instantiate([1, 2, 3]) == [1, 2, 3]
 
 
+class TestResolveSpecClass:
+    def test_string_resolves_registry_class(self) -> None:
+        from src.core.instantiate import resolve_spec_class
+        from src.losses.criterion import CrossEntropyCriterion
+        from src.losses.registry import criteria
+
+        assert resolve_spec_class("cross_entropy", criteria) is CrossEntropyCriterion
+
+    def test_name_mapping_resolves_registry_class(self) -> None:
+        from src.core.instantiate import resolve_spec_class
+        from src.losses.registry import criteria
+
+        resolved = resolve_spec_class({"name": "cross_entropy", "label_smoothing": 0.1}, criteria)
+        assert resolved.__name__ == "CrossEntropyCriterion"
+
+    def test_target_resolves_imported_class(self) -> None:
+        from src.core.instantiate import resolve_spec_class
+
+        assert resolve_spec_class({"_target_": "torch.optim.SGD"}).__name__ == "SGD"
+
+    def test_mapping_without_name_or_target_raises(self) -> None:
+        from src.core.instantiate import resolve_spec_class
+
+        with pytest.raises(ValueError, match="name.*_target_|_target_.*name"):
+            resolve_spec_class({"margin": 0.5})
+
+
 class TestBuildTransforms:
     def test_all_stages_present(self) -> None:
         config = load_config(_minimal_config())
@@ -946,3 +973,33 @@ class TestBuildTrainer:
 
         with pytest.raises(ConfigError, match="managed by the framework"):
             load_config(_minimal_config(dataloader={"shuffle": True}))
+
+
+class TestArcFaceEmbeddingWiring:
+    """Pins the arcface_embedding preset end-to-end: config dict → wired Task.
+
+    Parts (encoder default, dimension seam, activation) landed in prior tasks and are
+    unit-tested there; this integration test may already pass — that is expected, it is
+    pinning the seam rather than driving new red/green cycles.
+    """
+
+    def test_embedder_task_wired_from_config(self, make_image_csv: Callable[..., Path]) -> None:
+        from src.losses.angular import ProxyAngularCriterion
+        from src.tasks.activations import NormalizeActivation
+
+        csv_path = make_image_csv(count=15, size=32, seed=3)
+        raw = _minimal_config()
+        raw["data"]["sources"] = str(csv_path)
+        raw["tasks"] = {"embed": {"preset": "arcface_embedding", "target": "label", "dim": 16}}
+        config = load_config(raw)
+
+        bindings = build_bindings(config)
+        assert type(bindings[0].encoder).__name__ == "LabelEncoder"  # preset default_encoder="label"
+
+        runtime = RuntimeContext()
+        runtime.num_classes["embed"] = 3  # what DataModule.setup() would infer from the label column
+        task = build_tasks(config, runtime)[0]
+        assert task.head_spec.out_features == 16
+        assert isinstance(task.activation, NormalizeActivation)
+        assert isinstance(task.criterion, ProxyAngularCriterion)
+        assert task.criterion.prototypes.shape == (16, 3)

@@ -9,8 +9,8 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
-from src.core.instantiate import BrickSpec, instantiate
-from src.core.ports import Activation, Criterion, MetricSet, TargetAdapter
+from src.core.instantiate import BrickSpec, instantiate, resolve_spec_class
+from src.core.ports import Activation, Criterion, CriterionDimensions, MetricSet, TargetAdapter
 from src.core.registry import Registry
 from src.core.taxonomy import Objective, Topology
 from src.losses.registry import criteria
@@ -67,9 +67,34 @@ class ObjectiveStrategy(ABC):
     def metric_base_kwargs(self, num_classes: int) -> dict[str, object]:
         """torchmetrics kwargs every metric for this objective needs (task, num_classes)."""
 
-    def build_criterion(self, spec: BrickSpec | None = None) -> Criterion:
-        """Build the loss; ``spec`` (YAML ``loss:``) overrides the objective default."""
-        return instantiate(spec if spec is not None else self.default_loss, criteria)
+    def build_criterion(
+        self, spec: BrickSpec | None = None, dimensions: CriterionDimensions | None = None
+    ) -> Criterion:
+        """Build the loss; ``spec`` (YAML ``loss:``) overrides the objective default.
+
+        A criterion class that declares ``requires_dimensions = True`` receives
+        ``num_classes``/``embedding_dim`` kwargs (still overridable by explicit spec params);
+        every other criterion is built exactly as before — no injection.
+
+        Parameters:
+            spec (BrickSpec | None): YAML ``loss:`` override; ``None`` → objective default.
+            dimensions (CriterionDimensions | None): Runtime sizes for dimension-aware criteria.
+
+        Raises:
+            ValueError: If a dimension-aware criterion is requested without a known class count.
+        """
+        resolved_spec = spec if spec is not None else self.default_loss
+        criterion_cls = resolve_spec_class(resolved_spec, criteria)
+        if not getattr(criterion_cls, "requires_dimensions", False):
+            return instantiate(resolved_spec, criteria)
+        if dimensions is None or dimensions.num_classes is None:
+            raise ValueError(
+                f"Criterion spec {resolved_spec!r} requires task dimensions, but the class count is "
+                "unknown — the task must declare a 'target' column with class labels."
+            )
+        return instantiate(
+            resolved_spec, criteria, num_classes=dimensions.num_classes, embedding_dim=dimensions.embedding_dim
+        )
 
     def default_metrics_spec(self) -> MetricsSpec | None:
         """Default ``metrics:`` spec when the user doesn't override. ``None`` → accuracy."""
@@ -182,13 +207,18 @@ class ContinuousObjective(ObjectiveStrategy):
 class MetricObjective(ObjectiveStrategy):
     """Metric learning: the target is implicit, supervision comes from structure.
 
-    Covers both embedding topologies — RANKING (triplet/pair views through one
-    shared backbone) and MULTISTREAM (InfoNCE/SigLIP over N separate encoders).
-    There is no per-sample class label: positives come from the pair/triplet
-    grouping or the batch diagonal, so the adapter is pass-through and the
-    activation is identity.  ``num_classes`` is reinterpreted as ``embedding_dim``
-    (the head projection size).  Metrics are empty by default; add retrieval
-    metrics via the YAML ``metrics:`` block.
+    Covers both embedding topologies — MULTIVIEW (triplet/pair views through one
+    shared backbone) and MULTISTREAM (InfoNCE/SigLIP over N separate encoders) —
+    where supervision comes from pair/triplet/batch structure, or from **proxy
+    classification over labels** (GLOBAL: one image → one embedding; the classifier
+    lives inside the criterion and is discarded at export).  There is no per-sample
+    class label for the structure-supervised flavors (MULTIVIEW/MULTISTREAM):
+    positives come from the pair/triplet grouping or the batch diagonal. The GLOBAL
+    proxy flavor is the exception — it does have per-sample class labels, consumed
+    only inside the criterion (`ProxyAngularCriterion`), never by the adapter. In all
+    cases the adapter is pass-through and the activation is identity.
+    ``num_classes`` is reinterpreted as ``embedding_dim`` (the head projection size).
+    Metrics are empty by default; add retrieval metrics via the YAML ``metrics:`` block.
 
     The *loss* is what varies across metric-learning methods (triplet /
     margin-ranking / InfoNCE / SigLIP), so the default loss lives on the **preset**
@@ -197,7 +227,7 @@ class MetricObjective(ObjectiveStrategy):
     """
 
     kind = Objective.METRIC
-    supported_topologies = frozenset({Topology.RANKING, Topology.MULTISTREAM})
+    supported_topologies = frozenset({Topology.GLOBAL, Topology.MULTIVIEW, Topology.MULTISTREAM})
     default_loss = "triplet_margin"  # fallback only; presets set the real default
     # Used only when a task *does* supply a target column (e.g. pairwise ranking's ±1 label).
     # Structure-only tasks (triplet/contrastive) omit ``target`` and get the ``null`` encoder.

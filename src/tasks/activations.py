@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import torch.nn.functional as F
 from torch import Tensor
 
 from src.core.ports import Activation
@@ -26,3 +27,14 @@ class IdentityActivation(Activation):
 
     def __call__(self, logits: Tensor) -> Tensor:
         return logits
+
+
+class NormalizeActivation(Activation):
+    """L2-normalize the embedding (metric learning) — unit-norm output in cosine space.
+
+    Used by embedding presets so metrics, visualization and the exported graph all
+    consume the embedding in the same space the cosine-margin loss trained it in.
+    """
+
+    def __call__(self, logits: Tensor) -> Tensor:
+        return F.normalize(logits, dim=-1)

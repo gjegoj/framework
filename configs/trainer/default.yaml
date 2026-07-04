@@ -1,6 +1,9 @@
 accelerator: auto
 devices: auto
-precision: 32-true
+# Mixed bf16: ~2-3x throughput vs 32-true, and numerically safe (no gradient scaling, unlike
+# 16-mixed). Requires an Ampere-or-newer GPU (A100/H100/RTX 30xx+). On older GPUs or CPU-only
+# machines override per run: trainer.precision=32-true (or use the cpu_smoke trainer preset).
+precision: bf16-mixed
 log_every_n_steps: 10
 num_sanity_val_steps: 0
 deterministic: warn

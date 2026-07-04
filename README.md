@@ -433,11 +433,11 @@ dimension** (the projection-head size). The *loss method* is pinned by the prese
 
 | Preset | Topology | Default loss | Shape of supervision |
 |---|---|---|---|
-| `triplet` | RANKING | `triplet_margin` | 3 views: anchor / positive / negative |
-| `pairwise_ranking` | RANKING | `margin_ranking` | 2 views ranked against each other |
+| `triplet` | MULTIVIEW | `triplet_margin` | 3 views: anchor / positive / negative |
+| `pairwise_ranking` | MULTIVIEW | `margin_ranking` | 2 views ranked against each other |
 | `contrastive` | MULTISTREAM | `info_nce` | N separate encoders aligned (InfoNCE / SigLIP) |
 
-**RANKING (Siamese)** — N input views go through *one shared backbone* (stacked to
+**MULTIVIEW (Siamese)** — N input views go through *one shared backbone* (stacked to
 `[B·N, …]`, reshaped to `[B, N, D]`). The view names come from `data.inputs`:
 
 ```yaml
@@ -1162,11 +1162,12 @@ flowchart LR
 ### ② Composing a task — the three-axis Bridge
 
 A preset fixes a `(topology, default objective)` point; `TaskBuilder` validates the pair
-(e.g. `metric` only with RANKING / MULTISTREAM) and assembles the bricks into one `Task`.
+(e.g. `metric` never pairs with DENSE — on GLOBAL it works via proxy classification
+(`arcface_embedding`)) and assembles the bricks into one `Task`.
 
 ```mermaid
 flowchart TB
-    preset["Preset<br/>classification · segmentation · triplet · contrastive · …"] --> topo["Topology<br/>GLOBAL · DENSE · RANKING · MULTISTREAM"]
+    preset["Preset<br/>classification · segmentation · triplet · contrastive · …"] --> topo["Topology<br/>GLOBAL · DENSE · MULTIVIEW · MULTISTREAM"]
     preset --> obj["Objective<br/>multiclass · binary · multilabel · continuous · metric"]
     topo --> tb["TaskBuilder — Bridge<br/>validates the topology × objective pair"]
     obj --> tb

@@ -8,7 +8,8 @@
       "Bash(make check *)",
       "mcp__plugin_context-mode_context-mode__ctx_search",
       "WebFetch(domain:huggingface.co)",
-      "mcp__plugin_context-mode_context-mode__ctx_execute"
+      "mcp__plugin_context-mode_context-mode__ctx_execute",
+      "Edit(/.claude/skills/python-patterns/**)"
     ]
   },
   "enabledPlugins": {

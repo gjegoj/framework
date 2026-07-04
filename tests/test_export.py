@@ -12,7 +12,7 @@ from src.composition.wiring.export import validate_export_preconditions
 from src.config import ConfigError, load_config
 from src.config.export import ExportConfig
 from src.core.keys import ENCODER_LAST, POOLED
-from src.export.entities import ExportReport, ParityResult
+from src.export.entities import ExportReport, ExportRequest, ParityResult
 from src.export.onnx import OnnxExporter
 from src.export.pipeline import export_model, resolve_export_io_names
 from src.export.registry import exporters
@@ -355,6 +355,42 @@ class TestExportOnnx:
         assert len(artifacts) == 4
 
 
+class TestEmbedderExport:
+    def test_exported_embedder_outputs_unit_norm_and_no_prototypes(self, tmp_path: Path) -> None:
+        pytest.importorskip("onnx")
+        import onnx
+
+        from src.models.backbones import EmbeddingBackbone
+        from src.tasks.presets import task_presets
+
+        # EmbeddingBackbone (no image encoder) is the cheapest exportable backbone here;
+        # export_model's plan always builds an image-shaped dummy input, so this test drives
+        # the same CombinedExportModel + OnnxExporter machinery export_model uses internally,
+        # directly — mirroring TestExportOnnx's construction, not a new export entry point.
+        task = task_presets.create("arcface_embedding")("embed", num_classes=16, class_count=5)
+        model = build_composite_model(EmbeddingBackbone(embedding_dim=8), {"embed": task.head_spec})
+        model.eval()
+        wrapper = CombinedExportModel(model, ("embed",), {"embed": task.activation})
+        example = torch.randn(2, 8)
+        outputs = wrapper(example)
+        embedding = outputs[0] if isinstance(outputs, tuple) else outputs
+        assert embedding.shape == (2, 16)
+        assert torch.allclose(embedding.norm(dim=-1), torch.ones(2), atol=1e-5)  # NormalizeActivation applied
+
+        onnx_path = tmp_path / "model_combined.onnx"
+        request = ExportRequest(
+            module=wrapper,
+            example_inputs=(example,),
+            path=onnx_path,
+            input_names=["input"],
+            output_names=["output"],
+        )
+        OnnxExporter().export(request)
+
+        initializer_shapes = {tuple(tensor.dims) for tensor in onnx.load(str(onnx_path)).graph.initializer}
+        assert (16, 5) not in initializer_shapes and (5, 16) not in initializer_shapes  # no prototypes in graph
+
+
 class TestExportTorchScript:
     def test_combined_torchscript_export(self, tmp_path: Path) -> None:
         lit = _single_task_lit_module()
@@ -402,18 +438,18 @@ class TestExportTorchScript:
 
 
 class TestExportGuards:
-    def test_ranking_topology_rejected(self) -> None:
+    def test_multiview_topology_rejected(self) -> None:
         task = triplet("rank", num_classes=16)
         backbone = TimmBackbone("resnet18", pretrained=False)
         model = build_composite_model(backbone, {"rank": task.head_spec})
         config = load_config(_raw(image_size=[32, 32]))
-        with pytest.raises(ValueError, match="ranking"):
+        with pytest.raises(ValueError, match="multiview"):
             build_export_plan(model, [task], config)
 
-    def test_preconditions_reject_ranking_when_export_enabled(self) -> None:
+    def test_preconditions_reject_multiview_when_export_enabled(self) -> None:
         task = triplet("rank", num_classes=16)
         config = load_config(_raw(image_size=[32, 32], run_export=True))
-        with pytest.raises(ValueError, match="ranking"):
+        with pytest.raises(ValueError, match="multiview"):
             validate_export_preconditions(config, [task])
 
     def test_preconditions_noop_when_export_disabled(self) -> None:

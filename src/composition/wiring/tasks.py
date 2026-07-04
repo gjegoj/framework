@@ -92,11 +92,11 @@ def _bind_input_keys(task: Task, topology: Topology, inputs: str | dict[str, Any
     """Fill a multi-input task's key field (``view_keys``/``stream_keys``) from data.inputs.
 
     The data config is the single source of truth for input alias names, so
-    RANKING (views through one shared backbone) and MULTISTREAM (streams from N
+    MULTIVIEW (views through one shared backbone) and MULTISTREAM (streams from N
     separate encoders) presets leave the field ``None`` and it is derived here.
     Other topologies and already-populated specs pass through unchanged.
     """
-    if topology == Topology.RANKING and task.head_spec.view_keys is None:
+    if topology == Topology.MULTIVIEW and task.head_spec.view_keys is None:
         head_spec = dataclasses.replace(task.head_spec, view_keys=input_aliases(inputs))
     elif topology == Topology.MULTISTREAM and task.head_spec.stream_keys is None:
         head_spec = dataclasses.replace(task.head_spec, stream_keys=input_aliases(inputs))
@@ -108,7 +108,7 @@ def _bind_input_keys(task: Task, topology: Topology, inputs: str | dict[str, Any
 def build_tasks(config: ExperimentConfig, runtime: RuntimeContext) -> list[Task]:
     """Build task bundles after ``DataModule.setup()`` has populated ``RuntimeContext.num_classes``.
 
-    For multi-input topologies (RANKING views / MULTISTREAM streams) whose key
+    For multi-input topologies (MULTIVIEW views / MULTISTREAM streams) whose key
     field is ``None`` (the default for config-driven experiments), the input
     alias names are derived here from ``config.data.inputs`` — the data config is
     the single source of truth.
@@ -127,6 +127,7 @@ def build_tasks(config: ExperimentConfig, runtime: RuntimeContext) -> list[Task]
     for task_name, task_config in config.tasks.items():
         num_classes = resolve_num_classes(task_name, task_config, runtime)
         preset = task_presets.create(task_config.preset)
+        class_count = runtime.num_classes.get(task_name)
         task = preset.build(
             name=task_name,
             num_classes=num_classes,
@@ -136,6 +137,7 @@ def build_tasks(config: ExperimentConfig, runtime: RuntimeContext) -> list[Task]
             metrics=task_config.metrics,
             head=task_config.head,
             feature_key=task_config.feature_key,
+            class_count=class_count,
         )
         task = _bind_input_keys(task, preset.topology, config.data.inputs)
         if task_config.class_mapping is not None:

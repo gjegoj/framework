@@ -19,7 +19,8 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, ClassVar, Protocol, cast, runtime_checkable
 
 import torch.nn as nn
 
@@ -75,8 +76,26 @@ class Head(nn.Module, ABC):
         return cast("Tensor", super().__call__(features))
 
 
+@dataclass(frozen=True, slots=True)
+class CriterionDimensions:
+    """Runtime dimensions injected into a criterion that declares ``requires_dimensions``.
+
+    Parameters:
+        num_classes (int | None): Label-vocabulary size inferred from data; ``None`` when the
+            task has no ``target`` column (structure-only supervision).
+        embedding_dim (int): The head's ``out_features`` — the embedding size for metric tasks.
+    """
+
+    num_classes: int | None
+    embedding_dim: int
+
+
 class Criterion(nn.Module, ABC):
     """Computes a task loss from logits and target (operates on logits)."""
+
+    # Opt-in marker (cf. BatchTransform.supported_topologies): when True, the task layer
+    # injects num_classes/embedding_dim kwargs at construction (see ObjectiveStrategy.build_criterion).
+    requires_dimensions: ClassVar[bool] = False
 
     @abstractmethod
     def forward(self, logits: Tensor, target: Tensor) -> LossResult:

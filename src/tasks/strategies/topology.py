@@ -48,8 +48,8 @@ class DenseTopology(TopologyStrategy):
         return HeadSpec(kind="conv", out_features=out_features, feature_key=DECODER, prefer_native=True)
 
 
-@topology_strategies.register(Topology.RANKING)
-class RankingTopology(TopologyStrategy):
+@topology_strategies.register(Topology.MULTIVIEW)
+class MultiViewTopology(TopologyStrategy):
     """N views of the same input through a shared backbone (Siamese network).
 
     The backbone is called once with a stacked ``[B*N, ...]`` batch; the
@@ -70,7 +70,7 @@ class RankingTopology(TopologyStrategy):
         POOLED ``[B, D]`` — backbone pooled output (same as GlobalTopology).
     """
 
-    kind = Topology.RANKING
+    kind = Topology.MULTIVIEW
 
     def __init__(self, view_keys: tuple[str, ...] | None = None) -> None:
         self.view_keys = view_keys
@@ -89,7 +89,7 @@ class RankingTopology(TopologyStrategy):
 class MultistreamTopology(TopologyStrategy):
     """N streams from N separate encoders (dual/multi-encoder, e.g. CLIP/SIGLIP).
 
-    Unlike RANKING (one shared backbone over stacked input views), here a
+    Unlike MULTIVIEW (one shared backbone over stacked input views), here a
     ``MultiEncoderBackbone`` produces N named streams with *separate* weights.
     The assembly layer stacks the named streams into ``[B, N, D]``; per-encoder
     projection into the shared space lives in the backbone, so the task head is

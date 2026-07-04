@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from src.core.entities import Batch
 from src.core.keys import IMAGE
-from src.core.taxonomy import Topology
+from src.core.taxonomy import Objective, Topology
 from src.transforms.batch.multihead import CutMixMultiHead, MixUpMultiHead, _MultiHeadMix
 from src.transforms.batch.registry import batch_transforms
 from src.transforms.batch.spec import BatchTransform, TargetSpec
@@ -30,6 +30,9 @@ class _LabelMixTransform(BatchTransform):
     """
 
     supported_topologies: frozenset[Topology] = frozenset({Topology.GLOBAL})
+    supported_objectives = frozenset(
+        {Objective.MULTICLASS, Objective.BINARY, Objective.MULTILABEL, Objective.CONTINUOUS}
+    )
 
     def __init__(self, targets: list[TargetSpec], mixer: _MultiHeadMix, input_key: str = IMAGE) -> None:
         self._targets = targets

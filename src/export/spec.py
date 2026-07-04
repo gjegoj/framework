@@ -108,7 +108,7 @@ def build_export_plan(model: CompositeModel, tasks: list[Task], config: Experime
         ExportPlan: Dummy shapes and naming for exporters.
 
     Raises:
-        ValueError: If any task topology is not exportable in Phase 1 (ranking / multistream).
+        ValueError: If any task topology is not exportable in Phase 1 (multiview / multistream).
     """
     guard_exportable_topologies(tasks)
 

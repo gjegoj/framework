@@ -8,8 +8,9 @@ import pytest
 import torch
 
 from src.callbacks.batch_transform import BatchTransformCallback
+from src.composition.wiring.callbacks import _instantiate_guarded
 from src.core.entities import Batch
-from src.core.taxonomy import Topology
+from src.core.taxonomy import Objective, Topology
 from src.tasks.adapters import MulticlassTargetAdapter
 from src.transforms.batch import CutMix, MixUp, Mosaic, TargetSpec
 from src.transforms.batch.spec import BatchTransform
@@ -17,12 +18,22 @@ from src.transforms.batch.spec import BatchTransform
 # ---------------------------------------------------------------- helpers
 
 
-def _global(key: str, num_classes: int) -> TargetSpec:
-    return TargetSpec(key=key, topology=Topology.GLOBAL, num_classes=num_classes)
+def _global(key: str, num_classes: int, objective: Objective = Objective.MULTICLASS) -> TargetSpec:
+    return TargetSpec(key=key, topology=Topology.GLOBAL, num_classes=num_classes, objective=objective)
 
 
-def _dense(key: str, num_classes: int) -> TargetSpec:
-    return TargetSpec(key=key, topology=Topology.DENSE, num_classes=num_classes)
+def _dense(key: str, num_classes: int, objective: Objective = Objective.MULTICLASS) -> TargetSpec:
+    return TargetSpec(key=key, topology=Topology.DENSE, num_classes=num_classes, objective=objective)
+
+
+def _build_guarded_mixup(specs: list[TargetSpec]) -> MixUp:
+    """Reuse the wiring's guard+instantiate entry point (``_instantiate_guarded``) against a
+    hand-built ``TargetSpec`` list — the same path the composition-root topology guard uses,
+    minus the config→``TargetSpec`` translation step.
+    """
+    transform = _instantiate_guarded({"name": "mixup"}, specs)
+    assert isinstance(transform, MixUp)
+    return transform
 
 
 def _trainer(current_epoch: int = 0, max_epochs: int = 10) -> MagicMock:
@@ -90,6 +101,20 @@ class TestLabelMixTransforms:
     def test_supported_topologies_is_global_only(self) -> None:
         assert MixUp.supported_topologies == frozenset({Topology.GLOBAL})
         assert CutMix.supported_topologies == frozenset({Topology.GLOBAL})
+
+
+# ---------------------------------------------------------------- objective guard
+
+
+class TestObjectiveGuard:
+    def test_mixup_rejects_metric_objective_task(self) -> None:
+        specs = [TargetSpec(key="embed", topology=Topology.GLOBAL, num_classes=32, objective=Objective.METRIC)]
+        with pytest.raises(ValueError, match="embed"):
+            _build_guarded_mixup(specs)
+
+    def test_mixup_still_accepts_multiclass(self) -> None:
+        specs = [TargetSpec(key="label", topology=Topology.GLOBAL, num_classes=3, objective=Objective.MULTICLASS)]
+        _build_guarded_mixup(specs)  # must not raise
 
 
 # ---------------------------------------------------------------- Mosaic
