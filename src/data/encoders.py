@@ -229,6 +229,13 @@ class MaskEncoder(TargetEncoder):
     consistent with the categorical encoders. Otherwise ``num_classes`` stays ``None``
     and the task config must supply an explicit ``num_classes``.
 
+    Masks must already contain class *indices* (``0..num_classes-1``) — converting a
+    grayscale-coded mask (e.g. a binary PNG saved as ``{0, 255}``) into indices is the
+    dataset's responsibility. Like the categorical encoders validate labels against
+    ``class_mapping``, ``load`` validates pixel values against the class count (when
+    known) and fails loudly, instead of letting an out-of-range index crash deep inside
+    the loss.
+
     Parameters:
         class_mapping (dict[int, str] | None): Index → label map, e.g.
             ``{0: "background", 1: "defect"}``. Determines class count.
@@ -251,6 +258,13 @@ class MaskEncoder(TargetEncoder):
         mask = cv2.imread(str(value), cv2.IMREAD_GRAYSCALE)
         if mask is None:
             raise FileNotFoundError(f"Mask not found or unreadable: {value}")
+        if self._num_classes is not None and int(mask.max()) >= self._num_classes:
+            found = sorted(np.unique(mask).tolist())
+            raise ValueError(
+                f"Mask {value} contains pixel values {found}, outside the {self._num_classes}-class index "
+                "range — masks must store class indices (e.g. a binary mask saved as 0/255 must be "
+                "converted to 0/1 in the dataset)."
+            )
         return mask
 
     def to_tensor(self, value: Any) -> Tensor:

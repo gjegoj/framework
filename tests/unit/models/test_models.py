@@ -194,3 +194,54 @@ class TestCompositeModel:
         assert output.task_logits["age"].shape == (2, 1)
         # One shared backbone instance, two heads.
         assert len(model.heads) == 2
+
+
+class TestDinoDptStaticRope:
+    """Device-portability pin: statically-built DINOv3 traces its ROPE from a buffer.
+
+    With timm's default ``dynamic_img_size=True`` the rotary embedding is recomputed per
+    forward and ``torch.jit.trace`` bakes its coordinate grid as trace-device constants —
+    the artifact then breaks on ``.to("cuda")``. Built statically (the dinov3_dpt config),
+    the embedding lives in the ``pos_embed_cached`` registered buffer, which ``.to()`` moves.
+    """
+
+    def test_static_build_traces_rope_from_registered_buffer(self) -> None:
+        import torch
+
+        from src.models.registry import backbones
+
+        backbone = backbones.create(
+            "dino_dpt",
+            encoder_name="tu-vit_tiny_patch16_dinov3_qkvb",
+            pretrained=False,
+            encoder_depth=4,
+            encoder_output_indices=[2, 5, 8, 11],
+            decoder_intermediate_channels=[16, 32, 64, 64],
+            decoder_fusion_channels=16,
+            global_pool="token",
+            dynamic_img_size=False,
+            img_size=64,
+        )
+        encoder = backbone._encoder  # noqa: SLF001 — pinning smp/timm internals on purpose
+        assert isinstance(encoder, torch.nn.Module)
+        encoder_model = encoder.model
+        assert isinstance(encoder_model, torch.nn.Module)
+        assert encoder_model.dynamic_img_size is False
+        rope = encoder_model.rope
+        assert isinstance(rope, torch.nn.Module)
+        assert "pos_embed_cached" in dict(rope.named_buffers())
+
+        class _DecoderOnly(torch.nn.Module):
+            def __init__(self, wrapped: torch.nn.Module) -> None:
+                super().__init__()
+                self.wrapped = wrapped
+
+            def forward(self, image: torch.Tensor) -> torch.Tensor:
+                decoder_stream: torch.Tensor = self.wrapped({"image": image})["decoder"]
+                return decoder_stream
+
+        module = _DecoderOnly(backbone).eval()
+        with torch.no_grad():
+            traced = torch.jit.trace(module, torch.randn(1, 3, 64, 64))
+        graph = str(traced.inlined_graph)
+        assert "pos_embed_cached" in graph  # ROPE read from the movable buffer, not baked constants

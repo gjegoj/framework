@@ -322,3 +322,37 @@ class TestMaskEncoderAndDensePipeline:
         assert sample.meta["index"] == 2
         assert sample.meta["input_sources"]["image"] == str(frame.iloc[2]["image_path"])  # image file path
         assert sample.meta["target_sources"]["mask"] == str(frame.iloc[2]["mask_path"])  # mask file path
+
+
+class TestMaskEncoderIndexValidation:
+    """Masks must arrive as class indices; out-of-range pixel values fail loudly at load."""
+
+    @staticmethod
+    def _write_mask(path: Path, values: np.ndarray) -> Path:
+        mask_path = path / "mask.png"
+        cv2.imwrite(str(mask_path), values.astype(np.uint8))
+        return mask_path
+
+    def test_out_of_range_pixel_values_raise_actionable_error(self, tmp_path: Path) -> None:
+        from src.data import MaskEncoder
+
+        raw = np.array([[0, 255]], dtype=np.uint8)  # {0, 255} PNG fed to a 2-class index encoder
+        codec = MaskEncoder(class_mapping={0: "background", 1: "defect"})
+        with pytest.raises(ValueError, match="class indices"):
+            codec.load(self._write_mask(tmp_path, raw))
+
+    def test_plain_index_mask_passes_unchanged(self, tmp_path: Path) -> None:
+        from src.data import MaskEncoder
+
+        raw = np.array([[0, 1], [1, 0]], dtype=np.uint8)
+        codec = MaskEncoder(class_mapping={0: "background", 1: "defect"})
+        mask = codec.load(self._write_mask(tmp_path, raw))
+        assert np.array_equal(mask, raw)
+
+    def test_without_class_mapping_values_are_not_validated(self, tmp_path: Path) -> None:
+        """No class count known at the encoder -> validation is the task config's job."""
+        from src.data import MaskEncoder
+
+        raw = np.array([[0, 255]], dtype=np.uint8)
+        mask = MaskEncoder().load(self._write_mask(tmp_path, raw))
+        assert np.array_equal(mask, raw)

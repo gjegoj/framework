@@ -5,11 +5,19 @@
 # `classes` here. Decoder/encoder knobs forward verbatim to smp.create_model.
 kind: dino_dpt
 name: dpt
-encoder_name: tu-vit_small_plus_patch16_dinov3.lvd1689m
+encoder_name: tu-vit_tiny_patch16_dinov3_qkvb.eupe_lvd1689m
 encoder_weights: true                 # load the DINOv3 timm pretrained (overrides pretrained→imagenet)
 encoder_depth: 4
 encoder_output_indices: [2, 5, 8, 11]
 decoder_readout: cat                  # [cat, add, ignore]
-decoder_intermediate_channels: [256, 512, 1024, 1024]
+decoder_intermediate_channels: [128, 256, 512, 512]
 decoder_fusion_channels: 256
 global_pool: token                    # required for ViT token-pool encoders
+# Static input size (timm defaults DINOv3 to dynamic_img_size=True): with dynamic sizing the
+# rotary position embedding is recomputed every forward, so torch.jit.trace bakes its coordinate
+# grid as constants pinned to the trace device — the exported TorchScript then fails with a
+# device mismatch after .to("cuda"). Built statically, the ROPE lives in a registered buffer
+# (pos_embed_cached) that follows .to(); the checkpoint is unaffected (ROPE has no learned
+# weights). The framework trains/exports at the fixed ${image_size} anyway.
+dynamic_img_size: false
+img_size: ${image_size}
