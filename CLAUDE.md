@@ -21,7 +21,7 @@ handlers (scalar/vector/matrix/curve), ClearML logger, and callbacks — EMA (th
 Lightning's `EMAWeightAveraging`), freeze, checkpoint, `MetricsProgressBar`, `SampleLogCallback`,
 batch transforms (MixUp/CutMix/Mosaic), and `criterion_schedule` (epoch-wise annealing of a
 numeric criterion attribute, e.g. FocalLoss `gamma`; linear/cosine, resolved and validated at
-`on_fit_start`). Cross-cutting subsystems: model **export**
+`on_fit_start`; `weighted_sum` terms addressed by dot-path, `parameter: focal.gamma`). Cross-cutting subsystems: model **export**
 (`export/`: ONNX/TorchScript/TensorRT + numerical-parity verification), sample **visualization**
 (`visualization/`: interactive HTML GT-vs-pred grid behind `SampleLogCallback`), an in-RAM
 image/mask **cache** (`data/cache.py`), and a pre-training **dataset distribution report**

@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 import math
 from collections.abc import Callable
+from typing import Any, cast
 
 import lightning as L
 import torch
@@ -76,6 +77,7 @@ class CriterionScheduleCallback(L.Callback):
                 raise ValueError(f"{label} must be a number, got {value!r}.")
         self._task_name = task
         self._parameter = parameter
+        self._leaf_attribute = parameter.split(".")[-1]
         self._start = float(start)
         self._end = float(end)
         self._shape = _SCHEDULES[schedule]
@@ -112,14 +114,17 @@ class CriterionScheduleCallback(L.Callback):
         )
 
     def _resolve_owner(self, criterion: object) -> object:
+        *term_path, leaf = self._parameter.split(".")
+        for segment in term_path:
+            criterion = self._descend(criterion, segment)
         candidates: list[object] = [criterion]
         wrapped = getattr(criterion, "_loss", None)
         if wrapped is not None:
             candidates.append(wrapped)
         for owner in candidates:
-            if not hasattr(owner, self._parameter):
+            if not hasattr(owner, leaf):
                 continue
-            value = getattr(owner, self._parameter)
+            value = getattr(owner, leaf)
             if isinstance(value, torch.nn.Parameter):
                 raise ValueError(
                     f"CriterionScheduleCallback: {self._parameter!r} is a learnable nn.Parameter — "
@@ -139,10 +144,28 @@ class CriterionScheduleCallback(L.Callback):
                 if isinstance(value, (int, float)) and not isinstance(value, bool)
             }
         )
-        raise ValueError(
+        message = (
             f"CriterionScheduleCallback: criterion for task {self._task_name!r} has no attribute "
-            f"{self._parameter!r}. Numeric attributes available: {available}."
+            f"{leaf!r}. Numeric attributes available: {available}."
         )
+        term_keys = getattr(criterion, "keys", None)
+        if not term_path and callable(term_keys):
+            examples = ", ".join(f"'{term}.{leaf}'" for term in sorted(term_keys()))
+            message += f" This is a composite criterion — address a term's parameter with a dot-path, e.g. {examples}."
+        raise ValueError(message)
+
+    @staticmethod
+    def _descend(criterion: object, segment: str) -> object:
+        """Step one dot-path segment down into a composite criterion's term."""
+        try:
+            return cast("Any", criterion)[segment]
+        except KeyError as error:
+            raise ValueError(f"CriterionScheduleCallback: {error.args[0]}") from error
+        except TypeError as error:
+            raise ValueError(
+                f"CriterionScheduleCallback: cannot descend into {segment!r} — "
+                f"{type(criterion).__name__} is not a composite criterion."
+            ) from error
 
     # ----------------------------------------------------------- application
 
@@ -150,6 +173,6 @@ class CriterionScheduleCallback(L.Callback):
         if self._owner is None or self._window is None:
             return
         value = scheduled_value(trainer.current_epoch, self._window, self._start, self._end, self._shape)
-        setattr(self._owner, self._parameter, value)
+        setattr(self._owner, self._leaf_attribute, value)
         pl_module.log(f"schedule/{self._task_name}/{self._parameter}", value)
         log.debug("Scheduled %s.%s = %.4f (epoch %d).", self._task_name, self._parameter, value, trainer.current_epoch)

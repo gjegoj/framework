@@ -22,11 +22,15 @@ def _make_focal_task(task_name: str = "species") -> Task:
     return dataclasses.replace(task, criterion=criteria.create("focal", gamma=1.0))
 
 
-def _focal_loss_of(task: Task) -> FocalLoss:
+def _focal_loss_of_criterion(criterion: object) -> FocalLoss:
     """Narrow the wrapped loss for mypy (nn.Module attribute access is a Tensor|Module union)."""
-    wrapped = task.criterion._loss  # noqa: SLF001 — pinning the resolver contract
+    wrapped = criterion._loss  # type: ignore[attr-defined]  # noqa: SLF001 — pinning the resolver contract
     assert isinstance(wrapped, FocalLoss)
     return wrapped
+
+
+def _focal_loss_of(task: Task) -> FocalLoss:
+    return _focal_loss_of_criterion(task.criterion)
 
 
 def _fake_trainer(max_epochs: int | None, current_epoch: int = 0) -> L.Trainer:
@@ -141,6 +145,43 @@ class TestResolutionGuards:
         callback = CriterionScheduleCallback(task="species", parameter="gamma", start=2.0, end=0.5)
         with pytest.raises(ValueError, match="tasks"):
             callback.on_fit_start(_fake_trainer(max_epochs=5), cast(L.LightningModule, SimpleNamespace()))
+
+
+class TestCompositeResolution:
+    """weighted_sum terms are addressed by dot-path: ``parameter: focal.gamma``."""
+
+    @staticmethod
+    def _make_weighted_sum_task(task_name: str = "mask") -> Task:
+        task = make_task("classification", task_name, num_classes=3)
+        composite = criteria.create("weighted_sum", losses={"focal": {"weight": 2.0, "gamma": 2.0}, "dice": 1.0})
+        return dataclasses.replace(task, criterion=composite)
+
+    def test_dot_path_resolves_into_composite_term(self) -> None:
+        task = self._make_weighted_sum_task()
+        module, logged = _fake_module(task)
+        callback = CriterionScheduleCallback(task="mask", parameter="focal.gamma", start=2.0, end=0.5)
+        callback.on_fit_start(_fake_trainer(max_epochs=5), module)
+        callback.on_train_epoch_start(_fake_trainer(max_epochs=5, current_epoch=2), module)
+        assert _focal_loss_of_criterion(task.criterion["focal"]).gamma == pytest.approx(1.25)  # type: ignore[index]
+        assert logged == [("schedule/mask/focal.gamma", pytest.approx(1.25))]
+
+    def test_plain_parameter_on_composite_hints_dot_path(self) -> None:
+        module, _ = _fake_module(self._make_weighted_sum_task())
+        callback = CriterionScheduleCallback(task="mask", parameter="gamma", start=2.0, end=0.5)
+        with pytest.raises(ValueError, match=r"focal\.gamma"):
+            callback.on_fit_start(_fake_trainer(max_epochs=5), module)
+
+    def test_unknown_term_raises_listing_terms(self) -> None:
+        module, _ = _fake_module(self._make_weighted_sum_task())
+        callback = CriterionScheduleCallback(task="mask", parameter="focall.gamma", start=2.0, end=0.5)
+        with pytest.raises(ValueError, match="dice"):
+            callback.on_fit_start(_fake_trainer(max_epochs=5), module)
+
+    def test_dot_path_on_non_composite_raises(self) -> None:
+        module, _ = _fake_module(_make_focal_task())
+        callback = CriterionScheduleCallback(task="species", parameter="focal.gamma", start=2.0, end=0.5)
+        with pytest.raises(ValueError, match="focal"):
+            callback.on_fit_start(_fake_trainer(max_epochs=5), module)
 
 
 class TestNoOpWithoutMaxEpochs:
