@@ -19,7 +19,9 @@ per-task `feature_key`), precomputed-`EmbeddingBackbone`, and multi-encoder `Mul
 Training: per-head LR via param-groups, LR **schedulers** (`training/scheduler.py`), typed metric
 handlers (scalar/vector/matrix/curve), ClearML logger, and callbacks — EMA (thin subclass of
 Lightning's `EMAWeightAveraging`), freeze, checkpoint, `MetricsProgressBar`, `SampleLogCallback`,
-and batch transforms (MixUp/CutMix/Mosaic). Cross-cutting subsystems: model **export**
+batch transforms (MixUp/CutMix/Mosaic), and `criterion_schedule` (epoch-wise annealing of a
+numeric criterion attribute, e.g. FocalLoss `gamma`; linear/cosine, resolved and validated at
+`on_fit_start`). Cross-cutting subsystems: model **export**
 (`export/`: ONNX/TorchScript/TensorRT + numerical-parity verification), sample **visualization**
 (`visualization/`: interactive HTML GT-vs-pred grid behind `SampleLogCallback`), an in-RAM
 image/mask **cache** (`data/cache.py`), and a pre-training **dataset distribution report**
@@ -85,8 +87,11 @@ albumentations are details** kept behind ABC ports. Layers:
   affordance, not presentation of domain data);
   `data/encoders.py` the raw-value→tensor `TargetEncoder`s (label/mask/scalar/null — `null` is
   the target-less Null Object for structure-only tasks);
-  `models/backbones/` the four backbones (timm/smp/embedding/multi); `losses/` the criteria
-  incl. metric-learning (`angular.py`=ArcFace, `contrastive.py`=InfoNCE/SigLIP, `ranking.py`).
+  `models/backbones/` the four backbones (timm/smp/embedding/multi); `losses/` — one module
+  per loss family (`classification`=CE/BCE/focal, `regression`=MSE/L1, `segmentation`=Dice,
+  `composite`=weighted sum, `angular`=ArcFace, `contrastive`=InfoNCE/SigLIP, `ranking`);
+  wrappers declare only params needing conversion and forward the rest verbatim to the
+  wrapped loss (`base.SingleTermCriterion`).
   `training/` groups its Lightning humble objects under `modules/` (`base.py`=`BaseLitModule`,
   `lit_module.py`, `lit_datamodule.py`) and the optimizer+scheduler+their registry under `optim/`.
   Two registry-placement conventions coexist by intent: **brick-layer registries** live in

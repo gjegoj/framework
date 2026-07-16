@@ -1,21 +1,59 @@
-"""Focal loss criterion (down-weights well-classified examples; optional per-class weights).
+"""Classification criteria: cross-entropy, BCE, and focal (multiclass / binary / multilabel).
 
-Multiclass focal loss on logits, generalised across topologies: the same code consumes
-``[B, C]`` vs ``[B]`` (GLOBAL classification) and ``[B, C, H, W]`` vs ``[B, H, W]`` (DENSE
-segmentation) — the class axis is dim 1, the target carries the remaining dims. Unlike
-``smp.losses.FocalLoss`` (scalar ``alpha``, binary/multilabel modes) this accepts a per-class
-``alpha`` vector — the "weighted" of the original prototype loss; reach for the smp variant via
-a ``_target_`` spec when you need those other modes.
+Wrappers declare only the parameters that need conversion or a default; everything else
+forwards verbatim to the wrapped torch loss (see ``SingleTermCriterion``).
 """
 
 from __future__ import annotations
+
+from typing import Any
 
 import torch
 import torch.nn.functional as F
 from torch import Tensor, nn
 
-from src.losses.criterion import _SingleTermCriterion
+from src.losses.base import SingleTermCriterion
 from src.losses.registry import criteria
+
+
+@criteria.register("cross_entropy")
+class CrossEntropyCriterion(SingleTermCriterion):
+    """Multiclass cross-entropy on logits ``[B, C]`` vs class indices ``[B]``.
+
+    Parameters:
+        weight (list[float] | None): Optional per-class rescaling weights.
+        **kwargs: Forwarded verbatim to ``nn.CrossEntropyLoss``
+            (``label_smoothing``, ``ignore_index``, ``reduction``, ...).
+    """
+
+    component_name = "cross_entropy"
+
+    def __init__(
+        self,
+        weight: list[float] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        weight_tensor = torch.tensor(weight, dtype=torch.float) if weight is not None else None
+        super().__init__(nn.CrossEntropyLoss(weight=weight_tensor, **kwargs))
+
+
+@criteria.register("bce")
+class BCECriterion(SingleTermCriterion):
+    """Binary / multilabel BCE on logits vs float targets.
+
+    Operates on logits ``[B]`` or ``[B, C]`` vs float targets of the same shape.
+    Use for binary (out=1) and multilabel (out=C) objectives.
+
+    Parameters:
+        pos_weight (list[float] | None): Per-class positive-class weight (length C).
+        **kwargs: Forwarded verbatim to ``nn.BCEWithLogitsLoss`` (``reduction``, ...).
+    """
+
+    component_name = "bce"
+
+    def __init__(self, pos_weight: list[float] | None = None, **kwargs: Any) -> None:
+        pos_weight_tensor = torch.tensor(pos_weight, dtype=torch.float) if pos_weight is not None else None
+        super().__init__(nn.BCEWithLogitsLoss(pos_weight=pos_weight_tensor, **kwargs))
 
 
 class FocalLoss(nn.Module):
@@ -61,7 +99,7 @@ class FocalLoss(nn.Module):
 
 
 @criteria.register("focal")
-class FocalCriterion(_SingleTermCriterion):
+class FocalCriterion(SingleTermCriterion):
     """Focal loss on logits — down-weights well-classified examples.
 
     Multiclass, generalised across GLOBAL (``[B, C]`` vs ``[B]``) and DENSE
@@ -75,7 +113,7 @@ class FocalCriterion(_SingleTermCriterion):
         reduction (str): ``"mean"`` (default) / ``"sum"`` / ``"none"``.
     """
 
-    _component_name = "focal"
+    component_name = "focal"
 
     def __init__(self, alpha: list[float] | None = None, gamma: float = 2.0, reduction: str = "mean") -> None:
         super().__init__(FocalLoss(alpha=alpha, gamma=gamma, reduction=reduction))

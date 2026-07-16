@@ -1,7 +1,8 @@
-"""One-epoch CPU training smokes: classification, embedding, ArcFace embedder, segmentation."""
+"""CPU training smokes: classification, embedding, ArcFace embedder, segmentation, criterion schedule."""
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Callable
 from pathlib import Path
 from typing import cast
@@ -13,6 +14,7 @@ import pandas as pd
 import pytest
 import torch
 
+from src.callbacks.criterion_schedule import CriterionScheduleCallback
 from src.core.enums import Stage
 from src.core.runtime import RuntimeContext
 from src.data import (
@@ -22,6 +24,8 @@ from src.data import (
     LabelEncoder,
     TargetBinding,
 )
+from src.losses.classification import FocalLoss
+from src.losses.registry import criteria
 from src.models import build_composite_model
 from src.models.backbones import TimmBackbone
 from src.tasks import classification
@@ -259,3 +263,54 @@ class TestSegmentationSmoke:
         trainer.fit(lit_module, LitDataModule(plain_dm))
 
         assert "mask/iou/val/mean" in trainer.logged_metrics
+
+
+class TestCriterionScheduleSmoke:
+    """3-epoch CPU fit with FocalLoss gamma annealed 2.0 → 0.5 by the callback."""
+
+    def test_gamma_annealed_over_fit(self, csv_path: Path) -> None:
+        runtime = RuntimeContext()
+        transforms = {s: _make_transform((32, 32)) for s in Stage}
+        plain_dm = DataModule(
+            target_bindings=[
+                TargetBinding("label", "label", LabelEncoder(class_mapping={0: "cat", 1: "cow", 2: "dog"}))
+            ],
+            inputs_config="image_path",
+            transforms=transforms,
+            runtime=runtime,
+            batch_size=4,
+            seed=0,
+            source=CsvDataSource(str(csv_path)),
+            split={Stage.TRAIN: 0.6, Stage.VAL: 0.2, Stage.TEST: 0.2},
+            dataloader_options=DataLoaderOptions(drop_last=True),
+        )
+        plain_dm.setup()
+
+        task = classification("label", num_classes=runtime.num_classes["label"])
+        task = dataclasses.replace(task, criterion=criteria.create("focal"))
+        backbone = TimmBackbone("resnet18", pretrained=False)
+        model = build_composite_model(backbone, {"label": task.head_spec})
+
+        lit_module = LitModule(
+            model=model,
+            tasks=[task],
+            optimizer_builder=OptimizerBuilder(base_lr=1e-3),
+        )
+
+        trainer = L.Trainer(
+            max_epochs=3,
+            accelerator="cpu",
+            logger=False,
+            enable_checkpointing=False,
+            enable_progress_bar=False,
+            enable_model_summary=False,
+            callbacks=[
+                CriterionScheduleCallback(task="label", parameter="gamma", start=2.0, end=0.5),
+            ],
+        )
+        trainer.fit(lit_module, LitDataModule(plain_dm))
+
+        focal_loss = task.criterion._loss  # noqa: SLF001 — pinning the applied end value
+        assert isinstance(focal_loss, FocalLoss)
+        assert focal_loss.gamma == pytest.approx(0.5)
+        assert "schedule/label/gamma" in trainer.logged_metrics

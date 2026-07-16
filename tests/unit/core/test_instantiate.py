@@ -130,7 +130,7 @@ class TestInstantiateNested:
 class TestResolveSpecClass:
     def test_string_resolves_registry_class(self) -> None:
         from src.core.instantiate import resolve_spec_class
-        from src.losses.criterion import CrossEntropyCriterion
+        from src.losses.classification import CrossEntropyCriterion
         from src.losses.registry import criteria
 
         assert resolve_spec_class("cross_entropy", criteria) is CrossEntropyCriterion

@@ -10,6 +10,7 @@ from __future__ import annotations
 from lightning.pytorch.callbacks import Callback, LearningRateMonitor, ModelCheckpoint
 
 from src.callbacks.batch_transform import BatchTransformCallback
+from src.callbacks.criterion_schedule import CriterionScheduleCallback
 from src.callbacks.dataset_stats import DatasetStatsCallback
 from src.callbacks.ema import EmaCallback
 from src.callbacks.freeze import FreezeCallback
@@ -31,3 +32,4 @@ callback_registry.register("batch_transform")(BatchTransformCallback)
 callback_registry.register("sample_log")(SampleLogCallback)
 callback_registry.register("metric_summary")(MetricSummaryCallback)
 callback_registry.register("dataset_stats")(DatasetStatsCallback)
+callback_registry.register("criterion_schedule")(CriterionScheduleCallback)

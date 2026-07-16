@@ -1,4 +1,4 @@
-"""Tests for the focal loss criterion.
+"""Classification criteria: focal loss behaviour and wrapper kwargs forwarding.
 
 Focal loss is a standard supervised criterion (no new topology/objective). It is
 generalised across GLOBAL (``[B, C]`` vs ``[B]``) and DENSE (``[B, C, H, W]`` vs
@@ -14,7 +14,7 @@ import pytest
 import torch
 import torch.nn.functional as F
 
-from src.losses.focal import FocalCriterion, FocalLoss
+from src.losses.classification import FocalCriterion, FocalLoss
 
 
 class TestRegistration:
@@ -136,3 +136,23 @@ class TestValidationAndGradients:
         logits = torch.randn(8, 4, requires_grad=True)
         FocalCriterion(gamma=2.0, alpha=[1.0, 2.0, 1.0, 0.5])(logits, torch.randint(0, 4, (8,))).total.backward()
         assert logits.grad is not None and torch.isfinite(logits.grad).all()
+
+
+class TestWrapperKwargsForwarding:
+    """Unlisted torch-loss params are configurable from YAML via verbatim **kwargs forwarding."""
+
+    def test_cross_entropy_forwards_reduction_and_ignore_index(self) -> None:
+        from src.losses.registry import criteria
+
+        criterion = criteria.create("cross_entropy", reduction="sum", ignore_index=255)
+        wrapped = criterion._loss  # noqa: SLF001 — pinning the forwarding contract
+        assert isinstance(wrapped, torch.nn.CrossEntropyLoss)
+        assert wrapped.reduction == "sum"
+        assert wrapped.ignore_index == 255
+
+    def test_bce_forwards_reduction(self) -> None:
+        from src.losses.registry import criteria
+
+        wrapped = criteria.create("bce", reduction="none")._loss  # noqa: SLF001
+        assert isinstance(wrapped, torch.nn.BCEWithLogitsLoss)
+        assert wrapped.reduction == "none"

@@ -8,8 +8,8 @@ import torch
 from src.core.entities import HeadSpec, LossResult, Task
 from src.core.enums import Stage
 from src.core.ports import Criterion, CriterionDimensions
-from src.losses.criterion import (
-    BCEWithLogitsCriterion,
+from src.losses import (
+    BCECriterion,
     CrossEntropyCriterion,
     DiceCriterion,
     L1Criterion,
@@ -126,7 +126,7 @@ class TestBricks:
         logits = torch.randn(4, 1, requires_grad=True)
         soft = torch.tensor([[0.3, 0.7], [0.9, 0.1], [0.5, 0.5], [0.2, 0.8]])
         loss_target = BinaryTargetAdapter().adapt(soft).loss
-        BCEWithLogitsCriterion()(logits, loss_target).total.backward()
+        BCECriterion()(logits, loss_target).total.backward()
         assert logits.grad is not None
 
     def test_cross_entropy_backprops(self) -> None:
@@ -141,7 +141,7 @@ class TestBricks:
     def test_bce_binary_backprops(self) -> None:
         logits = torch.randn(4, 1, requires_grad=True)
         target = torch.randint(0, 2, (4, 1)).float()
-        result = BCEWithLogitsCriterion()(logits, target)
+        result = BCECriterion()(logits, target)
         assert result.total.ndim == 0
         assert "bce" in result.components
         result.total.backward()
@@ -150,7 +150,7 @@ class TestBricks:
     def test_bce_multilabel_backprops(self) -> None:
         logits = torch.randn(4, 5, requires_grad=True)
         target = torch.randint(0, 2, (4, 5)).float()
-        result = BCEWithLogitsCriterion()(logits, target)
+        result = BCECriterion()(logits, target)
         assert result.total.ndim == 0
         result.total.backward()
 

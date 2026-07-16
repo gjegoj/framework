@@ -1,12 +1,14 @@
-"""Contrastive loss criteria for MULTISTREAM topology (M7b).
+"""Contrastive loss criteria for MULTISTREAM topology.
 
 Receives ``logits: [B, 2, D]`` — two embedding streams per sample from two
 separate encoders — and aligns them: row ``i`` of stream 0 matches row ``i`` of
 stream 1 (the diagonal), every other pairing is a negative.  The ``target`` is
 ignored; supervision is implicit in the pairing.
 
-Only the 2-stream InfoNCE ships in sub-project A.  The ``[B, N, D]`` carrier is
-N-general, so an N-way variant can be added later without upstream changes.
+The ``[B, N, D]`` carrier is N-general, so an N-way variant can be added later
+without upstream changes.  ``PairedStreamCriterion`` is the family's extension
+point — it lives here rather than in ``base.py`` because its only consumers are
+this family's losses (cross-family bases go to ``base``).
 """
 
 from __future__ import annotations
@@ -19,13 +21,14 @@ from torch import Tensor, nn
 
 from src.core.entities import LossResult
 from src.core.ports import Criterion
+from src.losses.base import require_view_shape
 from src.losses.registry import criteria
 
 # CLIP clamps the exponentiated logit scale to keep training stable.
 _MAX_LOGIT_SCALE = 100.0
 
 
-class _PairedStreamCriterion(Criterion):
+class PairedStreamCriterion(Criterion):
     """Base for contrastive losses over two L2-normalized streams ``[B, 2, D]``.
 
     Holds the learnable log-space ``logit_scale`` and the preparation shared by
@@ -38,8 +41,7 @@ class _PairedStreamCriterion(Criterion):
 
     def _normalized_streams(self, logits: Tensor) -> tuple[Tensor, Tensor, Tensor]:
         """Validate ``[B, 2, D]`` and return ``(stream0, stream1, scale)``, streams L2-normalized."""
-        if logits.ndim != 3 or logits.size(1) != 2:
-            raise ValueError(f"{type(self).__name__} expects logits of shape [B, 2, D], got {tuple(logits.shape)}.")
+        require_view_shape(logits, views=2, owner=type(self).__name__)
         anchor = F.normalize(logits[:, 0], dim=-1)
         other = F.normalize(logits[:, 1], dim=-1)
         scale = self.logit_scale.exp().clamp(max=_MAX_LOGIT_SCALE)
@@ -47,7 +49,7 @@ class _PairedStreamCriterion(Criterion):
 
 
 @criteria.register("info_nce")
-class InfoNCECriterion(_PairedStreamCriterion):
+class InfoNCECriterion(PairedStreamCriterion):
     """Symmetric InfoNCE (CLIP loss) on ``[B, 2, D]`` embeddings.
 
     L2-normalizes each stream, forms the ``[B, B]`` similarity matrix scaled by a
@@ -76,7 +78,7 @@ class InfoNCECriterion(_PairedStreamCriterion):
 
 
 @criteria.register("siglip")
-class SigLIPCriterion(_PairedStreamCriterion):
+class SigLIPCriterion(PairedStreamCriterion):
     """Sigmoid pairwise loss (SigLIP) on ``[B, 2, D]`` embeddings.
 
     Unlike InfoNCE's batch-normalized softmax, SigLIP treats every cell of the

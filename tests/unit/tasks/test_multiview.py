@@ -142,7 +142,7 @@ class TestTripletMarginCriterion:
         crit = TripletMarginCriterion()
         logits = torch.randn(2, 3, 8)
         result = crit(logits, torch.ones(2))
-        assert "triplet" in result.components
+        assert "triplet_margin" in result.components
 
     def test_wrong_n_views_raises(self) -> None:
         from src.losses.ranking import TripletMarginCriterion
