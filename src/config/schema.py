@@ -452,6 +452,56 @@ class TrainerConfig(BaseModel):
     model_config = ConfigDict(extra="allow")
 
 
+class TeacherConfig(BaseModel):
+    """One frozen distillation teacher: its architecture plus trained weights.
+
+    Parameters:
+        backbone (BackboneConfig): Teacher backbone; heads are derived from the
+            student's tasks, so logit shapes match the student by construction.
+        ckpt_path (str): Lightning ``.ckpt`` or raw state-dict file with the weights.
+    """
+
+    backbone: BackboneConfig
+    ckpt_path: str = Field(..., description="Checkpoint holding the teacher weights.")
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class DistillationConfig(BaseModel):
+    """Online knowledge distillation settings (teachers run inside the training step).
+
+    Per distilled task the training loss becomes ``hard + weight * soft``, where
+    ``soft`` compares student logits against the teachers' averaged raw logits.
+
+    Parameters:
+        teachers (list[TeacherConfig]): One or more teachers; raw logits are averaged.
+        temperature (float): Softening temperature injected into the default loss.
+        weight (float | dict[str, float]): Additive soft-loss weight — one value for
+            all distilled tasks or per-task by name.
+        loss (str | dict | None): ``criteria`` brick-spec override; ``None`` -> the
+            ``kl_divergence`` brick with ``temperature``. An explicit dict wins
+            outright (its own kwargs are used as given).
+        tasks (list[str] | None): Task names to distill; ``None`` -> every task.
+    """
+
+    teachers: list[TeacherConfig] = Field(..., min_length=1)
+    temperature: float = Field(2.0, gt=0, description="Softening temperature (> 0).")
+    weight: float | dict[str, float] = Field(1.0, description="Additive soft-loss weight (>= 0).")
+    loss: str | dict[str, Any] | None = Field(None, description="criteria brick-spec; None -> kl_divergence.")
+    tasks: list[str] | None = Field(None, description="Tasks to distill; None -> all.")
+
+    # Fixed schema (no brick extras to forward) — a typo like `temperature:` must fail loudly.
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("weight")
+    @classmethod
+    def _weight_non_negative(cls, value: float | dict[str, float]) -> float | dict[str, float]:
+        values = value.values() if isinstance(value, dict) else [value]
+        if any(weight < 0 for weight in values):
+            raise ValueError("distillation.weight must be non-negative.")
+        return value
+
+
 class ExperimentConfig(BaseModel):
     """Root experiment contract assembled from the YAML config."""
 
@@ -551,6 +601,9 @@ class ExperimentConfig(BaseModel):
     )
     trainer: TrainerConfig = Field(default_factory=TrainerConfig)
     export: ExportConfig = Field(default_factory=ExportConfig, description="Model export settings.")
+    distillation: DistillationConfig | None = Field(
+        None, description="Online knowledge distillation; None -> disabled."
+    )
 
     model_config = ConfigDict(extra="forbid")
 

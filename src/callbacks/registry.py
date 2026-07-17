@@ -7,12 +7,13 @@ escape hatch in YAML (no registration needed).
 
 from __future__ import annotations
 
-from lightning.pytorch.callbacks import Callback, LearningRateMonitor, ModelCheckpoint
+from lightning.pytorch.callbacks import Callback, LearningRateMonitor
 
 from src.callbacks.batch_transform import BatchTransformCallback
 from src.callbacks.criterion_schedule import CriterionScheduleCallback
 from src.callbacks.dataset_stats import DatasetStatsCallback
 from src.callbacks.ema import EmaCallback
+from src.callbacks.ema_checkpoint import EmaModelCheckpoint
 from src.callbacks.freeze import FreezeCallback
 from src.callbacks.metric_summary import MetricSummaryCallback
 from src.callbacks.model_summary import TreeModelSummary
@@ -24,7 +25,7 @@ callback_registry: Registry[Callback] = Registry("callback")
 
 callback_registry.register("lr_monitor")(LearningRateMonitor)
 callback_registry.register("ema")(EmaCallback)
-callback_registry.register("checkpoint")(ModelCheckpoint)
+callback_registry.register("checkpoint")(EmaModelCheckpoint)
 callback_registry.register("freeze")(FreezeCallback)
 callback_registry.register("model_summary")(TreeModelSummary)
 callback_registry.register("progress_bar")(MetricsProgressBar)

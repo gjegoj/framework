@@ -23,7 +23,7 @@ from src.core.constants import IMAGENET_MEAN, IMAGENET_STD
 from src.core.entities import Batch, is_step_output
 from src.core.enums import Stage
 from src.core.ports import HtmlLogger
-from src.training.modules import LitModule
+from src.training.modules import BaseLitModule
 from src.visualization.pipeline import build_sample_views
 from src.visualization.renderer import HtmlRenderer, Renderer
 
@@ -118,7 +118,9 @@ class SampleLogCallback(L.Callback):
             return
         if not isinstance(trainer.logger, HtmlLogger):
             return
-        if not isinstance(pl_module, LitModule):
+        # BaseLitModule (not LitModule): any regime exposing `tasks` + the StepOutput contract
+        # qualifies — a narrower check silently disables logging for e.g. distillation runs.
+        if not isinstance(pl_module, BaseLitModule):
             return
 
         batch_obj = batch if isinstance(batch, Batch) else Batch(**batch) if isinstance(batch, dict) else None

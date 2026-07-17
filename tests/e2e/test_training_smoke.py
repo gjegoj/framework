@@ -15,6 +15,9 @@ import pytest
 import torch
 
 from src.callbacks.criterion_schedule import CriterionScheduleCallback
+from src.callbacks.ema import EmaCallback
+from src.callbacks.ema_checkpoint import EmaModelCheckpoint
+from src.callbacks.freeze import FreezeCallback
 from src.core.enums import Stage
 from src.core.runtime import RuntimeContext
 from src.data import (
@@ -314,3 +317,142 @@ class TestCriterionScheduleSmoke:
         assert isinstance(focal_loss, FocalLoss)
         assert focal_loss.gamma == pytest.approx(0.5)
         assert "schedule/label/gamma" in trainer.logged_metrics
+
+
+class TestCallbackComboSmoke:
+    """freeze + EMA + criterion_schedule + EMA-aware checkpoint composing in one fit.
+
+    Each callback is pinned in isolation by its unit tests; this smoke pins the
+    cross-callback invariants a real Lightning fit exercises together: the schedule's
+    cached criterion reference survives EMA's weight swaps, the frozen backbone stays
+    untouched by training (EMA's final copy-in reproduces constants only up to float
+    rounding), and the weights-only checkpoint holds the EMA weights that produced the
+    monitored validation metric.
+    """
+
+    def test_freeze_ema_schedule_and_checkpoint_compose(self, csv_path: Path, tmp_path: Path) -> None:
+        runtime = RuntimeContext()
+        transforms = {s: _make_transform((32, 32)) for s in Stage}
+        plain_dm = DataModule(
+            target_bindings=[
+                TargetBinding("label", "label", LabelEncoder(class_mapping={0: "cat", 1: "cow", 2: "dog"}))
+            ],
+            inputs_config="image_path",
+            transforms=transforms,
+            runtime=runtime,
+            batch_size=4,
+            seed=0,
+            source=CsvDataSource(str(csv_path)),
+            split={Stage.TRAIN: 0.6, Stage.VAL: 0.2, Stage.TEST: 0.2},
+            dataloader_options=DataLoaderOptions(drop_last=True),
+        )
+        plain_dm.setup()
+
+        task = classification("label", num_classes=runtime.num_classes["label"])
+        task = dataclasses.replace(task, criterion=criteria.create("focal"))
+        backbone = TimmBackbone("resnet18", pretrained=False)
+        model = build_composite_model(backbone, {"label": task.head_spec})
+
+        lit_module = LitModule(
+            model=model,
+            tasks=[task],
+            optimizer_builder=OptimizerBuilder(base_lr=1e-3),
+        )
+        frozen_before = next(lit_module.model.backbone.parameters()).detach().clone()
+        # monitor=None -> the last epoch is saved, so the file's EMA weights match the
+        # post-fit module (on_train_end copies the average in; no updates follow the save).
+        checkpoint = EmaModelCheckpoint(dirpath=tmp_path, filename="combo", save_weights_only=True)
+
+        trainer = L.Trainer(
+            max_epochs=3,
+            accelerator="cpu",
+            logger=False,
+            enable_progress_bar=False,
+            enable_model_summary=False,
+            num_sanity_val_steps=0,
+            callbacks=[
+                FreezeCallback(targets=["model.backbone"]),
+                CriterionScheduleCallback(task="label", parameter="gamma", start=2.0, end=0.5),
+                EmaCallback(decay=0.9, warmup_fraction=0.0, use_buffers=True),
+                checkpoint,
+            ],
+        )
+        trainer.fit(lit_module, LitDataModule(plain_dm))
+
+        # Schedule applied through EMA's swaps: the cached criterion reference stayed live.
+        focal_loss = task.criterion._loss  # noqa: SLF001 — pinning the applied end value
+        assert isinstance(focal_loss, FocalLoss)
+        assert focal_loss.gamma == pytest.approx(0.5)
+
+        # Backbone frozen: untouched by training, reproduced by the EMA copy-in up to rounding.
+        frozen_after = next(lit_module.model.backbone.parameters()).detach()
+        assert not frozen_after.requires_grad
+        assert torch.allclose(frozen_after, frozen_before, atol=1e-6)
+
+        # The weights-only checkpoint holds the EMA weights (== post-fit module weights).
+        saved = torch.load(checkpoint.best_model_path, weights_only=False)
+        for key, value in lit_module.state_dict().items():
+            if value.dtype.is_floating_point:
+                assert torch.equal(saved["state_dict"][key], value), f"checkpoint diverges at {key}"
+
+
+class TestDistillationSmoke:
+    """2-epoch CPU fit distilling a student from one frozen teacher.
+
+    Pins the regime end-to-end: the KL term is logged, all losses stay finite, the
+    teacher never trains, and the teacher weights never enter the student's state_dict.
+    """
+
+    def test_distillation_fit(self, csv_path: Path) -> None:
+        from src.losses.distillation import KLDivergenceCriterion
+        from src.models import TeacherEnsemble
+        from src.training import DistillationLitModule
+
+        runtime = RuntimeContext()
+        transforms = {s: _make_transform((32, 32)) for s in Stage}
+        plain_dm = DataModule(
+            target_bindings=[
+                TargetBinding("label", "label", LabelEncoder(class_mapping={0: "cat", 1: "cow", 2: "dog"}))
+            ],
+            inputs_config="image_path",
+            transforms=transforms,
+            runtime=runtime,
+            batch_size=4,
+            seed=0,
+            source=CsvDataSource(str(csv_path)),
+            split={Stage.TRAIN: 0.6, Stage.VAL: 0.2, Stage.TEST: 0.2},
+            dataloader_options=DataLoaderOptions(drop_last=True),
+        )
+        plain_dm.setup()
+
+        task = classification("label", num_classes=runtime.num_classes["label"])
+        head_specs = {"label": task.head_spec}
+        student = build_composite_model(TimmBackbone("resnet18", pretrained=False), head_specs)
+        teacher = build_composite_model(TimmBackbone("resnet18", pretrained=False), head_specs)
+        teacher_weight_before = next(teacher.parameters()).detach().clone()
+        ensemble = TeacherEnsemble([teacher])
+
+        lit_module = DistillationLitModule(
+            model=student,
+            tasks=[task],
+            optimizer_builder=OptimizerBuilder(base_lr=1e-3),
+            teachers=ensemble,
+            distillation_criteria={"label": KLDivergenceCriterion(temperature=2.0)},
+            distillation_weights={"label": 0.7},
+        )
+
+        trainer = L.Trainer(
+            max_epochs=2,
+            accelerator="cpu",
+            logger=False,
+            enable_checkpointing=False,
+            enable_progress_bar=False,
+            enable_model_summary=False,
+        )
+        trainer.fit(lit_module, LitDataModule(plain_dm))
+
+        assert "loss/train/label/kl" in trainer.logged_metrics
+        assert all(torch.isfinite(value).all() for value in trainer.logged_metrics.values())
+        # Teacher never trained and never leaked into the student's state_dict.
+        assert torch.equal(next(teacher.parameters()).detach(), teacher_weight_before)
+        assert not any("teacher" in key.lower() for key in lit_module.state_dict())

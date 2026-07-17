@@ -7,16 +7,22 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 import lightning as L
+import torch
+import torch.nn as nn
 
 from src.callbacks.progress_bar import MetricsProgressBar
-from src.composition.wiring.checkpointing import load_init_weights, resolve_test_ckpt_path
+from src.composition.wiring.checkpointing import extract_model_state_dict, load_init_weights, resolve_test_ckpt_path
 from src.composition.wiring.common import forward_extras
 from src.composition.wiring.export import run_export
-from src.config.schema import ExperimentConfig, OptimizerConfig, SchedulerConfig
+from src.composition.wiring.model import build_backbone
+from src.config.schema import DistillationConfig, ExperimentConfig, OptimizerConfig, SchedulerConfig
 from src.core.entities import Task
 from src.core.instantiate import instantiate
-from src.models.assembly import CompositeModel
-from src.training.modules import LitDataModule, LitModule
+from src.core.ports import Criterion
+from src.losses.registry import criteria
+from src.models.assembly import CompositeModel, build_composite_model
+from src.models.ensemble import TeacherEnsemble
+from src.training.modules import BaseLitModule, DistillationLitModule, LitDataModule, LitModule
 from src.training.optim import TRAINER_FACTS, OptimizerBuilder, SchedulerBuilder
 
 if TYPE_CHECKING:
@@ -109,18 +115,95 @@ def build_task_lr_overrides(config: ExperimentConfig) -> dict[str, float]:
     }
 
 
+def build_teachers(distillation_config: DistillationConfig, tasks: list[Task]) -> TeacherEnsemble:
+    """Assemble the frozen teacher ensemble: teacher backbone + student-derived heads + weights.
+
+    Each teacher's heads are sized from the *student's* task specs, so the teacher's
+    per-task logit shapes match the student's by construction. Weights load via the
+    shared ``extract_model_state_dict`` (Lightning ``.ckpt`` or raw state dict); the
+    LitModule ``model.`` key prefix is stripped when present. EMA checkpoints
+    contribute their EMA weights automatically (that is what their ``state_dict`` holds).
+
+    Parameters:
+        distillation_config (DistillationConfig): Validated distillation section.
+        tasks (list[Task]): Student tasks (their head specs size the teacher heads).
+
+    Returns:
+        TeacherEnsemble: Frozen ensemble producing averaged soft targets per task.
+    """
+    head_specs = {task.name: task.head_spec for task in tasks}
+    teachers: list[nn.Module] = []
+    for teacher_config in distillation_config.teachers:
+        backbone = build_backbone(teacher_config.backbone)
+        composite = build_composite_model(backbone, head_specs)
+        checkpoint = torch.load(teacher_config.ckpt_path, map_location="cpu", weights_only=True)
+        state = extract_model_state_dict(checkpoint)
+        # A LitModule checkpoint prefixes model weights with "model."; a raw CompositeModel
+        # state dict does not. Strip the prefix in the former case, load verbatim otherwise.
+        if any(key.startswith("model.") for key in state):
+            state = {key.removeprefix("model."): value for key, value in state.items() if key.startswith("model.")}
+        composite.load_state_dict(state, strict=True)
+        teachers.append(composite)
+    return TeacherEnsemble(teachers)
+
+
+def resolve_distillation_bricks(
+    distillation_config: DistillationConfig, tasks: list[Task]
+) -> tuple[dict[str, Criterion], dict[str, float]]:
+    """Resolve per-task soft-loss criteria and additive weights; validate task names.
+
+    ``tasks: null`` distills every task. A per-task ``weight`` map applies its values
+    (defaulting missing entries to ``1.0``); a scalar ``weight`` applies to all. The
+    default criterion is the ``kl_divergence`` brick carrying ``temperature``; an
+    explicit ``loss:`` brick-spec wins outright.
+
+    Parameters:
+        distillation_config (DistillationConfig): Validated distillation section.
+        tasks (list[Task]): Student tasks (the universe of distillable names).
+
+    Returns:
+        tuple[dict[str, Criterion], dict[str, float]]: Per-task criteria and weights.
+
+    Raises:
+        ValueError: If ``tasks`` or a ``weight`` map names an unknown task.
+    """
+    task_names = [task.name for task in tasks]
+    distilled = distillation_config.tasks if distillation_config.tasks is not None else task_names
+    unknown = set(distilled) - set(task_names)
+    if unknown:
+        raise ValueError(f"distillation.tasks reference unknown task(s): {sorted(unknown)}; tasks: {task_names}.")
+
+    weight = distillation_config.weight
+    if isinstance(weight, dict):
+        unknown_weights = set(weight) - set(distilled)
+        if unknown_weights:
+            raise ValueError(f"distillation.weight references unknown task(s): {sorted(unknown_weights)}.")
+        weights = {name: weight.get(name, 1.0) for name in distilled}
+    else:
+        weights = {name: weight for name in distilled}
+
+    def build_criterion() -> Criterion:
+        if distillation_config.loss is None:
+            return criteria.create("kl_divergence", temperature=distillation_config.temperature)
+        return instantiate(distillation_config.loss, criteria)
+
+    return {name: build_criterion() for name in distilled}, weights
+
+
 def build_lit_module(
     config: ExperimentConfig,
     model: CompositeModel,
     tasks: list[Task],
     optimizer_builder: OptimizerBuilder,
     scheduler_builder: SchedulerBuilder | None = None,
-) -> LitModule:
-    """Build a ``LitModule`` from the assembled collaborators and config hyperparams.
+) -> BaseLitModule:
+    """Build the training module from the assembled collaborators and config hyperparams.
 
     Per-task LR overrides already live on ``optimizer_builder`` (bound in
     ``build_optimizer_builder``), so this only wires the module and serialises the
-    full config as hyperparams the logger records at ``on_fit_start``.
+    full config as hyperparams the logger records at ``on_fit_start``. When
+    ``config.distillation`` is set, the distillation regime is built instead of the
+    plain module (the sanctioned single branch, like ``kind: multi`` for backbones).
 
     Parameters:
         config (ExperimentConfig): Validated experiment config.
@@ -129,14 +212,27 @@ def build_lit_module(
         optimizer_builder (OptimizerBuilder): Fully configured (incl. per-head LRs).
 
     Returns:
-        LitModule: Ready for ``L.Trainer.fit``.
+        BaseLitModule: ``DistillationLitModule`` when distillation is configured, else ``LitModule``.
     """
+    hparams = config.model_dump(mode="json")
+    if config.distillation is not None:
+        distillation_criteria, distillation_weights = resolve_distillation_bricks(config.distillation, tasks)
+        return DistillationLitModule(
+            model=model,
+            tasks=tasks,
+            optimizer_builder=optimizer_builder,
+            scheduler_builder=scheduler_builder,
+            teachers=build_teachers(config.distillation, tasks),
+            distillation_criteria=distillation_criteria,
+            distillation_weights=distillation_weights,
+            hparams=hparams,
+        )
     return LitModule(
         model=model,
         tasks=tasks,
         optimizer_builder=optimizer_builder,
         scheduler_builder=scheduler_builder,
-        hparams=config.model_dump(mode="json"),
+        hparams=hparams,
     )
 
 
@@ -234,7 +330,7 @@ def _lightning_prints_test_results(trainer: L.Trainer) -> bool:
 
 def run_experiment(
     trainer: L.Trainer,
-    lit_module: LitModule,
+    lit_module: BaseLitModule,
     lit_data_module: LitDataModule,
     config: ExperimentConfig,
     tasks: list[Task],
@@ -248,7 +344,7 @@ def run_experiment(
 
     Parameters:
         trainer (L.Trainer): Configured Lightning trainer.
-        lit_module (LitModule): Model module.
+        lit_module (BaseLitModule): Model module (any regime: standard or distillation).
         lit_data_module (LitDataModule): Data module.
         config (ExperimentConfig): Validated experiment config.
         tasks (list[Task]): Active tasks (for export planning).

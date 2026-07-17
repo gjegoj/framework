@@ -5,44 +5,15 @@ from __future__ import annotations
 from collections.abc import Callable
 from unittest.mock import MagicMock
 
-import lightning as L
 import pytest
 import torch
-import torch.nn as nn
 
 from src.callbacks.ema import EmaCallback
 from src.callbacks.freeze import FreezeCallback
 from src.callbacks.metric_summary import MetricSummaryCallback
 from src.callbacks.model_summary import TreeModelSummary, tree_names
 from src.callbacks.registry import callback_registry
-from tests.support.fakes import FakePlotLogger
-
-# ---------------------------------------------------------------- helpers
-
-
-class _TinyModule(L.LightningModule):
-    def __init__(self) -> None:
-        super().__init__()
-        self.linear = nn.Linear(2, 2, bias=False)
-        nn.init.ones_(self.linear.weight)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.linear(x)  # type: ignore[no-any-return]
-
-    def training_step(self, batch: object, batch_idx: int) -> torch.Tensor:
-        return torch.tensor(0.0)
-
-    def configure_optimizers(self) -> torch.optim.Optimizer:
-        return torch.optim.SGD(self.parameters(), lr=0.01)
-
-
-def _trainer(global_step: int = 1, estimated_stepping_batches: int = 100) -> MagicMock:
-    t = MagicMock()
-    t.global_step = global_step
-    t.estimated_stepping_batches = estimated_stepping_batches
-    t.max_epochs = 10
-    return t
-
+from tests.support.fakes import FakePlotLogger, TinyLitModule, make_mock_trainer
 
 # ---------------------------------------------------------------- EmaCallback: init
 
@@ -86,22 +57,22 @@ class TestEmaCallbackInit:
 class TestEmaCallbackSetup:
     def test_average_model_created_on_fit(self) -> None:
         cb = EmaCallback(decay=0.999)
-        cb.setup(_trainer(), _TinyModule(), stage="fit")
+        cb.setup(make_mock_trainer(), TinyLitModule(), stage="fit")
         assert cb._average_model is not None
 
     def test_no_average_model_outside_fit(self) -> None:
         cb = EmaCallback(decay=0.999)
-        cb.setup(_trainer(), _TinyModule(), stage="validate")
+        cb.setup(make_mock_trainer(), TinyLitModule(), stage="validate")
         assert cb._average_model is None
 
     def test_warmup_fraction_resolves_to_start_step(self) -> None:
         cb = EmaCallback(decay=0.999, warmup_fraction=0.5)
-        cb.setup(_trainer(estimated_stepping_batches=200), _TinyModule(), stage="fit")
+        cb.setup(make_mock_trainer(estimated_stepping_batches=200), TinyLitModule(), stage="fit")
         assert cb.update_starting_at_step == 100
 
     def test_zero_warmup_starts_at_step_zero(self) -> None:
         cb = EmaCallback(decay=0.999, warmup_fraction=0.0)
-        cb.setup(_trainer(estimated_stepping_batches=200), _TinyModule(), stage="fit")
+        cb.setup(make_mock_trainer(estimated_stepping_batches=200), TinyLitModule(), stage="fit")
         assert cb.update_starting_at_step == 0
 
 
@@ -114,11 +85,11 @@ class TestEmaCallbackSetup:
 
 class TestEmaWarmupValidationGuard:
     @staticmethod
-    def _prepared(latest_update_step: int) -> tuple[EmaCallback, _TinyModule]:
+    def _prepared(latest_update_step: int) -> tuple[EmaCallback, TinyLitModule]:
         """Averaged model captures the init weights (ones); the live model is then diverged to twos."""
-        module = _TinyModule()  # linear.weight initialised to ones -> AveragedModel copies ones
+        module = TinyLitModule()  # linear.weight initialised to ones -> AveragedModel copies ones
         cb = EmaCallback(decay=0.999, warmup_fraction=0.5)
-        cb.setup(_trainer(estimated_stepping_batches=200), module, stage="fit")
+        cb.setup(make_mock_trainer(estimated_stepping_batches=200), module, stage="fit")
         with torch.no_grad():
             module.linear.weight.copy_(torch.full_like(module.linear.weight, 2.0))
         cb._latest_update_step = latest_update_step
@@ -127,26 +98,26 @@ class TestEmaWarmupValidationGuard:
     def test_no_swap_during_warmup(self) -> None:
         """Before any EMA update, validation keeps the live (training) weights — no swap to init."""
         cb, module = self._prepared(latest_update_step=0)
-        cb.on_validation_epoch_start(_trainer(), module)
+        cb.on_validation_epoch_start(make_mock_trainer(), module)
         assert torch.allclose(module.linear.weight, torch.full_like(module.linear.weight, 2.0))
 
     def test_swap_after_averaging_started(self) -> None:
         """Once averaging has begun, the averaged weights (ones) are swapped in for validation."""
         cb, module = self._prepared(latest_update_step=5)
-        cb.on_validation_epoch_start(_trainer(), module)
+        cb.on_validation_epoch_start(make_mock_trainer(), module)
         assert torch.allclose(module.linear.weight, torch.ones_like(module.linear.weight))
 
     def test_validation_swap_is_symmetric_after_start(self) -> None:
         """start then end restores the live weights (averaged swapped in, then back out)."""
         cb, module = self._prepared(latest_update_step=5)
-        cb.on_validation_epoch_start(_trainer(), module)
-        cb.on_validation_epoch_end(_trainer(), module)
+        cb.on_validation_epoch_start(make_mock_trainer(), module)
+        cb.on_validation_epoch_end(make_mock_trainer(), module)
         assert torch.allclose(module.linear.weight, torch.full_like(module.linear.weight, 2.0))
 
     def test_train_end_keeps_trained_weights_if_averaging_never_ran(self) -> None:
         """The degenerate no-averaging case must not overwrite the trained model with init weights."""
         cb, module = self._prepared(latest_update_step=0)
-        cb.on_train_end(_trainer(), module)
+        cb.on_train_end(make_mock_trainer(), module)
         assert torch.allclose(module.linear.weight, torch.full_like(module.linear.weight, 2.0))
 
     def test_checkpoint_during_warmup_keeps_live_weights(self) -> None:
@@ -158,7 +129,7 @@ class TestEmaWarmupValidationGuard:
         """
         cb, module = self._prepared(latest_update_step=0)
         checkpoint = {"state_dict": {key: value.clone() for key, value in module.state_dict().items()}}
-        cb.on_save_checkpoint(_trainer(), module, checkpoint)
+        cb.on_save_checkpoint(make_mock_trainer(), module, checkpoint)
         assert torch.allclose(checkpoint["state_dict"]["linear.weight"], torch.full((2, 2), 2.0))
         assert "current_model_state" not in checkpoint
 
@@ -166,7 +137,7 @@ class TestEmaWarmupValidationGuard:
         """Once averaging runs, the parent behaviour applies: state_dict = EMA, live kept aside."""
         cb, module = self._prepared(latest_update_step=5)
         checkpoint = {"state_dict": {key: value.clone() for key, value in module.state_dict().items()}}
-        cb.on_save_checkpoint(_trainer(), module, checkpoint)
+        cb.on_save_checkpoint(make_mock_trainer(), module, checkpoint)
         assert torch.allclose(checkpoint["state_dict"]["linear.weight"], torch.ones(2, 2))
         assert torch.allclose(checkpoint["current_model_state"]["linear.weight"], torch.full((2, 2), 2.0))
 
@@ -182,9 +153,9 @@ class TestEmaWarmupValidationGuard:
 
 class TestEmaPrivateApiCanary:
     def test_real_update_path_flips_the_guard(self) -> None:
-        module = _TinyModule()
+        module = TinyLitModule()
         cb = EmaCallback(decay=0.999, warmup_fraction=0.0)  # update_starting_at_step == 0
-        trainer = _trainer(global_step=1, estimated_stepping_batches=100)
+        trainer = make_mock_trainer(global_step=1, estimated_stepping_batches=100)
         cb.setup(trainer, module, stage="fit")
         assert not cb._averaging_has_started()  # nothing averaged yet
 
@@ -281,7 +252,7 @@ class TestTreeModelSummary:
 # ---------------------------------------------------------------- MetricSummaryCallback
 
 
-def _summary_trainer(logger: object, *, global_zero: bool = True) -> MagicMock:
+def _summarymake_mock_trainer(logger: object, *, global_zero: bool = True) -> MagicMock:
     trainer = MagicMock()
     trainer.is_global_zero = global_zero
     trainer.logger = logger
@@ -300,7 +271,7 @@ class TestMetricSummaryCallback:
 
     def test_reports_headline_metrics_to_plot_logger(self) -> None:
         logger = FakePlotLogger()
-        MetricSummaryCallback().on_test_end(_summary_trainer(logger), MagicMock())
+        MetricSummaryCallback().on_test_end(_summarymake_mock_trainer(logger), MagicMock())
         # Names match the training table rows: stage and the "mean" leaf are stripped.
         assert set(logger.single_values) == {"species/f1", "breed/f1", "loss/total"}
         assert logger.single_values["species/f1"] == pytest.approx(0.75, abs=1e-4)
@@ -308,9 +279,9 @@ class TestMetricSummaryCallback:
     def test_noop_without_plot_logger(self) -> None:
         """A logger lacking the single-value capability is skipped, not crashed."""
         cb = MetricSummaryCallback()
-        cb.on_test_end(_summary_trainer(object()), MagicMock())  # object() is not a PlotLogger
+        cb.on_test_end(_summarymake_mock_trainer(object()), MagicMock())  # object() is not a PlotLogger
 
     def test_skips_non_global_zero(self) -> None:
         logger = FakePlotLogger()
-        MetricSummaryCallback().on_test_end(_summary_trainer(logger, global_zero=False), MagicMock())
+        MetricSummaryCallback().on_test_end(_summarymake_mock_trainer(logger, global_zero=False), MagicMock())
         assert logger.single_values == {}

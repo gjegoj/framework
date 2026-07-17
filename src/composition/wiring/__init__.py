@@ -40,7 +40,9 @@ from src.composition.wiring.training import (
     build_optimizer_builder,
     build_scheduler_builder,
     build_task_lr_overrides,
+    build_teachers,
     build_trainer,
+    resolve_distillation_bricks,
     run_experiment,
 )
 
@@ -60,6 +62,7 @@ __all__ = [
     "build_staged_sources",
     "build_task_lr_overrides",
     "build_tasks",
+    "build_teachers",
     "build_trainer",
     "build_transforms",
     "callback_builders",
@@ -67,6 +70,7 @@ __all__ = [
     "forward_extras",
     "load_init_weights",
     "resolve_ckpt_file",
+    "resolve_distillation_bricks",
     "resolve_test_ckpt_path",
     "run_experiment",
     "run_export",

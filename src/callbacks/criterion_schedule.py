@@ -27,12 +27,20 @@ _SCHEDULES: dict[str, Callable[[float], float]] = {
 }
 
 
+def _is_plain_number(value: object) -> bool:
+    """Return whether ``value`` is a schedulable plain int/float.
+
+    ``bool`` passes ``isinstance(..., int)`` but is a flag, not a quantity — excluded.
+    """
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
 def scheduled_value(epoch: int, window: int, start: float, end: float, shape: Callable[[float], float]) -> float:
     """Interpolate the scheduled value for an epoch.
 
     Epoch 0 yields exactly ``start``; the last epoch of the window (and every epoch
-    after) yields exactly ``end``. Degenerate ``window == 1`` has no room to ramp —
-    the value stays at ``start``.
+    after) yields exactly ``end``. Degenerate ``window == 1`` collapses the ramp to a
+    step: epoch 0 stays at ``start``, every later epoch yields ``end``.
 
     Parameters:
         epoch (int): Current epoch index (0-based).
@@ -73,7 +81,7 @@ class CriterionScheduleCallback(L.Callback):
         if not 0.0 < over <= 1.0:
             raise ValueError(f"over must be a fraction in (0, 1], got {over}.")
         for label, value in (("start", start), ("end", end)):
-            if isinstance(value, bool) or not isinstance(value, (int, float)):
+            if not _is_plain_number(value):
                 raise ValueError(f"{label} must be a number, got {value!r}.")
         self._task_name = task
         self._parameter = parameter
@@ -130,19 +138,14 @@ class CriterionScheduleCallback(L.Callback):
                     f"CriterionScheduleCallback: {self._parameter!r} is a learnable nn.Parameter — "
                     "scheduling it fights the optimizer."
                 )
-            if isinstance(value, bool) or not isinstance(value, (int, float)):
+            if not _is_plain_number(value):
                 raise ValueError(
                     f"CriterionScheduleCallback: {self._parameter!r} is not a plain numeric attribute "
                     f"(got {type(value).__name__}); tensors/buffers are not schedulable."
                 )
             return owner
         available = sorted(
-            {
-                name
-                for owner in candidates
-                for name, value in vars(owner).items()
-                if isinstance(value, (int, float)) and not isinstance(value, bool)
-            }
+            {name for owner in candidates for name, value in vars(owner).items() if _is_plain_number(value)}
         )
         message = (
             f"CriterionScheduleCallback: criterion for task {self._task_name!r} has no attribute "

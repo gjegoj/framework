@@ -126,6 +126,7 @@ class TestValidationAndGradients:
         [
             pytest.param(lambda: FocalLoss(gamma=-1.0), "gamma must be non-negative", id="negative_gamma"),
             pytest.param(lambda: FocalLoss(reduction="average"), "reduction must be", id="unknown_reduction"),
+            pytest.param(lambda: FocalLoss(eps=0.0), "eps must be positive", id="non_positive_eps"),
         ],
     )
     def test_invalid_constructor_argument_raises(self, build: Callable[[], FocalLoss], match: str) -> None:
@@ -135,6 +136,23 @@ class TestValidationAndGradients:
     def test_gradients_flow_to_logits(self) -> None:
         logits = torch.randn(8, 4, requires_grad=True)
         FocalCriterion(gamma=2.0, alpha=[1.0, 2.0, 1.0, 0.5])(logits, torch.randint(0, 4, (8,))).total.backward()
+        assert logits.grad is not None and torch.isfinite(logits.grad).all()
+
+    @pytest.mark.parametrize(
+        "gamma",
+        [
+            pytest.param(0.0, id="cross_entropy"),
+            pytest.param(0.5, id="fractional_focus"),
+            pytest.param(1.0, id="unit_focus"),
+            pytest.param(2.0, id="default_focus"),
+        ],
+    )
+    def test_gradients_finite_at_saturated_confidence(self, gamma: float) -> None:
+        """A fully-learned target rounds p_t to exactly 1.0 in fp32, so the focal base is 0;
+        pow's backward at a zero base is infinite for gamma < 1 — the whole declared gamma
+        domain must stay finite (criterion_schedule anneals gamma straight through (0, 1))."""
+        logits = torch.tensor([[40.0, -40.0], [0.5, -0.5]], requires_grad=True)
+        FocalCriterion(gamma=gamma)(logits, torch.tensor([0, 0])).total.backward()
         assert logits.grad is not None and torch.isfinite(logits.grad).all()
 
 

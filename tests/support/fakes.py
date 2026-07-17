@@ -2,14 +2,19 @@
 
 ``FakePlotLogger`` is the full-contract artifact-logger double consumed by the metrics,
 callbacks, reporting and sample-log tests; it records every call for assertion.
+``TinyLitModule`` / ``make_mock_trainer`` are the minimal Lightning module and trainer
+doubles the callback tests drive hooks against.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
 from typing import Any
+from unittest.mock import MagicMock
 
+import lightning as L
 import torch
+import torch.nn as nn
 
 from src.core.plotting import Plot
 from src.core.ports import (
@@ -20,6 +25,37 @@ from src.core.ports import (
     PlotLogger,
     SingleValueLogger,
 )
+
+
+class TinyLitModule(L.LightningModule):
+    """Smallest possible LightningModule: one bias-free linear layer initialised to ones.
+
+    The deterministic init lets EMA tests distinguish averaged weights (ones) from
+    live weights they diverge manually.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.linear = nn.Linear(2, 2, bias=False)
+        nn.init.ones_(self.linear.weight)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.linear(x)  # type: ignore[no-any-return]
+
+    def training_step(self, batch: object, batch_idx: int) -> torch.Tensor:
+        return torch.tensor(0.0)
+
+    def configure_optimizers(self) -> torch.optim.Optimizer:
+        return torch.optim.SGD(self.parameters(), lr=0.01)
+
+
+def make_mock_trainer(global_step: int = 1, estimated_stepping_batches: int = 100) -> MagicMock:
+    """Build a ``MagicMock`` trainer with the attributes callback hooks read."""
+    trainer = MagicMock()
+    trainer.global_step = global_step
+    trainer.estimated_stepping_batches = estimated_stepping_batches
+    trainer.max_epochs = 10
+    return trainer
 
 
 class FakePlotLogger(MatrixLogger, CurveLogger, HtmlLogger, SingleValueLogger, HistogramLogger, PlotLogger):

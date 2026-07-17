@@ -10,7 +10,7 @@ import lightning as L
 import torch
 
 from src.config.schema import ExperimentConfig
-from src.training.modules import LitModule
+from src.training.modules import BaseLitModule
 
 log = logging.getLogger(__name__)
 
@@ -37,7 +37,7 @@ def extract_model_state_dict(checkpoint: object) -> dict[str, Any]:
     raise ValueError("Checkpoint must be a Lightning .ckpt with 'state_dict' or a raw state_dict mapping.")
 
 
-def load_init_weights(lit_module: LitModule, ckpt_path: str) -> None:
+def load_init_weights(lit_module: BaseLitModule, ckpt_path: str) -> None:
     """Load pretrained weights into ``lit_module`` before ``fit`` (not resume).
 
     Only model parameters/buffers are copied; optimizer and trainer state are untouched.
@@ -45,7 +45,7 @@ def load_init_weights(lit_module: LitModule, ckpt_path: str) -> None:
     (the same tensors used for validation and checkpoint export).
 
     Parameters:
-        lit_module (LitModule): Module to initialize.
+        lit_module (BaseLitModule): Module to initialize.
         ckpt_path (str): Path to a ``.ckpt`` file.
 
     Raises:

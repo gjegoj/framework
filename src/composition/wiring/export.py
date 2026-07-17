@@ -12,14 +12,14 @@ from src.config.schema import ExperimentConfig
 from src.core.entities import Task
 from src.export.pipeline import export_model
 from src.export.spec import guard_exportable_topologies
-from src.training.modules import LitModule
+from src.training.modules import BaseLitModule
 
 log = logging.getLogger(__name__)
 
 
 def ensure_module_weights_for_export(
     trainer: L.Trainer,
-    lit_module: LitModule,
+    lit_module: BaseLitModule,
     config: ExperimentConfig,
     *,
     trained: bool,
@@ -29,7 +29,7 @@ def ensure_module_weights_for_export(
 
     Parameters:
         trainer (L.Trainer): Trainer (for checkpoint callback paths).
-        lit_module (LitModule): Module to load into.
+        lit_module (BaseLitModule): Module to load into.
         config (ExperimentConfig): Experiment config.
         trained (bool): Whether ``fit`` ran in this session.
         tested (bool): Whether ``test`` ran in this session.
@@ -62,7 +62,7 @@ def validate_export_preconditions(config: ExperimentConfig, tasks: list[Task]) -
 
 def run_export(
     trainer: L.Trainer,
-    lit_module: LitModule,
+    lit_module: BaseLitModule,
     tasks: list[Task],
     config: ExperimentConfig,
     *,
@@ -73,7 +73,7 @@ def run_export(
 
     Parameters:
         trainer (L.Trainer): Trainer instance.
-        lit_module (LitModule): Trained/evaluated module.
+        lit_module (BaseLitModule): Trained/evaluated module.
         tasks (list[Task]): Active tasks.
         config (ExperimentConfig): Validated config.
         trained (bool): Whether training ran.

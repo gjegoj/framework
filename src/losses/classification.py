@@ -68,27 +68,38 @@ class FocalLoss(nn.Module):
         gamma (float): Focusing parameter (``>= 0``); higher down-weights easy examples more.
             ``0`` recovers (weighted) cross-entropy.
         reduction (str): ``"mean"`` (default) / ``"sum"`` / ``"none"``.
+        eps (float): Floor for the focal base ``1 - p_t``, keeping ``pow`` differentiable
+            when ``p_t`` saturates to exactly ``1.0`` (``> 0``).
     """
 
     alpha: Tensor | None
 
-    def __init__(self, alpha: list[float] | None = None, gamma: float = 2.0, reduction: str = "mean") -> None:
+    def __init__(
+        self, alpha: list[float] | None = None, gamma: float = 2.0, reduction: str = "mean", eps: float = 1e-6
+    ) -> None:
         super().__init__()
         if gamma < 0:
             raise ValueError(f"gamma must be non-negative, got {gamma}.")
         if reduction not in ("mean", "sum", "none"):
             raise ValueError(f"reduction must be 'mean'/'sum'/'none', got {reduction!r}.")
+        if eps <= 0:
+            raise ValueError(f"eps must be positive, got {eps}.")
         weights = torch.tensor(alpha, dtype=torch.float) if alpha is not None else None
         # Buffer so the weights follow the module across .to(device) and state_dict.
         self.register_buffer("alpha", weights)
         self.gamma = gamma
         self.reduction = reduction
+        self.eps = eps
 
     def forward(self, logits: Tensor, target: Tensor) -> Tensor:
         log_probabilities = F.log_softmax(logits, dim=1)
         target_log_probability = log_probabilities.gather(1, target.unsqueeze(1)).squeeze(1)
         target_probability = target_log_probability.exp()
-        loss = -(1.0 - target_probability).pow(self.gamma) * target_log_probability
+        # A fully-learned target rounds p_t to exactly 1.0 in fp32 and pow's backward at a
+        # zero base is infinite for gamma < 1, so the base is floored to keep every gamma
+        # in the declared domain (annealing from 0 crosses (0, 1)) differentiable.
+        focal_base = (1.0 - target_probability).clamp_min(self.eps)
+        loss = -focal_base.pow(self.gamma) * target_log_probability
         if self.alpha is not None:
             loss = loss * self.alpha[target]
         if self.reduction == "mean":
@@ -111,9 +122,12 @@ class FocalCriterion(SingleTermCriterion):
         alpha (list[float] | None): Per-class weights (length ``C``). ``None`` → unweighted.
         gamma (float): Focusing parameter (default ``2.0``).
         reduction (str): ``"mean"`` (default) / ``"sum"`` / ``"none"``.
+        eps (float): Floor for the focal base ``1 - p_t`` (``> 0``); see :class:`FocalLoss`.
     """
 
     component_name = "focal"
 
-    def __init__(self, alpha: list[float] | None = None, gamma: float = 2.0, reduction: str = "mean") -> None:
-        super().__init__(FocalLoss(alpha=alpha, gamma=gamma, reduction=reduction))
+    def __init__(
+        self, alpha: list[float] | None = None, gamma: float = 2.0, reduction: str = "mean", eps: float = 1e-6
+    ) -> None:
+        super().__init__(FocalLoss(alpha=alpha, gamma=gamma, reduction=reduction, eps=eps))

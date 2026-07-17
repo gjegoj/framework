@@ -1,0 +1,12 @@
+kind: dino_dpt
+name: dpt
+encoder_name: tu-vit_small_plus_patch16_dinov3.lvd1689m
+encoder_weights: true
+encoder_depth: 4
+encoder_output_indices: [2, 5, 8, 11]
+decoder_readout: cat                  # [cat, add, ignore]
+decoder_intermediate_channels: [128, 256, 512, 512]
+decoder_fusion_channels: 256
+global_pool: token  # required for ViT token-pool encoders
+dynamic_img_size: false
+img_size: ${image_size}

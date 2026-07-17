@@ -3,22 +3,30 @@
 Holds everything common across training regimes — construction, the step dispatch,
 device/epoch hooks, optimizer configuration, loss/metric logging — leaving only the
 per-batch ``_shared_step`` (forward → loss → aggregate) for subclasses. ``LitModule`` is
-the standard supervised implementation; a knowledge-distillation module would subclass this
-and override ``_shared_step`` (teacher forward + KD loss) while reusing the rest unchanged.
+the standard supervised implementation whose loop delegates to two fine-grained seams —
+``_auxiliary_targets`` (extra per-batch targets) and ``_task_loss`` (how one task's loss
+is formed) — so a regime that only varies the loss (e.g. ``DistillationLitModule``)
+subclasses ``LitModule`` and overrides the seams; a regime with a genuinely different
+step shape overrides ``_shared_step`` itself.
 """
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any
+from collections.abc import Iterable
+from typing import TYPE_CHECKING, Any
 
 import lightning as L
 import torch.nn as nn
 from lightning.pytorch.loggers import Logger as LightningLogger
 from lightning.pytorch.utilities.types import OptimizerLRScheduler, OptimizerLRSchedulerConfig
 
-from src.core.entities import Batch, LossResult, StepOutput, Task
+from src.core.entities import Batch, LossResult, StepOutput, TargetView, Task
 from src.core.enums import Stage
+
+if TYPE_CHECKING:
+    from torch import Tensor
+
 from src.core.keys import LOSS, TOTAL
 from src.core.ports import LossAggregator
 from src.metrics.directions import task_metric_directions
@@ -72,6 +80,29 @@ class BaseLitModule(L.LightningModule, ABC):
     def _shared_step(self, batch: Batch, stage: Stage) -> StepOutput:
         """Run one forward + loss/metric step on a normalized ``Batch`` (regime-specific)."""
 
+    def _auxiliary_targets(self, batch: Batch, stage: Stage) -> dict[str, Tensor]:
+        """Per-batch extra targets a regime injects before the per-task loss (default: none).
+
+        Keyed by task name — :meth:`_task_loss` looks its task up by ``task.name``. The
+        distillation regime overrides this to supply teacher soft targets on TRAIN; the
+        shared step loop passes the result to :meth:`_task_loss`.
+        """
+        return {}
+
+    def _task_loss(self, task: Task, logits: Tensor, target: TargetView, auxiliary: dict[str, Tensor]) -> LossResult:
+        """Compute one task's loss (default: the task criterion on the ground-truth target).
+
+        The seam the distillation regime overrides to add ``weight * soft`` from
+        ``auxiliary`` (teacher soft targets), keeping the shared step loop in one place.
+
+        Parameters:
+            task (Task): The task whose loss is computed.
+            logits (Tensor): The task head's raw outputs.
+            target (TargetView): Adapted loss/metric targets for the task.
+            auxiliary (dict[str, Tensor]): Extra per-batch targets from :meth:`_auxiliary_targets`.
+        """
+        return task.criterion(logits, target.loss)
+
     def _run_step(self, batch: Batch | dict[str, Any], stage: Stage) -> StepOutput:
         """Normalize the Lightning batch (collate may yield a dict) and dispatch to ``_shared_step``."""
         return self._shared_step(Batch(**batch) if isinstance(batch, dict) else batch, stage)
@@ -121,8 +152,17 @@ class BaseLitModule(L.LightningModule, ABC):
 
     # ----------------------------------------------------------- optimizer
 
+    def _extra_optimizer_parameters(self) -> Iterable[nn.Parameter]:
+        """Trainable parameters outside ``self.model`` the optimizer must include.
+
+        Defaults to the task criteria (learnable terms like InfoNCE's ``logit_scale``);
+        a regime with extra parametric components (e.g. a parametric distillation loss)
+        overrides this to chain them in.
+        """
+        return self._criteria.parameters()
+
     def configure_optimizers(self) -> OptimizerLRScheduler:
-        optimizer = self._optimizer_builder.build(self.model, extra_params=self._criteria.parameters())
+        optimizer = self._optimizer_builder.build(self.model, extra_params=self._extra_optimizer_parameters())
         if self._scheduler_builder is None:
             return optimizer
         trainer_facts = {name: getattr(self.trainer, attribute) for name, attribute in TRAINER_FACTS.items()}

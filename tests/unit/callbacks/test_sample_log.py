@@ -130,6 +130,41 @@ class TestSampleLogCallback:
         assert fake_logger.html_calls[0]["title"] == "samples/val"
         assert fake_logger.html_calls[0]["html"] == "<html>fake</html>"
 
+    def test_logs_for_any_base_lit_module_regime(self) -> None:
+        """The guard is BaseLitModule-wide: a distillation run must get sample grids too.
+
+        Regression: an `isinstance(pl_module, LitModule)`-narrow guard silently disabled
+        visualization for every non-standard training regime.
+        """
+        from src.losses.distillation import KLDivergenceCriterion
+        from src.models.ensemble import TeacherEnsemble
+        from src.training.modules.distillation import DistillationLitModule
+
+        task = replace(classification("species", num_classes=3), class_names=["cat", "cow", "dog"])
+        model = build_composite_model(EmbeddingBackbone(embedding_dim=8), {"species": task.head_spec})
+
+        class _FixedTeacher(torch.nn.Module):
+            def forward(self, inputs: dict[str, Any]) -> Any:
+                from src.core.entities import FeatureBundle, ModelOutput
+
+                return ModelOutput(features=FeatureBundle(), task_logits={"species": torch.randn(4, 3)})
+
+        distillation_module = DistillationLitModule(
+            model=model,
+            tasks=[task],
+            optimizer_builder=OptimizerBuilder(base_lr=1e-3),
+            teachers=TeacherEnsemble([_FixedTeacher()]),
+            distillation_criteria={"species": KLDivergenceCriterion()},
+            distillation_weights={"species": 0.5},
+        )
+        fake_logger = FakePlotLogger()
+        renderer = _RecordingRenderer()
+        cb = SampleLogCallback(
+            num_images=2, batch_index=0, mean=(0.0, 0.0, 0.0), std=(1.0, 1.0, 1.0), renderer=renderer
+        )
+        cb.on_validation_batch_end(_trainer(fake_logger), distillation_module, _outputs(), _batch(), batch_idx=0)
+        assert len(fake_logger.html_calls) == 1
+
     def test_no_op_without_plot_logger(self) -> None:
         renderer = _RecordingRenderer()
         cb = SampleLogCallback(num_images=2, renderer=renderer)

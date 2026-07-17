@@ -16,9 +16,16 @@ MULTIVIEW (Siamese: N views through one shared backbone) and MULTISTREAM (dual/m
 CLIP/SigLIP-style) topologies with triplet / margin-ranking / InfoNCE / SigLIP / ArcFace
 losses. Backbones: `TimmBackbone`, multi-stream `SmpBackbone` (`ENCODER_LAST`/`DECODER`,
 per-task `feature_key`), precomputed-`EmbeddingBackbone`, and multi-encoder `MultiEncoderBackbone`.
-Training: per-head LR via param-groups, LR **schedulers** (`training/scheduler.py`), typed metric
+Training: per-head LR via param-groups, LR **schedulers** (`training/scheduler.py`), a **knowledge-distillation**
+regime (`DistillationLitModule` extends `LitModule` via the base's two step seams —
+`_auxiliary_targets`/`_task_loss` — so the step loop lives in one place; frozen `TeacherEnsemble`
+(`models/ensemble.py`) — held off the module tree so it stays out of `state_dict`/EMA/checkpoints —
+averages raw teacher logits online; per-task loss becomes `hard + weight*KL` on TRAIN only;
+`kl_divergence` criterion + `DistillationConfig` section, gated in `build_lit_module`), typed metric
 handlers (scalar/vector/matrix/curve), ClearML logger, and callbacks — EMA (thin subclass of
-Lightning's `EMAWeightAveraging`), freeze, checkpoint, `MetricsProgressBar`, `SampleLogCallback`,
+Lightning's `EMAWeightAveraging`), freeze, checkpoint (`EmaModelCheckpoint` — weights-only
+checkpoints store the EMA weights; Lightning skips callbacks' `on_save_checkpoint` when
+`weights_only=True`), `MetricsProgressBar`, `SampleLogCallback`,
 batch transforms (MixUp/CutMix/Mosaic), and `criterion_schedule` (epoch-wise annealing of a
 numeric criterion attribute, e.g. FocalLoss `gamma`; linear/cosine, resolved and validated at
 `on_fit_start`; `weighted_sum` terms addressed by dot-path, `parameter: focal.gamma`). Cross-cutting subsystems: model **export**
@@ -89,7 +96,8 @@ albumentations are details** kept behind ABC ports. Layers:
   the target-less Null Object for structure-only tasks);
   `models/backbones/` the four backbones (timm/smp/embedding/multi); `losses/` — one module
   per loss family (`classification`=CE/BCE/focal, `regression`=MSE/L1, `segmentation`=Dice,
-  `composite`=weighted sum, `angular`=ArcFace, `contrastive`=InfoNCE/SigLIP, `ranking`);
+  `composite`=weighted sum, `distillation`=KL vs teacher logits, `angular`=ArcFace,
+  `contrastive`=InfoNCE/SigLIP, `ranking`);
   wrappers declare only params needing conversion and forward the rest verbatim to the
   wrapped loss (`base.SingleTermCriterion`).
   `training/` groups its Lightning humble objects under `modules/` (`base.py`=`BaseLitModule`,

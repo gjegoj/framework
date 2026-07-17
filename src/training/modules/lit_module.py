@@ -2,16 +2,20 @@
 
 Implements ``_shared_step`` on top of :class:`BaseLitModule`: one forward pass, then
 per-task loss + metric update, then loss aggregation. All decision logic lives in the Task
-objects and the aggregator; this is a thin coordinator. Other regimes (e.g. knowledge
-distillation) subclass ``BaseLitModule`` and override ``_shared_step`` instead.
+objects and the aggregator; this is a thin coordinator. The loop itself varies only at two
+seams — :meth:`BaseLitModule._auxiliary_targets` (extra per-batch targets) and
+:meth:`BaseLitModule._task_loss` (how one task's loss is formed) — so a regime like
+knowledge distillation subclasses ``LitModule`` and overrides just those hooks rather than
+copying the loop.
 
 The step loop:
 
     output = model(batch.inputs)
+    auxiliary = self._auxiliary_targets(batch, stage)   # {} for standard training
     for task in tasks:
         logits = output.task_logits[task.name]
         target = task.adapter.adapt(batch.targets[task.name])
-        losses[task.name] = task.criterion(logits, target.loss)
+        losses[task.name] = self._task_loss(task, logits, target, auxiliary)
         task.metrics[stage].update(task.activation(logits), target.metric)
     total = aggregator.combine(losses, weights)
 """
@@ -33,9 +37,11 @@ class LitModule(BaseLitModule):
         targets) flow to ``on_*_batch_end(outputs, ...)`` so visualization callbacks reuse
         step work without re-running activation or adapter adaptation. ``predictions`` are detached —
         the activation output only feeds metrics/inference, never backprop (the loss runs on
-        ``logits``).
+        ``logits``). Per-task loss formation is delegated to :meth:`_task_loss` so regimes vary
+        the loss without re-implementing this loop.
         """
         output = self.model(batch.inputs)
+        auxiliary = self._auxiliary_targets(batch, stage)
         losses: dict[str, LossResult] = {}
         task_views: dict[str, TaskStepView] = {}
 
@@ -43,7 +49,7 @@ class LitModule(BaseLitModule):
             logits = output.task_logits[task.name]
             target = task.adapter.adapt(batch.targets[task.name])
             predictions = task.activation(logits).detach()
-            losses[task.name] = task.criterion(logits, target.loss)
+            losses[task.name] = self._task_loss(task, logits, target, auxiliary)
             task.metrics[stage].update(predictions, target.metric)
             task_views[task.name] = TaskStepView(predictions=predictions, metric_target=target.metric)
 
