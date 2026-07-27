@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 
 
 class TestMultiEncoderBackbone:
-    def _backbone(self, embed_dim: int | None = 32) -> "MultiEncoderBackbone":
+    def _backbone(self, embed_dim: int | None = 32) -> MultiEncoderBackbone:
         from src.models.backbones import EmbeddingBackbone
         from src.models.backbones.multi import MultiEncoderBackbone
 
@@ -100,7 +100,7 @@ class TestMultiEncoderBackbone:
 
 
 class TestMultiStreamForward:
-    def _model(self, stream_keys: tuple[str, ...], emb_dim: int = 32) -> "CompositeModel":
+    def _model(self, stream_keys: tuple[str, ...], emb_dim: int = 32) -> CompositeModel:
         from src.models.assembly import build_composite_model
         from src.models.backbones import EmbeddingBackbone
         from src.models.backbones.multi import MultiEncoderBackbone

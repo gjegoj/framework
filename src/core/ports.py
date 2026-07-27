@@ -22,7 +22,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar, Protocol, cast, runtime_checkable
 
-import torch.nn as nn
+from torch import nn
 
 from src.core.plotting import Plot
 
@@ -192,7 +192,7 @@ class MatrixLogger(ABC):
     def log_matrix(
         self,
         title: str,
-        matrix: "Tensor",
+        matrix: Tensor,
         iteration: int,
         labels: list[str] | None = None,
         xaxis: str | None = None,
@@ -217,8 +217,8 @@ class CurveLogger(ABC):
     def log_curve(
         self,
         title: str,
-        x: "Tensor",
-        y: "Tensor",
+        x: Tensor,
+        y: Tensor,
         iteration: int,
         series: str = "curve",
         xaxis: str | None = None,

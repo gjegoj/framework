@@ -16,6 +16,7 @@ class TestRegistry:
         assert "hello" in registry
         assert registry.create("hello", "world") == "hello world"
         assert list(registry.keys()) == ["hello"]
+        assert list(registry) == ["hello"]  # iterating a registry yields its keys
 
     def test_duplicate_key_raises(self) -> None:
         registry: Registry[int] = Registry("nums")

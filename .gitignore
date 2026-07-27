@@ -2,7 +2,6 @@
 /data
 .codegraph/
 runs/
-docs/
 .claude/settings.local.json
 .claude/settings.json
 AUDIT.md

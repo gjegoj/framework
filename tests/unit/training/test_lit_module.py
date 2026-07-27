@@ -7,9 +7,8 @@ from typing import Any, cast
 
 import pytest
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
-from torch import Tensor
+from torch import Tensor, nn
 
 from src.core.entities import LossResult, Task
 from src.core.enums import Stage

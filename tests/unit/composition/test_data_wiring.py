@@ -13,7 +13,7 @@ from src.composition.wiring import (
     build_tasks,
     build_transforms,
 )
-from src.config import load_config
+from src.config import ConfigError, load_config
 from src.core.enums import Stage
 from src.core.runtime import RuntimeContext
 from src.data.sources import CsvDataSource, JsonDataSource
@@ -311,7 +311,7 @@ class TestDataConfigModes:
             )
 
     def test_invalid_stage_key_raises(self) -> None:
-        with pytest.raises(Exception):
+        with pytest.raises(ConfigError):
             load_config(
                 _minimal_config(
                     data={

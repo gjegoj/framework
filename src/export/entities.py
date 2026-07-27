@@ -6,8 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
-import torch.nn as nn
-from torch import Tensor
+from torch import Tensor, nn
 
 ExportArtifactKind = Literal["combined", "backbone", "head"]
 ExportFormat = Literal["onnx", "torchscript", "tensorrt"]

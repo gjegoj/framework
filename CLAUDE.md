@@ -7,33 +7,52 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 A configuration-driven framework for training computer-vision models (multi-task,
 multi-modal) on top of PyTorch Lightning, Hydra, Pydantic, timm/smp, albumentations
 and torchmetrics. It is a clean-architecture rewrite of the prototype in `old/`
-(kept only as reference — do not edit or import from it). See `README.md` for the
-design walkthrough and the "How components are built" guide.
+(kept only as reference — do not edit or import from it). User documentation is plain
+Markdown under `docs/` (`docs/README.md` is the entry point; `docs/guides/`,
+`docs/reference/`, `docs/recipes.md`, `docs/internals.md`; `docs/superpowers/` holds
+internal specs/plans, not user docs). `README.md` is a thin landing page linking into
+`docs/`; the design walkthrough lives in `docs/concepts.md`, the "How components are
+built" guide included. Keep docs in sync when adding features; links must use
+GitHub-style anchors (e.g. `#tasks--presets` for "Tasks & presets").
 
-Status: the scope below is implemented and covered by the test suite. Tasks: classification + every objective
-(multiclass/binary/multilabel/continuous), DENSE segmentation, and **metric learning** —
-MULTIVIEW (Siamese: N views through one shared backbone) and MULTISTREAM (dual/multi-encoder,
-CLIP/SigLIP-style) topologies with triplet / margin-ranking / InfoNCE / SigLIP / ArcFace
-losses. Backbones: `TimmBackbone`, multi-stream `SmpBackbone` (`ENCODER_LAST`/`DECODER`,
-per-task `feature_key`), precomputed-`EmbeddingBackbone`, and multi-encoder `MultiEncoderBackbone`.
-Training: per-head LR via param-groups, LR **schedulers** (`training/scheduler.py`), a **knowledge-distillation**
-regime (`DistillationLitModule` extends `LitModule` via the base's two step seams —
-`_auxiliary_targets`/`_task_loss` — so the step loop lives in one place; frozen `TeacherEnsemble`
-(`models/ensemble.py`) — held off the module tree so it stays out of `state_dict`/EMA/checkpoints —
-averages raw teacher logits online; per-task loss becomes `hard + weight*KL` on TRAIN only;
-`kl_divergence` criterion + `DistillationConfig` section, gated in `build_lit_module`), typed metric
-handlers (scalar/vector/matrix/curve), ClearML logger, and callbacks — EMA (thin subclass of
-Lightning's `EMAWeightAveraging`), freeze, checkpoint (`EmaModelCheckpoint` — weights-only
-checkpoints store the EMA weights; Lightning skips callbacks' `on_save_checkpoint` when
-`weights_only=True`), `MetricsProgressBar`, `SampleLogCallback`,
-batch transforms (MixUp/CutMix/Mosaic), and `criterion_schedule` (epoch-wise annealing of a
-numeric criterion attribute, e.g. FocalLoss `gamma`; linear/cosine, resolved and validated at
-`on_fit_start`; `weighted_sum` terms addressed by dot-path, `parameter: focal.gamma`). Cross-cutting subsystems: model **export**
-(`export/`: ONNX/TorchScript/TensorRT + numerical-parity verification), sample **visualization**
-(`visualization/`: interactive HTML GT-vs-pred grid behind `SampleLogCallback`), an in-RAM
-image/mask **cache** (`data/cache.py`), and a pre-training **dataset distribution report**
-(`data/statistics.py` computes; the `dataset_stats` callback renders terminal tables + ClearML
-histograms). Next: LoRA/PEFT.
+Status — the scope below is implemented and covered by the test suite:
+
+- **Tasks**: classification + every objective (multiclass/binary/multilabel/continuous), DENSE
+  segmentation, and **metric learning** — MULTIVIEW (Siamese: N views through one shared
+  backbone) and MULTISTREAM (dual/multi-encoder, CLIP/SigLIP-style) topologies with
+  triplet / margin-ranking / RankNet / InfoNCE / SigLIP / ArcFace losses.
+- **Backbones** (`models/backbones/`, kinds in the `backbones` registry): `TimmBackbone`,
+  multi-stream `SmpBackbone` (`ENCODER_LAST`/`DECODER`, per-task `feature_key`), `dino_dpt`
+  (DINOv3/ViT encoder + DPT decoder — the primary production backbone), precomputed
+  `EmbeddingBackbone`, and multi-encoder `MultiEncoderBackbone` (kind `multi`, special-cased
+  in `build_backbone`).
+- **Training**: per-head LR via param-groups; LR schedulers (`training/optim/scheduler.py`);
+  typed metric handlers (scalar/vector/matrix/curve); ClearML logger.
+- **Knowledge distillation** (`training/modules/distillation.py`): `DistillationLitModule`
+  extends `LitModule` via the base's two step seams — `_auxiliary_targets`/`_task_loss` — so
+  the step loop lives in one place. Frozen `TeacherEnsemble` (`models/ensemble.py`) is held
+  OFF the module tree (out of `state_dict`/EMA/checkpoints) and averages raw teacher logits
+  online; per-task loss becomes `hard + weight*KL` on TRAIN only; `kl_divergence` criterion +
+  `DistillationConfig` section, gated in `build_lit_module`.
+- **LoRA fine-tuning** (`models/lora.py`): a peft facade using in-place
+  `inject_adapter_in_model` — no `PeftModel` wrapper, `state_dict` keys stay natural. `lora:`
+  typed section + `configs/lora/` group; backbone base frozen, adapters + heads train.
+  Checkpoints store trainable weights only (`checkpoint_trainable_only` on `BaseLitModule`
+  prunes frozen params, keeps buffers, relaxes `strict_loading`); `run_export` merges adapters
+  into base weights for one plain artifact; a wiring guard rejects Freeze×LoRA overlap — LoRA
+  owns backbone freezing.
+- **Callbacks**: EMA (thin subclass of Lightning's `EMAWeightAveraging`, warmup guard),
+  checkpoint (`EmaModelCheckpoint` — weights-only checkpoints store the EMA weights; Lightning
+  skips callbacks' `on_save_checkpoint` when `weights_only=True`), freeze,
+  `MetricsProgressBar`, `SampleLogCallback`, batch transforms (MixUp/CutMix/Mosaic), and
+  `criterion_schedule` (epoch-wise annealing of a numeric criterion attribute, e.g. FocalLoss
+  `gamma`; linear/cosine, resolved and validated at `on_fit_start`; `weighted_sum` terms
+  addressed by dot-path, `parameter: focal.gamma`).
+- **Cross-cutting subsystems**: model **export** (`export/`: ONNX/TorchScript/TensorRT +
+  numerical-parity verification), sample **visualization** (`visualization/`: interactive HTML
+  GT-vs-pred grid behind `SampleLogCallback`), the in-RAM image/mask **cache**
+  (`data/cache.py`), and the pre-training **dataset distribution report** (`data/statistics.py`
+  computes; the `dataset_stats` callback renders terminal tables + ClearML histograms).
 
 ## Commands
 
@@ -52,10 +71,14 @@ do not bypass them:
 Tests layout: `tests/unit/<layer>/` mirrors the `src/` layers; `tests/e2e/` holds the
 full-flow smokes (training fits, export round-trips, full wiring) and is auto-marked
 `e2e` by the root conftest. Shared pure builders/fakes live in `tests/support/`
-(`raw_config`/`minimal_config`/`make_transform`/`make_task`/`make_view`, `FakePlotLogger`);
+(`raw_config`/`minimal_config`/`make_transform`/`make_task`/`make_view`, `FakePlotLogger`,
+`TinyLitModule`/`make_mock_trainer` for callback hook tests);
 importing from another `tests.test_*` module is forbidden — only `tests.support`. A
 per-layer `conftest.py` is added only when ≥2 files of that layer share a fixture.
 Clone tests that differ only in data are parametrized (`pytest.param(..., id=...)`).
+Gotcha: the `typos` pre-commit hook auto-"fixes" intentional misspellings in test data and
+docstrings (it silently turned a `temperature`-typo probe into valid config once) — probe
+invalid-key validation with real words the spell-checker won't touch (e.g. `heat: 8.0`).
 
 mypy is configured strict-ish (untyped defs disallowed). Line length is 120 (ruff).
 
@@ -94,14 +117,16 @@ albumentations are details** kept behind ABC ports. Layers:
   affordance, not presentation of domain data);
   `data/encoders.py` the raw-value→tensor `TargetEncoder`s (label/mask/scalar/null — `null` is
   the target-less Null Object for structure-only tasks);
-  `models/backbones/` the four backbones (timm/smp/embedding/multi); `losses/` — one module
+  `models/backbones/` the backbone adapters (timm/smp/dino_dpt/embedding/multi), `models/ensemble.py`
+  the frozen `TeacherEnsemble`, `models/lora.py` the peft facade; `losses/` — one module
   per loss family (`classification`=CE/BCE/focal, `regression`=MSE/L1, `segmentation`=Dice,
   `composite`=weighted sum, `distillation`=KL vs teacher logits, `angular`=ArcFace,
   `contrastive`=InfoNCE/SigLIP, `ranking`);
   wrappers declare only params needing conversion and forward the rest verbatim to the
   wrapped loss (`base.SingleTermCriterion`).
   `training/` groups its Lightning humble objects under `modules/` (`base.py`=`BaseLitModule`,
-  `lit_module.py`, `lit_datamodule.py`) and the optimizer+scheduler+their registry under `optim/`.
+  `lit_module.py`, `distillation.py`, `lit_datamodule.py`) and the optimizer+scheduler+their
+  registry under `optim/`.
   Two registry-placement conventions coexist by intent: **brick-layer registries** live in
   `<layer>/registry.py` (`losses`, `data`, `models`, `metrics`, `export`, `callbacks`,
   `training/optim`); a **strategy/renderer registry** that owns a single ABC plus its built-in
@@ -227,7 +252,7 @@ classifier flavor keeps them in the `cosine` head.
   (e.g. `SimpleProfiler`/`AdvancedProfiler` with `dirpath`/`filename`) is built via `instantiate`,
   while a string alias (`simple`/`advanced`) or `None` passes straight to Lightning. See
   `configs/trainer/profile.yaml` for the file-output example.
-- **LR schedulers** (`training/scheduler.py`, registry `schedulers`: `cosine`/`onecycle`/
+- **LR schedulers** (`training/optim/scheduler.py`, registry `schedulers`: `cosine`/`onecycle`/
   `plateau`/`step`). `SchedulerConfig` mirrors the optimizer (extras forward verbatim);
   `runtime_kwargs` maps a constructor param to a trainer fact (`total_steps`/`steps_per_epoch`/
   `epochs`) resolved at fit time. `None` config → constant LR. It is a Hydra group
@@ -309,6 +334,9 @@ classifier flavor keeps them in the `cosine` head.
   DPT architecture is supported via the `_dpt_style` flag (detected from `name.lower() == "dpt"`).
   ASPP-based architectures (deeplabv3, pan, upernet) require `batch_size ≥ 2` in train mode
   (BatchNorm after global-avg-pool). See `configs/backbone/smp_dpt.yaml` for DPT config example.
+- `dino_dpt` (kind `dino_dpt`, `configs/backbone/dinov3_dpt.yaml`) pairs a DINOv3/ViT timm
+  encoder with a DPT decoder — the primary production backbone; its static-ROPE build keeps
+  the graph traceable for TorchScript export.
 - `EmbeddingBackbone` (kind `embedding`) consumes precomputed feature vectors (no image
   encoder) — the modality for embedding/ranking tasks on cached features. `MultiEncoderBackbone`
   (kind `multi`) holds N named sub-encoders producing N `POOLED` streams for MULTISTREAM tasks;

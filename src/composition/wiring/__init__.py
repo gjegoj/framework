@@ -31,7 +31,7 @@ from src.composition.wiring.data import (
     build_transforms,
 )
 from src.composition.wiring.export import run_export, validate_export_preconditions
-from src.composition.wiring.model import build_backbone
+from src.composition.wiring.model import apply_lora_if_configured, build_backbone, validate_lora_preconditions
 from src.composition.wiring.tasks import build_bindings, build_tasks
 from src.composition.wiring.training import (
     build_lit_data_module,
@@ -48,17 +48,18 @@ from src.composition.wiring.training import (
 
 __all__ = [
     "WiringContext",
+    "apply_lora_if_configured",
     "build_backbone",
     "build_bindings",
     "build_callbacks",
     "build_data_module",
     "build_data_source",
     "build_lit_data_module",
-    "build_source_bindings",
     "build_lit_module",
     "build_logger",
     "build_optimizer_builder",
     "build_scheduler_builder",
+    "build_source_bindings",
     "build_staged_sources",
     "build_task_lr_overrides",
     "build_tasks",
@@ -75,4 +76,5 @@ __all__ = [
     "run_experiment",
     "run_export",
     "validate_export_preconditions",
+    "validate_lora_preconditions",
 ]

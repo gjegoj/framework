@@ -13,8 +13,7 @@ from collections.abc import Sequence
 from typing import cast
 
 import torch
-import torch.nn as nn
-from torch import Tensor
+from torch import Tensor, nn
 
 
 class TeacherEnsemble(nn.Module):

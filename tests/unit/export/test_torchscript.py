@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 import torch
-import torch.nn as nn
+from torch import nn
 
 from src.export.entities import ExportRequest
 from src.export.torchscript import TorchScriptExporter

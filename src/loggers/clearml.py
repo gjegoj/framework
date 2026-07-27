@@ -205,7 +205,7 @@ class ClearMLLogger(Logger, MatrixLogger, CurveLogger, HtmlLogger, SingleValueLo
         )
 
     @rank_zero_only
-    def log_plot(self, plot: "Plot") -> None:
+    def log_plot(self, plot: Plot) -> None:
         """Render ``plot`` via the ``plot_builders`` registry and ship to ClearML.
 
         Parameters:

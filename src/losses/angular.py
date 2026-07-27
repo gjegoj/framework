@@ -17,9 +17,8 @@ from __future__ import annotations
 import math
 
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
-from torch import Tensor
+from torch import Tensor, nn
 
 from src.core.entities import LossResult
 from src.core.instantiate import BrickSpec, instantiate

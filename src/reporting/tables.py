@@ -12,7 +12,7 @@ from rich.table import Table
 from src.core.enums import Stage
 from src.data.statistics import CategoricalDistribution, ContinuousDistribution
 
-__all__ = ["new_table", "categorical_table", "continuous_table", "CONTINUOUS_ROWS"]
+__all__ = ["CONTINUOUS_ROWS", "categorical_table", "continuous_table", "new_table"]
 
 
 # Ordered (display label, ContinuousDistribution attribute) pairs.

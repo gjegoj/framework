@@ -21,9 +21,10 @@ import hydra
 import lightning as L
 from omegaconf import DictConfig, OmegaConf
 
-import src.models  # noqa: F401 — populate the backbone / head registries
+import src.models
 import src.tasks  # noqa: F401 — populate the topology / objective / preset (and criteria) registries
 from src.composition.wiring import (
+    apply_lora_if_configured,
     build_backbone,
     build_bindings,
     build_callbacks,
@@ -38,6 +39,7 @@ from src.composition.wiring import (
     build_trainer,
     run_experiment,
     validate_export_preconditions,
+    validate_lora_preconditions,
 )
 from src.config import load_config
 from src.core.runtime import RuntimeContext
@@ -68,9 +70,12 @@ def main(hydra_config: DictConfig) -> None:
     tasks = build_tasks(config, runtime)
     validate_export_preconditions(config, tasks)  # fail before training if export is impossible
 
-    # 4. Model — heads sized from backbone.feature_dim, derived from tasks
+    # 4. Model — heads sized from backbone.feature_dim, derived from tasks;
+    #    LoRA (when configured) wraps the backbone and freezes its base weights
     backbone = build_backbone(config.backbone)
     model = build_composite_model(backbone, {task.name: task.head_spec for task in tasks})
+    validate_lora_preconditions(config)
+    apply_lora_if_configured(config, model)
 
     # 5. Optimizer — per-head LR overrides (from task configs) bound into the builder
     optimizer_builder = build_optimizer_builder(config.optimizer, build_task_lr_overrides(config))

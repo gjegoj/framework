@@ -110,7 +110,7 @@ class TestRunFitAndTest:
         ):
             run_experiment(trainer, lit_module, lit_dm, config, _tasks())
 
-        mock_load.assert_called_once_with(lit_module, "/pretrain.ckpt")
+        mock_load.assert_called_once_with(lit_module, "/pretrain.ckpt", strict=lit_module.strict_loading)
         trainer.fit.assert_called_once_with(lit_module, lit_dm)
 
 

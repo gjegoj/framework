@@ -14,8 +14,7 @@ from pathlib import Path
 from typing import cast
 
 import torch
-import torch.nn as nn
-from torch import Tensor
+from torch import Tensor, nn
 
 from src.config.schema import ExperimentConfig
 from src.core.entities import Task

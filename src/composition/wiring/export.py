@@ -12,6 +12,7 @@ from src.config.schema import ExperimentConfig
 from src.core.entities import Task
 from src.export.pipeline import export_model
 from src.export.spec import guard_exportable_topologies
+from src.models.lora import has_lora_layers, merge_lora
 from src.training.modules import BaseLitModule
 
 log = logging.getLogger(__name__)
@@ -39,7 +40,7 @@ def ensure_module_weights_for_export(
     ckpt_path = resolve_test_ckpt_path(trainer, config, trained=trained)
     if ckpt_path is None:
         return
-    load_init_weights(lit_module, resolve_ckpt_file(trainer, ckpt_path))
+    load_init_weights(lit_module, resolve_ckpt_file(trainer, ckpt_path), strict=lit_module.strict_loading)
 
 
 def validate_export_preconditions(config: ExperimentConfig, tasks: list[Task]) -> None:
@@ -83,6 +84,12 @@ def run_export(
         return
 
     ensure_module_weights_for_export(trainer, lit_module, config, trained=trained, tested=tested)
+
+    if has_lora_layers(lit_module.model):
+        # Fold adapters into the base weights: the exported graph must be plain
+        # Linear/Conv2d with zero LoRA runtime overhead (single merged artifact).
+        merge_lora(lit_module.model)
+        log.info("LoRA adapters merged into base weights for export.")
 
     if config.export.output_dir is not None:
         output_dir = Path(config.export.output_dir)

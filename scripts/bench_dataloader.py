@@ -32,11 +32,11 @@ from torch.utils.data import DataLoader
 # Repo root on sys.path so `import src...` works when run as `python scripts/...`.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import src.models  # noqa: E402,F401 — registers backbones/heads (parity with main.py)
-import src.tasks  # noqa: E402,F401 — registers task presets
-from src.composition.wiring import build_bindings, build_data_module  # noqa: E402
-from src.config import ExperimentConfig, load_config  # noqa: E402
-from src.core.runtime import RuntimeContext  # noqa: E402
+import src.models
+import src.tasks  # noqa: F401 — registers task presets
+from src.composition.wiring import build_bindings, build_data_module
+from src.config import ExperimentConfig, load_config
+from src.core.runtime import RuntimeContext
 
 log = logging.getLogger(__name__)
 

@@ -31,13 +31,17 @@ def extract_model_state_dict(checkpoint: object) -> dict[str, Any]:
         state = checkpoint["state_dict"]
         if isinstance(state, dict):
             return state
-    if isinstance(checkpoint, dict) and checkpoint and all(isinstance(key, str) for key in checkpoint):
-        if all(isinstance(value, torch.Tensor) for value in checkpoint.values()):
-            return checkpoint
+    if (
+        isinstance(checkpoint, dict)
+        and checkpoint
+        and all(isinstance(key, str) for key in checkpoint)
+        and all(isinstance(value, torch.Tensor) for value in checkpoint.values())
+    ):
+        return checkpoint
     raise ValueError("Checkpoint must be a Lightning .ckpt with 'state_dict' or a raw state_dict mapping.")
 
 
-def load_init_weights(lit_module: BaseLitModule, ckpt_path: str) -> None:
+def load_init_weights(lit_module: BaseLitModule, ckpt_path: str, strict: bool = True) -> None:
     """Load pretrained weights into ``lit_module`` before ``fit`` (not resume).
 
     Only model parameters/buffers are copied; optimizer and trainer state are untouched.
@@ -47,6 +51,8 @@ def load_init_weights(lit_module: BaseLitModule, ckpt_path: str) -> None:
     Parameters:
         lit_module (BaseLitModule): Module to initialize.
         ckpt_path (str): Path to a ``.ckpt`` file.
+        strict (bool): Require an exact key match. Pass ``False`` for trainable-only
+            (LoRA-pruned) checkpoints whose frozen base keys come from config instead.
 
     Raises:
         FileNotFoundError: If ``ckpt_path`` does not exist.
@@ -61,7 +67,7 @@ def load_init_weights(lit_module: BaseLitModule, ckpt_path: str) -> None:
     # the safe loader reads them cleanly; a file smuggling a custom object is rejected instead.
     checkpoint = torch.load(path, map_location="cpu", weights_only=True)
     state_dict = extract_model_state_dict(checkpoint)
-    lit_module.load_state_dict(state_dict, strict=True)
+    lit_module.load_state_dict(state_dict, strict=strict)
     log.info("Loaded init weights from %s (%d tensors).", ckpt_path, len(state_dict))
 
 

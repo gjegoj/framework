@@ -6,8 +6,7 @@ import itertools
 from collections.abc import Iterable
 from typing import Any, cast
 
-import torch.nn as nn
-from torch import Tensor
+from torch import Tensor, nn
 
 from src.core.entities import Batch, LossResult, TargetView, Task
 from src.core.enums import Stage
@@ -63,6 +62,7 @@ class DistillationLitModule(LitModule):
         loss_aggregator: LossAggregator | None = None,
         metric_reporter: MetricReporter | None = None,
         hparams: dict[str, Any] | None = None,
+        checkpoint_trainable_only: bool = False,
     ) -> None:
         super().__init__(
             model=model,
@@ -72,6 +72,7 @@ class DistillationLitModule(LitModule):
             loss_aggregator=loss_aggregator,
             metric_reporter=metric_reporter,
             hparams=hparams,
+            checkpoint_trainable_only=checkpoint_trainable_only,
         )
         task_names = {task.name for task in tasks}
         unknown = set(distillation_criteria) - task_names

@@ -15,7 +15,7 @@ from unittest.mock import MagicMock
 
 import lightning as L
 import torch
-import torch.nn as nn
+from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
 
 from src.callbacks.ema import EmaCallback

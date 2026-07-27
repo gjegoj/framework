@@ -127,7 +127,7 @@ class TestLabelRenderers:
 
 
 class TestHtmlRenderer:
-    def _sample(self) -> "SampleView":
+    def _sample(self) -> SampleView:
 
         from src.visualization.entities import (
             Classification,

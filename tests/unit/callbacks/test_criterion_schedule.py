@@ -24,7 +24,7 @@ def _make_focal_task(task_name: str = "species") -> Task:
 
 def _focal_loss_of_criterion(criterion: object) -> FocalLoss:
     """Narrow the wrapped loss for mypy (nn.Module attribute access is a Tensor|Module union)."""
-    wrapped = criterion._loss  # type: ignore[attr-defined]  # noqa: SLF001 — pinning the resolver contract
+    wrapped = criterion._loss  # type: ignore[attr-defined]
     assert isinstance(wrapped, FocalLoss)
     return wrapped
 

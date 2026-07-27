@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 import lightning as L
 import torch
-import torch.nn as nn
+from torch import nn
 
 from src.callbacks.progress_bar import MetricsProgressBar
 from src.composition.wiring.checkpointing import extract_model_state_dict, load_init_weights, resolve_test_ckpt_path
@@ -215,6 +215,7 @@ def build_lit_module(
         BaseLitModule: ``DistillationLitModule`` when distillation is configured, else ``LitModule``.
     """
     hparams = config.model_dump(mode="json")
+    checkpoint_trainable_only = config.lora is not None
     if config.distillation is not None:
         distillation_criteria, distillation_weights = resolve_distillation_bricks(config.distillation, tasks)
         return DistillationLitModule(
@@ -226,6 +227,7 @@ def build_lit_module(
             distillation_criteria=distillation_criteria,
             distillation_weights=distillation_weights,
             hparams=hparams,
+            checkpoint_trainable_only=checkpoint_trainable_only,
         )
     return LitModule(
         model=model,
@@ -233,6 +235,7 @@ def build_lit_module(
         optimizer_builder=optimizer_builder,
         scheduler_builder=scheduler_builder,
         hparams=hparams,
+        checkpoint_trainable_only=checkpoint_trainable_only,
     )
 
 
@@ -273,7 +276,7 @@ def build_logger(config: ExperimentConfig) -> Any:
 
     kind = config.logger.kind
     if kind not in logger_builders:
-        known = ", ".join(sorted(str(key) for key in logger_builders.keys()))
+        known = ", ".join(sorted(str(key) for key in logger_builders))
         raise ValueError(f"Unknown logger kind: {kind!r}. Known kinds: {known}.")
     return logger_builders.create(kind, config)
 
@@ -354,7 +357,7 @@ def run_experiment(
 
     if config.run_train:
         if config.init_ckpt_path is not None:
-            load_init_weights(lit_module, config.init_ckpt_path)
+            load_init_weights(lit_module, config.init_ckpt_path, strict=lit_module.strict_loading)
         trainer.fit(lit_module, lit_data_module)
         trained = True
         log.info("Training complete.")

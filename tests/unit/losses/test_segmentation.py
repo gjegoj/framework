@@ -16,7 +16,7 @@ class TestDiceCriterion:
         import segmentation_models_pytorch as smp
 
         criterion = criteria.create("dice", smooth=1.0, log_loss=True, eps=1e-5)
-        wrapped = criterion._loss  # noqa: SLF001 — pinning the forwarding contract
+        wrapped = criterion._loss
         assert isinstance(wrapped, smp.losses.DiceLoss)
         assert wrapped.smooth == 1.0
         assert wrapped.log_loss is True

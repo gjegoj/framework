@@ -13,10 +13,10 @@ if TYPE_CHECKING:
 
 
 class TestAnnotators:
-    def _task(self, objective: str = "multiclass") -> "Task":
+    def _task(self, objective: str = "multiclass") -> Task:
         return make_task("classification", "species", 3, objective=objective, class_names=["cat", "cow", "dog"])
 
-    def _view(self, predictions: list[list[float]], target: list[object]) -> "TaskStepView":
+    def _view(self, predictions: list[list[float]], target: list[object]) -> TaskStepView:
         return make_view(predictions, target)
 
     def test_registry_keyed_by_axes(self) -> None:
@@ -120,10 +120,10 @@ class TestAnnotators:
 
 
 class TestRegressionAnnotator:
-    def _task(self) -> "Task":
+    def _task(self) -> Task:
         return make_task("regression", "age", 1)
 
-    def _view(self, predictions: list[list[float]], target: list[list[float]]) -> "TaskStepView":
+    def _view(self, predictions: list[list[float]], target: list[list[float]]) -> TaskStepView:
         return make_view(predictions, target)
 
     def test_registered_for_global_continuous(self) -> None:
@@ -152,10 +152,10 @@ class TestRegressionAnnotator:
 
 
 class TestSegmentationAnnotator:
-    def _task(self) -> "Task":
+    def _task(self) -> Task:
         return make_task("segmentation", "mask", 3)
 
-    def _view(self, predictions: object, target: object) -> "TaskStepView":
+    def _view(self, predictions: object, target: object) -> TaskStepView:
         return make_view(predictions, target)  # type: ignore[arg-type]
 
     def test_registered_for_dense_multiclass(self) -> None:
@@ -211,10 +211,10 @@ class TestSegmentationAnnotator:
 
 
 class TestMultilabelSegmentationAnnotator:
-    def _task(self) -> "Task":
+    def _task(self) -> Task:
         return make_task("segmentation", "mask", 2, objective="multilabel")
 
-    def _view(self, predictions: object, target: object) -> "TaskStepView":
+    def _view(self, predictions: object, target: object) -> TaskStepView:
         return make_view(predictions, target)  # type: ignore[arg-type]
 
     def test_registered_for_dense_multilabel(self) -> None:

@@ -2,14 +2,9 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 import numpy as np
 
 from tests.support.builders import make_task, make_view
-
-if TYPE_CHECKING:
-    pass
 
 
 class TestPipeline:

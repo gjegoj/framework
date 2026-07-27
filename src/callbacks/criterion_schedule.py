@@ -134,7 +134,7 @@ class CriterionScheduleCallback(L.Callback):
                 continue
             value = getattr(owner, leaf)
             if isinstance(value, torch.nn.Parameter):
-                raise ValueError(
+                raise ValueError(  # noqa: TRY004 — schedule-addressing errors are uniformly ValueError (tests pin it)
                     f"CriterionScheduleCallback: {self._parameter!r} is a learnable nn.Parameter — "
                     "scheduling it fights the optimizer."
                 )

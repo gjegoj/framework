@@ -8,7 +8,7 @@ their own backbones, heads, losses, metrics, etc.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Hashable, KeysView
+from collections.abc import Callable, Hashable, Iterator, KeysView
 
 
 class Registry[T]:
@@ -86,6 +86,10 @@ class Registry[T]:
 
     def __contains__(self, key: Hashable) -> bool:
         return key in self._factories
+
+    def __iter__(self) -> Iterator[Hashable]:
+        """Iterate over the registered keys (mirrors ``dict`` iteration)."""
+        return iter(self._factories)
 
     def keys(self) -> KeysView[Hashable]:
         """Return the registered keys."""

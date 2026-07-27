@@ -37,9 +37,9 @@ class EmaModelCheckpoint(ModelCheckpoint):
         # bookkeeping, with the one hook Lightning skips for weights-only checkpoints
         # applied in between. ``profiler`` is assigned dynamically in Trainer.__init__,
         # so it is invisible to mypy (same as ``callbacks``).
-        profiler: Profiler = getattr(trainer, "profiler")
+        profiler: Profiler = trainer.profiler  # type: ignore[attr-defined]
         with profiler.profile("save_checkpoint"):
-            checkpoint = trainer._checkpoint_connector.dump_checkpoint(weights_only=True)  # noqa: SLF001
+            checkpoint = trainer._checkpoint_connector.dump_checkpoint(weights_only=True)
             ema.on_save_checkpoint(trainer, trainer.lightning_module, checkpoint)
             trainer.strategy.save_checkpoint(checkpoint, filepath)
             trainer.strategy.barrier("Trainer.save_checkpoint")

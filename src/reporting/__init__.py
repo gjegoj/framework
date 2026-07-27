@@ -19,9 +19,9 @@ from src.reporting.renderers import (
 from src.reporting.report import report_dataset_statistics
 
 __all__ = [
-    "report_dataset_statistics",
-    "DistributionRenderer",
-    "distribution_renderers",
     "CategoricalDistributionRenderer",
     "ContinuousDistributionRenderer",
+    "DistributionRenderer",
+    "distribution_renderers",
+    "report_dataset_statistics",
 ]

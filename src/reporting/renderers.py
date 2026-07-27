@@ -169,8 +169,8 @@ class ContinuousDistributionRenderer(DistributionRenderer):
 
 
 __all__ = [
-    "DistributionRenderer",
-    "distribution_renderers",
     "CategoricalDistributionRenderer",
     "ContinuousDistributionRenderer",
+    "DistributionRenderer",
+    "distribution_renderers",
 ]

@@ -68,7 +68,7 @@ def _random_split(frame: pd.DataFrame, ratios: dict[Stage, float], seed: int) ->
         if i == len(stages) - 1:
             part = shuffled.iloc[cursor:]
         else:
-            count = int(round(ratios[stage] * total))
+            count = round(ratios[stage] * total)
             part = shuffled.iloc[cursor : cursor + count]
             cursor += count
         result[stage] = part.reset_index(drop=True)

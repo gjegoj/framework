@@ -313,7 +313,7 @@ class TestCriterionScheduleSmoke:
         )
         trainer.fit(lit_module, LitDataModule(plain_dm))
 
-        focal_loss = task.criterion._loss  # noqa: SLF001 — pinning the applied end value
+        focal_loss = task.criterion._loss
         assert isinstance(focal_loss, FocalLoss)
         assert focal_loss.gamma == pytest.approx(0.5)
         assert "schedule/label/gamma" in trainer.logged_metrics
@@ -380,7 +380,7 @@ class TestCallbackComboSmoke:
         trainer.fit(lit_module, LitDataModule(plain_dm))
 
         # Schedule applied through EMA's swaps: the cached criterion reference stayed live.
-        focal_loss = task.criterion._loss  # noqa: SLF001 — pinning the applied end value
+        focal_loss = task.criterion._loss
         assert isinstance(focal_loss, FocalLoss)
         assert focal_loss.gamma == pytest.approx(0.5)
 
@@ -456,3 +456,93 @@ class TestDistillationSmoke:
         # Teacher never trained and never leaked into the student's state_dict.
         assert torch.equal(next(teacher.parameters()).detach(), teacher_weight_before)
         assert not any("teacher" in key.lower() for key in lit_module.state_dict())
+
+
+class TestLoraSmoke:
+    """2-epoch CPU LoRA fit: frozen base, pruned checkpoint, resume, merge parity.
+
+    resnet18 with ``conv1`` targets exercises the Conv2d adapter path end to end.
+    """
+
+    def test_lora_fit_checkpoint_and_merge(self, csv_path: Path, tmp_path: Path) -> None:
+        from src.callbacks.ema_checkpoint import EmaModelCheckpoint
+        from src.config.schema import LoraConfig
+        from src.models import apply_lora, has_lora_layers, merge_lora
+
+        runtime = RuntimeContext()
+        transforms = {s: _make_transform((32, 32)) for s in Stage}
+        plain_dm = DataModule(
+            target_bindings=[
+                TargetBinding("label", "label", LabelEncoder(class_mapping={0: "cat", 1: "cow", 2: "dog"}))
+            ],
+            inputs_config="image_path",
+            transforms=transforms,
+            runtime=runtime,
+            batch_size=4,
+            seed=0,
+            source=CsvDataSource(str(csv_path)),
+            split={Stage.TRAIN: 0.6, Stage.VAL: 0.2, Stage.TEST: 0.2},
+            dataloader_options=DataLoaderOptions(drop_last=True),
+        )
+        plain_dm.setup()
+
+        task = classification("label", num_classes=runtime.num_classes["label"])
+        backbone = TimmBackbone("resnet18", pretrained=False)
+        model = build_composite_model(backbone, {"label": task.head_spec})
+        apply_lora(model.backbone, LoraConfig(target_modules=["conv1"], rank=2))
+
+        lit_module = LitModule(
+            model=model,
+            tasks=[task],
+            optimizer_builder=OptimizerBuilder(base_lr=1e-3),
+            checkpoint_trainable_only=True,
+        )
+        checkpoint = EmaModelCheckpoint(dirpath=tmp_path, filename="lora", save_weights_only=True)
+        trainer = L.Trainer(
+            max_epochs=2,
+            accelerator="cpu",
+            logger=False,
+            enable_progress_bar=False,
+            enable_model_summary=False,
+            num_sanity_val_steps=0,
+            callbacks=[checkpoint],
+        )
+        trainer.fit(lit_module, LitDataModule(plain_dm))
+
+        # Pruned checkpoint: adapters + heads present, frozen base PARAMETERS absent,
+        # buffers (BatchNorm running stats) kept by design.
+        saved = torch.load(checkpoint.best_model_path, weights_only=False)
+        saved_keys = set(saved["state_dict"].keys())
+        assert any("lora_" in key for key in saved_keys)
+        assert any(key.startswith("model.heads.") for key in saved_keys)
+        frozen_parameter_keys = {
+            f"model.{name}" for name, parameter in lit_module.model.named_parameters() if not parameter.requires_grad
+        }
+        assert frozen_parameter_keys and not (frozen_parameter_keys & saved_keys)
+        buffer_keys = {f"model.{name}" for name, _ in lit_module.model.named_buffers()}
+        assert buffer_keys & saved_keys
+
+        # Resume path: a freshly built identical module loads the pruned checkpoint.
+        fresh_model = build_composite_model(TimmBackbone("resnet18", pretrained=False), {"label": task.head_spec})
+        apply_lora(fresh_model.backbone, LoraConfig(target_modules=["conv1"], rank=2))
+        fresh_module = LitModule(
+            model=fresh_model,
+            tasks=[task],
+            optimizer_builder=OptimizerBuilder(base_lr=1e-3),
+            checkpoint_trainable_only=True,
+        )
+        fresh_module.load_state_dict(saved["state_dict"], strict=False)
+        trained_adapters = {k: v for k, v in lit_module.state_dict().items() if "lora_" in k}
+        for key, value in trained_adapters.items():
+            assert torch.equal(dict(fresh_module.state_dict())[key], value), key
+
+        # Merge parity on the trained model.
+        lit_module.eval()
+        features = torch.randn(2, 3, 32, 32)
+        with torch.no_grad():
+            before = lit_module.model({"image": features}).task_logits["label"]
+        merge_lora(lit_module.model)
+        with torch.no_grad():
+            after = lit_module.model({"image": features}).task_logits["label"]
+        assert not has_lora_layers(lit_module.model)
+        assert torch.allclose(before, after, atol=1e-5)

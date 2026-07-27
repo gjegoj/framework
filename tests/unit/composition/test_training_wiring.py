@@ -208,7 +208,7 @@ class TestBuildTrainer:
             )
         )
         trainer = build_trainer(config, logger=False, callbacks=[])
-        assert isinstance(getattr(trainer, "profiler"), AdvancedProfiler)
+        assert isinstance(trainer.profiler, AdvancedProfiler)  # type: ignore[attr-defined]
 
     def test_profiler_string_alias_passes_through(self) -> None:
         from lightning.pytorch.profilers import SimpleProfiler
@@ -217,7 +217,7 @@ class TestBuildTrainer:
 
         config = load_config(_minimal_config(trainer=self._cpu_trainer(profiler="simple")))
         trainer = build_trainer(config, logger=False, callbacks=[])
-        assert isinstance(getattr(trainer, "profiler"), SimpleProfiler)
+        assert isinstance(trainer.profiler, SimpleProfiler)  # type: ignore[attr-defined]
 
     def test_profiler_none_disables_profiling(self) -> None:
         from lightning.pytorch.profilers import PassThroughProfiler
@@ -226,7 +226,7 @@ class TestBuildTrainer:
 
         config = load_config(_minimal_config(trainer=self._cpu_trainer()))
         trainer = build_trainer(config, logger=False, callbacks=[])
-        assert isinstance(getattr(trainer, "profiler"), PassThroughProfiler)
+        assert isinstance(trainer.profiler, PassThroughProfiler)  # type: ignore[attr-defined]
 
     def test_epochs_and_save_dir_forwarded(self) -> None:
         from src.composition.wiring import build_trainer

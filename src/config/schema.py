@@ -196,7 +196,7 @@ class DataConfig(BaseModel):
 
     @field_validator("max_samples")
     @classmethod
-    def _validate_max_samples(cls, value: int | float | None) -> int | float | None:
+    def _validate_max_samples(cls, value: float | None) -> int | float | None:
         if isinstance(value, float) and not (0.0 < value <= 1.0):
             raise ValueError(f"max_samples as a fraction must be in (0, 1], got {value}.")
         return value
@@ -502,6 +502,27 @@ class DistillationConfig(BaseModel):
         return value
 
 
+class LoraConfig(BaseModel):
+    """LoRA adapter settings, forwarded to peft's ``LoraConfig`` by the model layer.
+
+    Core fields are typed; unknown keys forward verbatim (``use_dora``, ``use_rslora``,
+    ``bias``, ...) — the same forwarding convention as the optimizer/scheduler sections.
+
+    Parameters:
+        target_modules (list[str]): Backbone module-name suffixes or regexes to wrap.
+        rank (int): Low-rank dimension ``r`` (``> 0``).
+        alpha (float): LoRA scaling numerator (``> 0``); effective scale is ``alpha / rank``.
+        dropout (float): Dropout on the adapter input, in ``[0, 1)``.
+    """
+
+    target_modules: list[str] = Field(..., min_length=1)
+    rank: int = Field(8, gt=0, description="Low-rank dimension r.")
+    alpha: float = Field(16.0, gt=0, description="Scaling numerator; effective scale = alpha / rank.")
+    dropout: float = Field(0.0, ge=0.0, lt=1.0, description="Adapter-input dropout.")
+
+    model_config = ConfigDict(extra="allow")
+
+
 class ExperimentConfig(BaseModel):
     """Root experiment contract assembled from the YAML config."""
 
@@ -604,6 +625,7 @@ class ExperimentConfig(BaseModel):
     distillation: DistillationConfig | None = Field(
         None, description="Online knowledge distillation; None -> disabled."
     )
+    lora: LoraConfig | None = Field(None, description="LoRA fine-tuning; None -> full training.")
 
     model_config = ConfigDict(extra="forbid")
 

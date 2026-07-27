@@ -30,7 +30,7 @@ class FreezeCallback(BaseFinetuning):
     def __init__(
         self,
         targets: list[str],
-        unfreeze_at: int | float = -1,
+        unfreeze_at: float = -1,
         train_bn: bool = False,
     ) -> None:
         super().__init__()

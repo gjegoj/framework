@@ -163,7 +163,7 @@ class TestWrapperKwargsForwarding:
         from src.losses.registry import criteria
 
         criterion = criteria.create("cross_entropy", reduction="sum", ignore_index=255)
-        wrapped = criterion._loss  # noqa: SLF001 — pinning the forwarding contract
+        wrapped = criterion._loss
         assert isinstance(wrapped, torch.nn.CrossEntropyLoss)
         assert wrapped.reduction == "sum"
         assert wrapped.ignore_index == 255
@@ -171,6 +171,6 @@ class TestWrapperKwargsForwarding:
     def test_bce_forwards_reduction(self) -> None:
         from src.losses.registry import criteria
 
-        wrapped = criteria.create("bce", reduction="none")._loss  # noqa: SLF001
+        wrapped = criteria.create("bce", reduction="none")._loss
         assert isinstance(wrapped, torch.nn.BCEWithLogitsLoss)
         assert wrapped.reduction == "none"

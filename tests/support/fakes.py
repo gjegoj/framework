@@ -14,7 +14,7 @@ from unittest.mock import MagicMock
 
 import lightning as L
 import torch
-import torch.nn as nn
+from torch import nn
 
 from src.core.plotting import Plot
 from src.core.ports import (

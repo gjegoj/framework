@@ -133,11 +133,11 @@ class DataModule:
         source_bindings: list[SourceBinding] | None = None,
         split: dict[Stage, float] | None = None,
         split_stratify: str | None = None,
-        max_samples: int | float | None = None,
+        max_samples: float | None = None,
         staged_sources: dict[Stage, list[SourceBinding]] | None = None,
-        dataloader_options: DataLoaderOptions = DataLoaderOptions(),
+        dataloader_options: DataLoaderOptions = DataLoaderOptions(),  # noqa: B008 — frozen dataclass, safe
         root_path: str | None = None,
-        cache_options: CacheOptions = CacheOptions(),
+        cache_options: CacheOptions = CacheOptions(),  # noqa: B008 — frozen dataclass, safe
     ) -> None:
         modes = sum(value is not None for value in (source, source_bindings, staged_sources))
         if modes != 1:
@@ -355,7 +355,7 @@ class DataModule:
 
     def _dataloader(self, stage: Stage, *, shuffle: bool, drop_last: bool = False) -> DataLoader:
         options = self._dataloader_options
-        kwargs: dict[str, Any] = dict(
+        kwargs: dict[str, Any] = dict(  # noqa: C408 — kwargs style mirrors the DataLoader call it feeds
             batch_size=self._batch_size,
             shuffle=shuffle,
             num_workers=options.num_workers,
@@ -407,7 +407,7 @@ def _build_input_bindings(
     return bindings
 
 
-def _apply_max_samples(frame: pd.DataFrame, max_samples: int | float | None, seed: int) -> pd.DataFrame:
+def _apply_max_samples(frame: pd.DataFrame, max_samples: float | None, seed: int) -> pd.DataFrame:
     if max_samples is None:
         return frame
     if isinstance(max_samples, float):

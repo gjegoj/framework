@@ -2,12 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 import numpy as np
-
-if TYPE_CHECKING:
-    pass
 
 
 class TestVisualizationEntities:
@@ -40,14 +35,14 @@ class TestVisualizationEntities:
 
 
 class TestMasks:
-    def _square(self) -> "np.ndarray":
+    def _square(self) -> np.ndarray:
         import numpy as np
 
         mask = np.zeros((20, 20), dtype=bool)
         mask[6:14, 6:14] = True
         return mask
 
-    def _decode(self, uri: str) -> "np.ndarray":
+    def _decode(self, uri: str) -> np.ndarray:
         import base64
         import io
 

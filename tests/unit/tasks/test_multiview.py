@@ -48,7 +48,7 @@ class TestMultiViewTopology:
 
 
 class TestMultiViewForward:
-    def _triplet_model(self, emb_dim: int = 32) -> "CompositeModel":
+    def _triplet_model(self, emb_dim: int = 32) -> CompositeModel:
         from src.models.assembly import build_composite_model
         from src.models.backbones import EmbeddingBackbone
         from src.tasks.strategies.topology import MultiViewTopology
@@ -58,7 +58,7 @@ class TestMultiViewForward:
         specs = {"sim": topo.head_spec(out_features=emb_dim)}
         return build_composite_model(backbone, specs)
 
-    def _pair_model(self, emb_dim: int = 32) -> "CompositeModel":
+    def _pair_model(self, emb_dim: int = 32) -> CompositeModel:
         from src.models.assembly import build_composite_model
         from src.models.backbones import EmbeddingBackbone
         from src.tasks.strategies.topology import MultiViewTopology

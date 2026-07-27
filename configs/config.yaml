@@ -10,6 +10,7 @@ defaults:
   - transforms: default      # swap to augmented or your own transforms config
   - export: torchscript             # swap to torchscript, tensorrt, or all
   - distillation: none       # swap to kl to distill from frozen teacher checkpoint(s)
+  - lora: none               # swap to vit for LoRA fine-tuning (frozen base + adapters)
   - _self_
   - experiment: null        # experiment overrides go last → highest priority
 

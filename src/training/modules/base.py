@@ -17,9 +17,9 @@ from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any
 
 import lightning as L
-import torch.nn as nn
 from lightning.pytorch.loggers import Logger as LightningLogger
 from lightning.pytorch.utilities.types import OptimizerLRScheduler, OptimizerLRSchedulerConfig
+from torch import nn
 
 from src.core.entities import Batch, LossResult, StepOutput, TargetView, Task
 from src.core.enums import Stage
@@ -48,6 +48,10 @@ class BaseLitModule(L.LightningModule, ABC):
         loss_aggregator (LossAggregator | None): Loss combiner; defaults to weighted sum.
         metric_reporter (MetricReporter | None): Logs metrics by shape; defaults to the standard chain.
         hparams (dict[str, Any] | None): Config snapshot logged at ``on_fit_start``.
+        checkpoint_trainable_only (bool): Prune frozen model parameters from checkpoints
+            (LoRA: the frozen base is reconstructable from config, so checkpoints keep
+            only adapters/heads/criteria). Relaxes ``strict_loading`` so those pruned
+            checkpoints load back.
     """
 
     def __init__(
@@ -59,8 +63,12 @@ class BaseLitModule(L.LightningModule, ABC):
         loss_aggregator: LossAggregator | None = None,
         metric_reporter: MetricReporter | None = None,
         hparams: dict[str, Any] | None = None,
+        checkpoint_trainable_only: bool = False,
     ) -> None:
         super().__init__()
+        self._checkpoint_trainable_only = checkpoint_trainable_only
+        if checkpoint_trainable_only:
+            self.strict_loading = False
         self.model = model
         self.tasks = tasks
         # Criteria can carry learnable parameters (e.g. InfoNCE/SigLIP logit_scale/bias). Register
@@ -127,6 +135,25 @@ class BaseLitModule(L.LightningModule, ABC):
         self._move_metrics_to_device()
         if self._hparams_to_log is not None and isinstance(self.logger, LightningLogger) and self.global_rank == 0:
             self.logger.log_hyperparams(self._hparams_to_log)
+
+    def on_save_checkpoint(self, checkpoint: dict[str, Any]) -> None:
+        """Prune frozen model parameters from the checkpoint when configured (LoRA).
+
+        Runs unconditionally — Lightning always calls the module-level hook, even for
+        weights-only checkpoints. Only parameters with ``requires_grad=False`` are
+        dropped; buffers (e.g. BatchNorm running stats) are always kept.
+        ``current_model_state`` is EMA's live-weights stash and is pruned symmetrically.
+        """
+        if not self._checkpoint_trainable_only:
+            return
+        frozen_keys = {
+            f"model.{name}" for name, parameter in self.model.named_parameters() if not parameter.requires_grad
+        }
+        for section_name in ("state_dict", "current_model_state"):
+            section = checkpoint.get(section_name)
+            if section is not None:
+                for key in frozen_keys & section.keys():
+                    del section[key]
 
     def on_test_start(self) -> None:
         self._move_metrics_to_device()

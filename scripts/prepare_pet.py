@@ -43,7 +43,7 @@ def _verify_rgb(path: Path) -> bool:
         with Image.open(path) as im:
             im.convert("RGB").load()
         return True
-    except Exception:
+    except Exception:  # noqa: BLE001 — any decode failure means "skip this image"
         return False
 
 

@@ -1,5 +1,7 @@
 """Unit tests for the model layer (offline, pretrained=False)."""
 
+from typing import ClassVar
+
 import pytest
 import torch
 
@@ -141,7 +143,7 @@ class TestDinoDptPatch:
 
         class _Encoder:
             has_prefix_tokens = True
-            _output_indices = [2, 5]
+            _output_indices: ClassVar[list[int]] = [2, 5]
             model = _Model()
 
         self._stub_smp_build(monkeypatch, _Encoder())
@@ -222,7 +224,7 @@ class TestDinoDptStaticRope:
             dynamic_img_size=False,
             img_size=64,
         )
-        encoder = backbone._encoder  # noqa: SLF001 — pinning smp/timm internals on purpose
+        encoder = backbone._encoder
         assert isinstance(encoder, torch.nn.Module)
         encoder_model = encoder.model
         assert isinstance(encoder_model, torch.nn.Module)

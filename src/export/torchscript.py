@@ -77,7 +77,7 @@ class TorchScriptExporter(ModelExporter):
         """Compile via ``torch.jit.script``, surfacing a readable error on failure."""
         try:
             return torch.jit.script(module)
-        except Exception as error:  # noqa: BLE001 — torch raises varied, cryptic errors here
+        except Exception as error:
             raise RuntimeError(
                 "TorchScript method='script' could not compile the model. The composite export "
                 "wrappers use dataclasses (FeatureBundle / ModelOutput) the TorchScript compiler "

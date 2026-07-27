@@ -171,7 +171,7 @@ class TestDataModule:
         # The label encoder supports summarization → the task appears in the output.
         assert "label" in stats
         assert isinstance(datamodule._target_bindings[0].encoder, SupportsSummary)
-        for stage, distribution in stats["label"].items():
+        for distribution in stats["label"].values():
             assert isinstance(distribution, CategoricalDistribution)
             # All three classes present across every stage.
             assert set(distribution.counts.keys()) == {"cat", "cow", "dog"}
