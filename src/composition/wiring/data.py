@@ -286,6 +286,11 @@ def build_data_module(
     Returns:
         DataModule: Ready to call ``.setup()`` on.
     """
+    if config.data.inputs is None:
+        raise ValueError(
+            "data.inputs is required for the bindings data contour "
+            "(only detection runs, which use a YOLO data.yaml, may omit it)."
+        )
     global_transforms = build_transforms(config, bindings)
     staged = build_staged_sources(config, global_transforms, bindings)
     source_bindings = build_source_bindings(config, global_transforms, bindings) if staged is None else None

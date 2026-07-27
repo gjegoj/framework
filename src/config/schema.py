@@ -161,10 +161,11 @@ class DataConfig(BaseModel):
             "In pre-split mode applied per stage."
         ),
     )
-    inputs: str | dict[str, str | dict[str, str]] = Field(
-        ...,
+    inputs: str | dict[str, str | dict[str, str]] | None = Field(
+        None,
         description=(
-            "Input column(s) and their loaders. "
+            "Input column(s) and their loaders; required for the bindings contour, "
+            "unused for detection (YOLO data.yaml carries its own layout). "
             "str shorthand → single image input named 'image'. "
             "dict[alias, column] → multiple inputs, loader auto-detected from values. "
             "dict[alias, {column, loader}] → explicit loader key."
@@ -221,7 +222,10 @@ class DataConfig(BaseModel):
                             "({_target_: ...}), not a per-stage dict — it is already pinned to this stage."
                         )
         else:
-            if self.split is None:
+            sources_is_descriptor = isinstance(self.sources, str) and self.sources.endswith((".yaml", ".yml"))
+            if self.split is None and not sources_is_descriptor:
+                # A .yaml/.yml source is a dataset descriptor (detection: YOLO data.yaml)
+                # carrying its own split layout; tabular sources need explicit ratios.
                 raise ValueError("'split' is required when sources is a path (split mode).")
             # A split-mode source spans every stage → its transform must be a per-stage dict.
             for source in _source_configs(self.sources):
@@ -391,6 +395,10 @@ class TaskConfig(BaseModel):
     target_encoder: str | dict[str, Any] | None = Field(
         None,
         description="Data-encoder override: registry key or {name/_target_ + params}; None -> inferred from objective.",
+    )
+    model: str | None = Field(None, description="Detection preset: ultralytics architecture (.yaml) or weights (.pt).")
+    hyperparameters: dict[str, Any] | None = Field(
+        None, description="Detection preset: ultralytics hyp dict, forwarded verbatim (mosaic/box/cls/dfl/...)."
     )
 
     model_config = ConfigDict(extra="allow")

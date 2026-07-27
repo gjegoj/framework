@@ -10,6 +10,7 @@ from src.models.assembly import CompositeModel, build_composite_model
 from src.models.ensemble import TeacherEnsemble
 from src.models.lora import apply_lora, has_lora_layers, merge_lora
 from src.models.registry import backbones, head_builders
+from src.models.yolo import build_yolo_model, compute_detection_loss, decode_predictions
 
 __all__ = [
     "CompositeModel",
@@ -17,6 +18,9 @@ __all__ = [
     "apply_lora",
     "backbones",
     "build_composite_model",
+    "build_yolo_model",
+    "compute_detection_loss",
+    "decode_predictions",
     "has_lora_layers",
     "head_builders",
     "merge_lora",

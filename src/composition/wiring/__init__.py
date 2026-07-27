@@ -30,6 +30,11 @@ from src.composition.wiring.data import (
     build_staged_sources,
     build_transforms,
 )
+from src.composition.wiring.detection import (
+    build_detection_experiment,
+    is_detection_run,
+    validate_detection_preconditions,
+)
 from src.composition.wiring.export import run_export, validate_export_preconditions
 from src.composition.wiring.model import apply_lora_if_configured, build_backbone, validate_lora_preconditions
 from src.composition.wiring.tasks import build_bindings, build_tasks
@@ -54,6 +59,7 @@ __all__ = [
     "build_callbacks",
     "build_data_module",
     "build_data_source",
+    "build_detection_experiment",
     "build_lit_data_module",
     "build_lit_module",
     "build_logger",
@@ -69,12 +75,14 @@ __all__ = [
     "callback_builders",
     "extract_model_state_dict",
     "forward_extras",
+    "is_detection_run",
     "load_init_weights",
     "resolve_ckpt_file",
     "resolve_distillation_bricks",
     "resolve_test_ckpt_path",
     "run_experiment",
     "run_export",
+    "validate_detection_preconditions",
     "validate_export_preconditions",
     "validate_lora_preconditions",
 ]

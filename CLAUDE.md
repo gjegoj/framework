@@ -41,6 +41,14 @@ Status — the scope below is implemented and covered by the test suite:
   prunes frozen params, keeps buffers, relaxes `strict_loading`); `run_export` merges adapters
   into base weights for one plain artifact; a wiring guard rejects Freeze×LoRA overlap — LoRA
   owns backbone freezing.
+- **Detection regime (ultralytics facade)**: our Lightning contour driving a YOLO model —
+  `models/yolo.py` (build/loss/NMS-decode/uint8→float batch scaling; ultralytics imports live
+  ONLY here and in `data/detection.py`), `DetectionDataModule` (native YOLO `data.yaml`),
+  `DetectionLitModule` (`BaseLitModule[nn.Module]`, overrides the step methods; mAP via
+  torchmetrics logged as `{task}/map50|map50_95/{stage}`). `main.py` branches early on
+  `is_detection_run`; `validate_detection_preconditions` rejects task mixing and
+  export/LoRA/distillation (phase-2 landing points). Not a Task preset — no
+  topology×objective machinery. ultralytics is AGPL-3.0 (acknowledged in the spec).
 - **Callbacks**: EMA (thin subclass of Lightning's `EMAWeightAveraging`, warmup guard),
   checkpoint (`EmaModelCheckpoint` — weights-only checkpoints store the EMA weights; Lightning
   skips callbacks' `on_save_checkpoint` when `weights_only=True`), freeze,

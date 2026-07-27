@@ -334,7 +334,7 @@ def _lightning_prints_test_results(trainer: L.Trainer) -> bool:
 def run_experiment(
     trainer: L.Trainer,
     lit_module: BaseLitModule,
-    lit_data_module: LitDataModule,
+    lit_data_module: L.LightningDataModule,
     config: ExperimentConfig,
     tasks: list[Task],
 ) -> None:

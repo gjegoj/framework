@@ -31,17 +31,21 @@ from src.core.keys import LOSS, TOTAL
 from src.core.ports import LossAggregator
 from src.metrics.directions import task_metric_directions
 from src.metrics.reporter import MetricReporter
-from src.models.assembly import CompositeModel
 from src.training.aggregator import WeightedSumAggregator
 from src.training.optim.optimizer import OptimizerBuilder
 from src.training.optim.scheduler import TRAINER_FACTS, SchedulerBuilder
 
 
-class BaseLitModule(L.LightningModule, ABC):
+class BaseLitModule[ModelT: nn.Module](L.LightningModule, ABC):
     """Shared scaffolding for multi-task Lightning modules; subclasses implement ``_shared_step``.
 
+    Generic over the model type: standard task regimes bind ``CompositeModel``
+    (``LitModule(BaseLitModule[CompositeModel])``), regimes with their own graph bind
+    plain ``nn.Module`` (detection) — consumers of a concrete regime keep the precise
+    model type without casts.
+
     Parameters:
-        model (CompositeModel): Shared backbone + heads.
+        model (ModelT): The trained model (``CompositeModel`` for standard regimes).
         tasks (list[Task]): Task bundles (adapter/criterion/activation/metrics).
         optimizer_builder (OptimizerBuilder): Builds the optimizer on configure.
         scheduler_builder (SchedulerBuilder | None): Optional LR scheduler builder.
@@ -56,7 +60,7 @@ class BaseLitModule(L.LightningModule, ABC):
 
     def __init__(
         self,
-        model: CompositeModel,
+        model: ModelT,
         tasks: list[Task],
         optimizer_builder: OptimizerBuilder,
         scheduler_builder: SchedulerBuilder | None = None,
@@ -69,7 +73,7 @@ class BaseLitModule(L.LightningModule, ABC):
         self._checkpoint_trainable_only = checkpoint_trainable_only
         if checkpoint_trainable_only:
             self.strict_loading = False
-        self.model = model
+        self.model: ModelT = model
         self.tasks = tasks
         # Criteria can carry learnable parameters (e.g. InfoNCE/SigLIP logit_scale/bias). Register
         # them as a submodule (keyed by task name, mirroring the head ModuleDict) so they are moved

@@ -88,7 +88,7 @@ def resolve_num_classes(task_name: str, task_config: TaskConfig, runtime: Runtim
     return value
 
 
-def _bind_input_keys(task: Task, topology: Topology, inputs: str | dict[str, Any]) -> Task:
+def _bind_input_keys(task: Task, topology: Topology, inputs: str | dict[str, Any] | None) -> Task:
     """Fill a multi-input task's key field (``view_keys``/``stream_keys``) from data.inputs.
 
     The data config is the single source of truth for input alias names, so
@@ -96,12 +96,17 @@ def _bind_input_keys(task: Task, topology: Topology, inputs: str | dict[str, Any
     separate encoders) presets leave the field ``None`` and it is derived here.
     Other topologies and already-populated specs pass through unchanged.
     """
-    if topology == Topology.MULTIVIEW and task.head_spec.view_keys is None:
-        head_spec = dataclasses.replace(task.head_spec, view_keys=input_aliases(inputs))
-    elif topology == Topology.MULTISTREAM and task.head_spec.stream_keys is None:
-        head_spec = dataclasses.replace(task.head_spec, stream_keys=input_aliases(inputs))
-    else:
+    needs_input_keys = (topology == Topology.MULTIVIEW and task.head_spec.view_keys is None) or (
+        topology == Topology.MULTISTREAM and task.head_spec.stream_keys is None
+    )
+    if not needs_input_keys:
         return task
+    if inputs is None:
+        raise ValueError(f"Task {task.name!r} ({topology.value}) derives its input keys from data.inputs — set it.")
+    if topology == Topology.MULTIVIEW:
+        head_spec = dataclasses.replace(task.head_spec, view_keys=input_aliases(inputs))
+    else:
+        head_spec = dataclasses.replace(task.head_spec, stream_keys=input_aliases(inputs))
     return dataclasses.replace(task, head_spec=head_spec)
 
 

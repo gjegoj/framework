@@ -8,6 +8,7 @@ import shared infrastructure only from ``tests.support``.
 from __future__ import annotations
 
 import dataclasses
+from pathlib import Path
 from typing import Any
 
 import albumentations as A
@@ -105,3 +106,43 @@ def make_view(predictions: Tensor | list[Any], target: Tensor | list[Any]) -> Ta
     prediction_tensor = torch.tensor(predictions) if isinstance(predictions, list) else predictions
     target_tensor = torch.tensor(target) if isinstance(target, list) else target
     return TaskStepView(predictions=prediction_tensor, metric_target=target_tensor)
+
+
+def make_yolo_dataset(
+    root: Path,
+    count: int = 8,
+    image_size: int = 64,
+    class_names: tuple[str, ...] = ("a", "b"),
+) -> Path:
+    """Write a minimal YOLO-format detection dataset (images + label txts + data.yaml).
+
+    Each split (train/val) gets ``count`` random images with one centered box each,
+    cycling through the classes. Returns the ``data.yaml`` path.
+    """
+    import cv2
+    import numpy as np
+    import yaml
+
+    rng = np.random.default_rng(0)
+    for split in ("train", "val"):
+        image_directory = root / "images" / split
+        label_directory = root / "labels" / split
+        image_directory.mkdir(parents=True, exist_ok=True)
+        label_directory.mkdir(parents=True, exist_ok=True)
+        for index in range(count):
+            image = rng.integers(0, 255, size=(image_size, image_size, 3), dtype=np.uint8)
+            cv2.imwrite(str(image_directory / f"{index}.jpg"), image)
+            class_index = index % len(class_names)
+            (label_directory / f"{index}.txt").write_text(f"{class_index} 0.5 0.5 0.4 0.4\n")
+    data_yaml = root / "data.yaml"
+    data_yaml.write_text(
+        yaml.safe_dump(
+            {
+                "path": str(root),
+                "train": "images/train",
+                "val": "images/val",
+                "names": dict(enumerate(class_names)),
+            }
+        )
+    )
+    return data_yaml

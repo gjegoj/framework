@@ -29,6 +29,7 @@ from src.composition.wiring import (
     build_bindings,
     build_callbacks,
     build_data_module,
+    build_detection_experiment,
     build_lit_data_module,
     build_lit_module,
     build_logger,
@@ -37,7 +38,9 @@ from src.composition.wiring import (
     build_task_lr_overrides,
     build_tasks,
     build_trainer,
+    is_detection_run,
     run_experiment,
+    validate_detection_preconditions,
     validate_export_preconditions,
     validate_lora_preconditions,
 )
@@ -61,31 +64,40 @@ def main(hydra_config: DictConfig) -> None:
     # 1. Runtime context — populated incrementally as setup steps run
     runtime = RuntimeContext()
 
-    # 2. Data: read → fit encoders (infers num_classes) → split → datasets
-    bindings = build_bindings(config)
-    plain_data_module = build_data_module(config, bindings, runtime)
-    plain_data_module.setup()
+    if is_detection_run(config):
+        # Detection regime: native YOLO data + ultralytics model behind the facade —
+        # diverges before the bindings/tasks chain (see the detection design spec).
+        validate_detection_preconditions(config)
+        lit_module: L.LightningModule
+        lit_data_module: L.LightningDataModule
+        lit_module, lit_data_module = build_detection_experiment(config)
+        tasks = []
+    else:
+        # 2. Data: read → fit encoders (infers num_classes) → split → datasets
+        bindings = build_bindings(config)
+        plain_data_module = build_data_module(config, bindings, runtime)
+        plain_data_module.setup()
 
-    # 3. Tasks — built after setup so num_classes is a concrete int
-    tasks = build_tasks(config, runtime)
-    validate_export_preconditions(config, tasks)  # fail before training if export is impossible
+        # 3. Tasks — built after setup so num_classes is a concrete int
+        tasks = build_tasks(config, runtime)
+        validate_export_preconditions(config, tasks)  # fail before training if export is impossible
 
-    # 4. Model — heads sized from backbone.feature_dim, derived from tasks;
-    #    LoRA (when configured) wraps the backbone and freezes its base weights
-    backbone = build_backbone(config.backbone)
-    model = build_composite_model(backbone, {task.name: task.head_spec for task in tasks})
-    validate_lora_preconditions(config)
-    apply_lora_if_configured(config, model)
+        # 4. Model — heads sized from backbone.feature_dim, derived from tasks;
+        #    LoRA (when configured) wraps the backbone and freezes its base weights
+        backbone = build_backbone(config.backbone)
+        model = build_composite_model(backbone, {task.name: task.head_spec for task in tasks})
+        validate_lora_preconditions(config)
+        apply_lora_if_configured(config, model)
 
-    # 5. Optimizer — per-head LR overrides (from task configs) bound into the builder
-    optimizer_builder = build_optimizer_builder(config.optimizer, build_task_lr_overrides(config))
-    scheduler_builder = build_scheduler_builder(config.scheduler)
+        # 5. Optimizer — per-head LR overrides (from task configs) bound into the builder
+        optimizer_builder = build_optimizer_builder(config.optimizer, build_task_lr_overrides(config))
+        scheduler_builder = build_scheduler_builder(config.scheduler)
 
-    # 6. Lightning wrappers (humble objects delegating to domain logic)
-    lit_module = build_lit_module(config, model, tasks, optimizer_builder, scheduler_builder)
-    lit_data_module = build_lit_data_module(plain_data_module)
+        # 6. Lightning wrappers (humble objects delegating to domain logic)
+        lit_module = build_lit_module(config, model, tasks, optimizer_builder, scheduler_builder)
+        lit_data_module = build_lit_data_module(plain_data_module)
 
-    # 7. Train and/or test
+    # 7. Train and/or test (shared tail for both regimes)
     logger = build_logger(config)
     callbacks = build_callbacks(config, runtime)
     trainer = build_trainer(config, logger, callbacks)

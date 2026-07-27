@@ -5,6 +5,7 @@ runs/
 .claude/settings.local.json
 .claude/settings.json
 AUDIT.md
+docs/superpowers
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

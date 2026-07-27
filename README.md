@@ -4,9 +4,9 @@ Configuration-driven **multi-task & multimodal** computer-vision training on top
 PyTorch Lightning · Hydra · Pydantic · timm / smp · albumentations · torchmetrics.
 
 > Classification · segmentation · regression · **metric learning** (ranking / dual-encoder) ·
-> **knowledge distillation** · **LoRA fine-tuning** — with EMA, MixUp/CutMix/Mosaic, loss-parameter
-> scheduling, model **export** (ONNX / TorchScript / TensorRT) and interactive **sample
-> visualization** built in.
+> **object detection** (YOLO) · **knowledge distillation** · **LoRA fine-tuning** — with EMA,
+> MixUp/CutMix/Mosaic, loss-parameter scheduling, model **export** (ONNX / TorchScript / TensorRT)
+> and interactive **sample visualization** built in.
 
 ## Quick start
 
@@ -47,7 +47,7 @@ Full documentation lives in the [`docs/`](docs/README.md) folder:
 | [Core concepts](docs/concepts.md) | The three-axis task model, runtime values, construction families |
 | [Data](docs/guides/data.md) · [Tasks](docs/guides/tasks.md) · [Backbones](docs/guides/backbones.md) · [Optimizer & scheduler](docs/guides/training.md) | Everyday configuration guides |
 | [Callbacks](docs/guides/callbacks.md) | EMA, checkpointing, freeze, batch transforms, loss scheduling — every callback with usage |
-| [Distillation](docs/guides/distillation.md) · [LoRA](docs/guides/lora.md) · [Export](docs/guides/export.md) · [Visualization](docs/guides/visualization.md) | Feature guides |
+| [Distillation](docs/guides/distillation.md) · [LoRA](docs/guides/lora.md) · [Detection](docs/guides/detection.md) · [Export](docs/guides/export.md) · [Visualization](docs/guides/visualization.md) | Feature guides |
 | [Recipes](docs/recipes.md) | Complete copy-paste experiment configs |
 | [Config reference](docs/reference/config.md) · [CLI](docs/reference/cli.md) · [Extending](docs/reference/extending.md) | Reference |
 | [Internals](docs/internals.md) | Assembly pipeline with diagrams |

@@ -1,4 +1,4 @@
-"""CPU training smokes: classification, embedding, ArcFace embedder, segmentation, criterion schedule."""
+"""CPU training smokes: classification, embedding, ArcFace embedder, segmentation, criterion schedule, detection."""
 
 from __future__ import annotations
 
@@ -546,3 +546,50 @@ class TestLoraSmoke:
             after = lit_module.model({"image": features}).task_logits["label"]
         assert not has_lora_layers(lit_module.model)
         assert torch.allclose(before, after, atol=1e-5)
+
+
+class TestDetectionSmoke:
+    """2-epoch CPU YOLO detection fit through the wiring entry point.
+
+    Pins the regime end-to-end: all logged losses stay finite, mAP is computed and
+    logged on val, and the EMA weights-only checkpoint loads back into a freshly
+    built identical module.
+    """
+
+    def test_detection_fit_ema_checkpoint_roundtrip(self, tmp_path: Path) -> None:
+        from src.composition.wiring import build_detection_experiment, validate_detection_preconditions
+        from src.config import load_config
+        from tests.support.builders import make_yolo_dataset, minimal_config
+
+        data_yaml = make_yolo_dataset(tmp_path)
+        config = load_config(
+            minimal_config(
+                data={"sources": str(data_yaml)},
+                tasks={"boxes": {"preset": "detection", "model": "yolov8n.yaml"}},
+                image_size=[64, 64],
+                epochs=2,
+                run_export=False,
+            )
+        )
+        validate_detection_preconditions(config)
+        lit_module, datamodule = build_detection_experiment(config)
+
+        checkpoint = EmaModelCheckpoint(dirpath=tmp_path, filename="detect", save_weights_only=True)
+        trainer = L.Trainer(
+            max_epochs=2,
+            accelerator="cpu",
+            logger=False,
+            enable_progress_bar=False,
+            enable_model_summary=False,
+            num_sanity_val_steps=0,
+            callbacks=[EmaCallback(decay=0.9, warmup_fraction=0.0, use_buffers=True), checkpoint],
+        )
+        trainer.fit(lit_module, datamodule)
+
+        assert "boxes/map50_95/val" in trainer.logged_metrics
+        assert all(torch.isfinite(value).all() for value in trainer.logged_metrics.values())
+
+        # The weights-only EMA checkpoint loads back into a freshly built identical module.
+        saved = torch.load(checkpoint.best_model_path, weights_only=False)
+        fresh_module, _ = build_detection_experiment(config)
+        fresh_module.load_state_dict(saved["state_dict"])

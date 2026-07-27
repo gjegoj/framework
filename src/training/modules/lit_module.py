@@ -24,10 +24,11 @@ from __future__ import annotations
 
 from src.core.entities import Batch, LossResult, StepOutput, TaskStepView
 from src.core.enums import Stage
+from src.models.assembly import CompositeModel
 from src.training.modules.base import BaseLitModule
 
 
-class LitModule(BaseLitModule):
+class LitModule(BaseLitModule[CompositeModel]):
     """Standard supervised multi-task module: forward → per-task loss → aggregate."""
 
     def _shared_step(self, batch: Batch, stage: Stage) -> StepOutput:

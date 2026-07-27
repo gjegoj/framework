@@ -66,6 +66,8 @@ def resolve_export_input_key(config: ExperimentConfig) -> str:
     """
     if config.export.input_key is not None:
         return config.export.input_key
+    if config.data.inputs is None:
+        raise ValueError("export.input_key is required when data.inputs is not set (descriptor-mode data).")
     aliases = input_aliases(config.data.inputs)
     if len(aliases) != 1:
         raise ValueError(
