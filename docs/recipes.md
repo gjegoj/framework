@@ -4,7 +4,7 @@
 # configs/experiment/classify_pets.yaml
 # @package _global_
 defaults:
-  - override /backbone: resnet18
+  - override /model: resnet18
   - override /callbacks: default
 
 project: pets
@@ -35,7 +35,7 @@ uv run python main.py +experiment=classify_pets
 # configs/experiment/multitask.yaml
 # @package _global_
 defaults:
-  - override /backbone: smp_unet
+  - override /model: smp_unet
   - override /callbacks: default
 
 project: multitask-demo
@@ -71,7 +71,7 @@ tasks:
 # configs/experiment/align.yaml
 # @package _global_
 defaults:
-  - override /backbone: ...        # a `multi` backbone (image + other encoder)
+  - override /model: ...        # a `multi` backbone (image + other encoder)
   - override /callbacks: default
   - override /scheduler: cosine
 
@@ -123,7 +123,7 @@ callbacks:
 # configs/experiment/distill.yaml
 # @package _global_
 defaults:
-  - override /backbone: resnet18       # the STUDENT backbone (small)
+  - override /model: resnet18       # the STUDENT backbone (small)
   - override /callbacks: default
   - distillation: kl
 
@@ -135,7 +135,7 @@ lr: 1.0e-3
 
 distillation:
   teachers:
-    - backbone: {kind: dino_dpt, name: dpt, encoder_name: ...}   # the TEACHER architecture
+    - model: {kind: dino_dpt, name: dpt, encoder_name: ...}      # the TEACHER architecture
       ckpt_path: runs/teacher/checkpoints/best.ckpt              # its trained weights (EMA-aware)
   temperature: 2.0
   weight: 0.7
@@ -152,7 +152,7 @@ so the best-checkpoint choice is comparable with the non-distilled baseline.
 # configs/experiment/lora_finetune.yaml
 # @package _global_
 defaults:
-  - override /backbone: dinov3_dpt
+  - override /model: dinov3_dpt
   - override /callbacks: default
   - lora: vit
 

@@ -7,7 +7,7 @@ Override any config value directly — standard Hydra syntax:
 uv run python main.py epochs=5 batch_size=64
 
 # swap a config group
-uv run python main.py 'defaults=[{override /backbone: smp_unet}]'
+uv run python main.py 'defaults=[{override /model: smp_unet}]'
 
 # swap dataloader / scheduler / export presets
 uv run python main.py dataloader=performance scheduler=cosine export=all

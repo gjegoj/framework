@@ -30,10 +30,13 @@ from src.composition.wiring.data import (
     build_staged_sources,
     build_transforms,
 )
-from src.composition.wiring.detection import (
-    build_detection_experiment,
-    is_detection_run,
-    validate_detection_preconditions,
+from src.composition.wiring.detection import DetectionExperimentAssembler
+from src.composition.wiring.experiment import (
+    Capabilities,
+    ExperimentAssembler,
+    StandardExperimentAssembler,
+    experiment_assemblers,
+    resolve_experiment_assembler,
 )
 from src.composition.wiring.export import run_export, validate_export_preconditions
 from src.composition.wiring.model import apply_lora_if_configured, build_backbone, validate_lora_preconditions
@@ -52,6 +55,10 @@ from src.composition.wiring.training import (
 )
 
 __all__ = [
+    "Capabilities",
+    "DetectionExperimentAssembler",
+    "ExperimentAssembler",
+    "StandardExperimentAssembler",
     "WiringContext",
     "apply_lora_if_configured",
     "build_backbone",
@@ -59,7 +66,6 @@ __all__ = [
     "build_callbacks",
     "build_data_module",
     "build_data_source",
-    "build_detection_experiment",
     "build_lit_data_module",
     "build_lit_module",
     "build_logger",
@@ -73,16 +79,16 @@ __all__ = [
     "build_trainer",
     "build_transforms",
     "callback_builders",
+    "experiment_assemblers",
     "extract_model_state_dict",
     "forward_extras",
-    "is_detection_run",
     "load_init_weights",
     "resolve_ckpt_file",
     "resolve_distillation_bricks",
+    "resolve_experiment_assembler",
     "resolve_test_ckpt_path",
     "run_experiment",
     "run_export",
-    "validate_detection_preconditions",
     "validate_export_preconditions",
     "validate_lora_preconditions",
 ]

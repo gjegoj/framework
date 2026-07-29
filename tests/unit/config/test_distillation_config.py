@@ -7,7 +7,7 @@ from pydantic import ValidationError
 
 from src.config.schema import DistillationConfig
 
-TEACHER = {"backbone": {"kind": "timm", "name": "resnet18"}, "ckpt_path": "runs/teacher.ckpt"}
+TEACHER = {"model": {"kind": "timm", "name": "resnet18"}, "ckpt_path": "runs/teacher.ckpt"}
 
 
 class TestDistillationConfig:
@@ -16,7 +16,7 @@ class TestDistillationConfig:
         assert config.temperature == 2.0
         assert config.weight == 1.0
         assert config.loss is None and config.tasks is None
-        assert config.teachers[0].backbone.name == "resnet18"
+        assert config.teachers[0].model.name == "resnet18"
 
     def test_empty_teachers_rejected(self) -> None:
         with pytest.raises(ValidationError):

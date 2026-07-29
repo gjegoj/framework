@@ -12,6 +12,10 @@ from typing import Any, cast
 import torch
 from torch import Tensor, nn
 
+from src.core.entities import LossResult
+from src.models.complete import CompleteModel
+from src.models.registry import register_complete_model
+
 
 def build_yolo_model(model: str, num_classes: int, hyperparameters: dict[str, Any] | None = None) -> nn.Module:
     """Build a YOLO ``DetectionModel`` from a ``.yaml`` architecture or ``.pt`` weights.
@@ -132,3 +136,61 @@ def decode_predictions(
     return [
         {"boxes": boxes[:, :4], "scores": boxes[:, 4], "labels": boxes[:, 5].to(torch.int64)} for boxes in detections
     ]
+
+
+DetectionPredictions = list[dict[str, Tensor]]
+DetectionTargets = list[dict[str, Tensor]]
+
+
+@register_complete_model("yolo")
+class YoloModel(CompleteModel[DetectionPredictions, DetectionTargets]):
+    """ultralytics YOLO as a complete model: head and loss fused, framework drives the loop.
+
+    Thin adapter over this module's facade functions; the wrapped ``DetectionModel``
+    lives as a submodule so device moves / EMA / checkpoints see its parameters.
+
+    Parameters:
+        name (str): Architecture yaml (offline, e.g. ``yolov8n.yaml``) or ``.pt`` weights path.
+        num_classes (int): Detection class count (from the dataset descriptor).
+        image_size (int): Square image size — converts normalized targets for metrics.
+        hyperparameters (dict[str, Any] | None): ultralytics hyp overrides, forwarded verbatim.
+        confidence_threshold (float): Minimum detection confidence kept at evaluation.
+        iou_threshold (float): NMS IoU threshold at evaluation.
+    """
+
+    family = "detection"
+
+    def __init__(
+        self,
+        name: str,
+        num_classes: int,
+        image_size: int,
+        hyperparameters: dict[str, Any] | None = None,
+        confidence_threshold: float = 0.25,
+        iou_threshold: float = 0.7,
+    ) -> None:
+        super().__init__()
+        self._detection_model = build_yolo_model(name, num_classes=num_classes, hyperparameters=hyperparameters)
+        self._image_size = image_size
+        self._confidence_threshold = confidence_threshold
+        self._iou_threshold = iou_threshold
+
+    def prepare_batch(self, batch: dict[str, Any]) -> dict[str, Any]:
+        return normalize_batch_images(batch)
+
+    def forward(self, batch: dict[str, Any]) -> Any:
+        return self._detection_model(batch["img"])
+
+    def training_loss(self, batch: dict[str, Any]) -> LossResult:
+        total, components = compute_detection_loss(self._detection_model, batch)
+        return LossResult(total=total, components=components)
+
+    def evaluation_loss(self, batch: dict[str, Any], output: Any) -> LossResult:
+        total, components = compute_detection_loss(self._detection_model, batch, predictions=output)
+        return LossResult(total=total, components=components)
+
+    def predictions(self, output: Any) -> DetectionPredictions:
+        return decode_predictions(output, self._confidence_threshold, self._iou_threshold)
+
+    def targets(self, batch: dict[str, Any]) -> DetectionTargets:
+        return ground_truth_boxes(batch, self._image_size)

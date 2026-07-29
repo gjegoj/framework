@@ -20,6 +20,7 @@ from src.data import (
 )
 from src.data.datamodule import _build_input_bindings
 from src.data.dataset import Dataset
+from src.data.encoders import GaussianBinsEncoder, LinearBinsEncoder
 from tests.support.builders import make_transform as _make_transform
 
 LABELS = ["cat", "dog", "cow"]
@@ -356,3 +357,112 @@ class TestMaskEncoderIndexValidation:
         raw = np.array([[0, 255]], dtype=np.uint8)
         mask = MaskEncoder().load(self._write_mask(tmp_path, raw))
         assert np.array_equal(mask, raw)
+
+
+class TestGaussianBinsEncoder:
+    """Continuous value -> Gaussian label distribution over fixed bins (LDL)."""
+
+    def _encoder(self, sigma: float = 0.05) -> GaussianBinsEncoder:
+        edges = [round(0.1 * index, 1) for index in range(11)]  # [0.0, 0.1, ..., 1.0]
+        return GaussianBinsEncoder(bin_edges=edges, sigma=sigma)
+
+    def test_registered(self) -> None:
+        from src.data.registry import target_encoders
+
+        assert target_encoders.get("gaussian_bins") is GaussianBinsEncoder
+
+    def test_distribution_sums_to_one_and_peaks_at_the_value_bin(self) -> None:
+        encoder = self._encoder()
+        distribution = encoder.load(0.42)
+        assert distribution.shape == (10,)
+        assert distribution.sum() == pytest.approx(1.0)
+        assert distribution.argmax() == 4  # 0.42 lives in [0.4, 0.5) — center 0.45
+
+    def test_expectation_recovers_the_value_away_from_edges(self) -> None:
+        encoder = self._encoder()
+        centers = np.asarray([0.05 + 0.1 * index for index in range(10)])
+        distribution = encoder.load(0.42)
+        assert float((distribution * centers).sum()) == pytest.approx(0.42, abs=0.01)
+
+    def test_wider_sigma_spreads_the_distribution(self) -> None:
+        sharp = self._encoder(sigma=0.02).load(0.5)
+        wide = self._encoder(sigma=0.3).load(0.5)
+        assert sharp.max() > wide.max()
+
+    def test_edge_value_still_normalizes(self) -> None:
+        distribution = self._encoder().load(0.0)
+        assert distribution.sum() == pytest.approx(1.0)
+        assert distribution.argmax() == 0
+
+    def test_num_classes_and_tensor_shape(self) -> None:
+        encoder = self._encoder()
+        assert encoder.num_classes == 10
+        tensor = encoder.to_tensor(encoder.load(0.5))
+        assert tensor.dtype == torch.float32 and tensor.shape == (10,)
+
+    def test_summarize_is_continuous(self) -> None:
+        from src.data.statistics import ContinuousDistribution
+
+        summary = self._encoder().summarize([0.1, 0.5, 0.9])
+        assert isinstance(summary, ContinuousDistribution)
+        assert summary.mean == pytest.approx(0.5)
+
+    def test_invalid_edges_rejected(self) -> None:
+        with pytest.raises(ValueError, match="increasing"):
+            GaussianBinsEncoder(bin_edges=[0.0, 0.5, 0.4], sigma=0.05)
+        with pytest.raises(ValueError, match="at least"):
+            GaussianBinsEncoder(bin_edges=[0.0, 1.0], sigma=0.05)
+        with pytest.raises(ValueError, match="sigma"):
+            GaussianBinsEncoder(bin_edges=[0.0, 0.5, 1.0], sigma=0.0)
+
+
+class TestLinearBinsEncoder:
+    """Continuous value -> two-point weights on neighboring bin centers (DFL-style)."""
+
+    def _encoder(self) -> LinearBinsEncoder:
+        edges = [round(0.1 * index, 1) for index in range(11)]  # [0.0, 0.1, ..., 1.0]
+        return LinearBinsEncoder(bin_edges=edges)
+
+    def test_registered(self) -> None:
+        from src.data.registry import target_encoders
+
+        assert target_encoders.get("linear_bins") is LinearBinsEncoder
+
+    def test_two_point_weights_hand_computed(self) -> None:
+        distribution = self._encoder().load(0.42)  # between centers 0.35 (bin 3) and 0.45 (bin 4)
+        assert distribution.sum() == pytest.approx(1.0)
+        assert np.count_nonzero(distribution) == 2
+        assert distribution[3] == pytest.approx(0.3)  # (0.45 - 0.42) / 0.1
+        assert distribution[4] == pytest.approx(0.7)  # (0.42 - 0.35) / 0.1
+
+    def test_expectation_is_exact_inside_the_center_range(self) -> None:
+        encoder = self._encoder()
+        centers = np.asarray([0.05 + 0.1 * index for index in range(10)])
+        for value in [0.05, 0.1, 0.42, 0.5, 0.777, 0.95]:
+            distribution = encoder.load(value)
+            assert float((distribution * centers).sum()) == pytest.approx(value, abs=1e-6)
+
+    def test_value_at_a_center_is_a_delta(self) -> None:
+        distribution = self._encoder().load(0.45)
+        assert distribution[4] == pytest.approx(1.0)
+        assert np.count_nonzero(distribution) == 1
+
+    def test_values_beyond_the_center_range_clamp_to_the_edge_bin(self) -> None:
+        encoder = self._encoder()
+        assert encoder.load(0.0)[0] == pytest.approx(1.0)  # below the first center (0.05)
+        assert encoder.load(1.0)[-1] == pytest.approx(1.0)  # above the last center (0.95)
+
+    def test_num_classes_tensor_and_summary(self) -> None:
+        from src.data.statistics import ContinuousDistribution
+
+        encoder = self._encoder()
+        assert encoder.num_classes == 10
+        tensor = encoder.to_tensor(encoder.load(0.5))
+        assert tensor.dtype == torch.float32 and tensor.shape == (10,)
+        assert isinstance(encoder.summarize([0.2, 0.8]), ContinuousDistribution)
+
+    def test_shares_the_bin_edges_validation(self) -> None:
+        with pytest.raises(ValueError, match="increasing"):
+            LinearBinsEncoder(bin_edges=[0.0, 0.5, 0.4])
+        with pytest.raises(ValueError, match="at least"):
+            LinearBinsEncoder(bin_edges=[0.0, 1.0])

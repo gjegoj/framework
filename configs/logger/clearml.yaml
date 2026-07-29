@@ -5,10 +5,10 @@ kind: clearml
 
 # Task tags for filtering/grouping in the ClearML experiments list.
 # Values are resolved from the live config via ${...} interpolation.
-# A tag resolving to null (e.g. ${backbone.name} on a composite backbone) is dropped.
+# A tag resolving to null (e.g. ${model.name} on a composite backbone) is dropped.
 tags:
-  - "${backbone.kind}"                       # timm / smp / multi
-  - "${backbone.name}"                       # e.g. resnet18
+  - "${model.kind}"                       # timm / smp / multi
+  - "${model.name}"                       # e.g. resnet18
   - "${optimizer.name}"
   - "${oc.select:scheduler.name,''}"         # oc.select: scheduler may be wholly null (scheduler: none)
   - "lr=${lr}"

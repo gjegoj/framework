@@ -6,7 +6,7 @@
 
 defaults:
   - override /trainer: cpu_smoke
-  - override /backbone: embedding     # kind: embedding, embedding_dim: 32, input_key: embedding
+  - override /model: embedding     # kind: embedding, embedding_dim: 32, input_key: embedding
   - override /transforms: identity    # pass vectors through as tensors (no image augmentation)
 
 project: smoke-embeddings

@@ -8,7 +8,7 @@
 # Run:
 #   uv run python main.py experiment=imagereward_ranking
 defaults:
-  - override /backbone: resnet18            # shared image backbone over both views
+  - override /model: resnet18            # shared image backbone over both views
   - override /transforms: multiview_shared  # ONE augmentation sampling applied to both views (fair pair)
   - override /scheduler: onecycle
   - override /callbacks: default

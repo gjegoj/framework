@@ -4,7 +4,7 @@ Select the backbone group in `defaults` or override it:
 
 ```yaml
 defaults:
-  - backbone: resnet18    # configs/backbone/resnet18.yaml
+  - model: resnet18       # configs/model/resnet18.yaml
 ```
 
 | Group file | Architecture | Kind |
@@ -26,7 +26,7 @@ defaults:
 **timm backbone** (any model from the timm registry):
 
 ```yaml
-backbone:
+model:
   kind: timm
   name: efficientnet_b3
   pretrained: true
@@ -35,7 +35,7 @@ backbone:
 **smp backbone** for segmentation or multi-task:
 
 ```yaml
-backbone:
+model:
   kind: smp
   name: unet
   encoder_name: resnet34

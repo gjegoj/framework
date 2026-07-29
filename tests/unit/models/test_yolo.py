@@ -91,6 +91,44 @@ class TestComputeLossWithPrecomputedForward:
         assert set(components) == {"box", "cls", "dfl"}
 
 
+class TestYoloModel:
+    """The CompleteModel adapter: registry entry, family, contract methods."""
+
+    def _model(self) -> Any:
+        from src.models.yolo import YoloModel
+
+        return YoloModel(name="yolov8n.yaml", num_classes=2, image_size=64)
+
+    def test_registered_and_family(self) -> None:
+        from src.models.registry import complete_models
+        from src.models.yolo import YoloModel
+
+        assert "yolo" in complete_models
+        assert YoloModel.family == "detection"
+
+    def test_prepare_batch_scales_uint8(self) -> None:
+        batch = {"img": torch.full((1, 3, 4, 4), 255, dtype=torch.uint8)}
+        assert torch.allclose(self._model().prepare_batch(batch)["img"], torch.ones(1, 3, 4, 4))
+
+    def test_training_loss_finite_with_components(self) -> None:
+        result = self._model().training_loss(_synthetic_batch())
+        assert torch.isfinite(result.total) and result.total.requires_grad
+        assert set(result.components) == {"box", "cls", "dfl"}
+
+    def test_evaluation_contract_predictions_and_targets(self) -> None:
+        model = self._model()
+        model.eval()
+        batch = _synthetic_batch()
+        with torch.no_grad():
+            output = model(batch)
+            loss = model.evaluation_loss(batch, output)
+        decoded = model.predictions(output)
+        ground_truth = model.targets(batch)
+        assert torch.isfinite(loss.total)
+        assert len(decoded) == len(ground_truth) == 2
+        assert set(ground_truth[0]) == {"boxes", "labels"}
+
+
 class TestDecodePredictions:
     def test_torchmetrics_format(self) -> None:
         model = build_yolo_model("yolov8n.yaml", num_classes=2)

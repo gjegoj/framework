@@ -1,6 +1,6 @@
 defaults:
   - hydra: default           # rich logging to terminal + file
-  - backbone: resnet18
+  - model: resnet18
   - optimizer: adamw
   - scheduler: none          # swap to cosine, onecycle, or plateau to enable
   - dataloader: default      # swap to performance (GPU) or debug (num_workers=0)
@@ -12,7 +12,7 @@ defaults:
   - distillation: none       # swap to kl to distill from frozen teacher checkpoint(s)
   - lora: none               # swap to vit for LoRA fine-tuning (frozen base + adapters)
   - _self_
-  - experiment: null        # experiment overrides go last → highest priority
+  - experiment: detect_smoke        # experiment overrides go last → highest priority
 
 project: my-project
 run_name: ${now:%Y-%m-%d}/${now:%H-%M-%S}

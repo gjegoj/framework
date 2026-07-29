@@ -24,29 +24,14 @@ from omegaconf import DictConfig, OmegaConf
 import src.models
 import src.tasks  # noqa: F401 — populate the topology / objective / preset (and criteria) registries
 from src.composition.wiring import (
-    apply_lora_if_configured,
-    build_backbone,
-    build_bindings,
     build_callbacks,
-    build_data_module,
-    build_detection_experiment,
-    build_lit_data_module,
-    build_lit_module,
     build_logger,
-    build_optimizer_builder,
-    build_scheduler_builder,
-    build_task_lr_overrides,
-    build_tasks,
     build_trainer,
-    is_detection_run,
+    resolve_experiment_assembler,
     run_experiment,
-    validate_detection_preconditions,
-    validate_export_preconditions,
-    validate_lora_preconditions,
 )
 from src.config import load_config
 from src.core.runtime import RuntimeContext
-from src.models.assembly import build_composite_model
 from src.utils.console import print_config, silence_known_warnings
 
 log = logging.getLogger(__name__)
@@ -60,44 +45,15 @@ def main(hydra_config: DictConfig) -> None:
     config = load_config(raw)
 
     L.seed_everything(config.seed, workers=True, verbose=False)
-
-    # 1. Runtime context — populated incrementally as setup steps run
     runtime = RuntimeContext()
 
-    if is_detection_run(config):
-        # Detection regime: native YOLO data + ultralytics model behind the facade —
-        # diverges before the bindings/tasks chain (see the detection design spec).
-        validate_detection_preconditions(config)
-        lit_module: L.LightningModule
-        lit_data_module: L.LightningDataModule
-        lit_module, lit_data_module = build_detection_experiment(config)
-        tasks = []
-    else:
-        # 2. Data: read → fit encoders (infers num_classes) → split → datasets
-        bindings = build_bindings(config)
-        plain_data_module = build_data_module(config, bindings, runtime)
-        plain_data_module.setup()
+    # One assembler per run family (standard chain, detection, ...) — resolved from
+    # config, validated up front, then built. Adding a family never touches this file.
+    assembler = resolve_experiment_assembler(config)
+    assembler.validate(config)
+    lit_module, lit_data_module, tasks = assembler.build(config, runtime)
 
-        # 3. Tasks — built after setup so num_classes is a concrete int
-        tasks = build_tasks(config, runtime)
-        validate_export_preconditions(config, tasks)  # fail before training if export is impossible
-
-        # 4. Model — heads sized from backbone.feature_dim, derived from tasks;
-        #    LoRA (when configured) wraps the backbone and freezes its base weights
-        backbone = build_backbone(config.backbone)
-        model = build_composite_model(backbone, {task.name: task.head_spec for task in tasks})
-        validate_lora_preconditions(config)
-        apply_lora_if_configured(config, model)
-
-        # 5. Optimizer — per-head LR overrides (from task configs) bound into the builder
-        optimizer_builder = build_optimizer_builder(config.optimizer, build_task_lr_overrides(config))
-        scheduler_builder = build_scheduler_builder(config.scheduler)
-
-        # 6. Lightning wrappers (humble objects delegating to domain logic)
-        lit_module = build_lit_module(config, model, tasks, optimizer_builder, scheduler_builder)
-        lit_data_module = build_lit_data_module(plain_data_module)
-
-    # 7. Train and/or test (shared tail for both regimes)
+    # Shared tail: logging, callbacks, trainer, fit/test/export.
     logger = build_logger(config)
     callbacks = build_callbacks(config, runtime)
     trainer = build_trainer(config, logger, callbacks)

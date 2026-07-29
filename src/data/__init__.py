@@ -9,7 +9,9 @@ from src.data.collate import collate_samples
 from src.data.datamodule import CacheOptions, DataLoaderOptions, DataModule
 from src.data.dataset import Dataset
 from src.data.encoders import (
+    GaussianBinsEncoder,
     LabelEncoder,
+    LinearBinsEncoder,
     MaskEncoder,
     MultiLabelEncoder,
     ScalarEncoder,
@@ -39,11 +41,13 @@ __all__ = [
     "DatasetStatistics",
     "EmbeddingLoader",
     "FileDataSource",
+    "GaussianBinsEncoder",
     "ImageLoader",
     "InputBinding",
     "InputLoader",
     "JsonDataSource",
     "LabelEncoder",
+    "LinearBinsEncoder",
     "MaskEncoder",
     "MultiLabelEncoder",
     "ScalarEncoder",

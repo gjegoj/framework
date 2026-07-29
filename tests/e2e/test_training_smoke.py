@@ -1,4 +1,4 @@
-"""CPU training smokes: classification, embedding, ArcFace embedder, segmentation, criterion schedule, detection."""
+"""CPU training smokes: classification, embedding, ArcFace, segmentation, criterion schedule, LDL, detection."""
 
 from __future__ import annotations
 
@@ -548,6 +548,64 @@ class TestLoraSmoke:
         assert torch.allclose(before, after, atol=1e-5)
 
 
+class TestLabelDistributionSmoke:
+    """1-epoch CPU LDL fit: gaussian_bins targets + soft-CE + distribution_mean on one head."""
+
+    def test_soft_ce_with_expectation_regression(self, tmp_path: Path) -> None:
+        from src.data import GaussianBinsEncoder
+        from src.losses.registry import criteria as _criteria
+
+        image_dir = tmp_path / "img"
+        image_dir.mkdir()
+        rng = np.random.default_rng(7)
+        rows = []
+        for i in range(12):
+            cv2.imwrite(str(image_dir / f"{i}.jpg"), rng.integers(0, 256, (32, 32, 3), dtype=np.uint8))
+            rows.append({"image_path": str(image_dir / f"{i}.jpg"), "score": float(rng.uniform(0.05, 0.95))})
+        csv = tmp_path / "ldl.csv"
+        pd.DataFrame(rows).to_csv(csv, index=False)
+
+        bin_edges = [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]
+        runtime = RuntimeContext()
+        transforms = {s: _make_transform((32, 32)) for s in Stage}
+        plain_dm = DataModule(
+            target_bindings=[TargetBinding("quality", "score", GaussianBinsEncoder(bin_edges=bin_edges, sigma=0.1))],
+            inputs_config="image_path",
+            transforms=transforms,
+            runtime=runtime,
+            batch_size=4,
+            seed=0,
+            source=CsvDataSource(str(csv)),
+            split={Stage.TRAIN: 0.6, Stage.VAL: 0.2, Stage.TEST: 0.2},
+            dataloader_options=DataLoaderOptions(drop_last=True),
+        )
+        plain_dm.setup()
+        assert runtime.num_classes["quality"] == 5  # bin count inferred from the encoder
+
+        task = classification("quality", num_classes=runtime.num_classes["quality"])
+        composite_criterion = _criteria.create(
+            "weighted_sum",
+            losses={"cross_entropy": 1.0, "distribution_mean": {"weight": 0.5, "bin_edges": bin_edges}},
+        )
+        task = dataclasses.replace(task, criterion=composite_criterion)
+        model = build_composite_model(TimmBackbone("resnet18", pretrained=False), {"quality": task.head_spec})
+
+        lit_module = LitModule(model=model, tasks=[task], optimizer_builder=OptimizerBuilder(base_lr=1e-3))
+        trainer = L.Trainer(
+            max_epochs=1,
+            accelerator="cpu",
+            logger=False,
+            enable_checkpointing=False,
+            enable_progress_bar=False,
+            enable_model_summary=False,
+        )
+        trainer.fit(lit_module, LitDataModule(plain_dm))
+
+        assert "loss/train/quality/cross_entropy" in trainer.logged_metrics
+        assert "loss/train/quality/distribution_mean" in trainer.logged_metrics
+        assert all(torch.isfinite(value).all() for value in trainer.logged_metrics.values())
+
+
 class TestDetectionSmoke:
     """2-epoch CPU YOLO detection fit through the wiring entry point.
 
@@ -557,7 +615,7 @@ class TestDetectionSmoke:
     """
 
     def test_detection_fit_ema_checkpoint_roundtrip(self, tmp_path: Path) -> None:
-        from src.composition.wiring import build_detection_experiment, validate_detection_preconditions
+        from src.composition.wiring import resolve_experiment_assembler
         from src.config import load_config
         from tests.support.builders import make_yolo_dataset, minimal_config
 
@@ -565,14 +623,16 @@ class TestDetectionSmoke:
         config = load_config(
             minimal_config(
                 data={"sources": str(data_yaml)},
-                tasks={"boxes": {"preset": "detection", "model": "yolov8n.yaml"}},
+                model={"kind": "yolo", "name": "yolov8n.yaml"},
+                tasks={"boxes": {"preset": "detection"}},
                 image_size=[64, 64],
                 epochs=2,
                 run_export=False,
             )
         )
-        validate_detection_preconditions(config)
-        lit_module, datamodule = build_detection_experiment(config)
+        assembler = resolve_experiment_assembler(config)
+        assembler.validate(config)
+        lit_module, datamodule, _tasks = assembler.build(config, RuntimeContext())
 
         checkpoint = EmaModelCheckpoint(dirpath=tmp_path, filename="detect", save_weights_only=True)
         trainer = L.Trainer(
@@ -591,5 +651,5 @@ class TestDetectionSmoke:
 
         # The weights-only EMA checkpoint loads back into a freshly built identical module.
         saved = torch.load(checkpoint.best_model_path, weights_only=False)
-        fresh_module, _ = build_detection_experiment(config)
+        fresh_module, _datamodule, _tasks = assembler.build(config, RuntimeContext())
         fresh_module.load_state_dict(saved["state_dict"])

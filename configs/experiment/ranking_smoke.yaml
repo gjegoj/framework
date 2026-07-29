@@ -6,7 +6,7 @@
 
 defaults:
   - override /trainer: cpu_smoke
-  - override /backbone: resnet18   # pretrained: false — no download needed
+  - override /model: resnet18   # pretrained: false — no download needed
   - override /transforms: multiview   # process anchor/positive/negative views independently
 
 project: smoke-ranking

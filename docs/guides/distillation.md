@@ -9,7 +9,7 @@ across teachers; per distilled task the training loss becomes `hard + weight · 
 ```yaml
 distillation:
   teachers:
-    - backbone: ${backbone}          # reuse the student backbone spec, or inline a different one
+    - model: ${model}                # reuse the student model spec, or inline a different one
       ckpt_path: runs/.../teacher.ckpt   # EMA checkpoints contribute their EMA weights
   temperature: 2.0                   # softening for the default kl_divergence loss
   weight: 0.7                        # additive soft-loss weight (float, or {task_name: float})

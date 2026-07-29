@@ -38,7 +38,7 @@ def _distillation_config(tmp_path: Path, **distillation_overrides: object) -> Ex
     ckpt = _teacher_ckpt(tmp_path / "teacher.ckpt", lightning_prefix=True)
     raw = _minimal_config()
     raw["distillation"] = {
-        "teachers": [{"backbone": {"name": "resnet18", "pretrained": False}, "ckpt_path": ckpt}],
+        "teachers": [{"model": {"name": "resnet18", "pretrained": False}, "ckpt_path": ckpt}],
         **distillation_overrides,
     }
     return load_config(raw)
@@ -55,7 +55,7 @@ class TestBuildTeachers:
     def test_loads_teacher_from_either_format(self, tmp_path: Path, lightning_prefix: bool) -> None:
         ckpt = _teacher_ckpt(tmp_path / "teacher.ckpt", lightning_prefix=lightning_prefix)
         raw = _minimal_config()
-        raw["distillation"] = {"teachers": [{"backbone": {"name": "resnet18", "pretrained": False}, "ckpt_path": ckpt}]}
+        raw["distillation"] = {"teachers": [{"model": {"name": "resnet18", "pretrained": False}, "ckpt_path": ckpt}]}
         config = load_config(raw)
         tasks = build_tasks(config, RuntimeContext(num_classes={"label": 3}))
 

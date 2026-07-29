@@ -1,0 +1,5 @@
+kind: yolo
+name: yolov8n.yaml # ultralytics architecture yaml (offline) or a .pt weights path
+# Extra keys forward verbatim as native ultralytics hyperparameters:
+# box: 7.5
+# mosaic: 0.0

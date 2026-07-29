@@ -49,9 +49,9 @@ class TestEmbeddingBackbone:
 
     def test_builds_from_config_ignoring_name_and_pretrained(self) -> None:
         from src.composition.wiring import build_backbone
-        from src.config.schema import BackboneConfig
+        from src.config.schema import ModelConfig
 
-        cfg = BackboneConfig(kind="embedding", name="identity", embedding_dim=8, input_key="embedding")
+        cfg = ModelConfig(kind="embedding", name="identity", embedding_dim=8, input_key="embedding")
         backbone = build_backbone(cfg)
         assert isinstance(backbone, EmbeddingBackbone)
         assert backbone.feature_dim(POOLED) == 8

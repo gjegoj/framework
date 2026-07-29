@@ -4,7 +4,7 @@
 # `rotation` column seeds every sample at class 0 and the aug bumps it by the applied
 # quarter-turns — so one all-0° dataset yields a balanced 4-class task with no extra data.
 defaults:
-  - override /backbone: resnet18      # timm classifier on the pooled stream
+  - override /model: resnet18      # timm classifier on the pooled stream
   - override /transforms: rotation
   - override /logger: clearml
   - override /callbacks: default

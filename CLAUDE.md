@@ -20,7 +20,13 @@ Status — the scope below is implemented and covered by the test suite:
 - **Tasks**: classification + every objective (multiclass/binary/multilabel/continuous), DENSE
   segmentation, and **metric learning** — MULTIVIEW (Siamese: N views through one shared
   backbone) and MULTISTREAM (dual/multi-encoder, CLIP/SigLIP-style) topologies with
-  triplet / margin-ranking / RankNet / InfoNCE / SigLIP / ArcFace losses.
+  triplet / margin-ranking / RankNet / InfoNCE / SigLIP / ArcFace losses. **Label
+  distribution learning (LDL)**: `gaussian_bins` / `linear_bins` target encoders
+  (continuous value → `[C]` distribution, `num_classes` = bin count; gaussian = smooth
+  soft labels with edge bias ~sigma — pad edges 3-4 sigma; linear = DFL-style two-point,
+  expectation exact) + soft-CE + `distribution_mean` criterion (`losses/regression.py` —
+  L1/Huber on `softmax·bin_centers` expectations), composed via `weighted_sum` on ONE
+  head (the expectation is parameterless — never a second head).
 - **Backbones** (`models/backbones/`, kinds in the `backbones` registry): `TimmBackbone`,
   multi-stream `SmpBackbone` (`ENCODER_LAST`/`DECODER`, per-task `feature_key`), `dino_dpt`
   (DINOv3/ViT encoder + DPT decoder — the primary production backbone), precomputed
@@ -41,14 +47,24 @@ Status — the scope below is implemented and covered by the test suite:
   prunes frozen params, keeps buffers, relaxes `strict_loading`); `run_export` merges adapters
   into base weights for one plain artifact; a wiring guard rejects Freeze×LoRA overlap — LoRA
   owns backbone freezing.
-- **Detection regime (ultralytics facade)**: our Lightning contour driving a YOLO model —
-  `models/yolo.py` (build/loss/NMS-decode/uint8→float batch scaling; ultralytics imports live
-  ONLY here and in `data/detection.py`), `DetectionDataModule` (native YOLO `data.yaml`),
-  `DetectionLitModule` (`BaseLitModule[nn.Module]`, overrides the step methods; mAP via
-  torchmetrics logged as `{task}/map50|map50_95/{stage}`). `main.py` branches early on
-  `is_detection_run`; `validate_detection_preconditions` rejects task mixing and
-  export/LoRA/distillation (phase-2 landing points). Not a Task preset — no
-  topology×objective machinery. ultralytics is AGPL-3.0 (acknowledged in the spec).
+- **Complete-model mechanism + detection (ultralytics)**: models that own head+loss plug in
+  via per-layer ports (spec `docs/superpowers/specs/2026-07-27-complete-models-design.md`):
+  `CompleteModel[PredictionT, TargetT]` ABC (`models/complete.py`) + `complete_models`
+  registry (`register_complete_model` keeps `kind` ONE namespace with `backbones`);
+  `MetricBundle`/`build_metric_bundle` (`metrics/bundle.py` — built from the task's
+  `metrics:` block via `metric_factories` (`map` registered), dict-compute leaf selection,
+  directions from `higher_is_better`); generic `CompleteModelLitModule`
+  (`training/modules/complete.py`); `ExperimentAssembler` + `Capabilities` + singleton
+  registry `experiment_assemblers` (`composition/wiring/experiment.py` — the standard chain
+  is itself `StandardExperimentAssembler`, so `main.py` is a flat resolve→validate→build with
+  no per-family ifs). Config: model section `{kind: yolo, name: yolov8n.yaml}` (extras →
+  native hyperparameters), task `{preset: detection}` (== the model's `family`);
+  `resolve_experiment_assembler` dispatches by `kind` and rejects kind⇔preset drift both
+  ways. YOLO realization: `models/yolo.py` (`YoloModel` + facade functions; uint8→float and
+  frozen-`.pt` quirks live here; ultralytics imports ONLY here and in `data/detection.py`),
+  `DetectionDataModule` (native `data.yaml`; writes `num_classes` into `RuntimeContext`),
+  `DetectionExperimentAssembler` (capabilities all-False: export/LoRA/distillation/mixing are
+  phase-2). mAP logs as `{task}/map50|map50_95/{stage}`. ultralytics is AGPL-3.0.
 - **Callbacks**: EMA (thin subclass of Lightning's `EMAWeightAveraging`, warmup guard),
   checkpoint (`EmaModelCheckpoint` — weights-only checkpoints store the EMA weights; Lightning
   skips callbacks' `on_save_checkpoint` when `weights_only=True`), freeze,
@@ -341,8 +357,8 @@ classifier flavor keeps them in the `cosine` head.
   (full decoder output for segmentation heads). `POOLED` is not exposed — pooling is the head's job.
   DPT architecture is supported via the `_dpt_style` flag (detected from `name.lower() == "dpt"`).
   ASPP-based architectures (deeplabv3, pan, upernet) require `batch_size ≥ 2` in train mode
-  (BatchNorm after global-avg-pool). See `configs/backbone/smp_dpt.yaml` for DPT config example.
-- `dino_dpt` (kind `dino_dpt`, `configs/backbone/dinov3_dpt.yaml`) pairs a DINOv3/ViT timm
+  (BatchNorm after global-avg-pool). See `configs/model/smp_dpt.yaml` for DPT config example.
+- `dino_dpt` (kind `dino_dpt`, `configs/model/dinov3_dpt.yaml`) pairs a DINOv3/ViT timm
   encoder with a DPT decoder — the primary production backbone; its static-ROPE build keeps
   the graph traceable for TorchScript export.
 - `EmbeddingBackbone` (kind `embedding`) consumes precomputed feature vectors (no image

@@ -14,7 +14,7 @@ seed: 0
 epochs: 2
 batch_size: 4
 
-backbone:
+model:
   kind: multi
   embed_dim: 64                # shared projection dim D; matches task num_classes
   encoders:

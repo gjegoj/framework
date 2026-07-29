@@ -185,6 +185,25 @@ class MultiLabelEncoder(_CategoricalEncoder):
         return self._distribution_from_counts(Counter(label for value in values for label in self._split(value)))
 
 
+def _continuous_summary(values: Iterable[Any]) -> ContinuousDistribution | None:
+    """Percentile/mean/std summary of numeric values (shared by scalar-valued encoders)."""
+    numbers = np.asarray([float(value) for value in values], dtype=float)
+    numbers = numbers[~np.isnan(numbers)]
+    if numbers.size == 0:
+        return None
+    minimum, q25, median, q75, maximum = (float(x) for x in np.percentile(numbers, [0, 25, 50, 75, 100]))
+    return ContinuousDistribution(
+        count=int(numbers.size),
+        mean=float(numbers.mean()),
+        std=float(numbers.std(ddof=1)) if numbers.size > 1 else 0.0,
+        minimum=minimum,
+        q25=q25,
+        median=median,
+        q75=q75,
+        maximum=maximum,
+    )
+
+
 @target_encoders.register("scalar")
 class ScalarEncoder(TargetEncoder):
     """Encodes a scalar numeric target as a ``[]`` float tensor (regression)."""
@@ -199,21 +218,100 @@ class ScalarEncoder(TargetEncoder):
         return torch.tensor(float(value), dtype=torch.float)
 
     def summarize(self, values: Iterable[Any]) -> Distribution | None:
-        numbers = np.asarray([float(value) for value in values], dtype=float)
-        numbers = numbers[~np.isnan(numbers)]
-        if numbers.size == 0:
-            return None
-        minimum, q25, median, q75, maximum = (float(x) for x in np.percentile(numbers, [0, 25, 50, 75, 100]))
-        return ContinuousDistribution(
-            count=int(numbers.size),
-            mean=float(numbers.mean()),
-            std=float(numbers.std(ddof=1)) if numbers.size > 1 else 0.0,
-            minimum=minimum,
-            q25=q25,
-            median=median,
-            q75=q75,
-            maximum=maximum,
-        )
+        return _continuous_summary(values)
+
+
+class _BinnedDistributionEncoder(TargetEncoder):
+    """Shared machinery for encoders turning a continuous target into a bin distribution.
+
+    Owns the ``bin_edges`` validation and midpoint centers; subclasses implement
+    ``load`` — how a value spreads over the centers. ``num_classes`` is the bin
+    count, so the head sizes itself through ``RuntimeContext`` like every
+    categorical task.
+
+    Parameters:
+        bin_edges (list[float]): Strictly increasing bin boundaries (≥ 3 values → ≥ 2 bins).
+    """
+
+    def __init__(self, bin_edges: list[float]) -> None:
+        key = type(self).__name__
+        if len(bin_edges) < 3:
+            raise ValueError(f"{key} needs at least 3 bin_edges (2 bins), got {len(bin_edges)}.")
+        edges = np.asarray([float(edge) for edge in bin_edges], dtype=np.float64)
+        if not np.all(np.diff(edges) > 0):
+            raise ValueError(f"{key} bin_edges must be strictly increasing, got {bin_edges}.")
+        self._bin_centers = (edges[:-1] + edges[1:]) / 2.0
+
+    @property
+    def num_classes(self) -> int | None:
+        return int(self._bin_centers.size)
+
+    def fit(self, values: Iterable[Any]) -> None:
+        pass
+
+    def to_tensor(self, value: Any) -> Tensor:
+        return torch.as_tensor(value, dtype=torch.float)
+
+    def summarize(self, values: Iterable[Any]) -> Distribution | None:
+        return _continuous_summary(values)
+
+
+@target_encoders.register("gaussian_bins")
+class GaussianBinsEncoder(_BinnedDistributionEncoder):
+    """Encodes a continuous target as a Gaussian label distribution over fixed bins (LDL).
+
+    The value becomes a ``[C]`` float vector: a normal density centered on the value,
+    evaluated at the bin centers (midpoints of ``bin_edges``) and normalized to sum 1.
+    Feed it to soft-label cross-entropy, optionally combined with the
+    ``distribution_mean`` criterion for expectation regression.
+
+    Note: near the range edges the clipped Gaussian's expectation is biased toward the
+    center (up to ~sigma + half a bin) — pad ``bin_edges`` ~3-4 sigma beyond the data
+    range, or use ``linear_bins`` for an exact expectation.
+
+    Parameters:
+        bin_edges (list[float]): Strictly increasing bin boundaries (≥ 3 values → ≥ 2 bins).
+        sigma (float): Standard deviation of the smoothing Gaussian, in target units.
+    """
+
+    def __init__(self, bin_edges: list[float], sigma: float) -> None:
+        super().__init__(bin_edges)
+        if sigma <= 0:
+            raise ValueError(f"gaussian_bins sigma must be positive, got {sigma}.")
+        self._sigma = float(sigma)
+
+    def load(self, value: Any) -> np.ndarray:
+        density = np.exp(-0.5 * ((self._bin_centers - float(value)) / self._sigma) ** 2)
+        return np.asarray(density / density.sum(), dtype=np.float32)
+
+
+@target_encoders.register("linear_bins")
+class LinearBinsEncoder(_BinnedDistributionEncoder):
+    """Encodes a continuous target as two-point weights on neighboring bin centers (DFL-style).
+
+    The value splits linearly between the two centers that bracket it (the encoding
+    ultralytics' Distribution Focal Loss uses for box targets): the distribution's
+    expectation reproduces the value **exactly** anywhere inside the center range.
+    Values outside the center range clamp to the edge bin. The trade-off against
+    ``gaussian_bins``: an exact expectation, but only two non-zero bins — no smooth
+    soft-label mass around the value.
+
+    Parameters:
+        bin_edges (list[float]): Strictly increasing bin boundaries (≥ 3 values → ≥ 2 bins).
+    """
+
+    def load(self, value: Any) -> np.ndarray:
+        distribution = np.zeros(self._bin_centers.size, dtype=np.float32)
+        clamped = float(np.clip(float(value), self._bin_centers[0], self._bin_centers[-1]))
+        upper_index = int(np.searchsorted(self._bin_centers, clamped, side="left"))
+        if self._bin_centers[upper_index] == clamped:
+            distribution[upper_index] = 1.0
+            return distribution
+        lower_index = upper_index - 1
+        gap = self._bin_centers[upper_index] - self._bin_centers[lower_index]
+        distribution[lower_index] = (self._bin_centers[upper_index] - clamped) / gap
+        distribution[upper_index] = (clamped - self._bin_centers[lower_index]) / gap
+        return distribution
 
 
 @target_encoders.register("mask")

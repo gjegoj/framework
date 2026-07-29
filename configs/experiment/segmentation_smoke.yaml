@@ -3,7 +3,7 @@
 # Run: uv run python main.py +experiment=segmentation_smoke
 
 defaults:
-  - override /backbone: smp_unet
+  - override /model: smp_unet
   - override /trainer: cpu_smoke
 
 project: smoke-segmentation

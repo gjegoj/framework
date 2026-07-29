@@ -103,6 +103,47 @@ tasks:
       lr: 1.0e-4                # this head gets its own param group
 ```
 
+**Soft labels / label distribution (LDL).** A continuous target can be trained as a
+*distribution over bins* (DFL-style): the `gaussian_bins` encoder smooths the value into
+a `[C]` distribution, soft-label cross-entropy learns it (the multiclass adapter is
+soft-target aware), and the `distribution_mean` criterion regresses the **expectation**
+`softmax(logits) · bin_centers` onto the target's expectation. One head, one composite
+loss — no separate regression head (the expectation has no parameters of its own):
+
+```yaml
+tasks:
+  quality:
+    preset: classification
+    target: score                       # continuous column
+    num_classes: 10                     # = bin count
+    target_encoder:
+      name: gaussian_bins
+      bin_edges: [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
+      sigma: 0.05
+    loss:
+      name: weighted_sum
+      losses:
+        cross_entropy: 1.0              # soft-CE over the distribution
+        distribution_mean:              # expectation regression on the same logits
+          weight: 0.5
+          bin_edges: [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
+          kind: huber                   # or l1 (default); extras forward to the torch loss
+          delta: 0.1
+```
+
+Note: away from the range edges the target expectation equals the original value; where
+the Gaussian is clipped by the range it is biased toward the center (up to ~`sigma` +
+half a bin). Two remedies: pad `bin_edges` ~3–4 sigma beyond the data range (zero code),
+or switch the encoder to **`linear_bins`** — DFL-style two-point weights on the two
+neighboring centers (no `sigma`), whose expectation reproduces the value *exactly*
+anywhere inside the center range, at the cost of losing the smooth Gaussian mass:
+
+```yaml
+    target_encoder:
+      name: linear_bins
+      bin_edges: [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
+```
+
 ## Embeddings & metric learning
 
 
@@ -139,7 +180,7 @@ named stream each, aligned in a shared space. Use the `multi` backbone whose sub
 names match the `data.inputs` aliases:
 
 ```yaml
-backbone:
+model:
   kind: multi
   encoders:
     image: {kind: timm, name: resnet50}

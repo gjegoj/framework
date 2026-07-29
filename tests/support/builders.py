@@ -45,7 +45,7 @@ def raw_config(**overrides: Any) -> dict[str, Any]:
             "inputs": "image_path",
             "split": {"train": 0.8, "val": 0.1, "test": 0.1},
         },
-        "backbone": {"name": "resnet18"},
+        "model": {"name": "resnet18"},
         "optimizer": {"lr": 1e-3},
         "tasks": {
             "label": {"preset": "classification", "target": "label", "class_mapping": {0: "cat", 1: "cow", 2: "dog"}}
@@ -68,7 +68,7 @@ def minimal_config(**overrides: Any) -> dict[str, Any]:
             "inputs": "image_path",
             "split": {"train": 0.8, "val": 0.1, "test": 0.1},
         },
-        "backbone": {"name": "resnet18"},
+        "model": {"name": "resnet18"},
         "optimizer": {"lr": 1e-3},
         "tasks": {
             "label": {"preset": "classification", "target": "label", "class_mapping": {0: "cat", 1: "cow", 2: "dog"}}

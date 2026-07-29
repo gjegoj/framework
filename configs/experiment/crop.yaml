@@ -1,6 +1,6 @@
 # @package _global_
 defaults:
-  - override /backbone: resnet18
+  - override /model: resnet18
   - override /transforms: crop
   - override /logger: clearml
   - override /callbacks: default

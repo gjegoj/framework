@@ -88,6 +88,47 @@ data:
   source_type: parquet
 ```
 
+**Complete-model family** (a third-party model that owns its head and loss, like YOLO —
+the detection files are the worked example). Four pieces, each in its layer:
+
+```python
+# 1. models layer — the fused model behind the CompleteModel port (src/models/yolo.py)
+from src.models.complete import CompleteModel
+from src.models.registry import register_complete_model
+
+@register_complete_model("my_kind")            # 'kind' shares one namespace with backbones
+class MyModel(CompleteModel[MyPredictions, MyTargets]):
+    family = "my_family"                       # == the task preset of such runs
+    # prepare_batch / forward / training_loss / evaluation_loss / predictions / targets
+
+# 2. data layer (optional) — a native LightningDataModule that writes facts
+#    (num_classes, ...) into RuntimeContext at setup (src/data/detection.py);
+#    families without a native format reuse the standard bindings contour instead.
+
+# 3. metrics layer — a default metrics spec for build_metric_bundle (src/metrics/bundle.py)
+MY_FAMILY_DEFAULT_METRICS = {"my_metric": None}
+
+# 4. composition — the assembler gluing them, registered as a singleton
+#    (src/composition/wiring/detection.py)
+from src.composition.wiring.experiment import Capabilities, ExperimentAssembler, experiment_assemblers
+
+class MyFamilyAssembler(ExperimentAssembler):
+    name = "my_family"
+    capabilities = Capabilities(export=False, lora=False, distillation=False,
+                                batch_transforms=False, task_mixing=False)
+    def build(self, config, runtime): ...      # datamodule + MyModel + CompleteModelLitModule
+
+experiment_assemblers.register_instance(MyFamilyAssembler.name, MyFamilyAssembler())
+```
+
+```yaml
+model: {kind: my_kind, name: ...}      # extras forward as the model's native knobs
+tasks: {my_task: {preset: my_family}}
+```
+
+`main.py` never changes: `resolve_experiment_assembler` dispatches by the model
+section's `kind` and validates the kind⇔preset pairing in both directions.
+
 **Other extension points** follow the same pattern — `backbones`, `head_builders`,
 `target_encoders`, `input_loaders`, `topology_strategies`, `objective_strategies`,
 `task_presets`, `batch_transforms`, `schedulers`, `exporters`, `label_renderers`,

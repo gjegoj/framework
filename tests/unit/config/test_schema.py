@@ -21,7 +21,7 @@ class TestValidConfig:
         assert cfg.run_train is True  # default
         assert cfg.run_export is True  # default
         assert cfg.mean == [0.485, 0.456, 0.406]  # ImageNet default
-        assert cfg.backbone.kind == "timm"  # default
+        assert cfg.model.kind == "timm"  # default
 
     def test_run_test_can_be_disabled(self) -> None:
         cfg = load_config(_raw(run_test=False))
@@ -301,3 +301,17 @@ class TestRotationExperiment:
         train_pipeline = OmegaConf.to_container(context.transforms.train, resolve=True)
         compose = instantiate(train_pipeline)
         assert any(isinstance(step, Rotate90WithLabel) for step in compose.transforms)
+
+
+class TestModelSectionRename:
+    """The model section is ``model:`` — ``backbone:`` is the legacy name, rejected with a pointer."""
+
+    def test_model_section_carries_the_model_config(self) -> None:
+        config = load_config(_raw())
+        assert config.model.name == "resnet18"
+
+    def test_legacy_backbone_key_rejected_with_pointer(self) -> None:
+        raw = _raw()
+        raw["backbone"] = raw.pop("model")
+        with pytest.raises(ConfigError, match="renamed to 'model'"):
+            load_config(raw)

@@ -284,8 +284,8 @@ class DataLoaderConfig(BaseModel):
         return self
 
 
-class BackboneConfig(BaseModel):
-    """Backbone selection; ``kind`` picks the registry adapter."""
+class ModelConfig(BaseModel):
+    """Model selection; ``kind`` picks an assembled backbone or a complete model."""
 
     kind: str = Field("timm", description="Backbone registry key (timm/smp/hf/embedding/multi/...).")
     name: str | None = Field(
@@ -396,12 +396,18 @@ class TaskConfig(BaseModel):
         None,
         description="Data-encoder override: registry key or {name/_target_ + params}; None -> inferred from objective.",
     )
-    model: str | None = Field(None, description="Detection preset: ultralytics architecture (.yaml) or weights (.pt).")
-    hyperparameters: dict[str, Any] | None = Field(
-        None, description="Detection preset: ultralytics hyp dict, forwarded verbatim (mosaic/box/cls/dfl/...)."
-    )
-
     model_config = ConfigDict(extra="allow")
+
+    @model_validator(mode="after")
+    def _reject_migrated_model_keys(self) -> TaskConfig:
+        """Fail loudly on keys that moved to the model section (extras would silently ignore them)."""
+        migrated = {"model", "hyperparameters"} & set(self.model_extra or {})
+        if migrated:
+            raise ValueError(
+                f"task keys {sorted(migrated)} moved to the model section: declare the model as "
+                "'model: {kind: yolo, name: ...}' with native hyperparameters as extra keys there."
+            )
+        return self
 
 
 class LoggerConfig(BaseModel):
@@ -426,7 +432,7 @@ class LoggerConfig(BaseModel):
         description=(
             "Backend task tags (ClearML). Supports ${...} interpolation, e.g. "
             "'lr=${lr}' or '${optimizer.name}'. A tag that resolves to null (e.g. "
-            "${backbone.name} on a composite backbone) or empty is dropped."
+            "${model.name} on a composite backbone) or empty is dropped."
         ),
     )
 
@@ -435,7 +441,7 @@ class LoggerConfig(BaseModel):
     @field_validator("tags", mode="before")
     @classmethod
     def _drop_empty_tags(cls, value: list[Any] | None) -> list[str] | None:
-        """Drop null / empty tags (e.g. an unresolved ${backbone.name}) and stringify the rest."""
+        """Drop null / empty tags (e.g. an unresolved ${model.name}) and stringify the rest."""
         if value is None:
             return None
         return [str(tag) for tag in value if tag is not None and str(tag) != ""]
@@ -464,12 +470,12 @@ class TeacherConfig(BaseModel):
     """One frozen distillation teacher: its architecture plus trained weights.
 
     Parameters:
-        backbone (BackboneConfig): Teacher backbone; heads are derived from the
+        model (ModelConfig): Teacher backbone spec; heads are derived from the
             student's tasks, so logit shapes match the student by construction.
         ckpt_path (str): Lightning ``.ckpt`` or raw state-dict file with the weights.
     """
 
-    backbone: BackboneConfig
+    model: ModelConfig
     ckpt_path: str = Field(..., description="Checkpoint holding the teacher weights.")
 
     model_config = ConfigDict(extra="forbid")
@@ -603,7 +609,7 @@ class ExperimentConfig(BaseModel):
     )
     data: DataConfig
     dataloader: DataLoaderConfig = Field(default_factory=DataLoaderConfig)
-    backbone: BackboneConfig
+    model: ModelConfig
     optimizer: OptimizerConfig
     scheduler: SchedulerConfig | None = Field(None, description="LR scheduler config; None = constant LR.")
     tasks: dict[str, TaskConfig] = Field(..., min_length=1, description="Tasks by name.")
@@ -636,6 +642,17 @@ class ExperimentConfig(BaseModel):
     lora: LoraConfig | None = Field(None, description="LoRA fine-tuning; None -> full training.")
 
     model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_legacy_backbone_section(cls, data: Any) -> Any:
+        """Point old configs at the new section name instead of a generic extra-key error."""
+        if isinstance(data, dict) and "backbone" in data:
+            raise ValueError(
+                "the 'backbone' section was renamed to 'model' — it now declares assembled "
+                "backbones and complete models alike (model: {kind: ..., name: ...})."
+            )
+        return data
 
     @field_validator("image_size")
     @classmethod

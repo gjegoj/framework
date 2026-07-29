@@ -1,17 +1,22 @@
-"""Detection fields on TaskConfig: model + hyperparameters accepted and optional."""
+"""Migrated detection task keys: rejected with a pointer to the model section."""
 
 from __future__ import annotations
 
-from src.config.schema import TaskConfig
+import pytest
+
+from src.config import ConfigError, load_config
+from tests.support.builders import minimal_config
 
 
-class TestDetectionTaskConfig:
-    def test_detection_fields_accepted(self) -> None:
-        config = TaskConfig(preset="detection", model="yolo26n.yaml", hyperparameters={"mosaic": 1.0, "box": 7.5})
-        assert config.model == "yolo26n.yaml"
-        assert config.hyperparameters == {"mosaic": 1.0, "box": 7.5}
+class TestMigratedTaskKeysRejected:
+    def test_model_key_rejected_with_pointer(self) -> None:
+        raw = minimal_config()
+        raw["tasks"]["label"]["model"] = "yolov8n.yaml"
+        with pytest.raises(ConfigError, match="moved to the model section"):
+            load_config(raw)
 
-    def test_fields_default_to_none_for_other_presets(self) -> None:
-        config = TaskConfig(preset="classification", target="label")
-        assert config.model is None
-        assert config.hyperparameters is None
+    def test_hyperparameters_key_rejected_with_pointer(self) -> None:
+        raw = minimal_config()
+        raw["tasks"]["label"]["hyperparameters"] = {"box": 3.0}
+        with pytest.raises(ConfigError, match="moved to the model section"):
+            load_config(raw)

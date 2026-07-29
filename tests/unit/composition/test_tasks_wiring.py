@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 
@@ -12,6 +13,7 @@ from src.composition.wiring import (
     build_tasks,
 )
 from src.config import load_config
+from src.config.schema import ExperimentConfig
 from src.core.runtime import RuntimeContext
 from src.data.encoders import LabelEncoder, MultiLabelEncoder, ScalarEncoder
 from tests.support.builders import minimal_config as _minimal_config
@@ -147,3 +149,42 @@ class TestArcFaceEmbeddingWiring:
         assert isinstance(task.activation, NormalizeActivation)
         assert isinstance(task.criterion, ProxyAngularCriterion)
         assert task.criterion.prototypes.shape == (16, 3)
+
+
+class TestLabelDistributionRecipe:
+    """The LDL YAML shape: gaussian_bins encoder + weighted_sum(soft-CE + distribution_mean)."""
+
+    _EDGES: ClassVar[list[float]] = [0.0, 0.25, 0.5, 0.75, 1.0]
+
+    def _config(self) -> ExperimentConfig:
+        raw = _minimal_config()
+        raw["tasks"] = {
+            "quality": {
+                "preset": "classification",
+                "target": "score",
+                "num_classes": 4,
+                "target_encoder": {"name": "gaussian_bins", "bin_edges": self._EDGES, "sigma": 0.1},
+                "loss": {
+                    "name": "weighted_sum",
+                    "losses": {
+                        "cross_entropy": 1.0,
+                        "distribution_mean": {"weight": 0.5, "bin_edges": self._EDGES},
+                    },
+                },
+            }
+        }
+        return load_config(raw)
+
+    def test_binding_gets_gaussian_bins_encoder_with_num_classes(self) -> None:
+        from src.data.encoders import GaussianBinsEncoder
+
+        bindings = build_bindings(self._config())
+        assert isinstance(bindings[0].encoder, GaussianBinsEncoder)
+        assert bindings[0].encoder.num_classes == 4
+
+    def test_task_builds_with_the_composite_criterion(self) -> None:
+        from src.losses.composite import WeightedSumCriterion
+
+        tasks = build_tasks(self._config(), RuntimeContext())
+        assert tasks[0].head_spec.out_features == 4
+        assert isinstance(tasks[0].criterion, WeightedSumCriterion)

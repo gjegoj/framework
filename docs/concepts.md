@@ -43,7 +43,7 @@ constructor arguments. Used by `backbone`, `optimizer`, `scheduler`, `data`, `da
 `logger`, `trainer`.
 
 ```yaml
-backbone: {kind: smp, name: unet, encoder_name: resnet34}   # kind → adapter; encoder_name forwarded
+model: {kind: smp, name: unet, encoder_name: resnet34}      # kind → adapter; encoder_name forwarded
 optimizer: {name: adamw, lr: ${lr}, weight_decay: 1.0e-4}    # name → optimizer class; rest forwarded
 ```
 

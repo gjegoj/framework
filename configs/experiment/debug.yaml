@@ -17,7 +17,7 @@
 #   or set in this file: - override /logger: clearml
 
 defaults:
-  - override /backbone: smp_unet
+  - override /model: smp_unet
   # - override /trainer: cpu_smoke
   - override /logger: clearml
   - override /callbacks: default

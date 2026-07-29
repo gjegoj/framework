@@ -23,12 +23,12 @@ MetricsSpec = Mapping[str, Mapping[str, Any] | None]
 _CLASSIFICATION_DEFAULT: MetricsSpec = {"accuracy": None}
 
 
-def build_metric_set(
+def build_metric_instances(
     spec: MetricsSpec | None,
     base_kwargs: Mapping[str, Any],
     default_spec: MetricsSpec | None = None,
-) -> MetricSet:
-    """Assemble a per-stage metric set from a config spec.
+) -> dict[str, Metric | MetricCollection]:
+    """Resolve a ``metrics:`` spec into fresh metric instances (the shared grammar).
 
     Each entry is keyed by a display label; its value is the metric's params.
     The actual metric is the label itself unless the params carry an explicit
@@ -37,12 +37,12 @@ def build_metric_set(
 
     Parameters:
         spec (MetricsSpec | None): ``{label: {params}}``; ``None`` -> use ``default_spec``.
-        base_kwargs (Mapping[str, Any]): Objective-supplied defaults (task, num_classes).
+        base_kwargs (Mapping[str, Any]): Defaults merged under user params.
         default_spec (MetricsSpec | None): Fallback when both ``spec`` and this are ``None``
-            uses ``_CLASSIFICATION_DEFAULT`` (accuracy). Objectives pass their own default.
+            uses ``_CLASSIFICATION_DEFAULT`` (accuracy). Callers pass their own default.
 
     Returns:
-        MetricSet: A fresh metric set (new state) for one stage.
+        dict[str, Metric | MetricCollection]: Label -> constructed metric.
     """
     fallback = default_spec if default_spec is not None else _CLASSIFICATION_DEFAULT
     entries = spec if spec is not None else fallback
@@ -57,4 +57,22 @@ def build_metric_set(
         name = str(params.pop("name", label))
         factory = metric_factories.get(name)
         metrics[label] = factory(**{**base_kwargs, **params})
-    return TorchMetricsAdapter(MetricCollection(metrics))
+    return metrics
+
+
+def build_metric_set(
+    spec: MetricsSpec | None,
+    base_kwargs: Mapping[str, Any],
+    default_spec: MetricsSpec | None = None,
+) -> MetricSet:
+    """Assemble a per-stage metric set from a config spec (see ``build_metric_instances``).
+
+    Parameters:
+        spec (MetricsSpec | None): ``{label: {params}}``; ``None`` -> use ``default_spec``.
+        base_kwargs (Mapping[str, Any]): Objective-supplied defaults (task, num_classes).
+        default_spec (MetricsSpec | None): Fallback; ``None`` -> a single ``accuracy``.
+
+    Returns:
+        MetricSet: A fresh metric set (new state) for one stage.
+    """
+    return TorchMetricsAdapter(MetricCollection(build_metric_instances(spec, base_kwargs, default_spec)))

@@ -134,7 +134,7 @@ def build_teachers(distillation_config: DistillationConfig, tasks: list[Task]) -
     head_specs = {task.name: task.head_spec for task in tasks}
     teachers: list[nn.Module] = []
     for teacher_config in distillation_config.teachers:
-        backbone = build_backbone(teacher_config.backbone)
+        backbone = build_backbone(teacher_config.model)
         composite = build_composite_model(backbone, head_specs)
         checkpoint = torch.load(teacher_config.ckpt_path, map_location="cpu", weights_only=True)
         state = extract_model_state_dict(checkpoint)

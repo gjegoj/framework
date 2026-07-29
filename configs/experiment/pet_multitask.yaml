@@ -1,6 +1,6 @@
 # @package _global_
 defaults:
-  - override /backbone: smp_unet
+  - override /model: smp_unet
   - override /logger: clearml
   - override /callbacks: augmented
   - override /scheduler: onecycle

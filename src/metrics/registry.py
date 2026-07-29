@@ -9,6 +9,7 @@ registry entirely with a ``_target_`` spec.
 from __future__ import annotations
 
 import torchmetrics as tm
+from torchmetrics.detection import MeanAveragePrecision
 
 from src.core.registry import Registry
 
@@ -27,3 +28,4 @@ metric_factories.register("mse")(tm.MeanSquaredError)
 metric_factories.register("mae")(tm.MeanAbsoluteError)
 metric_factories.register("precision_recall_curve")(tm.PrecisionRecallCurve)
 metric_factories.register("roc")(tm.ROC)
+metric_factories.register("map")(MeanAveragePrecision)

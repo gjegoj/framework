@@ -32,7 +32,7 @@ outright.
 |---|---|---|---|---|
 | `data` | ✓ | `sources`, `inputs`, `split`, `split_stratify`, `cache`, `max_samples`, `root_path` | `DataConfig` | [Data](../guides/data.md#data) |
 | `dataloader` | default | `num_workers`, `pin_memory`, `persistent_workers`, `drop_last`, `prefetch_factor` | `DataLoaderConfig` | [DataLoader & cache](../guides/data.md#dataloader--cache) |
-| `backbone` | ✓ | encoder selection (`kind`, `name`, `pretrained`, …) | `BackboneConfig` | [Backbone](../guides/backbones.md) |
+| `model` | ✓ | model selection — assembled backbone or complete model (`kind`, `name`, `pretrained`, …) | `ModelConfig` | [Backbone](../guides/backbones.md) |
 | `optimizer` | ✓ | `name`, `lr`, `weight_decay`, … | `OptimizerConfig` | [Optimizer, LR & scheduler](../guides/training.md) |
 | `scheduler` | `null` | LR schedule (`name`, `interval`, `monitor`, `runtime_kwargs`, …); `null` = constant LR | `SchedulerConfig` | [Optimizer, LR & scheduler](../guides/training.md) |
 | `tasks` | ✓ (≥1) | per task: `preset`, `target`, `objective`, `head`, `feature_key`, `class_mapping`, `loss`, `metrics`, `weight`, per-head `optimizer` | `TaskConfig` | [Tasks & presets](../guides/tasks.md#tasks--presets) |
