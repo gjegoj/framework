@@ -1,9 +1,14 @@
+max_epochs: "${epochs}"
+# Where Lightning puts what nothing else claims. Written here rather than filled
+# in by assembly, for the reason every other path is: the run directory is a
+# config key, so config is what reaches it.
+default_root_dir: ${run.directory}
 accelerator: auto
 devices: auto
-# Mixed bf16: ~2-3x throughput vs 32-true, and numerically safe (no gradient scaling, unlike
-# 16-mixed). Requires an Ampere-or-newer GPU (A100/H100/RTX 30xx+). On older GPUs or CPU-only
-# machines override per run: trainer.precision=32-true (or use the cpu_smoke trainer preset).
-precision: bf16-mixed
+# precision: bf16-mixed
 log_every_n_steps: 10
 num_sanity_val_steps: 0
 deterministic: warn
+# Off by default; `trainer=profile` turns it on, and the key is written here so
+# `trainer.profiler.name=pytorch` needs no `+` to reach a config that has it.
+profiler: null

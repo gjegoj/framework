@@ -1,147 +1,80 @@
-"""Dataframe splitting: random/stratified split ratios and max_samples capping."""
+"""``Splitter`` contract: deterministic, exhaustive, disjoint stage splits."""
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from pathlib import Path
-
-import numpy as np
 import pandas as pd
 import pytest
 
-from src.core.enums import Stage
-from src.core.runtime import RuntimeContext
-from src.data import (
-    CsvDataSource,
-    DataModule,
-    LabelEncoder,
-    TargetBinding,
-    split_dataframe,
-)
-from tests.support.builders import make_transform as _make_transform
-
-_LABEL_MAPPING: dict[int, str] = {0: "cat", 1: "cow", 2: "dog"}
-
-LABELS = ["cat", "dog", "cow"]
+from src.config import SplitConfig
+from src.core import Stage
+from src.data import random_split
 
 
-@pytest.fixture
-def csv_path(make_image_csv: Callable[..., Path]) -> Path:
-    """15 synthetic 32x32 RGB jpgs across 3 classes and a CSV indexing them."""
-    return make_image_csv(count=15, size=32, seed=0, labels=LABELS)
+def make_table(rows: int) -> pd.DataFrame:
+    return pd.DataFrame({"path": [f"img_{index}.jpg" for index in range(rows)]})
 
 
-def _binding() -> TargetBinding:
-    return TargetBinding(name="label", column="label", encoder=LabelEncoder(class_mapping=_LABEL_MAPPING))
+def test_random_split_respects_fractions() -> None:
+    split = random_split({Stage.TRAIN: 0.5, Stage.VAL: 0.25, Stage.TEST: 0.25}, seed=42)
+
+    parts = split(make_table(8))
+
+    assert {stage: len(part) for stage, part in parts.items()} == {
+        Stage.TRAIN: 4,
+        Stage.VAL: 2,
+        Stage.TEST: 2,
+    }
 
 
-class TestSplitDataframe:
-    def _frame(self, n: int = 60) -> pd.DataFrame:
-        rng = np.random.default_rng(0)
-        labels = (["cat"] * 20 + ["dog"] * 20 + ["cow"] * 20)[:n]
-        return pd.DataFrame({"label": labels, "score": rng.random(n)})
+def test_a_run_declaring_no_test_share_cuts_no_test_rows() -> None:
+    """The whole reason a zero share is dropped rather than passed on as zero.
 
-    def test_random_split_sizes(self) -> None:
-        frame = self._frame()
-        parts = split_dataframe(frame, {Stage.TRAIN: 0.7, Stage.VAL: 0.15, Stage.TEST: 0.15}, seed=0)
-        assert sum(len(p) for p in parts.values()) == 60
+    The last stage a splitter cuts takes whatever flooring left over, and test is
+    last. Measured on these very numbers: `{train: 0.7, val: 0.3, test: 0.0}` handed
+    over intact splits nine rows 6/2/**1** — so a run that declared no test set
+    would report a test metric computed on that one leftover row, and val would be
+    short of it. Dropped, the same nine rows split 6/3.
+    """
+    declared = SplitConfig.model_validate({"train": 0.7, "val": 0.3, "test": 0})
 
-    def test_categorical_stratify_preserves_distribution(self) -> None:
-        frame = self._frame()
-        parts = split_dataframe(
-            frame,
-            {Stage.TRAIN: 0.7, Stage.VAL: 0.15, Stage.TEST: 0.15},
-            seed=0,
-            stratify_column="label",
-        )
-        for part in parts.values():
-            counts = part["label"].value_counts(normalize=True)
-            for cls in ["cat", "dog", "cow"]:
-                assert abs(counts.get(cls, 0) - 1 / 3) < 0.15
+    parts = random_split(declared.fractions(), seed=declared.seed)(make_table(9))
 
-    def test_numeric_stratify_works(self) -> None:
-        frame = self._frame()
-        parts = split_dataframe(
-            frame,
-            {Stage.TRAIN: 0.7, Stage.VAL: 0.3},
-            seed=0,
-            stratify_column="score",
-        )
-        assert sum(len(p) for p in parts.values()) == 60
-
-    def test_multilabel_stratify_works(self) -> None:
-        rng = np.random.default_rng(1)
-        labels = [
-            ",".join(rng.choice(["a", "b", "c"], size=rng.integers(1, 3), replace=False).tolist()) for _ in range(60)
-        ]
-        frame = pd.DataFrame({"tags": labels})
-        parts = split_dataframe(
-            frame,
-            {Stage.TRAIN: 0.7, Stage.VAL: 0.3},
-            seed=0,
-            stratify_column="tags",
-        )
-        assert sum(len(p) for p in parts.values()) == 60
-
-    def test_missing_stratify_column_raises(self) -> None:
-        frame = self._frame()
-        with pytest.raises(ValueError, match="stratify_column"):
-            split_dataframe(frame, {Stage.TRAIN: 0.8, Stage.VAL: 0.2}, seed=0, stratify_column="nonexistent")
+    assert {stage: len(part) for stage, part in parts.items()} == {Stage.TRAIN: 6, Stage.VAL: 3}
 
 
-class TestSplit:
-    def test_split_sizes_sum_and_are_disjoint(self) -> None:
-        frame = pd.DataFrame({"x": range(15)})
-        splits = split_dataframe(frame, {Stage.TRAIN: 0.6, Stage.VAL: 0.2, Stage.TEST: 0.2}, seed=42)
-        assert sum(len(part) for part in splits.values()) == 15
-        assert len(splits[Stage.TRAIN]) == 9
-        all_values = pd.concat(splits.values())["x"].tolist()
-        assert sorted(all_values) == list(range(15))  # no row lost or duplicated
+def test_random_split_covers_every_row_exactly_once() -> None:
+    split = random_split({Stage.TRAIN: 0.5, Stage.VAL: 0.5}, seed=0)
+    table = make_table(10)
+
+    parts = split(table)
+
+    covered = sorted(path for part in parts.values() for path in part["path"])
+    assert covered == sorted(table["path"])
 
 
-class TestMaxSamples:
-    def test_int_caps_rows(self, csv_path: Path) -> None:
-        dm = DataModule(
-            target_bindings=[_binding()],
-            inputs_config="image_path",
-            transforms={s: _make_transform() for s in Stage},
-            runtime=RuntimeContext(),
-            batch_size=4,
-            seed=0,
-            source=CsvDataSource(str(csv_path)),
-            split={Stage.TRAIN: 0.8, Stage.VAL: 0.2},
-            max_samples=6,
-        )
-        dm.setup()
-        total = sum(len(ds) for datasets in dm._datasets.values() for ds in datasets)
-        assert total == 6
+def test_random_split_is_deterministic_for_a_seed() -> None:
+    fractions = {Stage.TRAIN: 0.75, Stage.VAL: 0.25}
 
-    def test_float_caps_fraction(self, csv_path: Path) -> None:
-        dm = DataModule(
-            target_bindings=[_binding()],
-            inputs_config="image_path",
-            transforms={s: _make_transform() for s in Stage},
-            runtime=RuntimeContext(),
-            batch_size=4,
-            seed=0,
-            source=CsvDataSource(str(csv_path)),
-            split={Stage.TRAIN: 0.8, Stage.VAL: 0.2},
-            max_samples=0.5,
-        )
-        dm.setup()
-        total = sum(len(ds) for datasets in dm._datasets.values() for ds in datasets)
-        assert total == 8  # 50% of 15 rows = 7.5 → 8 (pandas rounds up)
+    first = random_split(fractions, seed=7)(make_table(12))
+    second = random_split(fractions, seed=7)(make_table(12))
 
-    def test_none_keeps_all_rows(self, csv_path: Path) -> None:
-        dm = DataModule(
-            target_bindings=[_binding()],
-            inputs_config="image_path",
-            transforms={s: _make_transform() for s in Stage},
-            runtime=RuntimeContext(),
-            batch_size=4,
-            seed=0,
-            source=CsvDataSource(str(csv_path)),
-            split={Stage.TRAIN: 0.8, Stage.VAL: 0.2},
-        )
-        dm.setup()
-        assert sum(len(ds) for datasets in dm._datasets.values() for ds in datasets) == 15
+    assert first[Stage.TRAIN]["path"].tolist() == second[Stage.TRAIN]["path"].tolist()
+
+
+def test_random_split_gives_the_remainder_to_the_last_stage() -> None:
+    split = random_split({Stage.TRAIN: 1 / 3, Stage.VAL: 2 / 3}, seed=0)
+
+    parts = split(make_table(4))
+
+    assert len(parts[Stage.TRAIN]) == 1
+    assert len(parts[Stage.VAL]) == 3
+
+
+def test_random_split_rejects_fractions_not_summing_to_one() -> None:
+    with pytest.raises(ValueError, match="sum"):
+        random_split({Stage.TRAIN: 0.5, Stage.VAL: 0.2}, seed=0)
+
+
+def test_random_split_rejects_an_empty_plan() -> None:
+    with pytest.raises(ValueError, match="empty"):
+        random_split({}, seed=0)

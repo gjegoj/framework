@@ -1,79 +1,37 @@
-"""Tasks: compose a ``Task`` from the topology x objective axes, via presets.
+"""The tasks capability: from universal ``Task`` declarations to the composite family's bricks."""
 
-Importing this package registers the built-in topology/objective strategies and
-task presets so they are resolvable by key.
-"""
+from __future__ import annotations
 
-from src.core.taxonomy import Objective, Topology
-from src.tasks.activations import IdentityActivation, SigmoidActivation, SoftmaxActivation
-from src.tasks.adapters import (
-    BinaryTargetAdapter,
-    ContinuousTargetAdapter,
-    MetricTargetAdapter,
-    MulticlassTargetAdapter,
-    MultilabelTargetAdapter,
-)
-from src.tasks.builder import DEFAULT_STAGES, TaskBuilder
-from src.tasks.presets import (
-    TaskPreset,
-    classification,
-    contrastive,
-    pairwise_ranking,
-    regression,
-    segmentation,
-    task_presets,
-    triplet,
-)
-from src.tasks.strategies.objective import (
+from src.tasks.builder import build_task_components
+from src.tasks.objectives import (
     BinaryObjective,
     ContinuousObjective,
     MetricObjective,
     MulticlassObjective,
     MultilabelObjective,
-    ObjectiveStrategy,
-    objective_strategies,
+    TaskObjective,
 )
-from src.tasks.strategies.topology import (
+from src.tasks.topologies import (
     DenseTopology,
     GlobalTopology,
-    MultistreamTopology,
+    InstancesTopology,
+    MultiStreamTopology,
     MultiViewTopology,
-    TopologyStrategy,
-    topology_strategies,
+    TaskTopology,
 )
 
 __all__ = [
-    "DEFAULT_STAGES",
     "BinaryObjective",
-    "BinaryTargetAdapter",
     "ContinuousObjective",
-    "ContinuousTargetAdapter",
     "DenseTopology",
     "GlobalTopology",
-    "IdentityActivation",
+    "InstancesTopology",
     "MetricObjective",
-    "MetricTargetAdapter",
+    "MultiStreamTopology",
     "MultiViewTopology",
     "MulticlassObjective",
-    "MulticlassTargetAdapter",
     "MultilabelObjective",
-    "MultilabelTargetAdapter",
-    "MultistreamTopology",
-    "Objective",
-    "ObjectiveStrategy",
-    "SigmoidActivation",
-    "SoftmaxActivation",
-    "TaskBuilder",
-    "TaskPreset",
-    "Topology",
-    "TopologyStrategy",
-    "classification",
-    "contrastive",
-    "objective_strategies",
-    "pairwise_ranking",
-    "regression",
-    "segmentation",
-    "task_presets",
-    "topology_strategies",
-    "triplet",
+    "TaskObjective",
+    "TaskTopology",
+    "build_task_components",
 ]

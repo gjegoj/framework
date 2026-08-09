@@ -1,107 +1,132 @@
-"""Classification criteria: cross-entropy, BCE, and focal (multiclass / binary / multilabel).
-
-Wrappers declare only the parameters that need conversion or a default; everything else
-forwards verbatim to the wrapped torch loss (see ``SingleTermCriterion``).
-"""
+"""Classification criteria: cross-entropy, its binary/multilabel form, and focal."""
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, override
 
 import torch
-import torch.nn.functional as F
-from torch import Tensor, nn
+from torch import nn
+from torch.nn import functional
 
-from src.losses.base import SingleTermCriterion
-from src.losses.registry import criteria
+from src.core.choices import one_of
+from src.losses.base import WrappedCriterion
+from src.losses.registry import criterion_registry
+
+if TYPE_CHECKING:
+    from torch import Tensor
+
+type Reduction = Literal["mean", "sum", "none"]
+"""How a per-sample loss becomes the number that is back-propagated."""
 
 
-@criteria.register("cross_entropy")
-class CrossEntropyCriterion(SingleTermCriterion):
+@criterion_registry.register("cross_entropy")
+class CrossEntropyCriterion(WrappedCriterion):
     """Multiclass cross-entropy on logits ``[B, C]`` vs class indices ``[B]``.
 
     Parameters:
-        weight (list[float] | None): Optional per-class rescaling weights.
+        weight (list[float] | None): Per-class rescaling — a plain list so a
+            config file can express it; converted to a tensor here.
         **kwargs: Forwarded verbatim to ``nn.CrossEntropyLoss``
-            (``label_smoothing``, ``ignore_index``, ``reduction``, ...).
+            (``label_smoothing``, ``ignore_index``, ...).
     """
 
-    component_name = "cross_entropy"
+    part_name: ClassVar[str] = "ce"
 
-    def __init__(
-        self,
-        weight: list[float] | None = None,
-        **kwargs: Any,
-    ) -> None:
+    def __init__(self, weight: list[float] | None = None, **kwargs: Any) -> None:
         weight_tensor = torch.tensor(weight, dtype=torch.float) if weight is not None else None
         super().__init__(nn.CrossEntropyLoss(weight=weight_tensor, **kwargs))
 
 
-@criteria.register("bce")
-class BCECriterion(SingleTermCriterion):
-    """Binary / multilabel BCE on logits vs float targets.
+@criterion_registry.register("bce")
+class BinaryCrossEntropyCriterion(WrappedCriterion):
+    """Binary and multilabel cross-entropy on raw logits.
 
-    Operates on logits ``[B]`` or ``[B, C]`` vs float targets of the same shape.
-    Use for binary (out=1) and multilabel (out=C) objectives.
+    Accepts a single-output head against channel-free targets — ``[B, 1]``
+    logits vs ``[B]``, or dense ``[B, 1, H, W]`` vs ``[B, H, W]`` — by
+    squeezing the channel dimension (preventing a silent broadcast), as well
+    as multilabel shapes (``[B, C]`` both).
 
     Parameters:
-        pos_weight (list[float] | None): Per-class positive-class weight (length C).
-        **kwargs: Forwarded verbatim to ``nn.BCEWithLogitsLoss`` (``reduction``, ...).
+        pos_weight (list[float] | None): Positive-class weighting — a plain
+            list so a config file can express it; converted to a tensor here.
+        **kwargs: Forwarded verbatim to ``nn.BCEWithLogitsLoss``.
     """
 
-    component_name = "bce"
+    part_name: ClassVar[str] = "bce"
 
     def __init__(self, pos_weight: list[float] | None = None, **kwargs: Any) -> None:
         pos_weight_tensor = torch.tensor(pos_weight, dtype=torch.float) if pos_weight is not None else None
         super().__init__(nn.BCEWithLogitsLoss(pos_weight=pos_weight_tensor, **kwargs))
 
+    @override
+    def _prepare(self, logits: Tensor, target: Tensor) -> tuple[Tensor, Tensor]:
+        if logits.dim() == target.dim() + 1:
+            logits = logits.squeeze(1)  # The channel dim: [B, 1] and [B, 1, H, W] alike.
+        return logits, target
+
 
 class FocalLoss(nn.Module):
-    """Multiclass focal loss on logits with optional per-class weighting.
+    """Multiclass focal loss on logits: cross-entropy that fades on easy examples.
 
-    Computes ``-alpha_c * (1 - p_t) ** gamma * log p_t`` where ``p_t`` is the softmax
-    probability assigned to the target class. Works at any spatial rank, so one instance
-    serves both classification and segmentation.
+    ``-alpha_t * (1 - p_t) ** gamma * log p_t``, where ``p_t`` is the
+    probability the model assigns to the target. The class dimension is always
+    dim 1, and everything after it rides along — one module serves ``[B, C]``
+    against ``[B]`` and ``[B, C, H, W]`` against ``[B, H, W]`` alike.
+
+    A soft target — the share of each class a mixed sample carries — is taken
+    as the weighting of ``log p`` and of ``alpha``; for a one-hot target that
+    is exactly the hard formula, so the two arrivals of a multiclass target
+    need no flag to tell apart, only their dtype.
 
     Parameters:
-        alpha (list[float] | None): Per-class weights (length ``C``). ``None`` → unweighted.
-        gamma (float): Focusing parameter (``>= 0``); higher down-weights easy examples more.
-            ``0`` recovers (weighted) cross-entropy.
-        reduction (str): ``"mean"`` (default) / ``"sum"`` / ``"none"``.
-        eps (float): Floor for the focal base ``1 - p_t``, keeping ``pow`` differentiable
-            when ``p_t`` saturates to exactly ``1.0`` (``> 0``).
+        alpha (list[float] | None): Per-class weights, length C. ``None`` keeps
+            classes equal.
+        gamma (float): How hard easy examples fade; 0 recovers cross-entropy.
+        reduction (str): ``mean``, ``sum`` or ``none``.
+        eps (float): Floor for the focal base ``1 - p_t``. A fully learned
+            sample rounds ``p_t`` to exactly 1.0 in fp32, and ``pow``'s
+            backward at a zero base is infinite for ``gamma < 1`` — a domain a
+            gamma annealed from 0 crosses, so it has to stay differentiable.
     """
 
     alpha: Tensor | None
 
     def __init__(
-        self, alpha: list[float] | None = None, gamma: float = 2.0, reduction: str = "mean", eps: float = 1e-6
+        self, alpha: list[float] | None = None, gamma: float = 2.0, reduction: Reduction = "mean", eps: float = 1e-6
     ) -> None:
         super().__init__()
         if gamma < 0:
-            raise ValueError(f"gamma must be non-negative, got {gamma}.")
-        if reduction not in ("mean", "sum", "none"):
-            raise ValueError(f"reduction must be 'mean'/'sum'/'none', got {reduction!r}.")
+            raise ValueError(f"FocalLoss gamma must be non-negative, got {gamma}.")
+        reduction = one_of(reduction, Reduction)
         if eps <= 0:
-            raise ValueError(f"eps must be positive, got {eps}.")
+            raise ValueError(f"FocalLoss eps must be positive, got {eps}.")
         weights = torch.tensor(alpha, dtype=torch.float) if alpha is not None else None
-        # Buffer so the weights follow the module across .to(device) and state_dict.
-        self.register_buffer("alpha", weights)
+        # Not persisted: like expectation's class values, alpha describes the recipe,
+        # not the trained weights — a later run may weigh its classes differently.
+        self.register_buffer("alpha", weights, persistent=False)
         self.gamma = gamma
         self.reduction = reduction
         self.eps = eps
 
     def forward(self, logits: Tensor, target: Tensor) -> Tensor:
-        log_probabilities = F.log_softmax(logits, dim=1)
-        target_log_probability = log_probabilities.gather(1, target.unsqueeze(1)).squeeze(1)
-        target_probability = target_log_probability.exp()
-        # A fully-learned target rounds p_t to exactly 1.0 in fp32 and pow's backward at a
-        # zero base is infinite for gamma < 1, so the base is floored to keep every gamma
-        # in the declared domain (annealing from 0 crosses (0, 1)) differentiable.
-        focal_base = (1.0 - target_probability).clamp_min(self.eps)
-        loss = -focal_base.pow(self.gamma) * target_log_probability
-        if self.alpha is not None:
-            loss = loss * self.alpha[target]
+        if self.alpha is not None and self.alpha.numel() != logits.shape[1]:
+            raise ValueError(
+                f"FocalLoss has {self.alpha.numel()} alpha weight(s) but the head produced "
+                f"{logits.shape[1]} classes; declare one alpha per class."
+            )
+        log_probabilities = functional.log_softmax(logits, dim=1)
+        if target.is_floating_point():
+            target_log_probability = (log_probabilities * target).sum(dim=1)
+            spread = self.alpha.view(1, -1, *([1] * (target.dim() - 2))) if self.alpha is not None else None
+            weight = (spread * target).sum(dim=1) if spread is not None else None
+        else:
+            target_log_probability = log_probabilities.gather(1, target.long().unsqueeze(1)).squeeze(1)
+            weight = self.alpha[target] if self.alpha is not None else None
+        probability = target_log_probability.exp()
+        base = (1.0 - probability).clamp_min(self.eps)
+        loss = -base.pow(self.gamma) * target_log_probability
+        if weight is not None:
+            loss = loss * weight
         if self.reduction == "mean":
             return loss.mean()
         if self.reduction == "sum":
@@ -109,25 +134,25 @@ class FocalLoss(nn.Module):
         return loss
 
 
-@criteria.register("focal")
-class FocalCriterion(SingleTermCriterion):
-    """Focal loss on logits — down-weights well-classified examples.
+@criterion_registry.register("focal")
+class FocalCriterion(WrappedCriterion):
+    """Focal loss as a criterion — cross-entropy whose easy examples fade.
 
-    Multiclass, generalised across GLOBAL (``[B, C]`` vs ``[B]``) and DENSE
-    (``[B, C, H, W]`` vs ``[B, H, W]``) topologies. With a per-class ``alpha`` it is the
-    weighted focal loss. (``smp.losses.FocalLoss`` — scalar alpha, binary/multilabel modes —
-    stays reachable via a ``_target_`` spec when those are what you need instead.)
+    Multiclass across both topologies, hard or mixed targets; ``gamma`` is a
+    plain number, so the ``anneal`` callback can move it over the run. For the
+    binary and multilabel forms, reach ``smp.losses.FocalLoss`` by import path
+    instead of growing modes here.
 
     Parameters:
-        alpha (list[float] | None): Per-class weights (length ``C``). ``None`` → unweighted.
-        gamma (float): Focusing parameter (default ``2.0``).
-        reduction (str): ``"mean"`` (default) / ``"sum"`` / ``"none"``.
-        eps (float): Floor for the focal base ``1 - p_t`` (``> 0``); see :class:`FocalLoss`.
+        alpha (list[float] | None): Per-class weights, length C.
+        gamma (float): How hard easy examples fade; 0 recovers cross-entropy.
+        reduction (str): ``mean``, ``sum`` or ``none``.
+        eps (float): Floor for the focal base — see :class:`FocalLoss`.
     """
 
-    component_name = "focal"
+    part_name: ClassVar[str] = "focal"
 
     def __init__(
-        self, alpha: list[float] | None = None, gamma: float = 2.0, reduction: str = "mean", eps: float = 1e-6
+        self, alpha: list[float] | None = None, gamma: float = 2.0, reduction: Reduction = "mean", eps: float = 1e-6
     ) -> None:
         super().__init__(FocalLoss(alpha=alpha, gamma=gamma, reduction=reduction, eps=eps))

@@ -1,87 +1,63 @@
-"""Dataset distribution entities — the result of summarizing target columns.
-
-Domain value objects (frozen dataclasses, not Pydantic). Two shapes cover every
-target: a **categorical** distribution (count per class — classification,
-multilabel, and, later, segmentation pixel counts) and a **continuous**
-distribution (numeric summary + histogram — regression). The reporter renders
-whichever shape it is handed, so a new producer (e.g. ``MaskEncoder.summarize``)
-needs no reporter change.
-
-``SupportsSummary`` is an optional-capability Protocol: encoders that can produce
-a distribution declare it by implementing ``summarize``; the base ``TargetEncoder``
-ABC does not.  Use ``isinstance(encoder, SupportsSummary)`` to guard before calling.
-"""
+"""The arithmetic behind the report a run prints before its first epoch."""
 
 from __future__ import annotations
 
-from collections.abc import Iterable
-from dataclasses import dataclass
-from typing import Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any
 
-from src.core.enums import Stage
+import numpy as np
 
+from src.core.entities import ClassDistribution, ValueDistribution
 
-@dataclass(frozen=True, slots=True)
-class CategoricalDistribution:
-    """Count of samples per class label, in class-index order.
-
-    Parameters:
-        counts (dict[str, int]): Class label → count (includes zero-count classes).
-    """
-
-    counts: dict[str, int]
-
-    @property
-    def total(self) -> int:
-        return sum(self.counts.values())
-
-    @property
-    def relative(self) -> dict[str, float]:
-        """Class label → fraction of the total (``0.0`` when the total is zero)."""
-        total = self.total
-        return {label: (count / total if total else 0.0) for label, count in self.counts.items()}
+if TYPE_CHECKING:
+    from collections.abc import Iterable, Sequence
 
 
-@dataclass(frozen=True, slots=True)
-class ContinuousDistribution:
-    """Summary statistics of a numeric target.
+def counted(names: Sequence[str] | None, labels: Iterable[str]) -> ClassDistribution:
+    """Count labels, starting from every declared class so the unused ones still show.
+
+    One of the two shapes every target here takes — *counted*, how many samples or
+    pixels carry each class (classification, multilabel, segmentation), against
+    *measured* for a column of numbers. Its encoder picks, since only the encoder
+    knows the vocabulary and the parsing.
+
+    Seeding with the vocabulary is the whole point: a class the split never produced is
+    the most useful row in the table, and counting only what appeared would quietly
+    leave it out. A label outside the vocabulary is still counted — the encoders refuse
+    those at ``fit``, and a report that hid one would be hiding the diagnosis.
 
     Parameters:
-        count (int): Number of non-null values.
-        mean, std, minimum, q25, median, q75, maximum (float): Summary statistics.
+        names (Sequence[str] | None): The declared vocabulary, seeded at zero.
+        labels (Iterable[str]): One label per sample, or per pixel for a mask.
     """
-
-    count: int
-    mean: float
-    std: float
-    minimum: float
-    q25: float
-    median: float
-    q75: float
-    maximum: float
+    counts = dict.fromkeys(names or (), 0)
+    for label in labels:
+        counts[label] = counts.get(label, 0) + 1
+    return ClassDistribution(counts=counts)
 
 
-type Distribution = CategoricalDistribution | ContinuousDistribution
+def measured(values: Iterable[Any]) -> ValueDistribution | None:
+    """The five-number summary of a numeric column, or ``None`` when it holds no number.
 
+    The other shape beside ``counted`` — a target with a spread rather than a
+    vocabulary: regression, and the binned encoders.
 
-@runtime_checkable
-class SupportsSummary(Protocol):
-    """Optional-capability Protocol for target encoders that can describe their column's distribution.
-
-    Encoders implementing this Protocol return a ``Distribution`` from ``summarize``; the
-    base ``TargetEncoder`` ABC does not declare it.  Callers must gate on
-    ``isinstance(encoder, SupportsSummary)`` before calling ``summarize``.
-
-    Parameters:
-        values (Iterable[Any]): Raw column values for one stage, as stored in the CSV / source frame.
-
-    Returns:
-        Distribution | None: The distribution, or ``None`` when the encoder cannot summarize
-            (e.g. empty data, deferred implementation).
+    ``NaN`` is dropped rather than propagated: one missing cell would otherwise turn
+    every statistic into ``nan`` and the row would say nothing at all, where ``count``
+    against the stage's row count already shows how much is missing.
     """
-
-    def summarize(self, values: Iterable[Any]) -> Distribution | None: ...
-
-
-# Per-task distributions across stages: ``{task_name: {stage: distribution}}``.
-type DatasetStatistics = dict[str, dict[Stage, Distribution]]
+    numbers = np.asarray([float(value) for value in values], dtype=float)
+    numbers = numbers[~np.isnan(numbers)]
+    if numbers.size == 0:
+        return None
+    minimum, q25, median, q75, maximum = (float(edge) for edge in np.percentile(numbers, [0, 25, 50, 75, 100]))
+    return ValueDistribution(
+        count=int(numbers.size),
+        mean=float(numbers.mean()),
+        # Sample deviation, and 0.0 for a single value rather than the nan numpy gives.
+        deviation=float(numbers.std(ddof=1)) if numbers.size > 1 else 0.0,
+        minimum=minimum,
+        q25=q25,
+        median=median,
+        q75=q75,
+        maximum=maximum,
+    )

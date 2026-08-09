@@ -1,2 +1,7 @@
-targets:
-  - {format: onnx, opset_version: 17, simplify: true}
+# @package _global_
+# One ONNX artifact in {run.directory}/export/, verified against the model it came from.
+# Written with a dynamic batch axis; the weights ride beside the graph in model.onnx.data,
+# so both files travel together. Add `tensor_names: uniform` for a serving stack that wants
+# one interface (input/output_0/...) whatever the model behind it is.
+export:
+  - {name: onnx}

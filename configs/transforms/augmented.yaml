@@ -1,52 +1,16 @@
-# @package transforms
-# Augmented: train uses colour + geometry augmentations; val/test are deterministic.
+# Training adds geometry and colour; evaluation stays deterministic.
 train:
-  _target_: albumentations.Compose
-  seed: ${seed}
-  telemetry: false
+  _target_: src.transforms.AlbumentationsTransform
   transforms:
-    - _target_: albumentations.Resize
-      height: ${image_size[0]}
-      width: ${image_size[1]}
-      mask_interpolation: 0
-    - _target_: albumentations.HorizontalFlip
-      p: 0.5
-    - _target_: albumentations.Affine
-      scale: [0.85, 1.15]
-      translate_percent: [-0.05, 0.05]
-      rotate: [-15, 15]
-      shear: [-5, 5]
-      interpolation: 1
-      border_mode: 1
-      p: 0.3
-    - _target_: albumentations.ColorJitter
-      brightness: [0.8, 1.2]
-      contrast: [0.8, 1.2]
-      saturation: [0.8, 1.2]
-      hue: [-0.05, 0.05]
-      p: 0.3
-    - _target_: albumentations.OneOf
-      p: 0.2
-      transforms:
-        - _target_: albumentations.GaussNoise
-          std_range: [0.05, 0.1]
-        - _target_: albumentations.ISONoise
-          intensity: [0.1, 0.3]
-    - _target_: albumentations.Normalize
-      mean: ${mean}
-      std: ${std}
-    - _target_: albumentations.pytorch.ToTensorV2
-
-val:
-  _target_: albumentations.Compose
-  seed: ${seed}
-  telemetry: false
+    - {_target_: albumentations.RandomResizedCrop, size: "${image_size}", scale: [0.7, 1.0]}
+    - {_target_: albumentations.HorizontalFlip, p: 0.5}
+    - {_target_: albumentations.ColorJitter, p: 0.3}
+    - {_target_: albumentations.Normalize, mean: "${mean}", std: "${std}"}
+    - {_target_: albumentations.ToTensorV2}
+val: &evaluation
+  _target_: src.transforms.AlbumentationsTransform
   transforms:
-    - _target_: albumentations.Resize
-      height: ${image_size[0]}
-      width: ${image_size[1]}
-      mask_interpolation: 0
-    - _target_: albumentations.Normalize
-      mean: ${mean}
-      std: ${std}
-    - _target_: albumentations.pytorch.ToTensorV2
+    - {_target_: albumentations.Resize, height: "${image_size.0}", width: "${image_size.1}"}
+    - {_target_: albumentations.Normalize, mean: "${mean}", std: "${std}"}
+    - {_target_: albumentations.ToTensorV2}
+test: *evaluation

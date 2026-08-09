@@ -1,468 +1,153 @@
-"""Target encoders: label/multilabel/scalar/null and the mask (dense) pipeline."""
+"""``TargetEncoder`` contracts: fit/encode, raw values, facts exposed after fit."""
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
 from pathlib import Path
-from typing import Any
 
 import cv2
 import numpy as np
 import pandas as pd
 import pytest
-import torch
-
-from src.data import (
-    LabelEncoder,
-    MultiLabelEncoder,
-    ScalarEncoder,
-    TargetBinding,
-)
-from src.data.datamodule import _build_input_bindings
-from src.data.dataset import Dataset
-from src.data.encoders import GaussianBinsEncoder, LinearBinsEncoder
-from tests.support.builders import make_transform as _make_transform
-
-LABELS = ["cat", "dog", "cow"]
-
-
-@pytest.fixture
-def csv_path(make_image_csv: Callable[..., Path]) -> Path:
-    """15 synthetic 32x32 RGB jpgs across 3 classes and a CSV indexing them."""
-    return make_image_csv(count=15, size=32, seed=0, labels=LABELS)
-
-
-class TestLabelEncoder:
-    def test_class_mapping_sets_vocab(self) -> None:
-        codec = LabelEncoder(class_mapping={0: "cat", 1: "cow", 2: "dog"})
-        assert codec.num_classes == 3
-        assert codec.class_mapping == {0: "cat", 1: "cow", 2: "dog"}
-
-    def test_is_neither_file_based_nor_spatial(self) -> None:
-        codec = LabelEncoder(class_mapping={0: "cat", 1: "dog"})
-        assert codec.file_based is False  # raw column value — no root_path / source / cache
-        assert codec.spatial is False  # not a mask — does not enter the geometric transform
-
-    def test_to_tensor_returns_long_index(self) -> None:
-        codec = LabelEncoder(class_mapping={0: "cat", 1: "dog"})
-        tensor = codec.to_tensor(codec.load("dog"))
-        assert tensor.item() == 1
-        assert tensor.dtype.is_floating_point is False
-
-    def test_load_returns_class_index(self) -> None:
-        codec = LabelEncoder(class_mapping={0: "cat", 1: "dog"})
-        assert codec.load("dog") == 1  # encoding happens in load (a transform-ready int)
-
-    def test_load_index_is_transform_ready_for_an_aug(self) -> None:
-        """load() yields the int index, so a label-aware aug can bump it; to_tensor wraps it."""
-        codec = LabelEncoder(class_mapping={0: "0", 1: "90", 2: "180", 3: "270"})
-        bumped = (codec.load("0") + 3) % 4  # e.g. a rotation aug applying 270° CCW
-        assert codec.to_tensor(bumped).item() == 3
-
-
-class TestMultiLabelEncoder:
-    def test_class_mapping_sets_vocab(self) -> None:
-        codec = MultiLabelEncoder(class_mapping={0: "cat", 1: "cow", 2: "dog"})
-        assert codec.num_classes == 3
-
-    def test_to_tensor_multihot(self) -> None:
-        codec = MultiLabelEncoder(class_mapping={0: "cat", 1: "cow", 2: "dog"})
-        vec = codec.to_tensor(codec.load("cat,cow"))
-        assert vec.dtype == torch.float
-        assert vec.shape == (3,)
-
-    def test_load_builds_multihot_at_correct_positions(self) -> None:
-        codec = MultiLabelEncoder(class_mapping={0: "a", 1: "b", 2: "c"})
-        assert codec.load("a,c").tolist() == [1.0, 0.0, 1.0]  # multi-hot built in load
-
-    def test_separator_param(self) -> None:
-        codec = MultiLabelEncoder(separator="|", class_mapping={0: "x", 1: "y", 2: "z"})
-        assert codec.num_classes == 3
-
-
-class TestCategoricalEncoderContract:
-    """Behaviours shared verbatim by the categorical encoders — same contract, different value format."""
-
-    @pytest.mark.parametrize(
-        ("codec", "bad_value"),
-        [
-            pytest.param(LabelEncoder(class_mapping={0: "cat", 1: "dog"}), "cow", id="label"),
-            pytest.param(MultiLabelEncoder(class_mapping={0: "cat", 1: "dog"}), "cat,fish", id="multilabel"),
-        ],
-    )
-    def test_load_unknown_label_raises(self, codec: LabelEncoder | MultiLabelEncoder, bad_value: str) -> None:
-        with pytest.raises(KeyError, match="Unknown label"):
-            codec.load(bad_value)
-
-    @pytest.mark.parametrize(
-        ("codec", "known_values"),
-        [
-            pytest.param(LabelEncoder(class_mapping={0: "cat", 1: "dog"}), ["cat", "dog", "cat"], id="label"),
-            pytest.param(
-                MultiLabelEncoder(class_mapping={0: "cat", 1: "cow", 2: "dog"}),
-                ["cat,dog", "cow,dog", "cat"],
-                id="multilabel",
-            ),
-        ],
-    )
-    def test_fit_validates_known_labels(self, codec: LabelEncoder | MultiLabelEncoder, known_values: list[str]) -> None:
-        codec.fit(known_values)  # all known — no error
-
-    @pytest.mark.parametrize(
-        ("codec", "values_with_unknown"),
-        [
-            pytest.param(LabelEncoder(class_mapping={0: "cat", 1: "dog"}), ["cat", "dog", "cow"], id="label"),
-            pytest.param(
-                MultiLabelEncoder(class_mapping={0: "cat", 1: "dog"}), ["cat,dog", "cat,fish"], id="multilabel"
-            ),
-        ],
-    )
-    def test_fit_raises_on_unknown_label(
-        self, codec: LabelEncoder | MultiLabelEncoder, values_with_unknown: list[str]
-    ) -> None:
-        with pytest.raises(ValueError, match="not in class_mapping"):
-            codec.fit(values_with_unknown)
-
-    @pytest.mark.parametrize(
-        ("codec", "values"),
-        [
-            pytest.param(LabelEncoder(), ["cat", "dog"], id="label"),
-            pytest.param(MultiLabelEncoder(), ["cat,dog"], id="multilabel"),
-        ],
-    )
-    def test_fit_raises_without_class_mapping(self, codec: LabelEncoder | MultiLabelEncoder, values: list[str]) -> None:
-        with pytest.raises(ValueError, match="class_mapping"):
-            codec.fit(values)
-
-
-class TestScalarEncoder:
-    def test_to_tensor_scalar(self) -> None:
-        codec = ScalarEncoder()
-        codec.fit([1.0, 2.5, 3.0])
-        t = codec.to_tensor(codec.load("2.5"))
-        assert t.dtype == torch.float
-        assert t.ndim == 0
-        assert t.item() == pytest.approx(2.5)
-
-    def test_num_classes_is_none(self) -> None:
-        codec = ScalarEncoder()
-        codec.fit([1, 2, 3])
-        assert codec.num_classes is None
-
-
-class TestSupportsSummary:
-    """Capability Protocol: encoders that can summarize declare it; others stay silent."""
-
-    def test_label_encoder_satisfies_protocol(self) -> None:
-        from src.data.statistics import SupportsSummary
-
-        codec = LabelEncoder(class_mapping={0: "cat", 1: "dog"})
-        assert isinstance(codec, SupportsSummary)
-
-    def test_scalar_encoder_satisfies_protocol(self) -> None:
-        from src.data.statistics import SupportsSummary
-
-        assert isinstance(ScalarEncoder(), SupportsSummary)
-
-    def test_bare_target_encoder_stub_does_not_satisfy_protocol(self) -> None:
-        from src.data.encoders import TargetEncoder
-        from src.data.statistics import SupportsSummary
-
-        class _StubEncoder(TargetEncoder):
-            def fit(self, values: Iterable[Any]) -> None:
-                pass
-
-            def load(self, value: Any) -> Any:
-                return value
-
-            def to_tensor(self, value: Any) -> torch.Tensor:
-                return torch.tensor(0)
-
-        assert not isinstance(_StubEncoder(), SupportsSummary)
-
-    def test_mask_encoder_does_not_satisfy_protocol(self) -> None:
-        from src.data import MaskEncoder
-        from src.data.statistics import SupportsSummary
-
-        assert not isinstance(MaskEncoder(), SupportsSummary)
-
-    def test_caching_encoder_over_summarizing_inner_satisfies_protocol(self) -> None:
-        from src.data.cache import ArrayCache, caching_target_encoder
-        from src.data.statistics import CategoricalDistribution, SupportsSummary
-
-        cache = ArrayCache(max_bytes=10**6)
-        inner = LabelEncoder(class_mapping={0: "cat", 1: "dog"})
-        inner.fit(["cat", "dog"])
-        cached = caching_target_encoder(inner, cache)
-        assert isinstance(cached, SupportsSummary)
-        # Delegation must produce the same distribution as the inner encoder directly.
-        values = ["cat", "dog", "cat"]
-        result = cached.summarize(values)
-        assert isinstance(result, CategoricalDistribution)
-        assert result.counts == {"cat": 2, "dog": 1}
-
-    def test_caching_encoder_over_mask_encoder_does_not_satisfy_protocol(self) -> None:
-        from src.data import MaskEncoder
-        from src.data.cache import ArrayCache, caching_target_encoder
-        from src.data.statistics import SupportsSummary
-
-        cache = ArrayCache(max_bytes=10**6)
-        cached = caching_target_encoder(MaskEncoder(class_mapping={0: "bg", 1: "fg"}), cache)
-        assert not isinstance(cached, SupportsSummary)
-
-
-class TestNullTargetEncoder:
-    def test_load_and_to_tensor_produce_scalar_ignoring_value(self) -> None:
-        from src.data.encoders import NullTargetEncoder
-
-        encoder = NullTargetEncoder()
-        encoder.fit([1, 2, 3])  # no-op
-        tensor = encoder.to_tensor(encoder.load("ignored"))
-        assert tensor.shape == ()
-        assert encoder.num_classes is None
-
-    def test_is_not_file_based_spatial_or_summarizable(self) -> None:
-        from src.data.encoders import NullTargetEncoder
-        from src.data.statistics import SupportsSummary
-
-        encoder = NullTargetEncoder()
-        assert encoder.file_based is False
-        assert encoder.spatial is False
-        assert not isinstance(encoder, SupportsSummary)
-
-    def test_registered_under_null_key(self) -> None:
-        from src.data.encoders import NullTargetEncoder
-        from src.data.registry import target_encoders
-
-        assert isinstance(target_encoders.create("null"), NullTargetEncoder)
-
-    def test_dataset_target_with_none_column_needs_no_data_column(self, csv_path: Path) -> None:
-        # A structure-only task (triplet/contrastive) declares no target column; the
-        # dataset still yields a target so the step can index batch.targets[name].
-        from src.data.encoders import NullTargetEncoder
-
-        frame = pd.read_csv(csv_path)  # image_path + label, but no column for 'rank'
-        dataset = Dataset(
-            frame=frame,
-            input_bindings=_build_input_bindings("image_path", frame),
-            target_bindings=[TargetBinding("rank", None, NullTargetEncoder())],
-            transform=_make_transform((16, 16)),
-        )
-        sample = dataset[0]
-        assert "rank" in sample.targets
-        assert sample.targets["rank"].shape == ()
-        assert "rank" not in sample.meta["target_sources"]  # not file-based → no recorded source
-
-
-class TestMaskEncoderAndDensePipeline:
-    @pytest.fixture
-    def seg_csv(self, tmp_path: Path) -> Path:
-        """5 images + matching index-mask ONGs (classes 0..2)."""
-        img_dir = tmp_path / "img"
-        msk_dir = tmp_path / "msk"
-        img_dir.mkdir()
-        msk_dir.mkdir()
-        rng = np.random.default_rng(0)
-        rows = []
-        for i in range(5):
-            cv2.imwrite(str(img_dir / f"{i}.jpg"), rng.integers(0, 256, (40, 40, 3), dtype=np.uint8))
-            mask = rng.integers(0, 3, (40, 40), dtype=np.uint8)  # class indices 0..2
-            cv2.imwrite(str(msk_dir / f"{i}.png"), mask)
-            rows.append({"image_path": str(img_dir / f"{i}.jpg"), "mask_path": str(msk_dir / f"{i}.png")})
-        csv = tmp_path / "seg.csv"
-        pd.DataFrame(rows).to_csv(csv, index=False)
-        return csv
-
-    def test_mask_codec_loads_and_finalizes(self, tmp_path: Path) -> None:
-        from src.data import MaskEncoder
-
-        mask = np.array([[0, 1], [2, 1]], dtype=np.uint8)
-        path = tmp_path / "m.png"
-        cv2.imwrite(str(path), mask)
-        codec = MaskEncoder()
-        assert codec.file_based is True  # read from a file (resolved against root_path)
-        assert codec.spatial is True  # and rides through the geometric transform
-        arr = codec.load(str(path))
-        assert arr.shape == (2, 2)
-        tensor = codec.to_tensor(arr)
-        assert tensor.dtype == torch.long
-
-    def test_mask_codec_missing_file_raises(self) -> None:
-        from src.data import MaskEncoder
-
-        with pytest.raises(FileNotFoundError, match="Mask not found"):
-            MaskEncoder().load("/no/such/mask.png")
-
-    def test_dense_pipeline_aligns_image_and_mask(self, seg_csv: Path) -> None:
-        from src.data import MaskEncoder
-
-        frame = pd.read_csv(seg_csv)
-        dataset = Dataset(
-            frame=frame,
-            input_bindings=_build_input_bindings("image_path", frame),
-            target_bindings=[TargetBinding("mask", "mask_path", MaskEncoder())],
-            transform=_make_transform((16, 16), spatial=["mask"]),
-        )
-        sample = dataset[0]
-        assert sample.inputs["image"].shape == (3, 16, 16)  # image resized
-        assert sample.targets["mask"].shape == (16, 16)  # mask resized in lockstep
-        assert sample.targets["mask"].dtype == torch.long
-        assert sample.targets["mask"].max().item() <= 2  # nearest preserved class indices
-
-    def test_meta_records_input_and_target_source_paths(self, seg_csv: Path) -> None:
-        from src.data import MaskEncoder
-
-        frame = pd.read_csv(seg_csv)
-        dataset = Dataset(
-            frame=frame,
-            input_bindings=_build_input_bindings("image_path", frame),
-            target_bindings=[TargetBinding("mask", "mask_path", MaskEncoder())],
-            transform=_make_transform((16, 16), spatial=["mask"]),
-        )
-        sample = dataset[2]
-        assert sample.meta["index"] == 2
-        assert sample.meta["input_sources"]["image"] == str(frame.iloc[2]["image_path"])  # image file path
-        assert sample.meta["target_sources"]["mask"] == str(frame.iloc[2]["mask_path"])  # mask file path
-
-
-class TestMaskEncoderIndexValidation:
-    """Masks must arrive as class indices; out-of-range pixel values fail loudly at load."""
-
-    @staticmethod
-    def _write_mask(path: Path, values: np.ndarray) -> Path:
-        mask_path = path / "mask.png"
-        cv2.imwrite(str(mask_path), values.astype(np.uint8))
-        return mask_path
-
-    def test_out_of_range_pixel_values_raise_actionable_error(self, tmp_path: Path) -> None:
-        from src.data import MaskEncoder
-
-        raw = np.array([[0, 255]], dtype=np.uint8)  # {0, 255} PNG fed to a 2-class index encoder
-        codec = MaskEncoder(class_mapping={0: "background", 1: "defect"})
-        with pytest.raises(ValueError, match="class indices"):
-            codec.load(self._write_mask(tmp_path, raw))
-
-    def test_plain_index_mask_passes_unchanged(self, tmp_path: Path) -> None:
-        from src.data import MaskEncoder
-
-        raw = np.array([[0, 1], [1, 0]], dtype=np.uint8)
-        codec = MaskEncoder(class_mapping={0: "background", 1: "defect"})
-        mask = codec.load(self._write_mask(tmp_path, raw))
-        assert np.array_equal(mask, raw)
-
-    def test_without_class_mapping_values_are_not_validated(self, tmp_path: Path) -> None:
-        """No class count known at the encoder -> validation is the task config's job."""
-        from src.data import MaskEncoder
-
-        raw = np.array([[0, 255]], dtype=np.uint8)
-        mask = MaskEncoder().load(self._write_mask(tmp_path, raw))
-        assert np.array_equal(mask, raw)
-
-
-class TestGaussianBinsEncoder:
-    """Continuous value -> Gaussian label distribution over fixed bins (LDL)."""
-
-    def _encoder(self, sigma: float = 0.05) -> GaussianBinsEncoder:
-        edges = [round(0.1 * index, 1) for index in range(11)]  # [0.0, 0.1, ..., 1.0]
-        return GaussianBinsEncoder(bin_edges=edges, sigma=sigma)
-
-    def test_registered(self) -> None:
-        from src.data.registry import target_encoders
-
-        assert target_encoders.get("gaussian_bins") is GaussianBinsEncoder
-
-    def test_distribution_sums_to_one_and_peaks_at_the_value_bin(self) -> None:
-        encoder = self._encoder()
-        distribution = encoder.load(0.42)
-        assert distribution.shape == (10,)
-        assert distribution.sum() == pytest.approx(1.0)
-        assert distribution.argmax() == 4  # 0.42 lives in [0.4, 0.5) — center 0.45
-
-    def test_expectation_recovers_the_value_away_from_edges(self) -> None:
-        encoder = self._encoder()
-        centers = np.asarray([0.05 + 0.1 * index for index in range(10)])
-        distribution = encoder.load(0.42)
-        assert float((distribution * centers).sum()) == pytest.approx(0.42, abs=0.01)
-
-    def test_wider_sigma_spreads_the_distribution(self) -> None:
-        sharp = self._encoder(sigma=0.02).load(0.5)
-        wide = self._encoder(sigma=0.3).load(0.5)
-        assert sharp.max() > wide.max()
-
-    def test_edge_value_still_normalizes(self) -> None:
-        distribution = self._encoder().load(0.0)
-        assert distribution.sum() == pytest.approx(1.0)
-        assert distribution.argmax() == 0
-
-    def test_num_classes_and_tensor_shape(self) -> None:
-        encoder = self._encoder()
-        assert encoder.num_classes == 10
-        tensor = encoder.to_tensor(encoder.load(0.5))
-        assert tensor.dtype == torch.float32 and tensor.shape == (10,)
-
-    def test_summarize_is_continuous(self) -> None:
-        from src.data.statistics import ContinuousDistribution
-
-        summary = self._encoder().summarize([0.1, 0.5, 0.9])
-        assert isinstance(summary, ContinuousDistribution)
-        assert summary.mean == pytest.approx(0.5)
-
-    def test_invalid_edges_rejected(self) -> None:
-        with pytest.raises(ValueError, match="increasing"):
-            GaussianBinsEncoder(bin_edges=[0.0, 0.5, 0.4], sigma=0.05)
-        with pytest.raises(ValueError, match="at least"):
-            GaussianBinsEncoder(bin_edges=[0.0, 1.0], sigma=0.05)
-        with pytest.raises(ValueError, match="sigma"):
-            GaussianBinsEncoder(bin_edges=[0.0, 0.5, 1.0], sigma=0.0)
-
-
-class TestLinearBinsEncoder:
-    """Continuous value -> two-point weights on neighboring bin centers (DFL-style)."""
-
-    def _encoder(self) -> LinearBinsEncoder:
-        edges = [round(0.1 * index, 1) for index in range(11)]  # [0.0, 0.1, ..., 1.0]
-        return LinearBinsEncoder(bin_edges=edges)
-
-    def test_registered(self) -> None:
-        from src.data.registry import target_encoders
-
-        assert target_encoders.get("linear_bins") is LinearBinsEncoder
-
-    def test_two_point_weights_hand_computed(self) -> None:
-        distribution = self._encoder().load(0.42)  # between centers 0.35 (bin 3) and 0.45 (bin 4)
-        assert distribution.sum() == pytest.approx(1.0)
-        assert np.count_nonzero(distribution) == 2
-        assert distribution[3] == pytest.approx(0.3)  # (0.45 - 0.42) / 0.1
-        assert distribution[4] == pytest.approx(0.7)  # (0.42 - 0.35) / 0.1
-
-    def test_expectation_is_exact_inside_the_center_range(self) -> None:
-        encoder = self._encoder()
-        centers = np.asarray([0.05 + 0.1 * index for index in range(10)])
-        for value in [0.05, 0.1, 0.42, 0.5, 0.777, 0.95]:
-            distribution = encoder.load(value)
-            assert float((distribution * centers).sum()) == pytest.approx(value, abs=1e-6)
-
-    def test_value_at_a_center_is_a_delta(self) -> None:
-        distribution = self._encoder().load(0.45)
-        assert distribution[4] == pytest.approx(1.0)
-        assert np.count_nonzero(distribution) == 1
-
-    def test_values_beyond_the_center_range_clamp_to_the_edge_bin(self) -> None:
-        encoder = self._encoder()
-        assert encoder.load(0.0)[0] == pytest.approx(1.0)  # below the first center (0.05)
-        assert encoder.load(1.0)[-1] == pytest.approx(1.0)  # above the last center (0.95)
-
-    def test_num_classes_tensor_and_summary(self) -> None:
-        from src.data.statistics import ContinuousDistribution
-
-        encoder = self._encoder()
-        assert encoder.num_classes == 10
-        tensor = encoder.to_tensor(encoder.load(0.5))
-        assert tensor.dtype == torch.float32 and tensor.shape == (10,)
-        assert isinstance(encoder.summarize([0.2, 0.8]), ContinuousDistribution)
-
-    def test_shares_the_bin_edges_validation(self) -> None:
-        with pytest.raises(ValueError, match="increasing"):
-            LinearBinsEncoder(bin_edges=[0.0, 0.5, 0.4])
-        with pytest.raises(ValueError, match="at least"):
-            LinearBinsEncoder(bin_edges=[0.0, 1.0])
+
+from src.data import LabelTargetEncoder, MaskTargetEncoder, MultiLabelTargetEncoder, ScalarTargetEncoder
+from src.data.registry import target_encoder_registry
+
+
+def write_mask(path: Path, classes: np.ndarray) -> Path:
+    """Write a class-index mask as a grayscale PNG."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    cv2.imwrite(str(path), classes.astype(np.uint8))
+    return path
+
+
+def test_label_encoder_learns_sorted_vocabulary_on_fit() -> None:
+    encoder = LabelTargetEncoder()
+
+    encoder.fit(pd.Series(["dog", "cat", "dog"]))
+
+    assert encoder.num_classes == 2
+    assert encoder.class_names == ["cat", "dog"]
+
+
+def test_label_encoder_encodes_to_a_raw_class_index() -> None:
+    """Encoders stay raw: tensors are made once, by the transform or collation."""
+    encoder = LabelTargetEncoder()
+    encoder.fit(pd.Series(["dog", "cat"]))
+
+    encoded = encoder.encode("dog")
+
+    assert encoded == 1
+    assert isinstance(encoded, int)
+
+
+def test_label_encoder_names_known_classes_for_unseen_value() -> None:
+    encoder = LabelTargetEncoder()
+    encoder.fit(pd.Series(["cat", "dog"]))
+
+    with pytest.raises(LookupError, match="bird"):
+        encoder.encode("bird")
+
+
+def test_label_encoder_refuses_to_encode_before_fit() -> None:
+    with pytest.raises(RuntimeError, match="fit"):
+        LabelTargetEncoder().encode("cat")
+
+
+def test_scalar_encoder_needs_no_fit_and_reports_no_classes() -> None:
+    encoder = ScalarTargetEncoder()
+
+    encoded = encoder.encode(3.5)
+
+    assert encoded == pytest.approx(3.5)
+    assert isinstance(encoded, float)
+    assert encoder.num_classes is None
+    assert encoder.class_names is None
+
+
+def test_built_in_encoders_are_registered_for_config() -> None:
+    assert set(target_encoder_registry) == {"label", "multilabel", "scalar", "mask", "gaussian_bins", "linear_bins"}
+    assert isinstance(target_encoder_registry.create("mask", num_classes=2), MaskTargetEncoder)
+
+
+def test_only_mask_targets_are_spatial() -> None:
+    """Spatiality is what tells a transform which targets ride the image's geometry."""
+    assert MaskTargetEncoder(num_classes=2).spatial is True
+    assert LabelTargetEncoder().spatial is False
+    assert ScalarTargetEncoder().spatial is False
+
+
+def test_mask_encoder_reads_class_indices_as_an_integer_array(tmp_path: Path) -> None:
+    classes = np.array([[0, 1], [2, 0]])
+    path = write_mask(tmp_path / "mask.png", classes)
+
+    encoded = MaskTargetEncoder(num_classes=3).encode(path)
+
+    assert isinstance(encoded, np.ndarray)
+    assert encoded.shape == (2, 2)
+    assert encoded.dtype == np.int64
+    assert encoded.tolist() == classes.tolist()
+
+
+def test_mask_encoder_prepends_its_own_root(tmp_path: Path) -> None:
+    write_mask(tmp_path / "masks" / "one.png", np.zeros((2, 2)))
+
+    encoded = MaskTargetEncoder(num_classes=2, root=tmp_path / "masks").encode("one.png")
+
+    assert encoded.shape == (2, 2)
+
+
+def test_mask_encoder_reports_the_class_count_it_was_given() -> None:
+    assert MaskTargetEncoder(num_classes=4).num_classes == 4
+
+
+def test_mask_encoder_names_a_missing_file(tmp_path: Path) -> None:
+    with pytest.raises(FileNotFoundError, match="absent.png"):
+        MaskTargetEncoder(num_classes=2, root=tmp_path).encode("absent.png")
+
+
+def test_a_declared_vocabulary_validates_the_data_instead_of_learning_it() -> None:
+    """A typo row must fail loudly, not silently grow an 11th class."""
+    encoder = LabelTargetEncoder(classes={0: "cat", 1: "dog"})
+
+    with pytest.raises(LookupError, match="catt"):
+        encoder.fit(["cat", "catt", "dog"])
+
+
+def test_a_declared_class_absent_from_train_is_legal() -> None:
+    """A rare class missing from a small slice must not reshuffle the index space."""
+    encoder = LabelTargetEncoder(classes={0: "cat", 1: "dog", 2: "cow"})
+
+    encoder.fit(["cat", "dog"])
+
+    assert encoder.num_classes == 3
+    assert encoder.encode("cow") == 2
+
+
+def test_a_multilabel_vocabulary_is_declared_the_same_way() -> None:
+    encoder = MultiLabelTargetEncoder(classes={0: "indoor", 1: "people"})
+
+    with pytest.raises(LookupError, match="outdor"):
+        encoder.fit(["indoor,people", "outdor"])
+
+
+def test_a_mask_derives_its_count_from_declared_classes() -> None:
+    encoder = MaskTargetEncoder(classes={0: "background", 1: "defect"})
+
+    assert encoder.num_classes == 2
+    assert encoder.class_names == ["background", "defect"]
+
+
+def test_a_mask_refuses_disagreeing_count_and_classes() -> None:
+    with pytest.raises(ValueError, match="num_classes"):
+        MaskTargetEncoder(num_classes=3, classes={0: "background", 1: "defect"})
+
+
+def test_a_mask_needs_a_count_from_somewhere() -> None:
+    with pytest.raises(ValueError, match="num_classes"):
+        MaskTargetEncoder()
+
+
+def test_duplicate_declared_names_are_refused_at_the_encoder_too() -> None:
+    """A copy-paste typo must not silently shrink the model: {0: a, 1: a} is one class in disguise."""
+    with pytest.raises(ValueError, match="duplicated"):
+        LabelTargetEncoder(classes={0: "a", 1: "a"})

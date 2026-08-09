@@ -1,9 +1,16 @@
-"""Backbone adapters. Importing this package registers built-in backbones."""
+"""Backbone adapters, one module per source library; importing this registers them all."""
 
-from src.models.backbones.embedding import EmbeddingBackbone
-from src.models.backbones.multi import MultiEncoderBackbone
-from src.models.backbones.smp import DinoDptBackbone, SmpBackbone
+from __future__ import annotations
+
+from src.models.backbones.hf import HFTextBackbone
+from src.models.backbones.multi import MultiEncoderBackbone, MultiViewBackbone
+from src.models.backbones.smp import SmpBackbone
 from src.models.backbones.timm import TimmBackbone
-from src.models.registry import backbones
 
-__all__ = ["DinoDptBackbone", "EmbeddingBackbone", "MultiEncoderBackbone", "SmpBackbone", "TimmBackbone", "backbones"]
+__all__ = [
+    "HFTextBackbone",
+    "MultiEncoderBackbone",
+    "MultiViewBackbone",
+    "SmpBackbone",
+    "TimmBackbone",
+]

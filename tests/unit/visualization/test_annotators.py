@@ -1,285 +1,381 @@
-"""Annotators: per-(topology, objective) GT-vs-prediction field writers."""
+"""Annotation: a task's step tensors become labels and a verdict, per axis pair."""
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import logging
+from typing import Any
 
 import numpy as np
+import pytest
+import torch
+from torchmetrics.classification import MulticlassJaccardIndex
 
-from tests.support.builders import make_task, make_view
+from src.core import Objective, Task, Topology
+from src.core.entities import TargetFacts
+from src.tasks.registry import objective_registry
+from src.visualization import (
+    Classification,
+    Classifications,
+    Image,
+    Regression,
+    SampleView,
+    Segmentation,
+)
+from src.visualization.annotators import (
+    ClassReading,
+    MulticlassAnnotation,
+    build_annotators,
+)
+from tests.support.entities import a_task
 
-if TYPE_CHECKING:
-    from src.core.entities import Task, TaskStepView
 
+def task_of(topology: Topology, objective: Objective, names: list[str] | None = None) -> Task:
+    return a_task(name="t", topology=topology, objective=objective, class_names=names)
 
-class TestAnnotators:
-    def _task(self, objective: str = "multiclass") -> Task:
-        return make_task("classification", "species", 3, objective=objective, class_names=["cat", "cow", "dog"])
 
-    def _view(self, predictions: list[list[float]], target: list[object]) -> TaskStepView:
-        return make_view(predictions, target)
+def activated(objective: Objective, logits: torch.Tensor) -> torch.Tensor:
+    """Push logits through the framework's own activation for that objective.
 
-    def test_registry_keyed_by_axes(self) -> None:
-        from src.core.taxonomy import Objective, Topology
-        from src.visualization.annotators import annotators
+    Tests used to hand-write the shape an annotator receives, and the two drifted:
+    a binary head's `[B, 1]` is squeezed to `[B]` before any consumer sees it, so
+    a fixture shaped like logits hid a reader that crashed on real output.
+    """
+    return objective_registry.create(objective).build_activation(TargetFacts())(logits)
 
-        assert (Topology.GLOBAL, Objective.MULTICLASS) in annotators
-        assert (Topology.GLOBAL, Objective.MULTILABEL) in annotators
 
-    def test_classification_annotator_adds_gt_pred_and_tag(self) -> None:
-        import numpy as np
+def annotate(task: Task, logits: torch.Tensor, targets: torch.Tensor, **knobs: object) -> SampleView:
+    """Annotate one sample from what a head emits, activated the way the run activates it."""
+    sample = SampleView(media={"image": Image(pixels=np.zeros((4, 4, 3), dtype=np.uint8))})
+    outputs = activated(task.objective, logits)
+    build_annotators([task], **knobs)["t"].annotate(sample, task, outputs, targets, index=0)
+    return sample
 
-        from src.visualization.annotators import ClassificationAnnotator
-        from src.visualization.entities import Classification, SampleView
 
-        sample = SampleView(image=np.zeros((2, 2, 3), dtype=np.uint8))
-        view = self._view(predictions=[[0.1, 0.2, 0.7]], target=[2])  # softmax-like, pred=dog, gt=dog
-        ClassificationAnnotator().annotate(sample, self._task(), view, index=0)
+def test_multiclass_argmaxes_and_judges() -> None:
+    task = task_of(Topology.GLOBAL, Objective.MULTICLASS, ["cat", "dog"])
 
-        gt = sample.fields["species_gt"]
-        pred = sample.fields["species_pred"]
-        assert isinstance(gt, Classification) and gt.label == "dog"
-        assert isinstance(pred, Classification) and pred.label == "dog"
-        assert abs((pred.confidence or 0.0) - 0.7) < 1e-6
-        assert "species:correct" in sample.tags
+    sample = annotate(task, torch.tensor([[0.2, 2.0]]), torch.tensor([0]))
 
-    def test_classification_annotator_wrong_tag(self) -> None:
-        import numpy as np
+    pred = sample.fields[("t", "pred")]
+    assert isinstance(pred, Classification)
+    assert pred.label == "dog"
+    assert pred.confidence == pytest.approx(0.858, abs=1e-3)  # softmax of the logits, not the logits
+    assert sample.fields[("t", "gt")] == Classification(label="cat")
+    assert sample.verdicts["t"].correct is False
 
-        from src.visualization.annotators import ClassificationAnnotator
-        from src.visualization.entities import SampleView
 
-        sample = SampleView(image=np.zeros((2, 2, 3), dtype=np.uint8))
-        view = self._view(predictions=[[0.8, 0.1, 0.1]], target=[2])  # pred=cat, gt=dog
-        ClassificationAnnotator().annotate(sample, self._task(), view, index=0)
-        assert "species:wrong" in sample.tags
+def test_binary_thresholds_because_argmax_would_always_answer_class_zero() -> None:
+    """A binary head emits one sigmoid value; the reference caught this and so do we."""
+    task = task_of(Topology.GLOBAL, Objective.BINARY, ["neg", "pos"])
 
-    def test_binary_annotator_thresholds_positive_class(self) -> None:
-        from dataclasses import replace
+    sample = annotate(task, torch.tensor([[2.0]]), torch.tensor([1]))
 
-        import numpy as np
+    pred = sample.fields[("t", "pred")]
+    assert isinstance(pred, Classification)
+    assert pred.label == "pos"
+    assert pred.confidence == pytest.approx(0.881, abs=1e-3)
+    assert sample.verdicts["t"].correct is True
 
-        from src.tasks.presets import classification
-        from src.visualization.annotators import BinaryClassificationAnnotator
-        from src.visualization.entities import Classification, SampleView
 
-        task = replace(classification("species", num_classes=2, objective="binary"), class_names=["cat", "dog"])
-        sample = SampleView(image=np.zeros((2, 2, 3), dtype=np.uint8))
-        # sigmoid P(positive=dog) = 0.8 → pred dog; gt = 1 (dog)
-        view = self._view(predictions=[[0.8]], target=[[1]])
-        BinaryClassificationAnnotator().annotate(sample, task, view, index=0)
+def test_the_declared_threshold_reaches_the_reader_that_names_it() -> None:
+    """The reference declared thresholds no config could reach; here one is offered to all."""
+    task = task_of(Topology.GLOBAL, Objective.BINARY, ["neg", "pos"])
 
-        gt = sample.fields["species_gt"]
-        pred = sample.fields["species_pred"]
-        assert isinstance(gt, Classification) and gt.label == "dog"
-        assert isinstance(pred, Classification) and pred.label == "dog"
-        assert abs((pred.confidence or 0.0) - 0.8) < 1e-6
-        assert "species:correct" in sample.tags
+    sample = annotate(task, torch.tensor([[2.0]]), torch.tensor([1]), threshold=0.95)
 
-    def test_binary_annotator_below_threshold_is_negative_class(self) -> None:
-        from dataclasses import replace
+    pred = sample.fields[("t", "pred")]
+    assert isinstance(pred, Classification)
+    assert pred.label == "neg"
 
-        import numpy as np
 
-        from src.tasks.presets import classification
-        from src.visualization.annotators import BinaryClassificationAnnotator
-        from src.visualization.entities import Classification, SampleView
+def test_multilabel_is_correct_only_when_the_whole_set_matches() -> None:
+    task = task_of(Topology.GLOBAL, Objective.MULTILABEL, ["a", "b", "c"])
 
-        task = replace(classification("species", num_classes=2, objective="binary"), class_names=["cat", "dog"])
-        sample = SampleView(image=np.zeros((2, 2, 3), dtype=np.uint8))
-        # P(dog) = 0.3 → pred cat with confidence 0.7; gt = 1 (dog) → wrong
-        view = self._view(predictions=[[0.3]], target=[[1]])
-        BinaryClassificationAnnotator().annotate(sample, task, view, index=0)
+    sample = annotate(task, torch.tensor([[2.0, -2.0, 1.5]]), torch.tensor([[1.0, 0.0, 0.0]]))
 
-        pred = sample.fields["species_pred"]
-        assert isinstance(pred, Classification) and pred.label == "cat"
-        assert abs((pred.confidence or 0.0) - 0.7) < 1e-6
-        assert "species:wrong" in sample.tags
+    pred = sample.fields[("t", "pred")]
+    assert isinstance(pred, Classifications)
+    assert [item.label for item in pred.classifications] == ["a", "c"]
+    assert sample.verdicts["t"].correct is False  # 'a' matched, and one extra class is still a miss
 
-    def test_binary_registered_for_global_binary(self) -> None:
-        from src.core.taxonomy import Objective, Topology
-        from src.visualization.annotators import annotators
 
-        assert (Topology.GLOBAL, Objective.BINARY) in annotators
+def test_regression_scores_the_gap_and_returns_no_binary_verdict() -> None:
+    task = task_of(Topology.GLOBAL, Objective.CONTINUOUS)
 
-    def test_multilabel_annotator_builds_classifications(self) -> None:
-        import numpy as np
+    sample = annotate(task, torch.tensor([[5.2]]), torch.tensor([4.0]))
 
-        from src.visualization.annotators import MultilabelAnnotator
-        from src.visualization.entities import Classifications, SampleView
+    predicted = sample.fields[("t", "pred")]
+    assert isinstance(predicted, Regression)
+    assert predicted.value == pytest.approx(5.2)
+    assert sample.verdicts["t"].correct is None
+    (score,) = sample.verdicts["t"].scores
+    assert score.name == "mae"  # what metric_registry and the regression preset call it
+    assert score.value == pytest.approx(1.2, abs=1e-5)
 
-        sample = SampleView(image=np.zeros((2, 2, 3), dtype=np.uint8))
-        # sigmoid predictions: cat=0.9, cow=0.1, dog=0.8 ; gt multi-hot: cat=1, dog=1
-        view = self._view(predictions=[[0.9, 0.1, 0.8]], target=[[1.0, 0.0, 1.0]])
-        MultilabelAnnotator(threshold=0.5).annotate(sample, self._task("multilabel"), view, index=0)
 
-        gt = sample.fields["species_gt"]
-        pred = sample.fields["species_pred"]
-        assert isinstance(gt, Classifications) and {c.label for c in gt.items} == {"cat", "dog"}
-        assert isinstance(pred, Classifications) and {c.label for c in pred.items} == {"cat", "dog"}
+def test_segmentation_masks_every_present_class_and_skips_ignore_index() -> None:
+    task = task_of(Topology.DENSE, Objective.MULTICLASS, ["bg", "cat"])
+    logits = torch.zeros(1, 2, 4, 4)
+    logits[0, 1, :2] = 4.0  # the top half is predicted 'cat'
+    targets = torch.zeros(1, 4, 4, dtype=torch.long)
+    targets[0, :, :2] = 1  # the left half is 'cat'
 
+    sample = annotate(task, logits, targets, ignore_index=0)
 
-class TestRegressionAnnotator:
-    def _task(self) -> Task:
-        return make_task("regression", "age", 1)
+    gt = sample.fields[("t", "gt")]
+    assert isinstance(gt, Segmentation)
+    assert [entry.name for entry in gt.classes] == ["cat"]
+    (score,) = sample.verdicts["t"].scores
+    assert score.name == "iou"  # what metric_registry and the segmentation preset call it
 
-    def _view(self, predictions: list[list[float]], target: list[list[float]]) -> TaskStepView:
-        return make_view(predictions, target)
 
-    def test_registered_for_global_continuous(self) -> None:
-        from src.core.taxonomy import Objective, Topology
-        from src.visualization.annotators import annotators
+def test_the_pages_iou_matches_the_metric_whose_name_it_borrows() -> None:
+    """`ignore_index` has to drop the void *pixels*, not only the void class.
 
-        assert (Topology.GLOBAL, Objective.CONTINUOUS) in annotators
+    A model cannot predict void, so every void pixel it labels lands in some real
+    class's union and counts against it. Measured before the fix: a prediction
+    correct on every valid pixel scored 0.70 on the page while
+    `MulticlassJaccardIndex(ignore_index=...)` said 1.0 — so the slider a user drags
+    to find the worst samples was calibrated on a different number from the one the
+    epoch report shows under the same name.
+    """
+    void = 3
+    truth = torch.tensor([[[0, 1, 1, void], [0, 1, 1, void], [0, 0, void, void], [0, 0, void, void]]])
+    perfect = truth.clone()
+    perfect[truth == void] = 1  # correct everywhere it is allowed to be judged
+    logits = torch.zeros(1, 4, 4, 4).scatter_(1, perfect.unsqueeze(1), 8.0)
+    task = task_of(Topology.DENSE, Objective.MULTICLASS, ["bg", "cat", "dog", "void"])
 
-    def test_scalar_gt_pred_and_signed_error(self) -> None:
-        import numpy as np
+    sample = annotate(task, logits, truth, ignore_index=void)
 
-        from src.visualization.annotators import RegressionAnnotator
-        from src.visualization.entities import Regression, SampleView
+    (score,) = sample.verdicts["t"].scores
+    reference = MulticlassJaccardIndex(num_classes=4, ignore_index=void, average="macro")
+    assert score.value == pytest.approx(float(reference(perfect, truth)))
+    assert score.value == pytest.approx(1.0)
 
-        sample = SampleView(image=np.zeros((2, 2, 3), dtype=np.uint8))
-        view = self._view(predictions=[[3.51]], target=[[3.42]])
-        RegressionAnnotator().annotate(sample, self._task(), view, index=0)
 
-        gt = sample.fields["age_gt"]
-        pred = sample.fields["age_pred"]
-        assert isinstance(gt, Regression) and isinstance(pred, Regression)
-        assert gt.components[0].name == "" and abs(gt.components[0].value - 3.42) < 1e-5
-        assert gt.components[0].error is None
-        assert abs(pred.components[0].value - 3.51) < 1e-5
-        assert abs((pred.components[0].error or 0.0) - 0.09) < 1e-5  # signed pred - gt
+def test_a_sample_with_nothing_left_to_judge_earns_no_score_rather_than_a_zero() -> None:
+    """An empty union is not a score of zero — a zero would sort it as the worst on the page.
 
+    It would also drag the slider's floor to 0, so the band a user narrows to find
+    real mistakes would be calibrated on a sample that was never judged at all.
+    """
+    void = 2
+    truth = torch.full((1, 4, 4), void, dtype=torch.long)
+    logits = torch.zeros(1, 3, 4, 4)
+    task = task_of(Topology.DENSE, Objective.MULTICLASS, ["bg", "cat", "void"])
 
-class TestSegmentationAnnotator:
-    def _task(self) -> Task:
-        return make_task("segmentation", "mask", 3)
+    sample = annotate(task, logits, truth, ignore_index=void)
 
-    def _view(self, predictions: object, target: object) -> TaskStepView:
-        return make_view(predictions, target)  # type: ignore[arg-type]
+    assert sample.verdicts["t"].scores == ()
 
-    def test_registered_for_dense_multiclass(self) -> None:
-        from src.core.taxonomy import Objective, Topology
-        from src.visualization.annotators import annotators
 
-        assert (Topology.DENSE, Objective.MULTICLASS) in annotators
+def test_maps_that_do_not_share_a_shape_are_refused_by_name() -> None:
+    """numpy would broadcast `[1, W]` against `[H, W]` and report a perfect IoU.
 
-    def test_builds_per_class_masks_from_logits_and_label_map(self) -> None:
-        import numpy as np
-        import torch
+    A head emitting at stride 8 against a full-resolution target is a real mistake,
+    and the two ways it ended otherwise were a bare broadcast error naming neither
+    side, or a silent 1.0 for a model that is not perfect.
+    """
+    task = task_of(Topology.DENSE, Objective.MULTICLASS, ["bg", "cat"])
+    logits = torch.zeros(1, 2, 2, 2)
+    logits[0, 1] = 4.0
 
-        from src.visualization.annotators import SegmentationAnnotator
-        from src.visualization.entities import SampleView, Segmentation
+    with pytest.raises(ValueError, match=r"do not share a shape"):
+        annotate(task, logits, torch.zeros(1, 4, 4, dtype=torch.long))
 
-        # predictions [B, C=3, H=4, W=4] softmax-ish; argmax over C gives the pred label map
-        probs = torch.zeros(1, 3, 4, 4)
-        probs[0, 0, :2, :] = 0.9  # top half class 0
-        probs[0, 1, 2:, :] = 0.9  # bottom half class 1
-        target = torch.zeros(1, 4, 4, dtype=torch.long)
-        target[0, 2:, :] = 1  # gt: bottom half class 1
 
-        sample = SampleView(image=np.zeros((4, 4, 3), dtype=np.uint8))
-        SegmentationAnnotator().annotate(sample, self._task(), self._view(probs, target), index=0)
+def test_an_unnamed_class_is_called_what_the_rest_of_the_run_calls_it() -> None:
+    """`Task.class_names` documents the fallback and `core.reporting` uses it: `class{i}`.
 
-        gt = sample.fields["mask_gt"]
-        pred = sample.fields["mask_pred"]
-        assert isinstance(gt, Segmentation) and isinstance(pred, Segmentation)
-        gt_classes = {c.name for c in gt.classes}
-        assert gt_classes == {"0", "1"}  # both present in gt
-        road = next(c for c in gt.classes if c.name == "1")
-        assert road.mask.shape == (4, 4) and bool(road.mask[3, 0])  # bottom half is class 1
+    A bare index here would give one run two names for one class — `class3` on the
+    metric leaves and the confusion matrix, `3` on the sample grid — so filtering a
+    tracker by either finds half the story.
+    """
+    task = task_of(Topology.GLOBAL, Objective.MULTICLASS)  # no class names declared
 
-    def test_ignore_index_skips_class(self) -> None:
-        import numpy as np
-        import torch
+    sample = annotate(task, torch.tensor([[0.1, 0.2, 4.0]]), torch.tensor([2]))
 
-        from src.visualization.annotators import SegmentationAnnotator
-        from src.visualization.entities import SampleView, Segmentation
+    predicted = sample.fields[("t", "pred")]
+    assert isinstance(predicted, Classification)
+    assert predicted.label == "class2"
 
-        probs = torch.zeros(1, 3, 4, 4)
-        probs[0, 0, :2, :] = 0.9
-        probs[0, 1, 2:, :] = 0.9
-        target = torch.zeros(1, 4, 4, dtype=torch.long)
-        target[0, 2:, :] = 1
 
-        sample = SampleView(image=np.zeros((4, 4, 3), dtype=np.uint8))
-        SegmentationAnnotator(ignore_index=0).annotate(sample, self._task(), self._view(probs, target), index=0)
+def test_a_binary_dense_task_draws_a_foreground_mask() -> None:
+    """The pair a registry keyed by (topology, objective) silently omitted."""
+    task = task_of(Topology.DENSE, Objective.BINARY, ["background", "foreground"])
+    logits = torch.full((1, 1, 4, 4), -4.0)
+    logits[0, 0, :2] = 4.0
+    targets = torch.zeros(1, 4, 4, dtype=torch.long)
+    targets[0, :2] = 1
 
-        gt = sample.fields["mask_gt"]
-        assert isinstance(gt, Segmentation)
-        assert {c.name for c in gt.classes} == {"1"}  # class 0 (background) skipped
+    sample = annotate(task, logits, targets, ignore_index=0)
 
+    pred = sample.fields[("t", "pred")]
+    assert isinstance(pred, Segmentation)
+    assert [entry.name for entry in pred.classes] == ["foreground"]
+    assert pred.classes[0].mask[:2].all()
+    assert not pred.classes[0].mask[2:].any()
 
-class TestMultilabelSegmentationAnnotator:
-    def _task(self) -> Task:
-        return make_task("segmentation", "mask", 2, objective="multilabel")
 
-    def _view(self, predictions: object, target: object) -> TaskStepView:
-        return make_view(predictions, target)  # type: ignore[arg-type]
+def test_a_global_binary_head_reads_after_its_channel_is_squeezed_away() -> None:
+    """Regression: `sigmoid_probabilities` squeezes `[B, 1]` to `[B]`, so a sample arrives 0-d.
 
-    def test_registered_for_dense_multilabel(self) -> None:
-        from src.core.taxonomy import Objective, Topology
-        from src.visualization.annotators import annotators
+    Reading `scores[0]` there raised IndexError on every real binary run — the
+    fixture that hid it was shaped like logits, not like an activated output.
+    """
+    task = task_of(Topology.GLOBAL, Objective.BINARY, ["neg", "pos"])
+    outputs = activated(Objective.BINARY, torch.tensor([[3.0], [-3.0]]))
 
-        assert (Topology.DENSE, Objective.MULTILABEL) in annotators
+    assert outputs.shape == (2,)  # the shape a real run hands the annotator
 
-    def test_overlapping_masks_from_per_channel_threshold(self) -> None:
-        import numpy as np
-        import torch
+    sample = SampleView(media={"image": Image(pixels=np.zeros((4, 4, 3), dtype=np.uint8))})
+    build_annotators([task])["t"].annotate(sample, task, outputs, torch.tensor([1, 0]), index=0)
 
-        from src.visualization.annotators import MultilabelSegmentationAnnotator
-        from src.visualization.entities import SampleView, Segmentation
+    predicted = sample.fields[("t", "pred")]
+    assert isinstance(predicted, Classification)
+    assert predicted.label == "pos"
 
-        # predictions [B, C=2, H=4, W=4] sigmoid; gt [B, C=2, H=4, W=4] multi-hot (classes overlap)
-        probs = torch.zeros(1, 2, 4, 4)
-        probs[0, 0] = 0.9  # class 0 active everywhere
-        probs[0, 1, :2, :2] = 0.9  # class 1 active only top-left → overlaps class 0
-        gt = torch.zeros(1, 2, 4, 4)
-        gt[0, 0] = 1.0
-        gt[0, 1, :2, :2] = 1.0
 
-        sample = SampleView(image=np.zeros((4, 4, 3), dtype=np.uint8))
-        MultilabelSegmentationAnnotator(threshold=0.5).annotate(sample, self._task(), self._view(probs, gt), index=0)
+def test_a_dense_binary_head_masks_the_whole_map_not_its_first_row() -> None:
+    """Regression: the same squeeze turns `[B, 1, H, W]` into `[B, H, W]`.
 
-        pred = sample.fields["mask_pred"]
-        assert isinstance(pred, Segmentation)
-        masks = {c.name: c.mask for c in pred.classes}
-        assert set(masks) == {"0", "1"}
-        assert bool(masks["0"][0, 0]) and bool(masks["1"][0, 0])  # same pixel in BOTH classes
-        assert bool(masks["0"][3, 3]) and not bool(masks["1"][3, 3])  # class 1 absent bottom-right
+    That case did not raise — `scores[0]` quietly took row 0 and produced an
+    `(W,)` mask where an `(H, W)` one belongs, so the overlay was a stripe.
+    """
+    task = task_of(Topology.DENSE, Objective.BINARY, ["background", "foreground"])
+    logits = torch.full((1, 1, 6, 8), -4.0)
+    logits[0, 0, 3:] = 4.0
+    outputs = activated(Objective.BINARY, logits)
 
-    def test_threshold_drops_low_confidence_class(self) -> None:
-        import numpy as np
-        import torch
+    assert outputs.shape == (1, 6, 8)
 
-        from src.visualization.annotators import MultilabelSegmentationAnnotator
-        from src.visualization.entities import SampleView, Segmentation
+    sample = SampleView(media={"image": Image(pixels=np.zeros((4, 4, 3), dtype=np.uint8))})
+    targets = torch.zeros(1, 6, 8, dtype=torch.long)
+    build_annotators([task], ignore_index=0)["t"].annotate(sample, task, outputs, targets, index=0)
 
-        probs = torch.zeros(1, 2, 4, 4)
-        probs[0, 0] = 0.9  # present
-        probs[0, 1] = 0.3  # below threshold everywhere → absent
-        gt = torch.zeros(1, 2, 4, 4)
-        gt[0, 0] = 1.0
+    predicted = sample.fields[("t", "pred")]
+    assert isinstance(predicted, Segmentation)
+    assert predicted.classes[0].mask.shape == (6, 8)
+    assert predicted.classes[0].mask[3:].all()
+    assert not predicted.classes[0].mask[:3].any()
 
-        sample = SampleView(image=np.zeros((4, 4, 3), dtype=np.uint8))
-        MultilabelSegmentationAnnotator(threshold=0.5).annotate(sample, self._task(), self._view(probs, gt), index=0)
 
-        pred = sample.fields["mask_pred"]
-        assert isinstance(pred, Segmentation)
-        assert {c.name for c in pred.classes} == {"0"}  # class 1 thresholded out
+def test_one_reader_serves_both_topologies_of_an_objective() -> None:
+    """The point of the split: multiclass argmaxes once, whatever shape it is given."""
+    flat = MulticlassAnnotation().read_output(np.array([0.2, 0.8]))
+    spatial = MulticlassAnnotation().read_output(np.array([[[0.2]], [[0.8]]]))
 
+    assert isinstance(flat, ClassReading)
+    assert isinstance(spatial, ClassReading)
+    assert [entry.index for entry in flat.presences] == [1]
+    assert [entry.index for entry in spatial.presences] == [1]
+    assert flat.presences[0].where.shape == ()
+    assert spatial.presences[0].where.shape == (1, 1)
 
-class TestMetricTaskAnnotation:
-    def test_global_metric_task_is_skipped_gracefully(self) -> None:
-        import dataclasses
 
-        from src.core.taxonomy import Objective, Topology
-        from src.visualization.pipeline import build_sample_views
+def test_metric_learning_is_skipped_with_its_reason_not_a_shrug(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Silence here was the reference's worst case; 'no annotator' and 'nothing to show' differ."""
+    task = task_of(Topology.GLOBAL, Objective.MULTICLASS, ["a"])
+    embedded = a_task(name="emb", objective=Objective.METRIC)
 
-        base = make_task("classification", "species", 3, class_names=["cat", "cow", "dog"])
-        task = dataclasses.replace(base, topology=Topology.GLOBAL, objective=Objective.METRIC)
-        views = {task.name: make_view([[0.1, 0.2]], [[0.1, 0.2]])}
+    with caplog.at_level(logging.INFO):
+        built = build_annotators([task, embedded])
 
-        samples = build_sample_views(np.zeros((1, 4, 4, 3), np.uint8), [task], views)
+    assert "t" in built
+    assert "emb" not in built
+    assert any("emb" in record.message and "metric" in record.message for record in caplog.records)
 
-        assert samples[0].fields == {}  # no annotator for (GLOBAL, METRIC): task silently skipped
+
+def test_a_dense_regression_says_what_it_cannot_draw_yet(caplog: pytest.LogCaptureFixture) -> None:
+    """Depth and heatmaps need a Label the IR has not got; half-drawing them would lie."""
+    depth = a_task(name="depth", topology=Topology.DENSE, objective=Objective.CONTINUOUS)
+
+    with caplog.at_level(logging.INFO):
+        built = build_annotators([depth])
+
+    assert built == {}
+    assert any("depth" in record.message for record in caplog.records)
+
+
+def test_a_stacked_view_topology_says_it_has_nothing_per_sample(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """MULTISTREAM predicts an alignment between inputs, not a label for one sample."""
+    clip = a_task(name="pairs", topology=Topology.MULTISTREAM, objective=Objective.METRIC)
+
+    with caplog.at_level(logging.INFO):
+        built = build_annotators([clip])
+
+    assert built == {}
+    assert any("pairs" in record.message for record in caplog.records)
+
+
+def test_the_page_names_a_measure_the_way_the_framework_names_it() -> None:
+    """One quantity, one name: the page said `miou` and `err` where the run logs `iou` and `mae`.
+
+    Pinned against the registry itself, so renaming a metric there is caught here
+    rather than by someone noticing two names for one number on two screens.
+    """
+    from src.metrics.registry import metric_registry
+    from src.visualization.annotators import IOU, MAE
+
+    assert IOU in metric_registry
+    assert MAE in metric_registry
+
+
+def test_every_kind_of_reading_has_a_labeller_to_route_it_to() -> None:
+    """A new Reading member must not reach a run before the topologies can draw it.
+
+    The table is the one place a kind is tied to the method that draws it; the union
+    is the one place a kind exists. They have to agree, and this is what makes a
+    missing entry a failed test instead of a KeyError mid-epoch.
+    """
+    from typing import get_args
+
+    from src.visualization.annotators import LABELLERS, Reading
+
+    assert set(LABELLERS) == set(get_args(Reading.__value__))
+
+
+def test_a_topology_draws_what_it_overrides_and_nothing_else() -> None:
+    """`draws` is derived, so it cannot claim a pairing the topology has no branch for.
+
+    Declared beside the implementation it could say yes where nothing was written,
+    and the run learned that an epoch in.
+    """
+    from src.visualization.annotators import (
+        ClassReading,
+        DenseAnnotation,
+        GlobalAnnotation,
+        ValueReading,
+    )
+
+    assert GlobalAnnotation().draws(ClassReading) is True
+    assert GlobalAnnotation().draws(ValueReading) is True
+    assert DenseAnnotation().draws(ClassReading) is True
+    assert DenseAnnotation().draws(ValueReading) is False  # a heatmap has no label kind yet
+
+
+def test_a_new_topology_needs_no_change_to_any_reading_kind() -> None:
+    """The point of the split: one class, drawing one kind, touching nothing else."""
+    from src.visualization.annotators import AnnotationTopology, ClassReading, ValueReading
+
+    class DrawsNumbersOnly(AnnotationTopology):
+        def label_values(self, view: SampleView, task: Task, truth: Any, predicted: Any) -> None: ...
+
+    assert DrawsNumbersOnly().draws(ValueReading) is True
+    assert DrawsNumbersOnly().draws(ClassReading) is False
+
+
+def test_a_pairing_a_topology_cannot_draw_names_itself() -> None:
+    """Unreachable if `draws` is right — and loud rather than silent if it ever is not."""
+    from src.visualization.annotators import DenseAnnotation, ValueReading
+
+    task = task_of(Topology.DENSE, Objective.CONTINUOUS)
+    field = ValueReading(values=np.zeros((2, 2)))
+
+    with pytest.raises(TypeError, match="DenseAnnotation has no label for a ValueReading"):
+        DenseAnnotation().annotate(SampleView(), task, field, field)

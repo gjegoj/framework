@@ -1,15 +1,15 @@
-"""Training: Lightning wrappers (humble objects) over the framework's domain logic."""
+"""The training capability: Lightning as the delivery mechanism for any ``Model``."""
 
-from src.training.aggregator import WeightedSumAggregator
-from src.training.modules import CompleteModelLitModule, DistillationLitModule, LitDataModule, LitModule
-from src.training.optim import OptimizerBuilder, SchedulerBuilder
+from __future__ import annotations
+
+from src.training.data import TrainingData
+from src.training.module import TrainingModule
+from src.training.optim import FitProfile, OptimizerFactory, SchedulerFactory
 
 __all__ = [
-    "CompleteModelLitModule",
-    "DistillationLitModule",
-    "LitDataModule",
-    "LitModule",
-    "OptimizerBuilder",
-    "SchedulerBuilder",
-    "WeightedSumAggregator",
+    "FitProfile",
+    "OptimizerFactory",
+    "SchedulerFactory",
+    "TrainingData",
+    "TrainingModule",
 ]

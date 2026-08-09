@@ -1,0 +1,22 @@
+# @package _global_
+# The default callbacks, plus a grid of samples in the tracker.
+# Needs a logger that can show a page: `logger=clearml`. Anything else warns once
+# and draws nothing rather than failing the run.
+# `mean`/`std` default to ImageNet's, which is also what the root normalises by —
+# but they are passed here anyway, quoted so YAML reads the interpolation as a
+# string. A run that normalises differently then changes one number at the root and
+# the page follows, instead of quietly denormalising by something else.
+callbacks:
+  - {name: lr_monitor, logging_interval: epoch}
+  - name: checkpoint
+    monitor: val/loss
+    mode: min
+    save_top_k: 1
+    save_weights_only: true
+    dirpath: ${run.directory}/checkpoints
+  - name: samples
+    every_n_epochs: 5
+    stages: [train, val, test]
+    num_images: 8
+    mean: "${mean}"
+    std: "${std}"

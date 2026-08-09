@@ -1,2 +1,5 @@
-targets:
-  - {format: torchscript, method: trace}
+# @package _global_
+# One TorchScript artifact in {run.directory}/export/, verified against the model it came from.
+# Triton's `pytorch_libtorch` backend loads this file directly.
+export:
+  - {name: torchscript}

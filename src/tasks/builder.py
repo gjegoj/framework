@@ -1,124 +1,80 @@
-"""TaskBuilder: the Bridge that combines a topology and an objective into a Task.
-
-Validates that the (topology, objective) combination is supported, then sizes
-the head, builds the bricks and clones metrics per stage (each stage needs its
-own accumulating state).
-"""
+"""Builds composite-family components from universal task declarations."""
 
 from __future__ import annotations
 
-import dataclasses
-from collections.abc import Callable, Sequence
-from typing import Any
+from typing import TYPE_CHECKING
 
-from src.core.entities import HeadSpec, Task
-from src.core.enums import Stage
-from src.core.instantiate import BrickSpec
-from src.core.ports import Activation, CriterionDimensions
-from src.metrics.builders import MetricsSpec
-from src.tasks.strategies.objective import ObjectiveStrategy
-from src.tasks.strategies.topology import TopologyStrategy
+from src.core.ports import Head
+from src.models import TaskComponents, WrappedHead
+from src.tasks.registry import objective_registry, topology_registry
 
-DEFAULT_STAGES: tuple[Stage, ...] = (Stage.TRAIN, Stage.VAL, Stage.TEST)
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from src.core.entities import DataProfile, Task
+    from src.core.ports import Backbone
 
 
-class TaskBuilder:
-    """Assembles a ``Task`` from a topology and an objective strategy.
+def build_task_components(
+    task: Task,
+    profile: DataProfile,
+    backbone: Backbone,
+    stream: str | None = None,
+    prefer_native_head: bool = False,
+    head_factory: Callable[[int, int], Head] | None = None,
+) -> TaskComponents:
+    """Assemble the bricks that serve ``task`` inside a composite model.
+
+    Resolves the task's axes to their behaviours, validates the pairing,
+    reads inferred facts (``num_classes``) from ``profile`` when the objective
+    needs them, and sizes the head from the backbone's stream dimension —
+    the ordering contract that keeps output sizes out of config.
 
     Parameters:
-        topology (TopologyStrategy): The output-structure axis.
-        objective (ObjectiveStrategy): The label-semantics axis.
+        stream (str | None): Read this stream instead of the topology's
+            default — e.g. a GLOBAL task on ``Stream.ENCODER`` of an smp
+            backbone.
+        prefer_native_head (bool): Use the backbone's own head for the
+            stream (smp's segmentation/classification head, timm's
+            classifier) instead of building a framework head.
+        head_factory (Callable | None): Build this head instead of the
+            topology's default, given ``(in_features, out_features)`` — how a
+            config override arrives without config entering this layer. A
+            factory rather than an instance, because the sizes are resolved
+            here.
+
+    Raises:
+        LookupError: If a native head is preferred but the backbone offers
+            none for the stream.
     """
-
-    def __init__(self, topology: TopologyStrategy, objective: ObjectiveStrategy) -> None:
-        self._topology = topology
-        self._objective = objective
-
-    def build(
-        self,
-        name: str,
-        num_classes: int,
-        weight: float = 1.0,
-        stages: Sequence[Stage] = DEFAULT_STAGES,
-        loss_spec: BrickSpec | None = None,
-        metrics_spec: MetricsSpec | None = None,
-        head_override: str | dict[str, Any] | None = None,
-        feature_key_override: str | None = None,
-        class_count: int | None = None,
-        activation_factory: Callable[[], Activation] | None = None,
-    ) -> Task:
-        """Build a task; raise if the topology/objective combination is invalid.
-
-        Parameters:
-            name (str): Unique task name.
-            num_classes (int): Class count (drives head size and metrics).
-            weight (float): Weight in the aggregated loss.
-            stages (Sequence[Stage]): Stages to build metric sets for.
-            loss_spec (BrickSpec | None): YAML ``loss:`` override; ``None`` -> objective default.
-            metrics_spec (MetricsSpec | None): YAML ``metrics:`` override; ``None`` -> default.
-            head_override: Optional head spec from task config.
-                ``None`` → backbone native (prefer_native=True).
-                ``str`` → registry key override (prefer_native=False).
-                ``dict`` → ``{kind?, _target_?, ...options}`` override.
-            feature_key_override (str | None): Override the topology-default
-                stream key (e.g. ``"encoder_last"`` for smp classification).
-                Applied before ``head_override`` so the key is visible to it.
-            class_count (int | None): Runtime-inferred label-vocabulary size; differs from
-                ``num_classes`` only for embedding tasks, where ``num_classes`` carries
-                ``embedding_dim``.
-            activation_factory (Callable[[], Activation] | None): Preset-supplied activation
-                override (e.g. ``NormalizeActivation`` for embedding presets); ``None`` →
-                the objective's own activation.
-
-        Returns:
-            Task: The assembled task bundle.
-
-        Raises:
-            ValueError: If the objective is not supported on the topology.
-        """
-        if not self._objective.supports(self._topology.kind):
-            raise ValueError(
-                f"Objective {self._objective.kind.value!r} is not supported on topology {self._topology.kind.value!r}."
-            )
-
-        out_features = self._objective.out_features(num_classes)
-        head_spec = self._topology.head_spec(out_features)
-        if feature_key_override is not None:
-            head_spec = dataclasses.replace(head_spec, feature_key=feature_key_override)
-        if head_override is not None:
-            head_spec = _apply_head_override(head_spec, head_override)
-        metrics = {stage: self._objective.build_metrics(num_classes, metrics_spec) for stage in stages}
-        dimensions = CriterionDimensions(num_classes=class_count, embedding_dim=out_features)
-        return Task(
-            name=name,
-            head_spec=head_spec,
-            adapter=self._objective.build_target_adapter(),
-            criterion=self._objective.build_criterion(loss_spec, dimensions=dimensions),
-            activation=activation_factory() if activation_factory is not None else self._objective.build_activation(),
-            metrics=metrics,
-            topology=self._topology.kind,
-            objective=self._objective.kind,
-            weight=weight,
-        )
-
-
-def _apply_head_override(base: HeadSpec, override: str | dict[str, Any]) -> HeadSpec:
-    """Merge an explicit head override from task config into the topology's default spec."""
-    if isinstance(override, str):
-        return HeadSpec(
-            kind=override,
-            out_features=base.out_features,
-            feature_key=base.feature_key,
-            prefer_native=False,
-        )
-    params = dict(override)
-    target = params.pop("_target_", None)
-    kind = str(params.pop("kind", base.kind))
-    return HeadSpec(
-        kind=kind,
-        out_features=base.out_features,
-        feature_key=base.feature_key,
-        options=params,
-        prefer_native=False,
-        target=target,
+    objective = objective_registry.create(task.objective)
+    topology = topology_registry.create(task.topology)
+    if not topology.supports(task.objective):
+        raise ValueError(f"Topology '{task.topology}' cannot be supervised by objective '{task.objective}'.")
+    if objective.needs_num_classes:
+        profile.require_num_classes(task.name)
+    facts = profile.facts(task.name)
+    chosen_stream = stream if stream is not None else topology.stream
+    in_features = backbone.feature_dim(chosen_stream)
+    out_features = objective.out_features(facts)
+    head: Head
+    if head_factory is not None:
+        head = head_factory(in_features, out_features)
+    elif prefer_native_head:
+        native = backbone.native_head(chosen_stream, in_features, out_features)
+        if native is None:
+            raise LookupError(f"{type(backbone).__name__} offers no native head for stream '{chosen_stream}'.")
+        # A native module that already is a Head keeps its own shape: wrapping it
+        # would bury contract paths (freeze's `...heads.<task>.base`) under a
+        # private attribute.
+        head = native if isinstance(native, Head) else WrappedHead(native)
+    else:
+        head = topology.build_head(in_features=in_features, out_features=out_features)
+    return TaskComponents(
+        head=head,
+        criterion=objective.build_criterion(facts),
+        activation=objective.build_activation(facts),
+        target_adapter=objective.build_target_adapter(facts),
+        stream=chosen_stream,
+        weight=task.weight,
     )

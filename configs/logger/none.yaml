@@ -1,1 +1,3 @@
-kind: none
+# @package _global_
+# No experiment tracker — Lightning's default logging stands.
+logger: null

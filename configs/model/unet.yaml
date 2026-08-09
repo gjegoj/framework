@@ -1,0 +1,13 @@
+# An smp encoder-decoder: two feature streams from one backbone.
+#
+# `encoder` is the last encoder stage `[B, D, H', W']` and `decoder` is the full-size
+# map `[B, D, H, W]`. A dense task reads the decoder; a global task beside it reads the
+# encoder and asks for the backbone's own pooling classifier (`native_head: true`),
+# because a linear head cannot take a feature *map*.
+#
+# That is what makes one backbone serve segmentation and classification at once — see
+# `+experiment=examples/multitask`.
+name: smp
+arch: unet
+encoder_name: resnet18
+pretrained: true

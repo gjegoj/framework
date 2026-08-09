@@ -1,0 +1,31 @@
+# @package _global_
+# A continuous target: `uv run main.py +experiment=examples/regression`.
+#
+# **`random_age` is noise, and named so nobody reads it as learnable.** Nothing in the
+# picture carries it, so no model can beat predicting its mean. A `val/age/mae` that
+# settles near the column's own standard deviation (~4.2 years) is the correct outcome,
+# not a failure — what this example demonstrates is that a regression task *builds,
+# trains, logs and reports*, which is a property of the pipeline rather than of a model.
+#
+# Swap `target` for a column that carries signal and nothing else here changes.
+defaults:
+  - examples/pet
+  - override /model: resnet18
+
+tasks:
+  age:
+    preset: regression
+    target: random_age
+    # The objective's default is mae. A second metric is a second entry, keyed by the
+    # label it logs under, so `val/age/mae` and `val/age/mse` stand side by side.
+    metrics:
+      mae: {name: mae}
+      mse: {name: mse}
+
+# A continuous target can instead be learned as a distribution over bins, without
+# leaving the regression semantics — choosing the encoder is the whole change:
+#
+#   target_encoder: {name: gaussian_bins, bins: 20}
+#
+# The bins then size the head, cross-entropy plus an expectation term replace mean
+# squared error, and predictions are read back as a number so `mae` still applies.

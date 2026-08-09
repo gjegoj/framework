@@ -1,0 +1,96 @@
+# @package _global_
+# Every callback the registry knows, in one run: `uv run main.py +experiment=examples/all_callbacks`.
+#
+# A smoke test for their interaction, not a recipe. Some of these contradict each other
+# as settings — freezing the backbone while annealing a loss knob and mixing batches is
+# nobody's training plan — but each one is exercised, and the pairs that genuinely
+# conflict are resolved here rather than discovered an hour in.
+defaults:
+  - examples/pet
+  - override /model: resnet18
+  - override /logger: clearml
+  - override /scheduler: onecycle
+
+lr: 3.0e-4
+epochs: 3
+image_size: [128, 128]
+batch_size: 8
+
+# Order is the semantics: whatever changes the weights runs before whatever saves
+# them, or the file holds one set of weights and the metric that chose it another.
+callbacks:
+  - {name: model_summary, max_depth: 3}
+  - {name: dataset_summary}
+  - {name: progress}
+  # One point per epoch — three over this run, which is enough to see that the
+  # head moves faster than the backbone but not to see the shape of a step-clocked
+  # schedule. Drop `logging_interval` to read on the schedule's own clock instead.
+  - {name: lr_monitor, logging_interval: epoch}
+
+  # Held for the first third, then released back into the optimizer's groups.
+  # `until` is a share of the run, so it means the same at 3 epochs and at 300.
+  - name: freeze
+    modules: [model.backbone]
+    until: 0.34
+    train_bn: true
+
+  # Blends images and labels; only global tasks can be served, which this one is.
+  # Off for the last third, so the run ends on clean data. 0.6 rather than 0.67:
+  # the window is `epoch < until * epochs`, and at 3 epochs 0.67 gives 2.01, so
+  # epoch 2 would still be inside it and the off-switch would never be exercised.
+  - name: batch_transform
+    transform: {_target_: src.transforms.MixUp, alpha: 0.4}
+    until: 0.6
+
+  # `label_smoothing` lives on the `nn.CrossEntropyLoss` inside the criterion; the
+  # callback walks the module tree to find it, so no path is written here.
+  - name: anneal
+    task: label
+    parameter: label_smoothing
+    start: 0.2
+    end: 0.0
+    schedule: cosine
+    over: 0.5
+
+  - {name: ema, decay: 0.99, after: 0.0}
+
+  # Two savers on purpose, to cover both. `ema_checkpoint` writes the averaged
+  # weights; the plain one writes the live weights and must not be weights-only —
+  # Lightning runs a callback's save hook for full checkpoints only, so a
+  # weights-only file would hold the live weights under the averaged model's score.
+  # `EmaWeights` refuses that pairing at setup rather than letting it happen.
+  - name: ema_checkpoint
+    monitor: val/loss
+    mode: min
+    save_top_k: 1
+    save_weights_only: true
+    filename: ema-{epoch}
+    dirpath: ${run.directory}/checkpoints
+  - name: checkpoint
+    monitor: val/loss
+    mode: min
+    save_top_k: 1
+    save_weights_only: false
+    filename: live-{epoch}
+    dirpath: ${run.directory}/checkpoints
+
+  - {name: metric_summary}
+
+  # Every stage, so the train page shows what augmentation did.
+  - name: samples
+    every_n_epochs: 1
+    num_images: 8
+    stages: [train, val, test]
+    mean: "${mean}"
+    std: "${std}"
+
+tasks:
+  label:
+    preset: classification
+    target: species
+    classes: {0: cat, 1: dog}
+    lr: 0.01
+
+  age:
+    preset: regression
+    target: random_age

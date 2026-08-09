@@ -1,3 +1,0 @@
-# @package _global_
-# No LoRA — full fine-tuning of the whole model.
-lora: null

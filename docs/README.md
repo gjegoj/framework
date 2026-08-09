@@ -1,48 +1,55 @@
-# Framework
+# Documentation
 
-Configuration-driven **multi-task & multimodal** computer-vision training on top of
-PyTorch Lightning · Hydra · Pydantic · timm / smp · albumentations · torchmetrics.
+Start with [core concepts](concepts.md) if you have five minutes; otherwise find
+what you came for below. The project overview and quick start live in the
+[root README](../README.md).
 
-Classification · segmentation · regression · **metric learning** (ranking / dual-encoder) ·
-**object detection** (YOLO) · **knowledge distillation** · **LoRA fine-tuning** — with EMA,
-MixUp/CutMix/Mosaic, loss-parameter scheduling, model **export** (ONNX / TorchScript / TensorRT)
-and interactive **sample visualization** built in.
-
-## Quick start
-
-```bash
-uv sync           # install dependencies
-make test         # verify everything works
-```
-
-The entry point is `main.py`. All configuration lives in `configs/`.
-Run with the built-in debug experiment (synthetic data, CPU, 2 epochs):
-
-```bash
-uv run python main.py
-```
-
-To point at your own data, override the experiment:
-
-```bash
-uv run python main.py +experiment=my_exp
-```
-
-## Where to go next
+## Guides
 
 | You want to… | Read |
 |---|---|
 | Understand the design in five minutes | [Core concepts](concepts.md) |
 | Point the framework at your data | [Data](guides/data.md) |
-| Declare classification / segmentation / regression tasks | [Tasks & presets](guides/tasks.md) |
-| Pick an encoder (timm / smp / DINOv3 / embeddings) | [Backbones](guides/backbones.md) |
-| Tune the optimizer and LR schedule | [Optimizer, LR & scheduler](guides/training.md) |
-| Configure EMA, checkpoints, freeze, MixUp/Mosaic, loss scheduling | [Callbacks](guides/callbacks.md) |
-| Distill a big model into a small one | [Knowledge distillation](guides/distillation.md) |
-| Fine-tune a large backbone cheaply | [LoRA fine-tuning](guides/lora.md) |
-| Train a YOLO object detector | [Object detection](guides/detection.md) |
-| Ship a model (ONNX / TorchScript / TensorRT) | [Export](guides/export.md) |
-| Copy a complete working config | [Recipes](recipes.md) |
-| Look up any YAML key | [Config reference](reference/config.md) |
-| Add your own loss / metric / callback / backbone | [Extending the framework](reference/extending.md) |
-| See how it all fits together | [Internals](internals.md) |
+| Declare classification / segmentation / regression / metric-learning tasks | [Tasks and presets](guides/tasks.md) |
+| Pick an encoder — timm, smp, HF text, multi-encoder, multi-view | [Models](guides/models.md) |
+| Tune the optimizer, the LR schedule, per-task rates | [Optimizer and scheduler](guides/training.md) |
+| Choose or compose a loss | [Losses](guides/losses.md) |
+| Decide what a run is judged by | [Metrics](guides/metrics.md) |
+| Augment samples, or mix whole batches | [Transforms](guides/transforms.md) |
+| Configure EMA, checkpoints, freezing, annealing, the dataset report | [Callbacks](guides/callbacks.md) |
+| Train a YOLO object detector | [Detection](guides/detection.md) |
+| See where the model gets it wrong, sample by sample | [The samples grid](guides/visualization.md) |
+| Read the log keys, or add a tracker | [Logging](guides/logging.md) |
+| Ship a model — TorchScript, ONNX, TensorRT | [Export](guides/export.md) |
+| Add your own loss, metric, callback, backbone or task kind | [Extending](guides/extending.md) |
+
+## Reference
+
+| | |
+|---|---|
+| [Vocabulary](vocabulary.md) | Every entity, port, adapter and registry, one line each |
+| [Backlog](backlog.md) | Known defects and deferred decisions, with the reasoning kept |
+| [Specs and plans](superpowers/) | The design record: why each feature has the shape it has |
+
+## Runnable configs
+
+[`configs/experiment/examples/`](../configs/experiment/examples/) holds working
+runs rather than copy-paste snippets, and a test composes every one of them, so
+they cannot drift from the code. Five read the same table — the Oxford-IIIT Pet
+dataset, which [`scripts/prepare_pet.py`](../scripts/prepare_pet.py) writes and
+`make test-run` fetches for you:
+
+| File | What it runs |
+|---|---|
+| [`classification.yaml`](../configs/experiment/examples/classification.yaml) | Cat or dog, from a pretrained ResNet |
+| [`regression.yaml`](../configs/experiment/examples/regression.yaml) | A continuous target, on a column that is deliberately noise |
+| [`segmentation.yaml`](../configs/experiment/examples/segmentation.yaml) | Pet / background / boundary, per pixel |
+| [`multitask.yaml`](../configs/experiment/examples/multitask.yaml) | All three at once, on one backbone |
+| [`all_callbacks.yaml`](../configs/experiment/examples/all_callbacks.yaml) | Every shipped callback in one run |
+| [`detection.yaml`](../configs/experiment/examples/detection.yaml) | A YOLO detector on COCO128, which downloads itself |
+| [`pet.yaml`](../configs/experiment/examples/pet.yaml) | What the first five share; inherited, never run |
+
+```bash
+make test-run                                # the dataset, then the multitask run
+uv run main.py +experiment=examples/classification # or any of the others
+```

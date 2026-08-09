@@ -1,0 +1,19 @@
+# A DINOv3 ViT encoder under smp's DPT decoder — dense prediction from a
+# self-supervised backbone. `encoder_weights: true` asks for the encoder's own
+# pretrained weights rather than an ImageNet checkpoint it never saw.
+#
+# `dynamic_img_size: false` with an explicit `img_size` is not a detail: built
+# dynamically, this family recomputes its rotary position grid inside every
+# forward, and `torch.jit.trace` freezes what a forward computes into a constant
+# pinned to the trace device. Measured, such an artifact is correct on CPU and
+# then refused by the accelerator it was written for — under `.to()` and under
+# `map_location` alike. Built statically the grid lives in a registered buffer
+# and the artifact travels. Export says so too, but a model that cannot ship is
+# worth not building.
+name: smp
+arch: dpt
+encoder_name: tu-vit_small_plus_patch16_dinov3.lvd1689m
+encoder_weights: true
+global_pool: token  # required for ViT token-pool encoders
+dynamic_img_size: false
+img_size: ${image_size}

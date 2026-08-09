@@ -1,399 +1,178 @@
-"""TaskBuilder: taxonomy/strategy validation, brick assembly, dimension seam, feature-key override."""
+"""``build_task_components``: from a universal ``Task`` plus profile to composite bricks."""
 
 from __future__ import annotations
 
 import pytest
 import torch
+from torch import Tensor, nn
 
-from src.core.entities import HeadSpec, LossResult, Task
-from src.core.enums import Stage
-from src.core.ports import Criterion, CriterionDimensions
-from src.losses import (
-    BCECriterion,
-    CrossEntropyCriterion,
-    DiceCriterion,
-    L1Criterion,
-    MSECriterion,
-    WeightedSumCriterion,
-)
-from src.losses.registry import criteria
-from src.metrics.builders import build_metric_set
-from src.tasks import (
-    BinaryObjective,
-    BinaryTargetAdapter,
-    ContinuousObjective,
-    ContinuousTargetAdapter,
-    GlobalTopology,
-    MulticlassObjective,
-    MulticlassTargetAdapter,
-    MultilabelObjective,
-    MultilabelTargetAdapter,
+from src.core import (
+    Backbone,
+    Batch,
+    DataProfile,
+    Features,
     Objective,
-    TaskBuilder,
     Topology,
-    classification,
-    objective_strategies,
-    topology_strategies,
 )
-from src.tasks.strategies.objective import ObjectiveStrategy
-from src.tasks.strategies.topology import TopologyStrategy
-
-
-@criteria.register("dimension_probe")
-class _DimensionProbeCriterion(Criterion):
-    """Test-only: records the injected dimensions."""
-
-    requires_dimensions = True
-
-    def __init__(self, num_classes: int, embedding_dim: int) -> None:
-        super().__init__()
-        self.received = (num_classes, embedding_dim)
-
-    def forward(self, logits: torch.Tensor, target: torch.Tensor) -> LossResult:
-        value = logits.sum() * 0.0
-        return LossResult(total=value, components={"probe": value})
-
-
-class TestTaxonomyAndStrategies:
-    def test_global_topology_head_spec(self) -> None:
-        spec = GlobalTopology().head_spec(out_features=7)
-        assert spec.kind == "linear" and spec.out_features == 7 and spec.feature_key == "pooled"
-        assert spec.prefer_native is True
-
-    def test_multiclass_objective_bricks(self) -> None:
-        objective = MulticlassObjective()
-        assert objective.out_features(5) == 5
-        assert objective.supports(Topology.GLOBAL)
-        assert not objective.supports(Topology.MULTIVIEW)
-        assert isinstance(objective.build_target_adapter(), MulticlassTargetAdapter)
-
-    def test_binary_objective_bricks(self) -> None:
-        obj = BinaryObjective()
-        assert obj.out_features(2) == 1  # always 1 regardless of num_classes
-        assert obj.supports(Topology.GLOBAL)
-        assert isinstance(obj.build_target_adapter(), BinaryTargetAdapter)
-
-    def test_multilabel_objective_bricks(self) -> None:
-        obj = MultilabelObjective()
-        assert obj.out_features(7) == 7
-        assert obj.supports(Topology.GLOBAL)
-        assert isinstance(obj.build_target_adapter(), MultilabelTargetAdapter)
-
-    def test_continuous_objective_bricks(self) -> None:
-        obj = ContinuousObjective()
-        assert obj.out_features(1) == 1
-        assert obj.supports(Topology.GLOBAL)
-        assert isinstance(obj.build_target_adapter(), ContinuousTargetAdapter)
-
-    def test_dense_topology_head_spec(self) -> None:
-        from src.tasks import DenseTopology
-
-        spec = DenseTopology().head_spec(out_features=4)
-        assert spec.kind == "conv" and spec.out_features == 4 and spec.feature_key == "decoder"
-        assert spec.prefer_native is True
-
-    def test_strategies_registered(self) -> None:
-        assert Topology.GLOBAL in topology_strategies
-        assert Topology.DENSE in topology_strategies
-        assert Objective.MULTICLASS in objective_strategies
-        assert Objective.BINARY in objective_strategies
-        assert Objective.MULTILABEL in objective_strategies
-        assert Objective.CONTINUOUS in objective_strategies
-
-
-class TestBricks:
-    def test_task_codec_squeezes_and_longs(self) -> None:
-        view = MulticlassTargetAdapter().adapt(torch.tensor([[0], [2]], dtype=torch.int32))
-        assert view.loss.shape == (2,)
-        assert view.loss.dtype == torch.long
-        assert torch.equal(view.loss, view.metric)
-
-    def test_binary_adapter_hard_target(self) -> None:
-        view = BinaryTargetAdapter().adapt(torch.tensor([0, 1, 1]))
-        assert view.loss.shape == (3, 1) and view.loss.dtype == torch.float
-        assert view.metric.shape == (3, 1) and view.metric.dtype == torch.long
-
-    def test_binary_adapter_soft_target_from_mixup(self) -> None:
-        """MixUp one-hots binary to ``[B, 2]``; the adapter feeds the single-logit head P(positive)."""
-        soft = torch.tensor([[0.3, 0.7], [0.9, 0.1]])  # one-hot over 2 classes, mixed
-        view = BinaryTargetAdapter().adapt(soft)
-        assert view.loss.shape == (2, 1) and view.loss.dtype == torch.float
-        assert torch.allclose(view.loss, torch.tensor([[0.7], [0.1]]))  # P(positive) = column 1
-        assert torch.equal(view.metric, torch.tensor([[1], [0]]))  # dominant class, [B, 1] long
-
-    def test_binary_bce_accepts_mixup_soft_target(self) -> None:
-        """Regression: BCE on ``[B, 1]`` logits must accept the adapter's ``[B, 1]`` soft target."""
-        logits = torch.randn(4, 1, requires_grad=True)
-        soft = torch.tensor([[0.3, 0.7], [0.9, 0.1], [0.5, 0.5], [0.2, 0.8]])
-        loss_target = BinaryTargetAdapter().adapt(soft).loss
-        BCECriterion()(logits, loss_target).total.backward()
-        assert logits.grad is not None
-
-    def test_cross_entropy_backprops(self) -> None:
-        logits = torch.randn(4, 3, requires_grad=True)
-        target = torch.randint(0, 3, (4,))
-        result = CrossEntropyCriterion()(logits, target)
-        assert result.total.ndim == 0
-        assert "cross_entropy" in result.components
-        result.total.backward()
-        assert logits.grad is not None
-
-    def test_bce_binary_backprops(self) -> None:
-        logits = torch.randn(4, 1, requires_grad=True)
-        target = torch.randint(0, 2, (4, 1)).float()
-        result = BCECriterion()(logits, target)
-        assert result.total.ndim == 0
-        assert "bce" in result.components
-        result.total.backward()
-        assert logits.grad is not None
-
-    def test_bce_multilabel_backprops(self) -> None:
-        logits = torch.randn(4, 5, requires_grad=True)
-        target = torch.randint(0, 2, (4, 5)).float()
-        result = BCECriterion()(logits, target)
-        assert result.total.ndim == 0
-        result.total.backward()
-
-    def test_mse_backprops(self) -> None:
-        logits = torch.randn(4, 1, requires_grad=True)
-        target = torch.randn(4, 1)
-        result = MSECriterion()(logits, target)
-        assert result.total.ndim == 0
-        assert "mse" in result.components
-        result.total.backward()
-        assert logits.grad is not None
-
-    def test_l1_backprops(self) -> None:
-        logits = torch.randn(4, 1, requires_grad=True)
-        target = torch.randn(4, 1)
-        result = L1Criterion()(logits, target)
-        assert result.total.ndim == 0
-        assert "l1" in result.components
-        result.total.backward()
-
-    def test_dice_multiclass_backprops(self) -> None:
-        logits = torch.randn(2, 4, 8, 8, requires_grad=True)  # [B,C,H,W]
-        target = torch.randint(0, 4, (2, 8, 8))  # [B,H,W]
-        result = DiceCriterion(mode="multiclass")(logits, target)
-        assert result.total.ndim == 0
-        assert "dice" in result.components
-        result.total.backward()
-        assert logits.grad is not None
-
-    def test_weighted_sum_ce_dice_combines_and_backprops(self) -> None:
-        logits = torch.randn(2, 4, 8, 8, requires_grad=True)
-        target = torch.randint(0, 4, (2, 8, 8))
-        crit = WeightedSumCriterion(losses={"cross_entropy": 1.0, "dice": 0.5})
-        result = crit(logits, target)
-        assert {"cross_entropy", "dice"} <= set(result.components)
-        result.total.backward()
-        assert logits.grad is not None
-
-    def test_weighted_sum_empty_losses_raises(self) -> None:
-        with pytest.raises(ValueError, match="at least one loss"):
-            WeightedSumCriterion(losses={})
-
-    def test_metric_set_update_compute_reset(self) -> None:
-        metrics = build_metric_set(None, base_kwargs={"task": "multiclass", "num_classes": 3})
-        preds = torch.randn(8, 3).softmax(dim=1)
-        target = torch.randint(0, 3, (8,))
-        metrics.update(preds, target)
-        computed = metrics.compute()
-        assert "accuracy" in computed
-        metrics.reset()
-
-
-class TestTaskBuilder:
-    def test_build_produces_full_task_with_per_stage_metrics(self) -> None:
-        task = TaskBuilder(GlobalTopology(), MulticlassObjective()).build("label", num_classes=3)
-        assert isinstance(task, Task)
-        assert task.head_spec.out_features == 3
-        assert task.feature_key == "pooled"
-        assert set(task.metrics) == {Stage.TRAIN, Stage.VAL, Stage.TEST}
-        # Each stage gets its own metric instance (independent state).
-        assert task.metrics[Stage.TRAIN] is not task.metrics[Stage.VAL]
-
-    # Bridge proof: same GlobalTopology, different objectives → different assemblies.
-    def test_bridge_binary_on_global_topology(self) -> None:
-        task = TaskBuilder(GlobalTopology(), BinaryObjective()).build("is_cat", num_classes=2)
-        assert task.head_spec.out_features == 1
-        assert task.head_spec.feature_key == "pooled"
-        assert isinstance(task.adapter, BinaryTargetAdapter)
-
-    def test_bridge_multilabel_on_global_topology(self) -> None:
-        task = TaskBuilder(GlobalTopology(), MultilabelObjective()).build("tags", num_classes=5)
-        assert task.head_spec.out_features == 5
-        assert isinstance(task.adapter, MultilabelTargetAdapter)
-        # default metrics should be accuracy (multilabel accuracy)
-        preds = torch.sigmoid(torch.randn(8, 5))
-        targets = torch.randint(0, 2, (8, 5))
-        task.metrics[Stage.TRAIN].update(preds, targets)
-        assert "accuracy" in task.metrics[Stage.TRAIN].compute()
-
-    def test_bridge_continuous_on_global_topology(self) -> None:
-        task = TaskBuilder(GlobalTopology(), ContinuousObjective()).build("value", num_classes=1)
-        assert task.head_spec.out_features == 1
-        assert isinstance(task.adapter, ContinuousTargetAdapter)
-        # default metrics should be mse + mae
-        preds = torch.randn(8, 1)
-        targets = torch.randn(8, 1)
-        task.metrics[Stage.TRAIN].update(preds, targets)
-        computed = task.metrics[Stage.TRAIN].compute()
-        assert {"mse", "mae"} <= set(computed)
-
-    def test_bridge_dense_multiclass_reuses_objective(self) -> None:
-        from src.tasks import DenseTopology
-
-        # Same MulticlassObjective as classification, new DenseTopology → segmentation task.
-        task = TaskBuilder(DenseTopology(), MulticlassObjective()).build("mask", num_classes=5)
-        assert task.head_spec.kind == "conv"
-        assert task.head_spec.feature_key == "decoder"
-        assert task.head_spec.out_features == 5
-        assert isinstance(task.adapter, MulticlassTargetAdapter)  # objective bricks unchanged
-
-    def test_invalid_combination_raises(self) -> None:
-        class _MultiViewTopology(TopologyStrategy):
-            kind = Topology.MULTIVIEW
-
-            def head_spec(self, out_features: int) -> HeadSpec:
-                return HeadSpec(kind="linear", out_features=out_features)
-
-        with pytest.raises(ValueError, match="not supported on topology 'multiview'"):
-            TaskBuilder(_MultiViewTopology(), MulticlassObjective()).build("x", num_classes=2)
-
-
-class TestConfigDrivenBricks:
-    def test_loss_override_applies_params(self) -> None:
-        task = classification(
-            "label",
-            num_classes=3,
-            loss={"name": "cross_entropy", "label_smoothing": 0.1},
-        )
-        assert isinstance(task.criterion, CrossEntropyCriterion)
-        assert task.criterion._loss.label_smoothing == pytest.approx(0.1)
-
-    def test_loss_string_spec_selects_default(self) -> None:
-        task = classification("label", num_classes=3, loss="cross_entropy")
-        assert isinstance(task.criterion, CrossEntropyCriterion)
-
-    def test_metrics_spec_builds_named_collection_with_params(self) -> None:
-        task = classification(
-            "label",
-            num_classes=4,
-            metrics={"accuracy": None, "macro_f1": {"name": "f1", "average": "macro"}},
-        )
-        preds = torch.randn(8, 4).softmax(dim=1)
-        target = torch.randint(0, 4, (8,))
-        task.metrics[Stage.TRAIN].update(preds, target)
-        computed = task.metrics[Stage.TRAIN].compute()
-        assert {"accuracy", "macro_f1"} <= set(computed)
-
-    def test_classification_default_metrics(self) -> None:
-        task = classification("label", num_classes=3)
-        preds = torch.randn(8, 3).softmax(dim=1)
-        task.metrics[Stage.TRAIN].update(preds, torch.randint(0, 3, (8,)))
-        keys = set(task.metrics[Stage.TRAIN].compute())
-        assert {"precision", "recall", "f1", "confusion_matrix"} <= keys
-
-
-class TestFeatureKeyOverride:
-    def test_builder_feature_key_override_changes_head_spec(self) -> None:
-        task = TaskBuilder(GlobalTopology(), MulticlassObjective()).build(
-            "label", num_classes=3, feature_key_override="encoder_last"
-        )
-        assert task.head_spec.feature_key == "encoder_last"
-
-    def test_preset_feature_key_overrides_topology_default(self) -> None:
-        task = classification("label", num_classes=5, feature_key="encoder_last")
-        assert task.head_spec.feature_key == "encoder_last"
-        # prefer_native stays on: native_head("encoder_last") → ClassificationHead
-        assert task.head_spec.prefer_native is True
-
-    def test_feature_key_none_keeps_topology_default(self) -> None:
-        task = classification("label", num_classes=3, feature_key=None)
-        assert task.head_spec.feature_key == "pooled"
-
-    def test_segmentation_feature_key_override(self) -> None:
-        from src.tasks import segmentation
-
-        task = segmentation("mask", num_classes=4, feature_key="decoder")
-        assert task.head_spec.feature_key == "decoder"  # same as default, just explicit
-
-    def test_feature_key_override_does_not_disable_native_head(self) -> None:
-        # feature_key_override changes the key but leaves prefer_native untouched.
-        task = TaskBuilder(GlobalTopology(), MulticlassObjective()).build(
-            "label", num_classes=3, feature_key_override="encoder_last"
-        )
-        assert task.head_spec.prefer_native is True
-
-    def test_feature_key_override_before_head_override(self) -> None:
-        # Both supplied: feature_key is in place when head_override runs.
-        task = TaskBuilder(GlobalTopology(), MulticlassObjective()).build(
-            "label",
-            num_classes=3,
-            feature_key_override="encoder_last",
-            head_override="linear",
-        )
-        assert task.head_spec.feature_key == "encoder_last"
-        assert task.head_spec.prefer_native is False
-
-
-class TestTaskCarriesAxes:
-    def test_classification_task_has_global_multiclass_axes(self) -> None:
-        from src.core.taxonomy import Objective, Topology
-        from src.tasks.presets import classification
-
-        task = classification("label", num_classes=3)
-        assert task.topology == Topology.GLOBAL
-        assert task.objective == Objective.MULTICLASS
-
-
-class TestCriterionDimensionSeam:
-    def _metric_objective(self) -> ObjectiveStrategy:
-        from src.core.taxonomy import Objective
-        from src.tasks.strategies.objective import objective_strategies
-
-        return objective_strategies.create(Objective.METRIC)
-
-    def test_dimension_aware_criterion_receives_both_numbers(self) -> None:
-        criterion = self._metric_objective().build_criterion(
-            "dimension_probe", dimensions=CriterionDimensions(num_classes=7, embedding_dim=32)
-        )
-        assert criterion.received == (7, 32)
-
-    def test_stateless_criterion_gets_no_injection(self) -> None:
-        # cross_entropy's __init__ accepts no num_classes — success proves nothing was injected.
-        from src.core.taxonomy import Objective
-        from src.tasks.strategies.objective import objective_strategies
-
-        objective = objective_strategies.create(Objective.MULTICLASS)
-        criterion = objective.build_criterion(None, dimensions=CriterionDimensions(num_classes=3, embedding_dim=3))
-        assert criterion is not None
-
-    def test_missing_dimensions_raise_with_target_hint(self) -> None:
-        with pytest.raises(ValueError, match="target"):
-            self._metric_objective().build_criterion("dimension_probe", dimensions=None)
-
-    def test_missing_class_count_raises_with_target_hint(self) -> None:
-        with pytest.raises(ValueError, match="target"):
-            self._metric_objective().build_criterion(
-                "dimension_probe", dimensions=CriterionDimensions(num_classes=None, embedding_dim=32)
-            )
-
-
-class TestTaskBuilderClassCount:
-    def test_class_count_flows_into_criterion(self) -> None:
-        from src.core.taxonomy import Objective, Topology
-        from src.tasks.builder import TaskBuilder
-        from src.tasks.strategies.objective import objective_strategies
-        from src.tasks.strategies.topology import topology_strategies
-
-        # METRIC pairs with GLOBAL (proxy classification, e.g. arcface_embedding) as well as
-        # MULTIVIEW/MULTISTREAM; GLOBAL is used here — the class_count plumbing under test
-        # is independent of which valid topology is chosen.
-        builder = TaskBuilder(
-            topology=topology_strategies.create(Topology.GLOBAL),
-            objective=objective_strategies.create(Objective.METRIC),
-        )
-        task = builder.build("embed", num_classes=32, loss_spec="dimension_probe", class_count=7)
-        assert task.criterion.received == (7, 32)  # num_classes=labels, embedding_dim=out_features
+from src.models import CompositeModel, ExpandedHead, TaskComponents
+from src.tasks import build_task_components
+from tests.support.entities import a_task, profiling
+from tests.support.fakes import FakeEncoder, FlattenBackbone
+from tests.support.narrowing import tensor
+
+
+def test_builds_components_for_a_classification_task() -> None:
+    components = build_task_components(a_task(), profiling(label=3), FlattenBackbone(dim=12))
+
+    assert isinstance(components, TaskComponents)
+    assert components.head(torch.zeros(2, 12)).shape == (2, 3)
+    assert components.weight == 1.0
+
+
+def test_task_weight_flows_into_the_components() -> None:
+    components = build_task_components(a_task(weight=0.5), profiling(label=3), FlattenBackbone(dim=12))
+
+    assert components.weight == 0.5
+
+
+def test_missing_num_classes_names_the_task_and_hints_setup() -> None:
+    with pytest.raises(LookupError, match="label"):
+        build_task_components(a_task(), DataProfile(), FlattenBackbone(dim=12))
+
+
+def test_incompatible_axes_are_rejected_with_both_names() -> None:
+    dense_metric = a_task(topology=Topology.DENSE, objective=Objective.METRIC)
+    with pytest.raises(ValueError, match="cannot be supervised"):
+        build_task_components(dense_metric, profiling(label=3), FlattenBackbone(dim=12))
+
+
+class TwoStreamBackbone(Backbone):
+    """Exposes a second stream and a native head for it."""
+
+    def forward(self, inputs: dict[str, Tensor]) -> Features:
+        flat = inputs["image"].flatten(start_dim=1)
+        return Features(streams={"features": flat, "extra": flat * 2})
+
+    def feature_dim(self, stream: str) -> int:
+        return 12
+
+    def native_head(self, stream: str, in_features: int, out_features: int) -> nn.Module | None:
+        if stream == "extra":
+            return nn.Linear(in_features, out_features)
+        return None
+
+
+def test_stream_override_reads_another_stream() -> None:
+    components = build_task_components(a_task(), profiling(label=3), TwoStreamBackbone(), stream="extra")
+
+    assert components.stream == "extra"
+
+
+def test_prefer_native_head_uses_the_backbones_head() -> None:
+    components = build_task_components(
+        a_task(), profiling(label=3), TwoStreamBackbone(), stream="extra", prefer_native_head=True
+    )
+
+    assert components.head(torch.zeros(2, 12)).shape == (2, 3)
+
+
+def test_prefer_native_head_fails_loud_when_unavailable() -> None:
+    with pytest.raises(LookupError, match="native"):
+        build_task_components(a_task(), profiling(label=3), FlattenBackbone(dim=12), prefer_native_head=True)
+
+
+class DecoderBackbone(Backbone):
+    """A dense-capable fake: exposes a decoder stream with spatial dims."""
+
+    def forward(self, inputs: dict[str, Tensor]) -> Features:
+        image = inputs["image"]
+        decoder = image.repeat(1, 4, 1, 1)  # [B, 12, H, W] from [B, 3, H, W]
+        return Features(streams={"decoder": decoder})
+
+    def feature_dim(self, stream: str) -> int:
+        return 12
+
+
+def test_a_contrastive_task_builds_and_steps_without_targets() -> None:
+    """Metric learning closes: two encoders, stacked embeddings, InfoNCE, no target column."""
+    from src.models import MultiEncoderBackbone
+
+    torch.manual_seed(0)
+    backbone = MultiEncoderBackbone(
+        encoders={"image": FakeEncoder("image", 4), "text": FakeEncoder("text", 6)},
+        embedding_dim=8,
+    )
+    task = a_task(name="pair", topology=Topology.MULTISTREAM, objective=Objective.METRIC)
+
+    components = build_task_components(task, DataProfile(), backbone)
+    model = CompositeModel(backbone=backbone, components={"pair": components})
+    batch = Batch(
+        inputs={"image": torch.randn(4, 5), "text": torch.randn(4, 7)},
+        targets={},
+    )
+
+    loss, prediction, targets = model.step(batch)
+
+    assert set(loss.parts) == {"pair/infonce"}
+    assert loss.total.requires_grad
+    assert tensor(prediction.outputs["pair"]).shape == (4, 2, 8)
+    assert tensor(targets["pair"]).numel() == 0
+
+
+def test_a_segmentation_task_builds_and_steps_end_to_end() -> None:
+    """DENSE closes: preset -> conv head sized from the decoder -> ce loss on masks."""
+    torch.manual_seed(0)
+    profile = profiling(label=3)
+    task = a_task(topology=Topology.DENSE)
+    backbone = DecoderBackbone()
+
+    components = build_task_components(task, profile, backbone)
+    model = CompositeModel(backbone=backbone, components={"label": components})
+    batch = Batch(
+        inputs={"image": torch.randn(2, 3, 8, 8)},
+        targets={"label": torch.randint(0, 3, (2, 8, 8))},
+    )
+
+    loss, prediction, _ = model.step(batch)
+
+    assert set(loss.parts) == {"label/ce"}
+    assert loss.total.requires_grad
+    assert tensor(prediction.outputs["label"]).shape == (2, 3, 8, 8)
+
+
+def test_built_components_run_inside_a_composite_model() -> None:
+    """The full chain closes: data facts, task declarations, model, one step."""
+    torch.manual_seed(0)
+    backbone = FlattenBackbone(dim=12)
+    profile = profiling(label=3)
+    tasks = [
+        a_task(),
+        a_task(name="score", objective=Objective.CONTINUOUS, weight=0.5),
+    ]
+
+    components = {task.name: build_task_components(task, profile, backbone) for task in tasks}
+    model = CompositeModel(backbone=backbone, components=components)
+    batch = Batch(
+        inputs={"image": torch.randn(4, 3, 2, 2)},
+        targets={"label": torch.tensor([0, 1, 2, 0]), "score": torch.rand(4)},
+    )
+
+    loss, prediction, _ = model.step(batch)
+
+    assert set(loss.parts) == {"label/ce", "score/mse"}
+    assert loss.total.requires_grad
+    assert tensor(prediction.outputs["label"]).shape == (4, 3)
+    assert tensor(prediction.outputs["score"]).shape == (4,)
+
+
+def test_a_native_head_that_already_is_a_head_stays_unwrapped() -> None:
+    """Freeze configs name ``model.heads.<task>.base``; a wrapper would bury the
+    contract path under a private attribute."""
+
+    class HeadOfferingBackbone(TwoStreamBackbone):
+        def native_head(self, stream: str, in_features: int, out_features: int) -> nn.Module | None:
+            return ExpandedHead(base=nn.Linear(in_features, 2), novel=nn.Linear(in_features, 1))
+
+    components = build_task_components(a_task(), profiling(label=3), HeadOfferingBackbone(), prefer_native_head=True)
+
+    assert isinstance(components.head, ExpandedHead)

@@ -1,191 +1,198 @@
-"""In-RAM cache of decoded images/masks to skip disk I/O + decode during training.
-
-Memory-safety model (why this avoids the classic DataLoader blow-up):
-- the cache is warmed ONCE in the parent process (``DataModule.setup``), before
-  ``DataLoader`` forks its workers;
-- it is READ-ONLY afterwards — workers never write to a cached array, so the
-  pixel buffers stay shared across forks via copy-on-write (no per-worker copy);
-- a byte budget caps total RAM so warm-up can't OOM.
-
-``CachingLoader`` / ``CachingTargetEncoder`` are thin decorators (the ``Dataset`` stays
-oblivious to caching). The store is filled only by ``ArrayCache.warm``.
-"""
+"""Holding decoded files in RAM, so an epoch does not decode what the last one did."""
 
 from __future__ import annotations
 
 import logging
+from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass
+from concurrent.futures import ThreadPoolExecutor
 from threading import Lock
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, override
 
 import numpy as np
-from rich.progress import BarColumn, MofNCompleteColumn, Progress, TextColumn
-from torch import Tensor
 
-from src.data.encoders import TargetEncoder
-from src.data.loaders import InputLoader
-from src.data.statistics import Distribution, SupportsSummary
+from src.data.registry import cache_registry
+from src.progress import track
+
+if TYPE_CHECKING:
+    from src.data.loaders import InputLoader
 
 log = logging.getLogger(__name__)
 
 BYTES_PER_GIB = 1024**3
 
+NAMESPACE_SEPARATOR = "\0"
+"""Divides a namespace from the cell value — the one byte a filename cannot hold."""
 
-class ArrayCache:
-    """Thread-safe, byte-capped ``path -> ndarray`` store, warmed in the parent.
 
-    Parameters:
-        max_bytes (int): Total RAM budget; ``<= 0`` disables the cache entirely.
+class LoaderCache(ABC):
+    """Keeps what a loader returned, so the next epoch does not read it again.
+
+    Keys are cell values as the annotation table stores them, never resolved paths —
+    the loader keeps sole ownership of how a relative path becomes absolute.
     """
 
-    def __init__(self, max_bytes: int) -> None:
+    @abstractmethod
+    def get(self, key: str) -> Any | None:
+        """The cached value for ``key``, or ``None`` when it is not held."""
+
+    @abstractmethod
+    def put(self, key: str, value: Any) -> None:
+        """Offer a value for caching.
+
+        A hint, not an instruction: an implementation may decline anything — a
+        value of the wrong kind, one that does not fit, or any value at all once
+        it has stopped accepting writes.
+        """
+
+    @abstractmethod
+    def warm(self, keys: Iterable[str], load: Callable[[Any], Any]) -> None:
+        """Fill the cache by calling ``load`` once per distinct key.
+
+        ``warm`` stores nothing itself — it drives a loader wrapped with
+        :func:`cached`, and that wrapper is the one line of code which writes to
+        the store; it also serves a value it already holds without loading, so
+        warming twice is cheap rather than wrong. Run this in the parent
+        process, before any worker forks.
+        """
+
+    def scoped(self, namespace: str) -> LoaderCache:
+        """A view of this cache whose keys are private to ``namespace``.
+
+        One cache serves every input and every file-reading encoder, so that
+        they share one budget — but a cell value alone does not say which column
+        it came from. An image column and a mask column holding the same
+        filename under different roots would otherwise serve each other's
+        arrays, and the pixels would arrive where an index map was promised.
+
+        A view object rather than a key convention at each call site: the one
+        object carries the store and the identity together, so a consumer that
+        is handed a cache cannot forget the namespace that makes keys its own.
+        """
+        return _ScopedCache(self, namespace)
+
+
+class _ScopedCache(LoaderCache):
+    """The keys of one namespace, held in the cache every namespace shares."""
+
+    def __init__(self, inner: LoaderCache, namespace: str) -> None:
+        self._inner = inner
+        self._namespace = namespace
+
+    @override
+    def get(self, key: str) -> Any | None:
+        return self._inner.get(self._scoped(key))
+
+    @override
+    def put(self, key: str, value: Any) -> None:
+        self._inner.put(self._scoped(key), value)
+
+    @override
+    def warm(self, keys: Iterable[str], load: Callable[[Any], Any]) -> None:
+        # Keys pass through untranslated: ``load`` is a loader wrapped with
+        # :func:`cached`, and that wrapper already serves a held value without
+        # loading — warming never needs to know what a store key looks like.
+        self._inner.warm(keys, load)
+
+    def _scoped(self, key: str) -> str:
+        return f"{self._namespace}{NAMESPACE_SEPARATOR}{key}"
+
+
+@cache_registry.register("ram")
+class RamCache(LoaderCache):
+    """Decoded arrays held in memory, up to a byte budget.
+
+    Only arrays are kept: a loader returning text or a scalar is simply not cached,
+    which is why no loader has to declare whether it reads files.
+
+    **Filled once in the parent process, read-only afterwards.** Writes are accepted
+    only while ``warm`` runs, which is what keeps the store frozen once ``DataLoader``
+    forks — a cache filled lazily inside workers would be filled independently by each
+    of them, multiplying its size by ``num_workers``.
+
+    Copy-on-write then carries the pixels but not the scaffolding. An array's data
+    buffer is a separate allocation that reading does not reference-count, so the
+    gigabytes are genuinely shared; the dict, its keys and the array object headers
+    *are* reference-counted, and CPython writes to them on ordinary reads, so those
+    pages are copied per worker — tens of megabytes at a hundred thousand entries.
+    Removing that remainder needs shared memory or a memory-mapped file, which is a
+    second implementation of this port rather than a change to this one.
+
+    Parameters:
+        max_gib (float): Memory budget. The cache stops taking values at it and
+            the remaining files are read from disk each epoch, as they would be
+            without a cache at all.
+        workers (int): Threads used to warm it. Image decoding releases the GIL,
+            so these genuinely overlap.
+    """
+
+    def __init__(self, max_gib: float = 4.0, workers: int = 8) -> None:
+        if max_gib <= 0:
+            raise ValueError(f"A ram cache needs a positive max_gib, got {max_gib}; omit the section to disable it.")
+        if workers < 1:
+            raise ValueError(f"A ram cache needs at least one worker, got {workers}.")
+        self._max_bytes = int(max_gib * BYTES_PER_GIB)
+        self._workers = workers
         self._store: dict[str, np.ndarray] = {}
         self._bytes = 0
-        self._max_bytes = max_bytes
+        self._filling = False
         self._lock = Lock()
 
-    def warm(self, keys: Iterable[str], load: Callable[[str], np.ndarray], workers: int) -> None:
-        """Pre-load ``keys`` via ``load`` (threaded) until the byte budget is hit.
+    @override
+    def get(self, key: str) -> Any | None:
+        return self._store.get(key)
 
-        Already-cached keys are skipped, so this is safe to call once per loader
-        against a single shared cache. A failing ``load`` (bad file) is logged
-        and skipped, never fatal.
-        """
-        if self._max_bytes <= 0:
+    @override
+    def put(self, key: str, value: Any) -> None:
+        if not self._filling or not isinstance(value, np.ndarray):
             return
+        with self._lock:
+            if key in self._store or self._bytes + int(value.nbytes) > self._max_bytes:
+                return
+            self._store[key] = value
+            self._bytes += int(value.nbytes)
+
+    @override
+    def warm(self, keys: Iterable[str], load: Callable[[Any], Any]) -> None:
         pending = [key for key in dict.fromkeys(keys) if key not in self._store]
         if not pending:
             return
-        columns = (
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            MofNCompleteColumn(),
-            TextColumn("{task.fields[status]}"),
-        )
-        with ThreadPoolExecutor(max_workers=workers) as pool, Progress(*columns) as progress:
-            task = progress.add_task("Warming cache", total=len(pending), status=self._status())
-            futures = {pool.submit(self._safe_load, load, key): key for key in pending}
-            for future in as_completed(futures):
-                key, array = future.result()
-                if array is not None:
-                    with self._lock:
-                        if self._bytes + int(array.nbytes) <= self._max_bytes:
-                            self._store[key] = array
-                            self._bytes += int(array.nbytes)
-                progress.update(task, advance=1, status=self._status())
 
-    def _status(self) -> str:
-        """Live progress suffix: total cached files and memory (cumulative across warms)."""
-        return f"[cyan]{len(self._store)} files · {self._bytes / BYTES_PER_GIB:.2f} GiB"
+        def read(key: str) -> None:
+            try:
+                load(key)
+            except Exception as error:  # noqa: BLE001 — one unreadable file must not abort a run
+                log.warning("Cache skipped '%s': %s", key, error)
 
-    @staticmethod
-    def _safe_load(load: Callable[[str], np.ndarray], key: str) -> tuple[str, np.ndarray | None]:
+        self._filling = True
         try:
-            return key, load(key)
-        except Exception as error:  # noqa: BLE001 — a bad file must not abort warm-up
-            log.warning("Cache warm-up skipped %s: %s", key, error)
-            return key, None
-
-    def get(self, key: str) -> np.ndarray | None:
-        """Return the cached array for ``key`` or ``None`` (read-only, fork-safe)."""
-        return self._store.get(key)
-
-    @property
-    def nbytes(self) -> int:
-        """Total bytes currently cached."""
-        return self._bytes
-
-    def __len__(self) -> int:
-        """Number of items currently cached."""
-        return len(self._store)
+            with ThreadPoolExecutor(max_workers=self._workers) as pool:
+                for _ in track(pool.map(read, pending), "Caching files", len(pending)):
+                    pass
+        finally:
+            self._filling = False
+        log.info(
+            "Cache holds %d file(s), %.2f of %.2f GiB.",
+            len(self._store),
+            self._bytes / BYTES_PER_GIB,
+            self._max_bytes / BYTES_PER_GIB,
+        )
 
 
-@dataclass
-class CachingLoader(InputLoader):
-    """Decorator: serve an input loader's result from an ``ArrayCache`` on hit.
+def cached(load: InputLoader, cache: LoaderCache) -> InputLoader:
+    """Wrap a loader so its result is served from ``cache`` when it is held there.
 
-    Parameters:
-        inner (InputLoader): The wrapped loader (e.g. ``ImageLoader``).
-        cache (ArrayCache): Shared cache, keyed by the resolved path.
+    The only code in the framework that writes to a cache, so a value can never be
+    stored under a key that means something else.
     """
 
-    inner: InputLoader
-    cache: ArrayCache
+    def read(value: Any) -> Any:
+        key = str(value)
+        hit = cache.get(key)
+        if hit is not None:
+            return hit
+        result = load(value)
+        cache.put(key, result)
+        return result
 
-    def __post_init__(self) -> None:
-        self.file_based = self.inner.file_based
-
-    def load(self, value: str) -> Any:
-        hit = self.cache.get(value)
-        return hit if hit is not None else self.inner.load(value)
-
-
-@dataclass
-class CachingTargetEncoder(TargetEncoder):
-    """Decorator: serve a file-based target encoder's ``load`` from an ``ArrayCache``.
-
-    Delegates ``fit`` / ``to_tensor`` / ``num_classes`` / ``file_based`` / ``spatial``
-    to the inner encoder; only ``load`` (the file read) is cached. This base does **not**
-    forward ``summarize``: an inner encoder implementing ``SupportsSummary`` is wrapped by
-    :class:`SummarizableCachingTargetEncoder` instead (chosen by
-    :func:`caching_target_encoder`). So ``isinstance(wrapper, SupportsSummary)`` mirrors
-    the inner encoder's capability through ordinary subclassing — no per-instance method
-    injection.
-
-    Parameters:
-        inner (TargetEncoder): The wrapped encoder (e.g. ``MaskEncoder``).
-        cache (ArrayCache): Shared cache, keyed by the resolved path.
-    """
-
-    inner: TargetEncoder
-    cache: ArrayCache
-
-    def __post_init__(self) -> None:
-        self.file_based = self.inner.file_based
-        self.spatial = self.inner.spatial
-
-    def fit(self, values: Iterable[Any]) -> None:
-        self.inner.fit(values)
-
-    def load(self, value: Any) -> Any:
-        hit = self.cache.get(value)
-        return hit if hit is not None else self.inner.load(value)
-
-    def to_tensor(self, value: Any) -> Tensor:
-        return self.inner.to_tensor(value)
-
-    @property
-    def num_classes(self) -> int | None:
-        return self.inner.num_classes
-
-
-class SummarizableCachingTargetEncoder(CachingTargetEncoder):
-    """A :class:`CachingTargetEncoder` whose inner encoder also implements ``SupportsSummary``.
-
-    Forwards ``summarize`` to the inner encoder so a cached label/scalar encoder keeps its
-    distribution for the dataset report. Built only by :func:`caching_target_encoder`, so
-    ``isinstance(wrapper, SupportsSummary)`` is ``True`` exactly when the inner supports it.
-    """
-
-    def summarize(self, values: Iterable[Any]) -> Distribution | None:
-        return cast(SupportsSummary, self.inner).summarize(values)
-
-
-def caching_target_encoder(inner: TargetEncoder, cache: ArrayCache) -> CachingTargetEncoder:
-    """Wrap ``inner`` in a cache decorator, preserving its ``SupportsSummary`` capability.
-
-    Returns :class:`SummarizableCachingTargetEncoder` when ``inner`` implements
-    ``SupportsSummary`` (so ``summarize`` is forwarded and the Protocol check holds),
-    else the plain :class:`CachingTargetEncoder`.
-
-    Parameters:
-        inner (TargetEncoder): The encoder to wrap.
-        cache (ArrayCache): Shared cache, keyed by the resolved path.
-
-    Returns:
-        CachingTargetEncoder: The summarizable subclass or the base, matching ``inner``.
-    """
-    wrapper = SummarizableCachingTargetEncoder if isinstance(inner, SupportsSummary) else CachingTargetEncoder
-    return wrapper(inner=inner, cache=cache)
+    return read

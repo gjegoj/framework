@@ -1,3 +1,6 @@
-kind: timm
-name: resnet18
-pretrained: false    # set true for production; false keeps smoke offline
+# The model section is a plain component: one shape for every family, and the
+# family follows from the name. A vendor family reads
+# `{name: yolo, model_name: yolov8n.yaml}` here instead.
+name: timm
+model_name: resnet18
+pretrained: true

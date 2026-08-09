@@ -1,0 +1,399 @@
+# Backlog
+
+Decisions deliberately deferred, with enough of the reasoning to pick them up
+cold. An entry here is not a bug report: it is a design question whose answer was
+out of scope when it surfaced, kept so it does not have to be rediscovered.
+
+## Dot-paths into the model should be relative to the model
+
+**Surfaced:** 2026-08-05, designing distillation.
+
+A `freeze` callback names the modules it holds by their dot-path *in the training
+module* — `model.backbone`. The leading `model.` is `TrainingModule.model`, which
+is Lightning's business rather than the user's, and every path carries it as
+noise.
+
+Worse, the path is knowledge about the module tree, so anything that changes that
+tree changes every path. Distillation does: it nests the student, and the backbone
+becomes `model.student.backbone`. That was handled by deriving the path
+(`backbone_path(config)` in `assembly/models.py`) rather than fixing it as a
+constant — the guard that refuses `adapters` plus a `freeze` on the same backbone
+had silently stopped matching, and a silent guard is worse than none, because the
+failure it guards against is a loss that never moves.
+
+Deriving the path works, but it tracks the problem instead of removing it. The
+removal is to declare paths **relative to the model that ships**:
+
+```yaml
+callbacks:
+  - name: freeze
+    modules: [backbone]      # not model.backbone
+```
+
+`Freeze` would then resolve against `without_teachers(pl_module.model)`, and no
+present or future decorator over `Model` could move a path again — the same
+answer that made a checkpoint's keys independent of the wrapper
+(`shipped_weights`).
+
+**Why it was not done then:** it breaks every config that names a module, and
+distillation was not the change that should carry that. It wants its own pass:
+the resolution root, the guard, the guides, and a refusal that recognises an old
+`model.`-prefixed path and says what to write instead.
+
+**Where to look:** `src/src/callbacks/freeze.py` (`_resolve`),
+`src/src/assembly/models.py` (`backbone_path`,
+`_refuse_a_second_owner_of_the_backbone`), `docs/guides/callbacks.md`.
+
+## `logger: none` does not turn the logger off
+
+**Surfaced:** 2026-08-06, porting the reference's console module.
+
+`configs/config.yaml` reads `- logger: none  # swap to clearml`, and the word says
+what a reader expects. What happens is different: `build_trainer` only sets a
+logger when `config.logger is not None`, so `None` passes nothing to `Trainer`,
+Lightning's own default `logger=True` applies, it looks for `tensorboard` and
+`tensorboardX`, finds neither, and falls back to `CSVLogger` — announcing the
+substitution in a warning nobody reads as being about them.
+
+Measured: a plain CLI run raises
+
+```
+Starting from v1.9.0, `tensorboardX` has been removed as a dependency of the
+`lightning.pytorch` package ... `logger=True` will use `CSVLogger` as the default
+```
+
+and writes `lightning_logs/version_0/metrics.csv` beside the run.
+
+Two ways out, and choosing between them is the deferred part. Passing
+`logger=False` makes the word true and stops writing a file nobody asked for.
+Keeping the CSV but *saying so* — a `csv` entry in the logger group — makes the
+default honest instead. The second is probably right: a run that records nothing
+anywhere is a poor default, and a nameless fallback is what makes it feel like
+one.
+
+**Where to look:** `src/src/assembly/training.py` (`build_trainer`),
+`configs/logger/none.yaml`, `docs/guides/logging.md`.
+
+## `num_workers: 0` guarantees three warnings on every run
+
+**Surfaced:** 2026-08-06, porting the reference's console module.
+
+`LoaderConfig.num_workers` defaults to `0`, so Lightning's "does not have many
+workers which may be a bottleneck" fires once per stage — three lines of the
+eight a plain run prints, provoked by our own default rather than by anything
+the user did.
+
+The reference's answer was to silence the tip. The honest choices are to keep the
+default and keep the tip (a fair trade: `0` is the value that works everywhere —
+no spawn cost on a small dataset, no shared-memory limits in a container, no
+start-method surprises on macOS), or to pick a default from the machine and let
+the tip disappear because it no longer applies.
+
+There are two filter lists in the repo and they differ on purpose. `pyproject.toml`
+silences this tip **for tests**, where CPU-only tiny loaders are the deliberate
+setup and the tip answers a question nobody asked. `silence_third_party_notices`
+in `cli.py` does not, because in a real run the tip describes a default this
+framework chose and hiding it would hide the choice. Whoever settles this entry
+should keep that difference stated rather than merge the lists.
+
+**Where to look:** `src/src/config/training.py` (`LoaderConfig`),
+`pyproject.toml` (`[tool.pytest.ini_options] filterwarnings`),
+`src/src/cli.py` (`silence_third_party_notices`).
+
+## `rich` is imported but not declared
+
+**Surfaced:** 2026-08-06, porting the reference's console module.
+
+Five modules import `rich` — `progress.py`, `cli.py`, `callbacks/progress.py`,
+`export/verification.py`, `data/datamodules/yolo.py`. It is not in `dependencies`.
+
+Measured, it arrives twice over as somebody else's transitive dependency:
+
+```
+rich v15.0.0
+├── onnxsim v0.7.0
+└── typer v0.27.0
+    └── transformers v5.14.1
+```
+
+Both paths are incidental. Dropping `onnxsim` and a `transformers` release that
+stops using `typer` would take the console with them, and the failure would be an
+`ImportError` at startup rather than anything a test caught. `pyproject.toml` is
+the user's file, so this is recorded rather than fixed.
+
+`cli.py` also imports `yaml` directly. That one is a milder case of the same
+thing: PyYAML is required by `hydra-core` through `omegaconf`, and by `peft`,
+`clearml`, `timm` and `albumentationsx` besides — declared dependencies every
+one, so it cannot quietly disappear the way `rich` can.
+
+## A regression head with several outputs
+
+**Surfaced:** 2026-08-07, designing sample visualization.
+
+`Regression` in the visualization IR holds one number, matching FiftyOne's
+`Regression(value, confidence)`. That is not a guess about the future — it is
+what this framework can currently produce: `ContinuousObjective` builds either
+`squeeze_single_output` or `expectation_over(class_values)`, and both collapse a
+head's output to one value per sample before any consumer sees it.
+
+A head predicting several quantities at once (height *and* weight, or a bounding
+box's four numbers) would change that. The shape to reach for is already named by
+the vocabulary this IR borrows: FiftyOne pairs a singular label with a plural
+container — `Classification`/`Classifications`, `Detection`/`Detections`,
+`Keypoint`/`Keypoints`. So the extension is `Regressions(regressions: tuple[Regression, ...])`,
+not a `RegressionComponent` field inside `Regression`. The reference took the
+second road and had to invent `dim0`/`dim1` naming for components; the plural
+container needs none, because each `Regression` can carry its own name.
+
+Three places move together when it lands: `ContinuousObjective.out_features` and
+its activation (the model has to emit and keep N numbers), the metric side (a
+vector metric per component), and `RegressionAnnotator` plus one
+`render_label` registration.
+
+**Where to look:** `src/src/tasks/objectives.py` (`ContinuousObjective`),
+`src/src/visualization/entities.py`, `src/src/visualization/annotators.py`.
+
+## No text input loader ships, though text inputs are supported
+
+**Surfaced:** 2026-08-07, designing sample visualization.
+
+`HFTextBackbone` consumes `input_ids` and an optional attention mask, and
+`MultiEncoderBackbone` runs an image encoder beside a text one — so a
+CLIP-style multimodal run is a supported model shape. But
+`input_loader_registry` holds exactly one entry, `image`. A text run therefore
+needs a custom loader supplied through `_target_`, which works (it is the
+documented escape hatch) but means the framework ships half of a supported
+combination.
+
+A `text` loader would tokenize a cell into `input_ids` and a mask — which raises
+the question the registry cannot answer alone: a tokenizer is a *fitted* thing
+tied to the backbone's hub id, so a loader declared independently of the model
+can silently disagree with it. That coupling is the design problem, and it is
+why this is a backlog entry rather than a small addition.
+
+The visualization side does not wait for it: the grid reads the raw table cell,
+so whatever a text loader eventually produces, the human-readable text is
+already what gets drawn.
+
+**Where to look:** `src/src/data/loaders.py`,
+`src/src/data/registry.py`, `src/src/models/backbones/hf.py`.
+
+## A dense task with continuous targets has no label to draw
+
+**Surfaced:** 2026-08-07, splitting annotation on the task axes.
+
+`(Topology.DENSE, Objective.CONTINUOUS)` is a pairing the framework supports —
+`DenseTopology.supports` admits every objective but `METRIC`, and depth
+estimation, heatmap regression and density maps all land there. The
+visualization IR has no `Label` for it: `Segmentation` holds boolean masks per
+class, and a field of real numbers is neither.
+
+`DenseAnnotation.draws(objective)` therefore refuses the pairing at build time
+and the task is skipped with its reason, rather than drawn as something it is
+not. That refusal is the whole of the deferral: nothing is half-rendered, and
+the log names the task.
+
+What it wants is a `Heatmap(values: np.ndarray, low: float, high: float)` label
+beside `Segmentation`, a colormap to encode it (the golden-angle palette is for
+identity, and a continuous field wants a perceptually ordered ramp — viridis or
+magma, sampled into a lookup table, no matplotlib dependency), and one
+`render_label` registration reusing `png_data_uri`. The per-sample range matters:
+normalising each sample to its own min/max makes cells incomparable, so the range
+should come from the batch, and that is the decision worth thinking about rather
+than guessing now.
+
+**Where to look:** `src/src/visualization/entities.py`,
+`src/src/visualization/annotators.py` (`DenseAnnotation.draws`),
+`src/src/visualization/html.py` (`render_label`),
+`src/src/tasks/topologies.py` (`DenseTopology.supports`).
+
+## Who owns what a sample looks like
+
+**Surfaced:** 2026-08-07, reviewing the samples grid. **Re-measured and
+narrowed:** 2026-08-08, after reading the transform it accused.
+
+Drawing a sample needs two facts: which inputs are pictures, and how to give
+their pixels back their original look. The grid answers both itself —
+
+```python
+def _is_picture(tensor): return tensor.ndim == 4 and tensor.is_floating_point()
+images = (images * std + mean).clamp(0.0, 1.0)     # mean/std declared on the callback
+```
+
+— and both answers already exist elsewhere.
+
+**"Which inputs are pictures" is declared twice.** `AlbumentationsTransform`
+takes `image_inputs` (default `(Modality.IMAGE,)`) and registers exactly those as
+albumentations image targets. The grid ignores that list and sniffs the tensor
+instead, so the two can disagree in both directions: a precomputed 4-D float
+feature map is drawn as a photograph, and an image input that stops being
+`[B, C, H, W]` float after the pipeline is not drawn at all.
+
+**Normalisation is declared twice.** `albumentations.Normalize(mean: ${mean})` in
+the transforms section, and `mean: ${mean}` on the callback. They agree today only
+because both point at one root key. Literal numbers in `Normalize`, a second
+`Normalize`, or a different transform library breaks the tie silently: the page
+mis-colours and nothing says so.
+
+**A claim from the first version of this entry was wrong and is withdrawn.** It
+said a CLIP-style run with per-input normalisation already draws its second
+picture in the wrong colours. It does not: `AlbumentationsTransform` runs *one*
+pipeline over every `image_inputs` entry with shared sampled parameters, so one
+`Normalize` covers them all and one mean/std pair is correct. Reaching the
+divergence needs a custom `SampleTransform` supplied through `_target_`. The
+callback's warning about several picture inputs stays useful, but the defect is
+reachable, not active.
+
+**What is active:** only a *linear* normalisation is invertible by that formula.
+Any other pixel-changing operation — CLAHE, posterize, a channel reorder — is not
+undone, and the page shows something an eye cannot map back to the source.
+Silently.
+
+### Options, with the cost measured
+
+| | Shape | Cost | What it leaves broken |
+|---|---|---|---|
+| 1 | The grid keeps guessing (today) | none | silently wrong outside the shipped pipeline; every new kind of input widens the guess |
+| 2 | The sample carries display pixels beside the model tensor | **+25% per batch** — 19.3 MB → 24.1 MB for 32 images at 224px — paid on every batch of every epoch, through the worker boundary, whether or not the grid is enabled | pays always for a page looked at every N epochs |
+| 3 | A transform can be asked how to make an input showable again | a port member on transforms; only the step that normalised can answer | a five-operation pipeline with one invertible step has to say "I cannot", which is at least honest |
+
+Option 2 also changes *what is shown*: the augmented-but-not-normalised image
+rather than the normalised one turned back. For a linear normalise those are the
+same up to clamping; for a non-linear pipeline, 2 is right and today is wrong.
+
+### Why it is parked
+
+The only active defect needs a configuration this repository does not yet
+contain. Option 2 asks 25% of every batch for a page read every N epochs; option 3
+asks for a decision about what a mixed pipeline answers. Neither is worth
+committing to against a hypothesis.
+
+**The cheap half, if it is ever wanted on its own:** have the grid read
+`image_inputs` where a transform declared it, instead of sniffing shapes. That
+removes one of the two double declarations, costs nothing and touches no data-layer
+code.
+
+**Pick it up when** a run ships a non-linear preprocessing step, or a custom
+`SampleTransform` handles inputs separately. Then there is something to measure
+against instead of a guess.
+
+**Where to look:** `src/src/callbacks/samples.py` (`_is_picture`,
+`_to_uint8`, `_warn_once_about_shared_normalisation`),
+`src/src/transforms/albumentations.py` (`image_inputs`),
+`src/src/data/schema.py`, `src/src/data/loaders.py`.
+
+## `HtmlLogger` will want to be an artifact port when there is a second format
+
+**Surfaced:** 2026-08-07, reviewing the samples grid.
+
+`core/ports.py` now has six artifact ports — `MatrixLogger`, `CurveLogger`,
+`BarsLogger`, `SpreadLogger`, `SingleValueLogger`, `HtmlLogger` — and each names
+one thing a tracker can be asked to show. The last two of those were added
+deliberately rather than by drift: a class balance and a box plot are each another
+*kind of picture*, carrying a typed entity the backend draws, so they belong with
+the first two and keep their payloads typed — which a media-typed port could not.
+The reference tried the other road here and it is instructive: its `PlotLogger`
+took a growing union (`type Plot = BoxPlot`), so a new plot type changed the
+port's own type and every backend's translation table. That is fine while each has one caller, and a MIME-agnostic
+`ArtifactLogger(name, payload, media_type, iteration)` today would be a general
+mechanism built for one case.
+
+The moment it stops being fine is the second page-shaped artifact: a PNG export
+of a grid, a JSON dump for an external viewer, a static report. At that point the
+ports stop naming *kinds of picture* and start naming *file formats*, which is
+the signal to collapse them into one port that takes a media type — and to give
+ClearML's side one `report_media` call instead of a method per format.
+
+The consumer side is the part already worth fixing, and it is independent of the
+count: six hand-written narrowings now exist (`core/reporting.py` twice,
+`callbacks/metric_summary.py`, `callbacks/samples.py`, and twice in
+`callbacks/dataset_summary.py`) with three different degradation policies — a debug
+line, a silent skip, and a warn-once. So "why did my artifact not appear" has three answers depending on
+which artifact it was.
+
+**Where to look:** `src/src/core/ports.py`,
+`src/src/loggers/clearml.py`.
+
+## `ultralytics` is a hard dependency, and it is AGPL-3.0
+
+**Surfaced:** 2026-08-08, designing detection.
+
+`ultralytics>=8.4.115` sits in `dependencies`, not in an optional extra. Every
+install of this framework therefore takes an AGPL-3.0 dependency, including the
+installs that only ever train a classifier — and the AGPL's obligations attach to
+distribution and to network use, which is exactly what a served model is.
+
+Nothing in the code is wrong. This is a licensing decision that has so far been
+made by omission, and it has two candidate answers. Either detection is declared
+an optional extra (`pip install ml-framework[detection]`), which keeps the default
+install permissive and makes the vendor family's import failure a clear message
+rather than a missing name; or the project accepts AGPL for everything, which is a
+legitimate choice and should be written down as one.
+
+The design that surfaced it is neutral: the vendor family is recognised by name in
+two functions and imports ultralytics lazily either way, so moving it to an extra
+later costs a dependency-group edit and one import guard.
+
+**Where to look:** `pyproject.toml` (`dependencies`),
+`src/src/data/datamodules/yolo.py`, and the model module the detection
+design adds beside it.
+
+## A vendor family builds `-seg` and `-pose` networks that nothing downstream can read
+
+**Surfaced:** 2026-08-09, writing the detection guide.
+
+`YoloModel` never branches on what kind of network it is building: `YOLO(name)`
+picks `DetectionModel`, `SegmentationModel` or `PoseModel` from the file, and the
+head is rebuilt at the dataset's class count either way. So a `-seg` or `-pose`
+architecture already *trains* — its loss parts arrive scoped by the task and the
+run reports them.
+
+What it cannot do is say anything about the result. Three pieces are missing, and
+they are the same three for both kinds:
+
+- the currency. `Instances` carries `boxes`, `labels`, `sample_index` and
+  `scores`. Masks and keypoints are a fourth and fifth column, and whether they
+  belong on the same entity or on a sibling is the design question — a mask per
+  instance is large, and a keypoint set has its own arity.
+- the metric. `map` compares boxes. torchmetrics computes a mask-IoU mAP from the
+  same class, and pose has no equivalent in the registry at all.
+- the annotator. `Topology.INSTANCES` has no `AnnotationTopology`, so the samples
+  grid names a detection task as undrawable today, whichever kind it is.
+
+**Why it was not done then:** detection was the scope, and each of the three is a
+decision about a shape rather than a line of plumbing. Guessing them from the
+vendor's side would fix the shape before a second consumer exists to argue with it.
+
+**Where to look:** `src/src/core/entities.py` (`Instances`),
+`src/src/metrics/detection.py`,
+`src/src/visualization/annotators.py`, `docs/guides/detection.md`.
+
+## `configs/` lives outside the package, so only an editable install can find it
+
+**Surfaced:** 2026-08-09, fixing the `ml-train` entry point.
+
+Hydra resolves a *relative* `config_path` against `task_function.__module__`,
+which the `ml-train` console script leaves as `src.cli` — so
+`../../configs` became the import path `configs` and every console invocation died
+with "Primary config module 'configs' not found", while `python -m
+src.cli` worked. That is fixed: `cli.py` now computes an absolute path
+from `__file__`, which `compute_search_path_dir` returns verbatim.
+
+The absolute path is the repository's `configs/`, two levels above the package.
+That is right for the editable install `make install` produces and wrong for a
+wheel, where the directory is not shipped at all — a `pip install ml-framework`
+would resolve to a path that does not exist on the target machine.
+
+Two candidate answers. Either `configs/` moves inside the package
+(`src/src/configs/`) and is declared as package data, which makes the
+shipped groups importable anywhere and turns a user's own `configs/` into a
+Hydra search-path addition; or the CLI grows a `--config-dir` of its own and the
+shipped groups stay a repository convenience. The first is the usual answer for a
+framework, and it is the larger change: every `defaults:` path, the tests that
+compose configs, and the guides all name the directory.
+
+**Why it was not done then:** the work was a documentation pass, and packaging is
+`pyproject.toml`'s business, which this project keeps in the user's hands.
+
+**Where to look:** `src/src/cli.py` (`CONFIG_DIRECTORY`),
+`pyproject.toml` (`[tool.hatch.build]`), `configs/`.

@@ -1,4 +1,4 @@
-fail_fast: false
+fail_fast: true
 
 default_install_hook_types:
 -   pre-commit
@@ -23,7 +23,7 @@ repos:
         args: ["--maxkb=1024"]
 
 -   repo: https://github.com/crate-ci/typos
-    rev: v1.48.0
+    rev: v1.49.0
     hooks:
     -   id: typos
 
@@ -39,7 +39,7 @@ repos:
     -   id: black
 
 -   repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.16.0
+    rev: v0.16.2
     hooks:
     -   id: ruff-check
         args: [--fix]

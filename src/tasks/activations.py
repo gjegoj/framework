@@ -1,40 +1,56 @@
-"""Activations: map logits to predictions for metrics/inference (never for loss)."""
+"""Built-in activations: what the standard objectives turn logits into for metrics."""
 
 from __future__ import annotations
 
-import torch.nn.functional as F
-from torch import Tensor
+from typing import TYPE_CHECKING
 
-from src.core.ports import Activation
+import torch
 
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
-class SoftmaxActivation(Activation):
-    """Softmax over the class dimension (multiclass)."""
+    from torch import Tensor
 
-    def __call__(self, logits: Tensor) -> Tensor:
-        return logits.softmax(dim=1)
-
-
-class SigmoidActivation(Activation):
-    """Per-class sigmoid (binary / multilabel)."""
-
-    def __call__(self, logits: Tensor) -> Tensor:
-        return logits.sigmoid()
+    from src.core.ports import Activation
 
 
-class IdentityActivation(Activation):
-    """No-op (regression / continuous targets)."""
-
-    def __call__(self, logits: Tensor) -> Tensor:
-        return logits
+def softmax_probabilities(logits: Tensor) -> Tensor:
+    """Class probabilities over the class dimension (multiclass default)."""
+    return torch.softmax(logits, dim=1)
 
 
-class NormalizeActivation(Activation):
-    """L2-normalize the embedding (metric learning) — unit-norm output in cosine space.
+def squeeze_single_output(logits: Tensor) -> Tensor:
+    """Drop a single-channel dimension; wide outputs pass through.
 
-    Used by embedding presets so metrics, visualization and the exported graph all
-    consume the embedding in the same space the cosine-margin loss trained it in.
+    Covers ``[B, 1]`` and dense ``[B, 1, H, W]`` alike — the channel dim is
+    always position 1.
     """
+    return logits.squeeze(1) if logits.dim() > 1 and logits.size(1) == 1 else logits
 
-    def __call__(self, logits: Tensor) -> Tensor:
-        return F.normalize(logits, dim=-1)
+
+def sigmoid_probabilities(logits: Tensor) -> Tensor:
+    """Per-output probabilities (binary and multilabel default)."""
+    return torch.sigmoid(squeeze_single_output(logits))
+
+
+def identity(logits: Tensor) -> Tensor:
+    """Predictions are the raw outputs — e.g. embedding carriers for metric tasks."""
+    return logits
+
+
+def expectation_over(class_values: Sequence[float]) -> Activation:
+    """Build an activation reading a distribution back as one number.
+
+    The inverse of a binned target encoding: the prediction a metric sees is
+    ``softmax(logits) · class_values``, so a binned regression reports the value
+    it was asked for rather than a vector of bin probabilities.
+
+    Parameters:
+        class_values (Sequence[float]): The number each class position stands for.
+    """
+    values = torch.as_tensor(list(class_values), dtype=torch.float)
+
+    def expectation(logits: Tensor) -> Tensor:
+        return torch.softmax(logits, dim=-1) @ values.to(logits.device)
+
+    return expectation

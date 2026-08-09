@@ -1,85 +1,87 @@
-"""Task-layer target adapters: light shape/type adaptation of targets for loss/metrics.
-
-Heavy encoding (label -> index, mask I/O) happens in the data layer (``data/encoders.py``);
-here we only adjust the already-tensor target to the shape each objective's criterion and
-metrics expect.
-"""
+"""Built-in target adapters: shaping one raw target into its loss and metric views."""
 
 from __future__ import annotations
 
-from torch import Tensor
+from typing import TYPE_CHECKING
 
-from src.core.entities import TargetView
-from src.core.ports import TargetAdapter
+import torch
+
+from src.core.entities import AdaptedTarget
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from torch import Tensor
+
+    from src.core.ports import TargetAdapter
+
+CLASS_DIM = 1
+"""Where the classes sit in a soft target — a mix is per sample, never per pixel."""
 
 
-class MulticlassTargetAdapter(TargetAdapter):
-    """Class-index targets for cross-entropy and accuracy: ``[B]`` long tensor.
+def as_is(target: Tensor) -> AdaptedTarget:
+    """Both views are the raw target (multiclass indices, continuous values)."""
+    return AdaptedTarget(for_loss=target, for_metrics=target)
 
-    Also accepts *soft* targets ``[B, C]`` float (produced by MixUp/CutMix): the
-    loss keeps the soft distribution (``nn.CrossEntropyLoss`` consumes it
-    natively) while the metric target collapses to the dominant class via argmax.
+
+def as_class_indices(target: Tensor) -> AdaptedTarget:
+    """Class indices for both views — unless the target is already a distribution.
+
+    A multiclass target arrives one of two ways, and they are told apart by
+    dtype rather than by a flag: an index is integral by construction, since an
+    encoder produces it and a mask is an index map, while a batch transform that
+    mixed two samples produces a share of each class and never is. Both are
+    genuine targets of the same task, so neither is an error.
+
+    Cross-entropy takes a distribution as it is; rounding one would collapse
+    every mixed sample onto a single class. Metrics rank against a class rather
+    than a distribution over them, so the metric view is the class the sample
+    mostly is.
+
+    Augmentation also hands masks back as ``int32`` while criteria and metrics
+    both want ``long``, which is what the integral branch is for.
     """
-
-    def adapt(self, target: Tensor) -> TargetView:
-        if target.is_floating_point() and target.ndim == 2:
-            return TargetView(loss=target, metric=target.argmax(dim=-1))
-        if target.ndim == 2 and target.size(-1) == 1:
-            target = target.squeeze(-1)
-        target = target.long()
-        return TargetView(loss=target, metric=target)
+    if target.is_floating_point():
+        return AdaptedTarget(for_loss=target, for_metrics=target.argmax(dim=CLASS_DIM))
+    indices = target.long()
+    return AdaptedTarget(for_loss=indices, for_metrics=indices)
 
 
-class BinaryTargetAdapter(TargetAdapter):
-    """Binary target: ``[B, 1]`` float for BCE loss; ``[B, 1]`` long for metrics.
+def float_for_loss(target: Tensor) -> AdaptedTarget:
+    """Float the loss view (BCE needs floats); metrics keep the raw dtype.
 
-    BCEWithLogitsLoss needs float targets matching the single-logit shape ``[B, 1]``.
-    torchmetrics binary metrics require preds and targets to have the same shape — since
-    logits/predictions are ``[B, 1]``, the metric target stays ``[B, 1]`` (torchmetrics
-    treats ``[N, 1]`` the same as ``[N]`` for binary as long as both shapes match).
-
-    Also accepts *soft* targets ``[B, 2]`` float (one-hot then mixed by MixUp/CutMix): the
-    loss keeps the soft probability of the positive class (index 1) as ``[B, 1]``, while the
-    metric target collapses to the dominant class via argmax.
+    For a target with no hard form to round to — a price, a temperature — which
+    is why an indicator uses ``as_indicators`` instead.
     """
-
-    def adapt(self, target: Tensor) -> TargetView:
-        if target.is_floating_point() and target.ndim == 2 and target.size(-1) == 2:
-            positive = target[:, 1:2]  # soft P(positive) for the single-logit head, [B, 1]
-            return TargetView(loss=positive, metric=target.argmax(dim=-1, keepdim=True))
-        if target.ndim == 1:
-            target = target.unsqueeze(-1)
-        return TargetView(loss=target.float(), metric=target.long())
+    return AdaptedTarget(for_loss=target.float(), for_metrics=target)
 
 
-class MultilabelTargetAdapter(TargetAdapter):
-    """Multilabel target: ``[B, C]`` float for BCE; ``[B, C]`` long for metrics."""
+def as_indicators(target: Tensor) -> AdaptedTarget:
+    """Float for the loss, a 0/1 label for the metrics.
 
-    def adapt(self, target: Tensor) -> TargetView:
-        loss_target = target.float()
-        metric_target = target.long()
-        return TargetView(loss=loss_target, metric=metric_target)
-
-
-class ContinuousTargetAdapter(TargetAdapter):
-    """Continuous (regression) target: ``[B, 1]`` float for both loss and metrics."""
-
-    def adapt(self, target: Tensor) -> TargetView:
-        if target.ndim == 1:
-            target = target.unsqueeze(-1)
-        target = target.float()
-        return TargetView(loss=target, metric=target)
-
-
-class MetricTargetAdapter(TargetAdapter):
-    """Pass-through adapter for metric-learning tasks (ranking + contrastive).
-
-    Supervision is implicit in the data structure, not a per-sample label, so the
-    ``target`` is passed through as a ``[B]`` float for both loss and metrics
-    (kept ``[B]`` — the margin loss needs that shape; unsqueezing would break it).
-    It is one of: a dummy ones vector (triplet / InfoNCE / SigLIP — ignored by the
-    criterion) or a ``[B]`` ±1 label (pair — consumed by ``MarginRankingCriterion``).
+    A binary or multilabel target says whether each label applies, and a batch
+    transform turns that into the share of it the mixed sample carries. Binary
+    cross-entropy takes the share directly — it is what the sample is — while
+    metrics rank against a label, so the metric view is the label the sample
+    mostly carries. A target that never went through a mix rounds to itself.
     """
+    return AdaptedTarget(for_loss=target.float(), for_metrics=(target >= 0.5).long())
 
-    def adapt(self, target: Tensor) -> TargetView:
-        return TargetView(loss=target.float(), metric=target.float())
+
+def expectation_of(class_values: Sequence[float]) -> TargetAdapter:
+    """Build an adapter for a target encoded as a distribution over ordered classes.
+
+    The two views genuinely differ here: the loss compares distributions, while
+    a metric compares the numbers they stand for. Both come from the same
+    weighting, so a target's metric view is the value it was encoded from.
+
+    Parameters:
+        class_values (Sequence[float]): The number each class position stands for.
+    """
+    values = torch.as_tensor(list(class_values), dtype=torch.float)
+
+    def adapt(target: Tensor) -> AdaptedTarget:
+        distribution = target.float()
+        return AdaptedTarget(for_loss=distribution, for_metrics=distribution @ values.to(target.device))
+
+    return adapt

@@ -1,109 +1,151 @@
-"""Shared test doubles (fakes) — pure classes, no pytest fixtures.
+"""Shared test fakes: minimal port implementations several test modules exercise.
 
-``FakePlotLogger`` is the full-contract artifact-logger double consumed by the metrics,
-callbacks, reporting and sample-log tests; it records every call for assertion.
-``TinyLitModule`` / ``make_mock_trainer`` are the minimal Lightning module and trainer
-doubles the callback tests drive hooks against.
+``test_ports.py`` deliberately keeps its own local copies — its fakes double
+as the executable documentation of the ports and must stay self-contained.
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from typing import Any
-from unittest.mock import MagicMock
 
 import lightning as L
 import torch
-from torch import nn
+from torch import Tensor
+from torch.utils.data import Dataset
+from torchmetrics import Metric
 
-from src.core.plotting import Plot
-from src.core.ports import (
-    CurveLogger,
-    HistogramLogger,
-    HtmlLogger,
-    MatrixLogger,
-    PlotLogger,
-    SingleValueLogger,
-)
+from src.core import Backbone, Batch, Features, MetricSet, Model, StepResult, Stream, TaskOutput, as_tensor
 
 
-class TinyLitModule(L.LightningModule):
-    """Smallest possible LightningModule: one bias-free linear layer initialised to ones.
+class PredictOnlyModel(Model):
+    """A model that predicts and refuses to step — the shape every export test needs.
 
-    The deterministic init lets EMA tests distinguish averaged weights (ones) from
-    live weights they diverge manually.
+    Export never steps a model: only ``predict`` is on the deployment path. So a test
+    about a written graph declares the one method that decides what the graph computes,
+    and inherits the refusal that says why the other is missing.
     """
+
+    def step(self, batch: Batch) -> StepResult:
+        raise NotImplementedError("Export never steps a model; only predict is on the deployment path.")
+
+
+class PageLogger(L.pytorch.loggers.Logger):
+    """A logger whose whole job is to receive pages — the ``HtmlLogger`` port, structurally."""
 
     def __init__(self) -> None:
         super().__init__()
-        self.linear = nn.Linear(2, 2, bias=False)
-        nn.init.ones_(self.linear.weight)
+        self.pages: list[tuple[str, str, int]] = []
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.linear(x)  # type: ignore[no-any-return]
+    @property
+    def name(self) -> str:
+        return "page"
 
-    def training_step(self, batch: object, batch_idx: int) -> torch.Tensor:
-        return torch.tensor(0.0)
+    @property
+    def version(self) -> str:
+        return "0"
 
-    def configure_optimizers(self) -> torch.optim.Optimizer:
-        return torch.optim.SGD(self.parameters(), lr=0.01)
+    def log_metrics(self, metrics: dict[str, float], step: int | None = None) -> None: ...
 
-
-def make_mock_trainer(global_step: int = 1, estimated_stepping_batches: int = 100) -> MagicMock:
-    """Build a ``MagicMock`` trainer with the attributes callback hooks read."""
-    trainer = MagicMock()
-    trainer.global_step = global_step
-    trainer.estimated_stepping_batches = estimated_stepping_batches
-    trainer.max_epochs = 10
-    return trainer
-
-
-class FakePlotLogger(MatrixLogger, CurveLogger, HtmlLogger, SingleValueLogger, HistogramLogger, PlotLogger):
-    """Full-contract test double recording every artifact-logger call (matrix/curve/html/single_value/histogram/plot)."""
-
-    def __init__(self) -> None:
-        self.matrix_calls: list[dict[str, Any]] = []
-        self.curve_calls: list[dict[str, Any]] = []
-        self.html_calls: list[dict[str, Any]] = []
-        self.single_values: dict[str, float] = {}
-        self.histogram_calls: list[dict[str, Any]] = []
-        self.plot_calls: list[Plot] = []
-
-    def log_matrix(
-        self,
-        title: str,
-        matrix: torch.Tensor,
-        iteration: int,
-        labels: list[str] | None = None,
-        xaxis: str | None = None,
-        yaxis: str | None = None,
-    ) -> None:
-        self.matrix_calls.append(
-            {"title": title, "matrix": matrix, "iteration": iteration, "labels": labels, "xaxis": xaxis, "yaxis": yaxis}
-        )
-
-    def log_curve(
-        self,
-        title: str,
-        x: torch.Tensor,
-        y: torch.Tensor,
-        iteration: int,
-        series: str = "curve",
-        xaxis: str | None = None,
-        yaxis: str | None = None,
-    ) -> None:
-        self.curve_calls.append(
-            {"title": title, "x": x, "y": y, "iteration": iteration, "series": series, "xaxis": xaxis, "yaxis": yaxis}
-        )
+    def log_hyperparams(self, params: Any, *args: Any, **kwargs: Any) -> None: ...
 
     def log_html(self, title: str, html: str, iteration: int) -> None:
-        self.html_calls.append({"title": title, "html": html, "iteration": iteration})
+        self.pages.append((title, html, iteration))
 
-    def log_single_value(self, name: str, value: float) -> None:
-        self.single_values[name] = value
 
-    def log_histogram(self, title: str, series: str, values: Sequence[float], labels: list[str] | None = None) -> None:
-        self.histogram_calls.append({"title": title, "series": series, "values": list(values), "labels": labels})
+class FlattenBackbone(Backbone):
+    """Flattens the ``image`` input into one features stream of a fixed width."""
 
-    def log_plot(self, plot: Plot) -> None:
-        self.plot_calls.append(plot)
+    def __init__(self, dim: int) -> None:
+        super().__init__()
+        self._dim = dim
+
+    def forward(self, inputs: dict[str, Tensor]) -> Features:
+        return Features(streams={Stream.FEATURES: inputs["image"].flatten(start_dim=1)})
+
+    def feature_dim(self, stream: str) -> int:
+        return self._dim
+
+
+class LearningBackbone(FlattenBackbone):
+    """A backbone with weights of its own, for tests about how parameters are grouped.
+
+    ``FlattenBackbone`` has none, and a group holding no parameters is never made —
+    which is right, and leaves nothing to check in a test whose whole subject is
+    the group everything no task claims belongs to.
+    """
+
+    def __init__(self, dim: int) -> None:
+        super().__init__(dim)
+        self.project = torch.nn.Linear(dim, dim)
+
+    def forward(self, inputs: dict[str, Tensor]) -> Features:
+        flattened = super().forward(inputs).streams[Stream.FEATURES]
+        return Features(streams={Stream.FEATURES: self.project(flattened)})
+
+
+class FakeEncoder(Backbone):
+    """Reads one named input and emits a constant features stream of a fixed width."""
+
+    def __init__(self, input_name: str, dim: int) -> None:
+        super().__init__()
+        self._input_name = input_name
+        self._dim = dim
+
+    def forward(self, inputs: dict[str, Tensor]) -> Features:
+        batch = inputs[self._input_name].shape[0]
+        return Features(streams={Stream.FEATURES: inputs[self._input_name].new_ones(batch, self._dim)})
+
+    def feature_dim(self, stream: str) -> int:
+        return self._dim
+
+
+class CountingMetricSet(MetricSet):
+    """Counts seen predictions — a deterministic ``MetricSet`` stand-in."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.seen = 0
+
+    def update(self, predictions: TaskOutput, target: TaskOutput) -> None:
+        self.seen += as_tensor(predictions, task="counted", wanted_by="this fake").shape[0]
+
+    def compute(self) -> dict[str, Any]:
+        return {"seen": float(self.seen)}
+
+    def reset(self) -> None:
+        self.seen = 0
+
+    def directions(self) -> dict[str, bool | None]:
+        return {"seen": None}
+
+
+class SizedMetric(Metric):
+    """A metric naming ``num_classes`` — proves derived facts reach imported metrics."""
+
+    def __init__(self, num_classes: int) -> None:
+        super().__init__()
+        self.num_classes = num_classes
+
+    def update(self, predictions: TaskOutput, target: TaskOutput) -> None:
+        """Nothing to accumulate; construction is what tests care about."""
+
+    def compute(self) -> Tensor:
+        return torch.tensor(0.0)
+
+
+class Batches(Dataset[Batch]):
+    """Already-collated batches handed to a loader with ``batch_size=None``.
+
+    A test that needs Lightning to drive real hooks needs a `Dataset`, and what
+    this framework's loop consumes is a ``Batch`` — so the batches are the items
+    and collation is skipped rather than re-implemented for a fixture.
+    """
+
+    def __init__(self, batches: list[Batch]) -> None:
+        self._batches = batches
+
+    def __len__(self) -> int:
+        return len(self._batches)
+
+    def __getitem__(self, index: int) -> Batch:
+        return self._batches[index]

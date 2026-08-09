@@ -1,83 +1,97 @@
-"""Freeze / unfreeze callback — freeze backbone layers for the first N epochs.
-
-Uses Lightning's ``BaseFinetuning`` which correctly handles ``requires_grad``
-and re-adds unfrozen params to the optimizer's param groups.
-"""
+"""Holding part of a model still while the rest learns."""
 
 from __future__ import annotations
 
 import logging
-from typing import Any
+import math
+from typing import TYPE_CHECKING, Any, override
 
-import lightning as L
 from lightning.pytorch.callbacks import BaseFinetuning
+
+from src.callbacks.moment import at_epoch
+
+if TYPE_CHECKING:
+    import lightning as L
+    from torch import nn
+    from torch.optim import Optimizer
 
 log = logging.getLogger(__name__)
 
 
-class FreezeCallback(BaseFinetuning):
-    """Freeze named sub-modules before training; optionally unfreeze later.
+class Freeze(BaseFinetuning):
+    """Freeze named sub-modules, optionally letting them go partway through training.
+
+    Built on Lightning's ``BaseFinetuning`` rather than on ``requires_grad``
+    directly: unfreezing has to return the parameters to the optimizer's groups,
+    and that is the step hand-rolled freezing usually misses — the weights thaw
+    but never move.
 
     Parameters:
-        targets (list[str]): Dot-paths into the ``LightningModule``,
-            e.g. ``["model.backbone"]``.
-        unfreeze_at (int | float): Epoch index to unfreeze (int), or fraction
-            of ``max_epochs`` (float in (0, 1]). ``-1`` → never unfreeze.
-        train_bn (bool): Keep BatchNorm layers in train mode while frozen
-            so their running statistics continue to update.
+        modules (list[str]): Dot-paths to the modules to hold still, relative to
+            the training module — ``model.backbone``.
+        until (float): How long they are held. A value of 1 or less is a share
+            of the run, so the same setting survives a change of epoch count;
+            a whole number above 1 is an epoch index. The boundary rounds up to
+            a whole epoch, so a declared freeze always holds at least one. The
+            default holds for the whole run.
+        train_bn (bool): Keep normalisation layers learning their running
+            statistics while the rest is frozen — usually right, since those
+            statistics describe *this* dataset, not the one pretraining used.
     """
 
-    def __init__(
-        self,
-        targets: list[str],
-        unfreeze_at: float = -1,
-        train_bn: bool = False,
-    ) -> None:
+    def __init__(self, modules: list[str], until: float = 1.0, train_bn: bool = True) -> None:
         super().__init__()
-        if not targets:
-            raise ValueError("FreezeCallback: targets must be a non-empty list of module paths.")
-        if isinstance(unfreeze_at, float) and not (0.0 < unfreeze_at <= 1.0):
-            raise ValueError(f"FreezeCallback: unfreeze_at as a fraction must be in (0, 1], got {unfreeze_at}.")
-        self._targets = targets
-        self._unfreeze_at = unfreeze_at
+        if not modules:
+            raise ValueError("Freeze needs at least one module to hold still.")
+        if until <= 0 or (until > 1 and until != int(until)):
+            raise ValueError(f"Freeze until is a share of the run in (0, 1] or a whole epoch index, got {until}.")
+        self._modules = list(modules)
+        self._until = until
         self._train_bn = train_bn
-        self._unfreeze_epoch: int | None = None
 
-    # ---------------------------------------------------------------- setup
+    def release_epoch(self, max_epochs: int) -> int:
+        """The epoch the modules are let go at; ``max_epochs`` means the run ends first."""
+        if self._until <= 1:
+            return math.ceil(self._until * max_epochs)
+        return int(self._until)
 
-    def on_fit_start(self, trainer: L.Trainer, pl_module: L.LightningModule) -> None:
-        self._unfreeze_epoch = self._resolve_epoch(trainer.max_epochs or 0)
-        super().on_fit_start(trainer, pl_module)
-
-    def _resolve_epoch(self, max_epochs: int) -> int | None:
-        if self._unfreeze_at == -1 or max_epochs <= 0:
-            return None
-        if isinstance(self._unfreeze_at, float):
-            return int(max_epochs * self._unfreeze_at)
-        return int(self._unfreeze_at)
-
-    # -------------------------------------------- BaseFinetuning interface
-
+    @override
     def freeze_before_training(self, pl_module: L.LightningModule) -> None:
-        for path in self._targets:
-            module = self._resolve(pl_module, path)
-            self.freeze(module, train_bn=self._train_bn)
-        log.info("Frozen: %s — will unfreeze at epoch %s.", self._targets, self._unfreeze_epoch)
+        for path in self._modules:
+            self.freeze(self._resolve(pl_module, path), train_bn=self._train_bn)
 
-    def finetune_function(self, pl_module: L.LightningModule, current_epoch: int, optimizer: Any) -> None:
-        if self._unfreeze_epoch is None or current_epoch < self._unfreeze_epoch:
+    @override
+    def on_fit_start(self, trainer: L.Trainer, pl_module: L.LightningModule) -> None:
+        """Announce the hold here rather than where it happens, and only for a fit.
+
+        ``BaseFinetuning`` freezes from ``setup``, which Lightning calls once per
+        stage — so announcing it there printed "frozen until ..." again as the test
+        pass began, about a run that had already finished training.
+        """
+        super().on_fit_start(trainer, pl_module)
+        release = self.release_epoch(int(trainer.max_epochs or 0))
+        log.info("Frozen until %s: %s", at_epoch(trainer, release), ", ".join(self._modules))
+
+    @override
+    def finetune_function(self, pl_module: L.LightningModule, epoch: int, optimizer: Optimizer) -> None:
+        if epoch != self.release_epoch(int(pl_module.trainer.max_epochs or 0)):
             return
-        for path in self._targets:
-            module = self._resolve(pl_module, path)
-            self.unfreeze_and_add_param_group(module, optimizer)
-        self._unfreeze_epoch = None
-        log.info("Unfrozen: %s.", self._targets)
-
-    # ---------------------------------------------------------------- utils
+        for path in self._modules:
+            self.unfreeze_and_add_param_group(self._resolve(pl_module, path), optimizer)
+        log.info("Unfrozen at %s: %s", at_epoch(pl_module.trainer, epoch), ", ".join(self._modules))
 
     @staticmethod
-    def _resolve(pl_module: L.LightningModule, path: str) -> Any:
-        try:
-            return pl_module.get_submodule(path)
-        except AttributeError as error:
-            raise ValueError(f"Cannot resolve module path '{path}' on {type(pl_module).__name__}.") from error
+    def _resolve(root: Any, path: str) -> nn.Module:
+        """The sub-module a dot-path names, or a message saying what was there instead."""
+        current = root
+        for step in path.split("."):
+            try:
+                current = getattr(current, step)
+            except AttributeError:
+                available = ", ".join(name for name, _ in current.named_children()) or "none"
+                raise LookupError(
+                    f"Freeze cannot find '{path}': '{step}' is not a module of "
+                    f"{type(current).__name__}. Available: {available}."
+                ) from None
+        found: nn.Module = current
+        return found

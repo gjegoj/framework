@@ -1,4 +1,3 @@
+# Epoch-clocked: one cosine arc over the whole run.
 name: cosine
-interval: epoch
-T_max: ${epochs}
-eta_min: 1.0e-6
+T_max: "${epochs}"

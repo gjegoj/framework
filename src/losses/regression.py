@@ -1,97 +1,159 @@
-"""Regression criteria: MSE/L1 on raw outputs, and expectation regression over bins."""
+"""Regression criteria."""
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any, ClassVar, override
 
 import torch
-from torch import Tensor, nn
+from torch import nn
 
-from src.core.entities import LossResult
+from src.core.entities import Loss
 from src.core.ports import Criterion
-from src.losses.base import SingleTermCriterion
-from src.losses.registry import criteria
+from src.losses.base import WrappedCriterion
+from src.losses.registry import criterion_registry
+
+if TYPE_CHECKING:
+    from torch import Tensor
 
 
-@criteria.register("mse")
-class MSECriterion(SingleTermCriterion):
-    """Mean squared error on raw outputs vs float targets.
+class _RegressionCriterion(WrappedCriterion):
+    """Shared shape handling: a single-output head against channel-free targets.
 
-    Parameters:
-        **kwargs: Forwarded verbatim to ``nn.MSELoss`` (``reduction``, ...).
+    ``[B, 1]`` outputs vs ``[B]``, or dense ``[B, 1, H, W]`` vs ``[B, H, W]`` —
+    the channel is squeezed so a silent broadcast cannot happen; matching
+    shapes pass through.
     """
 
-    component_name = "mse"
+    @override
+    def _prepare(self, logits: Tensor, target: Tensor) -> tuple[Tensor, Tensor]:
+        if logits.dim() == target.dim() + 1:
+            logits = logits.squeeze(1)  # The channel dim: [B, 1] and [B, 1, H, W] alike.
+        return logits, target
+
+
+@criterion_registry.register("mse")
+class MeanSquaredErrorCriterion(_RegressionCriterion):
+    """Mean squared error on raw outputs.
+
+    Parameters:
+        **kwargs: Forwarded verbatim to ``nn.MSELoss``.
+    """
+
+    part_name: ClassVar[str] = "mse"
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(nn.MSELoss(**kwargs))
 
 
-@criteria.register("l1")
-class L1Criterion(SingleTermCriterion):
-    """Mean absolute error on raw outputs vs float targets.
+@criterion_registry.register("mae")
+class MeanAbsoluteErrorCriterion(_RegressionCriterion):
+    """Mean absolute error (torch's ``L1Loss``) on raw outputs.
+
+    The outlier-tolerant sibling of ``mse``: an error counts once, not squared.
 
     Parameters:
-        **kwargs: Forwarded verbatim to ``nn.L1Loss`` (``reduction``, ...).
+        **kwargs: Forwarded verbatim to ``nn.L1Loss``.
     """
 
-    component_name = "l1"
+    part_name: ClassVar[str] = "mae"
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(nn.L1Loss(**kwargs))
 
 
-_DISTRIBUTION_MEAN_KINDS: dict[str, type[nn.Module]] = {"l1": nn.L1Loss, "huber": nn.HuberLoss}
+@criterion_registry.register("huber")
+class HuberCriterion(_RegressionCriterion):
+    """Huber loss on raw outputs: quadratic near zero, linear past ``delta``.
 
-
-@criteria.register("distribution_mean")
-class DistributionMeanCriterion(Criterion):
-    """Regression on the mean of a binned label distribution (LDL / DFL-style).
-
-    Both prediction and target are distributions over the same bins: the prediction's
-    expectation ``softmax(logits) · bin_centers`` is regressed onto the target
-    distribution's expectation with an L1 or Huber loss. Combine with soft-label
-    cross-entropy via ``weighted_sum`` (both terms share the same logits/target) —
-    the composite loss for distributional regression on one head.
+    The compromise between ``mse`` and ``mae`` — precise on small errors, calm
+    about outliers.
 
     Parameters:
-        bin_centers (list[float] | None): Explicit bin centers (one per class).
-        bin_edges (list[float] | None): Bin boundaries; centers become the midpoints —
-            paste the same list as the ``gaussian_bins`` encoder's. Exactly one of
-            ``bin_centers``/``bin_edges`` is required.
-        kind (str): Inner loss — ``l1`` (default) or ``huber``.
-        **kwargs: Forwarded verbatim to the inner torch loss (e.g. Huber ``delta``).
+        **kwargs: Forwarded verbatim to ``nn.HuberLoss`` (``delta``, ...).
     """
 
-    def __init__(
-        self,
-        bin_centers: list[float] | None = None,
-        bin_edges: list[float] | None = None,
-        kind: str = "l1",
-        **kwargs: Any,
-    ) -> None:
-        super().__init__()
-        if (bin_centers is None) == (bin_edges is None):
-            raise ValueError("distribution_mean needs exactly one of 'bin_centers' or 'bin_edges'.")
-        if kind not in _DISTRIBUTION_MEAN_KINDS:
-            raise ValueError(f"distribution_mean kind must be one of {sorted(_DISTRIBUTION_MEAN_KINDS)}, got {kind!r}.")
-        if bin_centers is not None:
-            centers = torch.as_tensor(bin_centers, dtype=torch.float)
-        else:
-            edges = torch.as_tensor(bin_edges, dtype=torch.float)
-            centers = (edges[:-1] + edges[1:]) / 2.0
-        # Non-persistent buffer: follows device moves without entering the state_dict.
-        self.register_buffer("bin_centers", centers, persistent=False)
-        self.bin_centers: Tensor
-        self._loss = _DISTRIBUTION_MEAN_KINDS[kind](**kwargs)
+    part_name: ClassVar[str] = "huber"
 
-    def forward(self, logits: Tensor, target: Tensor) -> LossResult:
-        if logits.shape[-1] != self.bin_centers.numel():
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(nn.HuberLoss(**kwargs))
+
+
+@criterion_registry.register("smooth_l1")
+class SmoothL1Criterion(_RegressionCriterion):
+    """Smooth L1 on raw outputs: Huber's shape, scaled inside ``beta``.
+
+    Identical to ``huber`` at ``beta == delta == 1``; they diverge in how the
+    quadratic zone is scaled — torch keeps both, and so do we, because papers
+    cite them by these exact names (detection heads say Smooth L1).
+
+    Parameters:
+        **kwargs: Forwarded verbatim to ``nn.SmoothL1Loss`` (``beta``, ...).
+    """
+
+    part_name: ClassVar[str] = "smooth_l1"
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(nn.SmoothL1Loss(**kwargs))
+
+
+@criterion_registry.register("expectation")
+class ExpectationCriterion(Criterion):
+    """Regression on the expectation of a distribution over ordered classes.
+
+    Both sides are reduced to one number — ``softmax(logits) · class_values``
+    against the same weighting of the target — and compared by an ordinary
+    regression criterion. It is the companion of cross-entropy for binned
+    targets, not a replacement: cross-entropy shapes the whole distribution but
+    saturates once a prediction stops overlapping the target, while this term
+    keeps a signal proportional to how far the reported number actually is.
+    Alone it is just as insufficient — any distribution with the right mean
+    satisfies it.
+
+    ``class_values`` is never written by hand: the target encoder that laid out
+    the bins reports them, and assembly passes them through as a derived value.
+
+    Two numbers can be compared in more than one way, so ``distance`` is a
+    criterion slot — absolute error by default, Huber when outliers should not
+    dominate::
+
+        loss:
+          - {name: cross_entropy}
+          - name: expectation
+            weight: 0.5
+            distance: {_target_: src.losses.HuberCriterion, delta: 0.1}
+
+    Whichever distance compares the numbers, the term logs as ``expectation``:
+    that is its identity in a composite, and the metric inside is its detail.
+
+    Parameters:
+        class_values (list[float]): The number each class position stands for.
+        distance (Criterion | None): How the two numbers are compared;
+            ``None`` builds the default ``mae`` from the remaining arguments.
+        **kwargs: Forwarded verbatim to the default ``mae``.
+    """
+
+    part_name: ClassVar[str] = "expectation"
+
+    def __init__(self, class_values: list[float], distance: Criterion | None = None, **kwargs: Any) -> None:
+        super().__init__()
+        if distance is not None and kwargs:
             raise ValueError(
-                f"distribution_mean has {self.bin_centers.numel()} bin centers but got logits with "
-                f"{logits.shape[-1]} classes — the bins must match the head."
+                f"expectation takes either a 'distance' criterion or arguments for the default mae, "
+                f"not both; declare {sorted(kwargs)} on the module itself."
             )
-        predicted_mean = (logits.softmax(dim=-1) * self.bin_centers).sum(dim=-1)
-        target_mean = (target * self.bin_centers).sum(dim=-1)
-        value: Tensor = self._loss(predicted_mean, target_mean)
-        return LossResult(total=value, components={"distribution_mean": value})
+        self._distance = distance if distance is not None else MeanAbsoluteErrorCriterion(**kwargs)
+        values = torch.as_tensor(class_values, dtype=torch.float)
+        # Non-persistent: the values belong to the data, not to the trained weights,
+        # so they follow device moves without entering the checkpoint.
+        self.register_buffer("class_values", values, persistent=False)
+        self.class_values: Tensor
+
+    def forward(self, logits: Tensor, target: Tensor) -> Loss:
+        if logits.shape[-1] != self.class_values.numel():
+            raise ValueError(
+                f"expectation has {self.class_values.numel()} class values but the head produced "
+                f"{logits.shape[-1]} outputs; the bins and the head must agree."
+            )
+        prediction = logits.softmax(dim=-1) @ self.class_values
+        wanted = target.float() @ self.class_values
+        return Loss.part(self.part_name, self._distance(prediction, wanted).total)

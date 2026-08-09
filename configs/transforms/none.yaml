@@ -1,0 +1,5 @@
+# @package _global_
+# No pipeline of ours. What a vendor family needs, since it augments through its own
+# box-aware one and refuses ours rather than ignoring it — and what a run over
+# already-tensor inputs (precomputed embeddings) needs for the same reason.
+transforms: null

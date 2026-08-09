@@ -1,7 +1,7 @@
+# Step-clocked: `total_steps` is derived from the fit, and the schedule must be
+# stepped on the same clock it was sized for — hence `interval: step`.
 name: onecycle
-interval: step
 max_lr: ${lr}
+interval: step
 pct_start: 0.05
 final_div_factor: 2
-runtime_kwargs:
-  total_steps: total_steps

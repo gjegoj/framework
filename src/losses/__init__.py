@@ -1,43 +1,43 @@
-"""Losses: criterion bricks behind the ``Criterion`` port.
+"""The losses capability: implementations of the core ``Criterion`` port, by task family."""
 
-Importing this package registers every built-in criterion in the ``criteria``
-registry, so ``import src.losses`` is enough. One module per loss family:
-``classification`` (cross-entropy / BCE / focal), ``regression`` (MSE / L1),
-``segmentation`` (Dice), ``composite`` (weighted sum), ``distillation`` (KL vs
-teacher logits), and the metric-learning families ``angular`` (ArcFace),
-``contrastive`` (InfoNCE / SigLIP), ``ranking`` (triplet / margin-ranking).
-``base.SingleTermCriterion`` is the extension point for wrapping any single loss module.
-"""
+from __future__ import annotations
 
 from src.losses.angular import ArcFaceCriterion, ProxyAngularCriterion
-from src.losses.base import SingleTermCriterion
-from src.losses.classification import BCECriterion, CrossEntropyCriterion, FocalCriterion, FocalLoss
+from src.losses.base import WrappedCriterion
+from src.losses.classification import BinaryCrossEntropyCriterion, CrossEntropyCriterion, FocalCriterion
 from src.losses.composite import WeightedSumCriterion
-from src.losses.contrastive import InfoNCECriterion, PairedStreamCriterion, SigLIPCriterion
+from src.losses.contrastive import InfoNceCriterion, SigLipCriterion, TripletCriterion
 from src.losses.distillation import KLDivergenceCriterion
-from src.losses.ranking import MarginRankingCriterion, RankNetCriterion, TripletMarginCriterion
-from src.losses.registry import criteria
-from src.losses.regression import L1Criterion, MSECriterion
-from src.losses.segmentation import DiceCriterion
+from src.losses.ranking import MarginRankingCriterion, RankNetCriterion
+from src.losses.regression import (
+    ExpectationCriterion,
+    HuberCriterion,
+    MeanAbsoluteErrorCriterion,
+    MeanSquaredErrorCriterion,
+    SmoothL1Criterion,
+)
+from src.losses.segmentation import DiceCriterion, IoUCriterion, TverskyCriterion
 
 __all__ = [
     "ArcFaceCriterion",
-    "BCECriterion",
+    "BinaryCrossEntropyCriterion",
     "CrossEntropyCriterion",
     "DiceCriterion",
+    "ExpectationCriterion",
     "FocalCriterion",
-    "FocalLoss",
-    "InfoNCECriterion",
+    "HuberCriterion",
+    "InfoNceCriterion",
+    "IoUCriterion",
     "KLDivergenceCriterion",
-    "L1Criterion",
-    "MSECriterion",
     "MarginRankingCriterion",
-    "PairedStreamCriterion",
+    "MeanAbsoluteErrorCriterion",
+    "MeanSquaredErrorCriterion",
     "ProxyAngularCriterion",
     "RankNetCriterion",
-    "SigLIPCriterion",
-    "SingleTermCriterion",
-    "TripletMarginCriterion",
+    "SigLipCriterion",
+    "SmoothL1Criterion",
+    "TripletCriterion",
+    "TverskyCriterion",
     "WeightedSumCriterion",
-    "criteria",
+    "WrappedCriterion",
 ]

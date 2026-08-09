@@ -1,211 +1,314 @@
-"""Dataset splitting utilities.
-
-Supports random and stratified splits. When ``stratify_column`` is given the
-strategy is auto-detected from the column values:
-
-- categorical strings (no commas) — ``sklearn.train_test_split`` with stratify
-- numeric values — quantile-binned stratification
-- comma-separated strings — ``IterativeStratification`` from scikit-multilearn
-
-Three-way splits (train / val / test) execute two sequential binary splits so
-every stage gets a representative label distribution.
-"""
+"""Stage splitting: one annotation table in, one table per stage out."""
 
 from __future__ import annotations
 
-from typing import Literal
+import logging
+import math
+from collections.abc import Callable, Mapping
+from typing import Any
 
 import numpy as np
 import pandas as pd
 from sklearn.model_selection import train_test_split
 from skmultilearn.model_selection import IterativeStratification
 
-from src.core.enums import Stage
+from src.core.taxonomy import Stage
+from src.data.sources import Table
 
-_STAGE_ORDER = (Stage.TRAIN, Stage.VAL, Stage.TEST)
+log = logging.getLogger(__name__)
 
-_Strategy = Literal["categorical", "numeric", "multilabel"]
+type Splitter = Callable[[Table], dict[Stage, Table]]
+"""Splits the full annotation table into per-stage tables."""
 
 
-def split_dataframe(
-    frame: pd.DataFrame,
-    ratios: dict[Stage, float],
-    seed: int,
-    stratify_column: str | None = None,
-) -> dict[Stage, pd.DataFrame]:
-    """Shuffle and split ``frame`` into per-stage frames by ``ratios``.
+def random_split(fractions: Mapping[Stage, float], seed: int) -> Splitter:
+    """Build a splitter that shuffles rows and cuts them by ``fractions``.
 
-    When ``stratify_column`` is given the split is stratified; the strategy is
-    auto-detected from the column values. Without it a plain random split is
-    performed. The last present stage absorbs the remainder so rounding never
-    drops samples.
+    Fractions must sum to 1. Cut sizes are floored, and the last stage absorbs
+    the rounding remainder, so every row lands in exactly one stage.
 
     Parameters:
-        frame (pd.DataFrame): Full dataset.
-        ratios (dict[Stage, float]): Per-stage ratios (must sum to ~1.0).
-        seed (int): Shuffle seed for reproducibility.
-        stratify_column (str | None): Column to stratify by. ``None`` → random.
-
-    Returns:
-        dict[Stage, pd.DataFrame]: Per-stage frames with reset indices.
+        fractions (Mapping[Stage, float]): Per-stage share of rows, summing to 1.
+        seed (int): Shuffle seed; the same seed always yields the same split.
     """
-    if stratify_column is not None:
-        return _stratified_split(frame, ratios, seed, stratify_column)
-    return _random_split(frame, ratios, seed)
+    _validate_fractions(fractions, caller="random_split")
+
+    def split(table: Table) -> dict[Stage, Table]:
+        shuffled = table.sample(frac=1, random_state=seed).reset_index(drop=True)
+        parts: dict[Stage, Table] = {}
+        stages = list(fractions)
+        start = 0
+        for position, stage in enumerate(stages):
+            is_last = position == len(stages) - 1
+            end = len(shuffled) if is_last else start + int(len(shuffled) * fractions[stage])
+            parts[stage] = shuffled.iloc[start:end].reset_index(drop=True)
+            start = end
+        return parts
+
+    return split
 
 
-# ------------------------------------------------------------------ random
-
-
-def _random_split(frame: pd.DataFrame, ratios: dict[Stage, float], seed: int) -> dict[Stage, pd.DataFrame]:
-    shuffled = frame.sample(frac=1.0, random_state=seed).reset_index(drop=True)
-    total = len(shuffled)
-    stages = [stage for stage in _STAGE_ORDER if stage in ratios]
-
-    result: dict[Stage, pd.DataFrame] = {}
-    cursor = 0
-    for i, stage in enumerate(stages):
-        if i == len(stages) - 1:
-            part = shuffled.iloc[cursor:]
-        else:
-            count = round(ratios[stage] * total)
-            part = shuffled.iloc[cursor : cursor + count]
-            cursor += count
-        result[stage] = part.reset_index(drop=True)
-    return result
-
-
-# ------------------------------------------------------------------ stratified
-
-
-def _detect_strategy(series: pd.Series) -> _Strategy:
-    if pd.api.types.is_numeric_dtype(series):
-        return "numeric"
-    if series.dropna().astype(str).str.contains(",").any():
-        return "multilabel"
-    return "categorical"
-
-
-def _stratified_split(
-    frame: pd.DataFrame,
-    ratios: dict[Stage, float],
+def stratified_split(
+    fractions: Mapping[Stage, float],
+    by: str,
     seed: int,
-    stratify_column: str,
-) -> dict[Stage, pd.DataFrame]:
-    if stratify_column not in frame.columns:
-        raise ValueError(f"stratify_column {stratify_column!r} not found in the dataset.")
+    bins: int = 10,
+    separator: str = ",",
+) -> Splitter:
+    """Build a splitter that gives every stage the same distribution of ``by``.
 
-    strategy = _detect_strategy(frame[stratify_column])
-    stages = [stage for stage in _STAGE_ORDER if stage in ratios]
+    A plain random split leaves stage composition to chance: with an imbalanced
+    target, a small validation set can end up with too few — or zero — rows of the
+    rare class, and its metrics then say more about the draw than about the model.
 
-    if len(stages) == 1:
-        return {stages[0]: frame.reset_index(drop=True)}
+    How a row is grouped follows from the column's *content*, not its dtype:
+    values that repeat (class labels, whether stored as text or as integers) group
+    by the value itself, while a numeric column with more distinct values than
+    ``bins`` groups by quantile. Deciding on dtype instead would quantile-bin
+    integer class labels and collapse an imbalanced 0/1 target into one bin,
+    degrading the split to a random one without any error.
 
-    train_size = ratios[Stage.TRAIN]
-    remainder_size = 1.0 - train_size
+    Cells carrying several labels at once ("cat,dog", or a list) are balanced one
+    label at a time by iterative stratification: past a handful of labels their
+    combinations are nearly unique, and holding combinations proportional would
+    leave almost every row unsplittable.
 
-    train_frame, remainder_frame = _binary_split(frame, train_size, seed, strategy, stratify_column)
+    Values too rare to spread across stages join the earliest stage that claims
+    them, so long-tail data stays usable instead of failing the run.
 
-    non_train_stages = [stage for stage in stages if stage != Stage.TRAIN]
-    if len(non_train_stages) == 1:
-        return {
-            Stage.TRAIN: train_frame.reset_index(drop=True),
-            non_train_stages[0]: remainder_frame.reset_index(drop=True),
-        }
+    Parameters:
+        fractions (Mapping[Stage, float]): Per-stage share of rows, summing to 1.
+        by (str): Column whose distribution is held equal across stages.
+        seed (int): Split seed; the same seed always yields the same split.
+        bins (int): Quantile count used for continuous columns.
+        separator (str): Separator splitting a multi-label cell into labels.
+    """
+    _validate_fractions(fractions, caller="stratified_split")
+    if bins < 2:
+        raise ValueError(f"stratified_split needs at least 2 bins, got {bins}.")
 
-    val_size_in_remainder = ratios[Stage.VAL] / remainder_size if remainder_size > 0 else 0.5
-    val_frame, test_frame = _binary_split(remainder_frame, val_size_in_remainder, seed, strategy, stratify_column)
+    def split(table: Table) -> dict[Stage, Table]:
+        rows = _rows_with_column(table, by, purpose="stratify")
+        indicators = _label_indicators(rows[by], separator)
+        if indicators is not None:
 
-    return {
-        Stage.TRAIN: train_frame.reset_index(drop=True),
-        Stage.VAL: val_frame.reset_index(drop=True),
-        Stage.TEST: test_frame.reset_index(drop=True),
-    }
+            def take_iterative(frame: Table, share: float) -> tuple[Table, Table]:
+                return _take_iterative(frame, indicators.loc[frame.index], share, seed)
 
+            return _divide(rows, fractions, take_iterative)
 
-def _binary_split(
-    frame: pd.DataFrame,
-    left_size: float,
-    seed: int,
-    strategy: _Strategy,
-    stratify_column: str,
-) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Split ``frame`` into two parts; ``left_size`` is the fraction for the first."""
-    if left_size <= 0.0:
-        return pd.DataFrame(columns=frame.columns), frame.copy()
-    if left_size >= 1.0:
-        return frame.copy(), pd.DataFrame(columns=frame.columns)
+        strata = _strata(rows[by], bins)
 
-    if strategy == "multilabel":
-        return _multilabel_split(frame, left_size, seed, stratify_column)
-    if strategy == "numeric":
-        return _numeric_split(frame, left_size, seed, stratify_column)
-    return _categorical_split(frame, left_size, seed, stratify_column)
+        def take(frame: Table, share: float) -> tuple[Table, Table]:
+            return _take_stratified(frame, strata.loc[frame.index], share, seed, by)
+
+        return _divide(rows, fractions, take)
+
+    return split
 
 
-def _categorical_split(
-    frame: pd.DataFrame,
-    left_size: float,
-    seed: int,
-    stratify_column: str,
-) -> tuple[pd.DataFrame, pd.DataFrame]:
-    left, right = train_test_split(
-        frame,
-        train_size=left_size,
-        random_state=seed,
-        stratify=frame[stratify_column],
+def group_split(fractions: Mapping[Stage, float], by: str, seed: int) -> Splitter:
+    """Build a splitter that keeps rows sharing a value of ``by`` in one stage.
+
+    Rows are often not independent: several scans of one patient, frames of one
+    video, crops of one image. A row-wise split scatters such a family across
+    stages, and the model then meets in test what it already memorised in train —
+    the metric measures recall of a specific patient, not generalisation.
+
+    Whole groups move together, so stage sizes approximate the fractions instead
+    of matching them exactly; that slack is inherent to keeping groups intact.
+    The fractions still count *rows*, as they do everywhere else here — which is
+    why sklearn's ``GroupShuffleSplit`` is not used: its ``train_size`` is a share
+    of groups, so with groups of unequal size (the ordinary case, patients
+    contributing different numbers of scans) asking for 0.6 can hand over a fifth
+    of the data.
+
+    Parameters:
+        fractions (Mapping[Stage, float]): Per-stage share of rows, summing to 1.
+        by (str): Column identifying the group a row belongs to.
+        seed (int): Split seed; the same seed always yields the same split.
+    """
+    _validate_fractions(fractions, caller="group_split")
+
+    def split(table: Table) -> dict[Stage, Table]:
+        rows = _rows_with_column(table, by, purpose="group")
+        sizes = rows.groupby(by, sort=False).size().sample(frac=1, random_state=seed)
+        log.info("Splitting by whole groups: %d distinct values of '%s'.", len(sizes), by)
+
+        targets = {stage: fraction * len(rows) for stage, fraction in fractions.items()}
+        members: dict[Stage, list[Any]] = {stage: [] for stage in fractions}
+        filled = dict.fromkeys(fractions, 0)
+        for group, size in sizes.items():
+            # Every stage is served at once rather than peeled off one by one: filling train
+            # first lets it take the groups a later stage needed and leaves that stage empty.
+            stage = max(fractions, key=lambda candidate: targets[candidate] - filled[candidate])
+            members[stage].append(group)
+            filled[stage] += int(size)
+
+        parts = {stage: rows[rows[by].isin(groups)].reset_index(drop=True) for stage, groups in members.items()}
+        if empty := [str(stage) for stage, part in parts.items() if part.empty]:
+            raise ValueError(
+                f"The split left {', '.join(empty)} without a single row: whole groups move "
+                f"together, and '{by}' has only {len(sizes)} of them. Use a finer grouping column, "
+                f"or drop 'group_by' if the rows are independent."
+            )
+        return parts
+
+    return split
+
+
+def _rows_with_column(table: Table, column: str, purpose: str) -> Table:
+    """The table re-indexed for positional work, once the column it is split by exists."""
+    if column not in table.columns:
+        raise KeyError(
+            f"Cannot {purpose} by '{column}': the annotation table has no such column. "
+            f"Available columns: {sorted(map(str, table.columns))}."
+        )
+    return table.reset_index(drop=True)
+
+
+def _divide(
+    rows: Table,
+    fractions: Mapping[Stage, float],
+    take: Callable[[Table, float], tuple[Table, Table]],
+) -> dict[Stage, Table]:
+    """Peel one stage at a time off the rows that are left, ``take`` deciding which ones."""
+    parts: dict[Stage, Table] = {}
+    stages = list(fractions)
+    remaining, remaining_share = rows, 1.0
+    for stage in stages[:-1]:
+        taken, remaining = take(remaining, fractions[stage] / remaining_share)
+        parts[stage] = taken.reset_index(drop=True)
+        remaining_share -= fractions[stage]
+    parts[stages[-1]] = remaining.reset_index(drop=True)
+
+    if empty := [str(stage) for stage, part in parts.items() if part.empty]:
+        raise ValueError(
+            f"The split left {', '.join(empty)} without a single row, so those stages would report "
+            f"nothing. {len(rows)} rows do not stretch across the requested fractions."
+        )
+    return parts
+
+
+def _validate_fractions(fractions: Mapping[Stage, float], caller: str) -> None:
+    if not fractions:
+        raise ValueError(f"{caller} needs a non-empty fractions mapping.")
+    total = sum(fractions.values())
+    if not math.isclose(total, 1.0, abs_tol=1e-6):
+        raise ValueError(f"Fractions must sum to 1, got {total}.")
+
+
+def _label_indicators(column: pd.Series, separator: str) -> Table | None:
+    """The ``[rows, labels]`` indicator frame when cells carry several labels, else ``None``.
+
+    ``None`` means one label per row at most, where balancing the values
+    themselves is exact and no approximation is called for.
+    """
+    parsed = [_labels_in(value, separator) for value in column]
+    if all(len(labels) <= 1 for labels in parsed):
+        return None
+    vocabulary = sorted({label for labels in parsed for label in labels})
+    log.info(
+        "Stratifying '%s' by %d labels carried across rows (iterative stratification).",
+        column.name,
+        len(vocabulary),
     )
-    return left, right
+    return pd.DataFrame(
+        {label: [label in labels for labels in parsed] for label in vocabulary},
+        index=column.index,
+        dtype=int,
+    )
 
 
-def _numeric_split(
-    frame: pd.DataFrame,
-    left_size: float,
-    seed: int,
-    stratify_column: str,
-) -> tuple[pd.DataFrame, pd.DataFrame]:
-    bins = pd.qcut(frame[stratify_column], q=min(5, len(frame) // 2), labels=False, duplicates="drop")
-    left, right = train_test_split(frame, train_size=left_size, random_state=seed, stratify=bins)
-    return left, right
+def _labels_in(value: Any, separator: str) -> set[str]:
+    """The labels one cell carries, in either of the two forms a table stores them."""
+    if isinstance(value, list | tuple | set):
+        return {str(item).strip() for item in value if str(item).strip()}
+    if value is None or (isinstance(value, float) and math.isnan(value)):
+        return set()
+    return {part.strip() for part in str(value).split(separator) if part.strip()}
 
 
-def _multilabel_split(
-    frame: pd.DataFrame,
-    left_size: float,
-    seed: int,
-    stratify_column: str,
-) -> tuple[pd.DataFrame, pd.DataFrame]:
-    labels = _to_multihot(frame[stratify_column])
-    # IterativeStratification draws from numpy's *global* RNG. Seed it for a reproducible
-    # split, but snapshot and restore the prior global state so we don't perturb any other
-    # caller that relies on numpy's global RNG (a hidden side effect otherwise).
+def _take_iterative(rows: Table, indicators: Table, share: float, seed: int) -> tuple[Table, Table]:
+    """Take ``share`` of ``rows`` while holding every label's rate steady, not every combination's.
+
+    With more than a handful of labels their combinations are nearly unique, so
+    treating a combination as a class leaves almost every row unsplittable.
+    Iterative stratification balances one label at a time instead, rarest first.
+    """
+    if share <= 0.0:
+        return rows.iloc[:0], rows
+    if share >= 1.0:
+        return rows, rows.iloc[:0]
+
+    # IterativeStratification takes no random_state and draws from numpy's global RNG.
+    # Seed it for a reproducible split, then hand the caller's state back: borrowing
+    # global randomness must leave no trace on the rest of the run.
     state = np.random.get_state()
     np.random.seed(seed)
     try:
         stratifier = IterativeStratification(
             n_splits=2,
             order=2,
-            sample_distribution_per_fold=[1.0 - left_size, left_size],
+            sample_distribution_per_fold=[1.0 - share, share],
         )
-        left_indices, right_indices = next(stratifier.split(np.arange(len(frame)).reshape(-1, 1), labels))
+        taken, rest = next(stratifier.split(np.zeros((len(rows), 1)), indicators.to_numpy()))
     finally:
         np.random.set_state(state)
-    return frame.iloc[left_indices], frame.iloc[right_indices]
+    return rows.iloc[taken], rows.iloc[rest]
 
 
-def _to_multihot(series: pd.Series) -> np.ndarray:
-    """Convert comma-separated label strings to a ``[N, C]`` multi-hot array."""
-    parsed: list[set[str]] = []
-    vocab: set[str] = set()
-    for value in series:
-        labels = {part.strip() for part in str(value).split(",") if part.strip()} if pd.notna(value) else set()
-        parsed.append(labels)
-        vocab.update(labels)
+def _strata(column: pd.Series, bins: int) -> pd.Series:
+    """The group each row is balanced within: its own value, or its quantile bin."""
+    distinct = column.nunique(dropna=False)
+    if pd.api.types.is_numeric_dtype(column) and distinct > bins:
+        quantiles = min(bins, max(2, len(column) // 2))
+        binned = pd.qcut(column, q=quantiles, labels=False, duplicates="drop")
+        log.info(
+            "Stratifying by %d quantile bins of '%s' (%d distinct values, treated as continuous).",
+            int(binned.nunique()),
+            column.name,
+            distinct,
+        )
+        return binned.astype(str)
+    log.info("Stratifying by the %d distinct values of '%s' (treated as classes).", distinct, column.name)
+    return column.astype(str)
 
-    ordered = sorted(vocab)
-    label_to_column = {label: column for column, label in enumerate(ordered)}
-    matrix = np.zeros((len(series), len(ordered)), dtype=int)
-    for row, labels in enumerate(parsed):
-        for label in labels:
-            matrix[row, label_to_column[label]] = 1
-    return matrix
+
+def _take_stratified(rows: Table, strata: pd.Series, share: float, seed: int, column: str) -> tuple[Table, Table]:
+    """Take ``share`` of ``rows`` while keeping every stratum's proportion intact."""
+    if share <= 0.0:
+        return rows.iloc[:0], rows
+    if share >= 1.0:
+        return rows, rows.iloc[:0]
+
+    counts = strata.value_counts()
+    unsplittable = strata.isin(counts[counts < 2].index)
+    if unsplittable.any():
+        log.info(
+            "%d row(s) hold a value of '%s' that occurs once in the rows left to split; "
+            "a single row cannot be spread across stages, so they join this stage.",
+            int(unsplittable.sum()),
+            column,
+        )
+    kept, splittable = rows[unsplittable], rows[~unsplittable]
+    if splittable.empty:
+        return kept, splittable
+
+    wanted = max(0, round(share * len(rows)) - len(kept))
+    adjusted = min(max(wanted / len(splittable), 1e-9), 1.0 - 1e-9)
+    try:
+        taken, rest = train_test_split(
+            splittable,
+            train_size=adjusted,
+            random_state=seed,
+            stratify=strata.loc[splittable.index],
+        )
+    except ValueError as error:
+        raise ValueError(
+            f"Cannot stratify by '{column}': every stage needs at least one row of each of its "
+            f"{strata.nunique()} distinct values, and {len(rows)} rows do not stretch that far "
+            f"(pandas: {error}). Use a coarser column, merge rare values, or drop 'stratify_by' "
+            f"to fall back on random_split."
+        ) from error
+    return pd.concat([kept, taken]), rest

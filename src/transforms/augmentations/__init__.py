@@ -1,18 +1,8 @@
-"""Custom per-sample Albumentations augmentations (plugged into a Compose via ``_target_``).
+"""Augmentations that create supervision as well as perturbing an image."""
 
-Each augmentation is a standalone albumentations transform living in its own module;
-``LabelAwareDualTransform`` (``base``) is the shared base for those that also rewrite a discrete
-label. Importing names from here is a convenience — configs reference the concrete module path
-(e.g. ``src.transforms.augmentations.rotate.Rotate90WithLabel``) directly.
-"""
+from __future__ import annotations
 
-from src.transforms.augmentations.base import LabelAwareDualTransform, LabelAwareMixin
-from src.transforms.augmentations.border_crop import RandomBorderCropWithLabel
-from src.transforms.augmentations.rotate import Rotate90WithLabel
+from src.transforms.augmentations.border_crop import SIDES, RandomBorderCrop
+from src.transforms.augmentations.rotate import QUARTER_TURNS, Rotate90
 
-__all__ = [
-    "LabelAwareDualTransform",
-    "LabelAwareMixin",
-    "RandomBorderCropWithLabel",
-    "Rotate90WithLabel",
-]
+__all__ = ["QUARTER_TURNS", "SIDES", "RandomBorderCrop", "Rotate90"]

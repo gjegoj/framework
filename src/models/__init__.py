@@ -1,28 +1,34 @@
-"""Models: backbone/head adapters and multi-head assembly.
+"""The models capability: implementations of the core ``Model`` port and its parts."""
 
-Importing this package registers the built-in backbones and heads so they are
-available by key in the registries.
-"""
+from __future__ import annotations
 
-import src.models.backbones
-import src.models.heads  # noqa: F401 — importing registers the built-in heads
-from src.models.assembly import CompositeModel, build_composite_model
-from src.models.ensemble import TeacherEnsemble
-from src.models.lora import apply_lora, has_lora_layers, merge_lora
-from src.models.registry import backbones, head_builders
-from src.models.yolo import YoloModel, build_yolo_model, compute_detection_loss, decode_predictions
+from src.models.adapters import LoraAdapters, merge_adapters
+from src.models.backbones.hf import HFTextBackbone
+from src.models.backbones.multi import MultiEncoderBackbone, MultiViewBackbone
+from src.models.backbones.smp import SmpBackbone
+from src.models.backbones.timm import TimmBackbone
+from src.models.composite import CompositeModel, TaskComponents
+from src.models.distillation import DistilledModel, without_teachers
+from src.models.heads import ConvHead, CosineHead, ExpandedHead, IdentityHead, LinearHead, WrappedHead
+from src.models.yolo import YoloModel
 
 __all__ = [
     "CompositeModel",
-    "TeacherEnsemble",
+    "ConvHead",
+    "CosineHead",
+    "DistilledModel",
+    "ExpandedHead",
+    "HFTextBackbone",
+    "IdentityHead",
+    "LinearHead",
+    "LoraAdapters",
+    "MultiEncoderBackbone",
+    "MultiViewBackbone",
+    "SmpBackbone",
+    "TaskComponents",
+    "TimmBackbone",
+    "WrappedHead",
     "YoloModel",
-    "apply_lora",
-    "backbones",
-    "build_composite_model",
-    "build_yolo_model",
-    "compute_detection_loss",
-    "decode_predictions",
-    "has_lora_layers",
-    "head_builders",
-    "merge_lora",
+    "merge_adapters",
+    "without_teachers",
 ]

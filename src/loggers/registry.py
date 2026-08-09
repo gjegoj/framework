@@ -1,38 +1,18 @@
-"""Logger registry: maps ``LoggerConfig.kind`` to a Lightning Logger or ``False``.
-
-``False`` is Lightning's sentinel for "disable all logging" — pass it directly
-to ``Trainer(logger=False)``.
-
-Extension point (per the framework's "extension points are registries" rule):
-register a new backend with ``@logger_builders.register("kind")``; the dispatch
-lives in ``build_logger`` (composition wiring). Each builder takes the validated
-``ExperimentConfig`` so it can resolve context (project/task names) and import its
-adapter lazily — mirroring ``callback_builders`` in ``composition/wiring/callbacks.py``.
-"""
+"""Experiment-tracker backends by name."""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import lightning as L
-
 from src.core.registry import Registry
 
 if TYPE_CHECKING:
-    from src.config.schema import ExperimentConfig
+    from lightning.pytorch.loggers import Logger
 
-logger_builders: Registry[L.pytorch.loggers.Logger | bool] = Registry("logger")
+logger_registry: Registry[Logger] = Registry("logger")
+"""Lightning ``Logger`` subclasses by config-facing name.
 
-
-@logger_builders.register("none")
-def _build_none(config: ExperimentConfig) -> L.pytorch.loggers.Logger | bool:
-    return False
-
-
-@logger_builders.register("clearml")
-def _build_clearml(config: ExperimentConfig) -> L.pytorch.loggers.Logger | bool:
-    from src.loggers.clearml import ClearMLLogger
-
-    project = config.logger.project or config.project
-    task = config.logger.task or config.run_name
-    return ClearMLLogger(project_name=project, task_name=task, tags=config.logger.tags)
+Assembly builds the declared one through ``instantiate``, so every constructor knob is
+reachable from config. An adapter imports its third-party client lazily: a registered
+backend must not require its package until it is actually built.
+"""

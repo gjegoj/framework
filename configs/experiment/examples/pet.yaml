@@ -1,0 +1,34 @@
+# @package _global_
+# What every example on this page shares: the Oxford-IIIT Pet table and how to read it.
+#
+# Not runnable on its own — it declares no task, and a run without one is refused by
+# name. The examples beside it inherit from it with `defaults: [pet]` and add the one
+# thing each is about.
+#
+# The table comes from `scripts/prepare_pet.py`, or from `make test-run` which fetches it
+# for you. Its columns:
+#
+#   image_path   the picture                          (the model's input)
+#   species      cat / dog                            (global, 2 classes)
+#   breed        one of 37                            (global, 37 classes)
+#   mask_path    pet / background / boundary          (dense, 3 classes)
+#   random_age   noise, by that name                  (global, continuous)
+defaults:
+  - override /transforms: augmented
+  - override /callbacks: default
+
+lr: 3.0e-4
+epochs: 10
+batch_size: 32
+image_size: [224, 224]
+
+data:
+  source: data/pet/data.csv
+  inputs:
+    image: {column: image_path}
+  # Stratified so a rare class cannot land wholly in one stage. The paths inside the
+  # table are absolute, so no loader `root` is needed.
+  split: {train: 0.7, val: 0.15, test: 0.15, stratify_by: species}
+
+run:
+  project: pet

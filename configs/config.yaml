@@ -1,38 +1,37 @@
 defaults:
-  - hydra: default           # rich logging to terminal + file
+  - hydra: default         # run directory follows run.project/run.name
   - model: resnet18
+  - adapters: none       # swap to `lora` to train a low-rank delta instead of the backbone
+  - distillation: none     # swap to `kl` to train beside a frozen teacher
   - optimizer: adamw
-  - scheduler: none          # swap to cosine, onecycle, or plateau to enable
-  - dataloader: default      # swap to performance (GPU) or debug (num_workers=0)
+  - scheduler: none        # swap to cosine / onecycle / plateau / step
   - trainer: default
-  - logger: none             # swap to clearml (or other) to enable experiment tracking
-  - callbacks: none          # swap to default (lr_monitor + ema + checkpoint) or minimal
-  - transforms: default      # swap to augmented or your own transforms config
-  - export: torchscript             # swap to torchscript, tensorrt, or all
-  - distillation: none       # swap to kl to distill from frozen teacher checkpoint(s)
-  - lora: none               # swap to vit for LoRA fine-tuning (frozen base + adapters)
+  - transforms: default
+  - loader: default
+  - callbacks: none        # swap to `default` for checkpointing + lr logging
+  - logger: none           # swap to `clearml` for experiment tracking
+  - export: none           # swap to `torchscript` to write a deployment artifact
   - _self_
-  - experiment: detect_smoke        # experiment overrides go last → highest priority
-
-project: my-project
-run_name: ${now:%Y-%m-%d}/${now:%H-%M-%S}
-save_dir: ${hydra:run.dir}
 
 seed: 42
+lr: 1.0e-3
 epochs: 10
 batch_size: 16
-lr: 1.0e-3
 image_size: [224, 224]
 mean: [0.485, 0.456, 0.406]
 std: [0.229, 0.224, 0.225]
 
-run_train: true
-run_test: true
-run_export: true
-
 data:
-  sources: ???         # str/list → split mode; {train: ..., val: ...} → pre-split mode
-  split: null
+  source: ???
+  inputs:
+    image: {column: image, loader: {name: image}}
+  split: {train: 0.7, val: 0.15, test: 0.15}
 
+tasks: {}
 
-tasks: {}              # override in experiment config
+run:
+  project: my-project      # the run's identity: tracker project + the runs/ subtree
+  name: ${now:%Y-%m-%d}/${now:%H-%M-%S}
+  train: true
+  test: true
+  directory: ${hydra:run.dir}

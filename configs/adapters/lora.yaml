@@ -1,0 +1,18 @@
+# @package _global_
+# LoRA on a ViT's attention and MLP projections (timm / DINOv3 naming).
+#
+# The base freezes; only the adapters and the task heads learn — measured on a
+# ViT-tiny, about 2% of the parameters. Before test and export the deltas fold
+# back into the weights they stood in for, so the artifact carries no adapter
+# overhead and its weights are named exactly as a plain run's.
+#
+# `target_modules` has no safe default: check the names against the backbone's
+# own `named_modules()`, and a value that matches nothing is refused at assembly.
+adapters:
+  name: lora
+  target_modules: [qkv, proj, fc1, fc2]
+  rank: 8
+  alpha: 16
+  # peft's remaining knobs forward verbatim, e.g.:
+  # use_dora: true
+  # use_rslora: true

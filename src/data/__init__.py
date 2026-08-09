@@ -1,64 +1,65 @@
-"""Data layer: sources, encoders, transforms, dataset, datamodule and collation.
+"""The data capability: from annotation tables to model-ready batches."""
 
-Interface-adapter layer: turns external data (CSV/JSON, image files) into the
-core ``Sample``/``Batch`` entities. Depends on core, never the reverse.
-"""
+from __future__ import annotations
 
-from src.data.bindings import InputBinding, SourceBinding, TargetBinding
+from src.data.cache import LoaderCache, RamCache, cached
 from src.data.collate import collate_samples
-from src.data.datamodule import CacheOptions, DataLoaderOptions, DataModule
-from src.data.dataset import Dataset
+from src.data.datamodules import SourceWithTransforms, TableDataModule, YoloDataModule
+from src.data.dataset import TableDataset
 from src.data.encoders import (
-    GaussianBinsEncoder,
-    LabelEncoder,
-    LinearBinsEncoder,
-    MaskEncoder,
-    MultiLabelEncoder,
-    ScalarEncoder,
+    BinnedTargetEncoder,
+    GaussianBinsTargetEncoder,
+    LabelTargetEncoder,
+    LinearBinsTargetEncoder,
+    MaskTargetEncoder,
+    MultiLabelTargetEncoder,
+    ScalarTargetEncoder,
     TargetEncoder,
 )
-from src.data.loaders import EmbeddingLoader, ImageLoader, InputLoader, TextLoader
-from src.data.registry import data_sources, input_loaders, target_encoders
-from src.data.sources import CsvDataSource, DataSource, FileDataSource, JsonDataSource
-from src.data.split import split_dataframe
-from src.data.statistics import (
-    CategoricalDistribution,
-    ContinuousDistribution,
-    DatasetStatistics,
+from src.data.loaders import ImageLoader, InputLoader
+from src.data.schema import DataSchema, InputColumn, TargetColumn
+from src.data.sources import (
+    CsvSource,
+    FileSource,
+    InMemorySource,
+    JsonSource,
+    LimitedSource,
+    Table,
+    TableSource,
 )
-from src.transforms.sample import AlbumentationsTransform, Transform
+from src.data.split import Splitter, group_split, random_split, stratified_split
 
 __all__ = [
-    "AlbumentationsTransform",
-    "CacheOptions",
-    "CategoricalDistribution",
-    "ContinuousDistribution",
-    "CsvDataSource",
-    "DataLoaderOptions",
-    "DataModule",
-    "DataSource",
-    "Dataset",
-    "DatasetStatistics",
-    "EmbeddingLoader",
-    "FileDataSource",
-    "GaussianBinsEncoder",
+    "BinnedTargetEncoder",
+    "CsvSource",
+    "DataSchema",
+    "FileSource",
+    "GaussianBinsTargetEncoder",
     "ImageLoader",
-    "InputBinding",
+    "InMemorySource",
+    "InputColumn",
     "InputLoader",
-    "JsonDataSource",
-    "LabelEncoder",
-    "LinearBinsEncoder",
-    "MaskEncoder",
-    "MultiLabelEncoder",
-    "ScalarEncoder",
-    "SourceBinding",
-    "TargetBinding",
+    "JsonSource",
+    "LabelTargetEncoder",
+    "LimitedSource",
+    "LinearBinsTargetEncoder",
+    "LoaderCache",
+    "MaskTargetEncoder",
+    "MultiLabelTargetEncoder",
+    "RamCache",
+    "ScalarTargetEncoder",
+    "SourceWithTransforms",
+    "Splitter",
+    "Table",
+    "TableDataModule",
+    "TableDataset",
+    "TableSource",
+    "TargetColumn",
     "TargetEncoder",
-    "TextLoader",
-    "Transform",
+    "YoloDataModule",
+    "cached",
     "collate_samples",
-    "data_sources",
-    "input_loaders",
-    "split_dataframe",
-    "target_encoders",
+    "group_split",
+    "random_split",
+    "stratified_split",
 ]

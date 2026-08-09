@@ -1,0 +1,25 @@
+# @package _global_
+# Cat or dog, from a pretrained ResNet: `uv run main.py +experiment=examples/classification`.
+#
+# The smallest thing this framework does, and the shape every other task follows: name a
+# preset, name the column it reads, and let the sizes come from the data. Point the same
+# task at `breed` instead for the 37-class version.
+defaults:
+  - examples/pet
+  - override /model: resnet18
+
+tasks:
+  label:
+    preset: classification
+    target: species
+    # Optional: omitted, the encoder learns the vocabulary from the train split.
+    # Declared, it becomes the source of truth — the data is validated against it at
+    # fit, the index space survives resampling, and these names label the per-class
+    # metrics, the confusion matrix and the samples grid.
+    classes: {0: cat, 1: dog}
+    # The preset already brings f1, precision, recall and a confusion matrix. Naming
+    # `metrics` replaces that set whole rather than adding to it.
+    metrics:
+      accuracy: {name: accuracy}
+      f1: {name: f1, average: none}
+      confusion_matrix: {name: confusion_matrix, normalize: "true"}

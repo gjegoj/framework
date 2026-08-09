@@ -1,80 +1,127 @@
-"""Mosaic batch transform — 2x2 regional swap across the batch.
-
-Each output sample keeps its own top-left quadrant and takes the other three
-quadrants from rolled batch neighbours at the **same** spatial positions (no
-resize). Every pixel therefore comes from exactly one source, so a DENSE mask
-target composes by the identical swap and stays a valid index map — no
-interpolation, no dtype juggling. A single split point per batch keeps the op
-fully vectorized (one ``clone`` + three slice assignments).
-"""
+"""Stitching: four samples become one picture, split once across the batch."""
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import torch
-from torch import Tensor
+from torch.nn.functional import one_hot
 
-from src.core.entities import Batch
-from src.core.keys import IMAGE
-from src.core.taxonomy import Topology
-from src.transforms.batch.registry import batch_transforms
-from src.transforms.batch.spec import BatchTransform, TargetSpec
+from src.core.entities import Batch, as_tensor
+from src.core.taxonomy import Modality, Objective, Topology
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from torch import Tensor
+
+    from src.core.entities import DataProfile, Task
 
 
-@batch_transforms.register("mosaic")
-class Mosaic(BatchTransform):
-    """2x2 mosaic over the batch, composing every DENSE mask target.
+class Mosaic:
+    """A 2x2 stitch across the batch, composing every task's target exactly.
+
+    Quadrant *k* takes its pixels from the batch rolled by *k*, top-left keeping the
+    sample's own — no resize, so every pixel comes from exactly one source. That is
+    what separates stitching from blending, and what lets a segmentation mask compose
+    by the identical swap and stay a valid index map: no interpolation, no dtype to
+    juggle. A global label instead takes the four quadrant areas as its weights, the
+    way a pasted rectangle's area weights a CutMix label.
+
+    A batch shorter than four wraps around, which costs variety but stays correct: the
+    label weights follow the same rolls, so a sample still reports where its pixels came
+    from. One split point per batch keeps the whole thing to a clone and three slice
+    assignments.
 
     Parameters:
-        targets (list[TargetSpec]): Tasks whose targets to compose (all DENSE —
-            guaranteed by the compatibility guard).
-        input_key (str): ``Batch.inputs`` key (image stream) to compose.
-        center_ratio (tuple[float, float]): Range for the split center as a
-            fraction of height/width; one split is sampled per batch within these
-            bounds.
+        tasks (Sequence[Task]): Every task whose target must be rewritten.
+        profile (DataProfile): Where the class counts come from.
+        input_name (str): Which input holds the image.
+        split_range (tuple[float, float]): Where the split may fall, as a
+            fraction of height and width. Sampled once per batch, separately
+            for each axis. Widening it towards 0 and 1 makes lopsided quadrants
+            more likely.
     """
-
-    supported_topologies: frozenset[Topology] = frozenset({Topology.DENSE})
 
     def __init__(
         self,
-        targets: list[TargetSpec],
-        input_key: str = IMAGE,
-        center_ratio: tuple[float, float] = (0.3, 0.7),
+        tasks: Sequence[Task],
+        profile: DataProfile,
+        input_name: str = Modality.IMAGE,
+        split_range: tuple[float, float] = (0.3, 0.7),
     ) -> None:
-        low, high = center_ratio
-        if not (0.0 < low <= high < 1.0):
-            raise ValueError(f"Mosaic: center_ratio must satisfy 0 < low <= high < 1, got {center_ratio}.")
-        self._targets = targets
-        self._input_key = input_key
-        self._center_ratio = center_ratio
+        low, high = split_range
+        if not 0.0 < low <= high < 1.0:
+            raise ValueError(f"Mosaic needs 0 < low <= high < 1 for split_range, got {split_range}.")
+        refused = [
+            task.name
+            for task in tasks
+            if task.topology not in {Topology.GLOBAL, Topology.DENSE} or task.objective is Objective.METRIC
+        ]
+        if refused:
+            raise ValueError(
+                f"Mosaic cannot rewrite the targets of {', '.join(refused)}: it composes a picture and "
+                f"whatever is laid over it, so a task without one has nothing to compose, and soft "
+                f"labels break metric learning. Drop the transform, or the task it cannot serve."
+            )
+        # A mask is swapped like the picture; a label is weighted by the areas. Only class
+        # indices need one-hot encoding first — a price or an indicator vector is a number already.
+        self._masks = [task.name for task in tasks if task.topology is Topology.DENSE]
+        self._classes = {
+            task.name: profile.require_num_classes(task.name) if task.objective is Objective.MULTICLASS else None
+            for task in tasks
+            if task.topology is Topology.GLOBAL
+        }
+        self._input_name = input_name
+        self._split_range = split_range
 
     def __call__(self, batch: Batch) -> Batch:
-        height, width = batch.inputs[self._input_key].shape[-2:]
-        split_y = self._sample_split(height)
-        split_x = self._sample_split(width)
+        """Return a new batch; the one given is never written into."""
+        image = batch.inputs[self._input_name]
+        height, width = image.shape[-2:]
+        split_y, split_x = self._split(height), self._split(width)
+        # In quadrant order, which is roll order: top left, top right, bottom left, bottom right.
+        shares = [y * x / (height * width) for y in (split_y, height - split_y) for x in (split_x, width - split_x)]
+        return Batch(
+            inputs={**batch.inputs, self._input_name: _stitch(image, split_y, split_x)},
+            targets={
+                **batch.targets,
+                **{
+                    name: _stitch(
+                        as_tensor(batch.targets[name], task=name, wanted_by="a batch transform"), split_y, split_x
+                    )
+                    for name in self._masks
+                },
+                **{
+                    name: self._weigh(
+                        as_tensor(batch.targets[name], task=name, wanted_by="a batch transform"), name, shares
+                    )
+                    for name in self._classes
+                },
+            },
+            meta=batch.meta,
+        )
 
-        inputs = {**batch.inputs, self._input_key: self._mosaic(batch.inputs[self._input_key], split_y, split_x)}
-        targets = {
-            **batch.targets,
-            **{spec.key: self._mosaic(batch.targets[spec.key], split_y, split_x) for spec in self._targets},
-        }
-        return Batch(inputs=inputs, targets=targets, meta=batch.meta)
-
-    @staticmethod
-    def _mosaic(x: Tensor, split_y: int, split_x: int) -> Tensor:
-        """Swap three quadrants in from rolled batch neighbours (last two dims are H, W).
-
-        Slicing before ``roll`` shifts only the quadrant window across the batch,
-        not a full copy of ``x``. Works for both images ``[B, C, H, W]`` and masks
-        ``[B, H, W]`` via the trailing-dims ellipsis.
-        """
-        out = x.clone()
-        out[..., :split_y, split_x:] = x[..., :split_y, split_x:].roll(1, 0)  # top-right    ← neighbour 1
-        out[..., split_y:, :split_x] = x[..., split_y:, :split_x].roll(2, 0)  # bottom-left  ← neighbour 2
-        out[..., split_y:, split_x:] = x[..., split_y:, split_x:].roll(3, 0)  # bottom-right ← neighbour 3
-        return out
-
-    def _sample_split(self, size: int) -> int:
-        low = max(1, int(self._center_ratio[0] * size))
-        high = max(low + 1, int(self._center_ratio[1] * size))
+    def _split(self, size: int) -> int:
+        low = max(1, int(self._split_range[0] * size))
+        high = max(low + 1, int(self._split_range[1] * size))
         return int(torch.randint(low, high, (1,)).item())
+
+    def _weigh(self, label: Tensor, name: str, shares: Sequence[float]) -> Tensor:
+        classes = self._classes[name]
+        soft = one_hot(label.long(), classes).float() if classes is not None else label.float()
+        return sum((share * soft.roll(k, 0) for k, share in enumerate(shares)), start=torch.zeros_like(soft))
+
+
+def _stitch(composed: Tensor, split_y: int, split_x: int) -> Tensor:
+    """Swap three quadrants in from rolled neighbours; height and width come last.
+
+    Slicing before rolling is what keeps this cheap: the roll then copies one
+    quadrant window across the batch rather than the whole tensor. The trailing
+    dimensions serve images ``[B, C, H, W]`` and masks ``[B, H, W]`` alike.
+    """
+    stitched = composed.clone()
+    stitched[..., :split_y, split_x:] = composed[..., :split_y, split_x:].roll(1, 0)  # top right
+    stitched[..., split_y:, :split_x] = composed[..., split_y:, :split_x].roll(2, 0)  # bottom left
+    stitched[..., split_y:, split_x:] = composed[..., split_y:, split_x:].roll(3, 0)  # bottom right
+    return stitched

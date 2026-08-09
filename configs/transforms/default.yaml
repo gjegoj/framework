@@ -1,30 +1,10 @@
-# @package transforms
-# Default: resize → normalize → to-tensor (no augmentation).
-# Val and test share the same deterministic pipeline.
-train:
-  _target_: albumentations.Compose
-  seed: ${seed}
-  telemetry: false
+# Resize + normalize + to-tensor. The pipeline ends in ToTensorV2 because the
+# raw-to-tensor boundary is crossed exactly once — see the data layer docs.
+train: &pipeline
+  _target_: src.transforms.AlbumentationsTransform
   transforms:
-    - _target_: albumentations.Resize
-      height: ${image_size[0]}
-      width: ${image_size[1]}
-      mask_interpolation: 0   # NEAREST — preserves segmentation class indices
-    - _target_: albumentations.Normalize
-      mean: ${mean}
-      std: ${std}
-    - _target_: albumentations.pytorch.ToTensorV2
-
-val:
-  _target_: albumentations.Compose
-  seed: ${seed}
-  telemetry: false
-  transforms:
-    - _target_: albumentations.Resize
-      height: ${image_size[0]}
-      width: ${image_size[1]}
-      mask_interpolation: 0
-    - _target_: albumentations.Normalize
-      mean: ${mean}
-      std: ${std}
-    - _target_: albumentations.pytorch.ToTensorV2
+    - {_target_: albumentations.Resize, height: "${image_size.0}", width: "${image_size.1}"}
+    - {_target_: albumentations.Normalize, mean: "${mean}", std: "${std}"}
+    - {_target_: albumentations.pytorch.ToTensorV2}
+val: *pipeline
+test: *pipeline

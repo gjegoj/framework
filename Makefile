@@ -1,4 +1,6 @@
-.PHONY: help install pre-commit clean test test-unit typecheck check generate-smoke smoke smoke-embeddings smoke-ranking smoke-contrastive smoke-arcface smoke-sample-log
+.PHONY: help install pre-commit clean test test-unit typecheck check test-run
+
+PET_TABLE := data/pet/data.csv
 
 
 help: ## Show help
@@ -32,23 +34,11 @@ typecheck: ## Run mypy static analysis
 
 check: typecheck test ## Run type checks and tests
 
-generate-smoke: ## Generate synthetic smoke dataset in data/smoke/
-	uv run python scripts/generate_smoke_data.py
+# A file target, not a phony one: the fetch happens once and every later run reuses it.
+# torchvision downloads ~800 MB of Oxford-IIIT Pet, then the script remaps 7349 trimaps
+# into 0-based masks and writes the table the examples read.
+$(PET_TABLE):
+	uv run python scripts/prepare_pet.py
 
-smoke: generate-smoke ## Run 2-epoch offline smoke training (CPU, no pretrained weights)
-	uv run python main.py
-
-smoke-embeddings: generate-smoke ## Run 2-epoch offline embeddings smoke (CPU, M6 modality)
-	uv run python main.py experiment=embeddings_smoke
-
-smoke-ranking: generate-smoke ## Run 2-epoch offline ranking smoke (CPU, M7a triplet)
-	uv run python main.py experiment=ranking_smoke
-
-smoke-contrastive: generate-smoke ## Run 2-epoch offline contrastive smoke (CPU, M7b dual-encoder)
-	uv run python main.py experiment=contrastive_smoke
-
-smoke-arcface: generate-smoke ## Run 2-epoch offline ArcFace smoke (CPU, cosine head + angular margin)
-	uv run python main.py experiment=arcface_smoke
-
-smoke-sample-log: generate-smoke ## Run 3-task sample-log smoke (multiclass + binary + multilabel, ClearML HTML grids)
-	uv run python main.py experiment=sample_log_smoke
+test-run: $(PET_TABLE) ## Fetch the pet dataset (once) and train the multitask example on a slice
+	uv run main.py +experiment=examples/multitask epochs=2 +data.max_samples=256

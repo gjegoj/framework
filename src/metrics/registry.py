@@ -1,31 +1,43 @@
-"""Registry of torchmetrics classes selectable from YAML by name.
-
-Maps short config keys (``accuracy``, ``f1``, ...) to torchmetrics classes so a
-``metrics:`` block can pick and parametrise them (``top_k``, ``average``, ...)
-without code. Users register their own metric the same way, or bypass the
-registry entirely with a ``_target_`` spec.
-"""
+"""Registries of the metrics capability."""
 
 from __future__ import annotations
 
-import torchmetrics as tm
-from torchmetrics.detection import MeanAveragePrecision
+from torchmetrics import (
+    ROC,
+    Accuracy,
+    ConfusionMatrix,
+    F1Score,
+    JaccardIndex,
+    MeanAbsoluteError,
+    MeanSquaredError,
+    Metric,
+    Precision,
+    PrecisionRecallCurve,
+    Recall,
+)
 
 from src.core.registry import Registry
+from src.metrics.detection import MeanAveragePrecisionOverInstances
 
-metric_factories: Registry[tm.Metric] = Registry("metric")
+metric_registry: Registry[Metric] = Registry("metric")
+"""Config-facing metrics, under the names a data scientist already uses.
 
-metric_factories.register("accuracy")(tm.Accuracy)
-metric_factories.register("precision")(tm.Precision)
-metric_factories.register("recall")(tm.Recall)
-metric_factories.register("f1")(tm.F1Score)
-metric_factories.register("auroc")(tm.AUROC)
-metric_factories.register("average_precision")(tm.AveragePrecision)
-metric_factories.register("confusion_matrix")(tm.ConfusionMatrix)
-metric_factories.register("jaccard")(tm.JaccardIndex)
-metric_factories.register("iou")(tm.JaccardIndex)
-metric_factories.register("mse")(tm.MeanSquaredError)
-metric_factories.register("mae")(tm.MeanAbsoluteError)
-metric_factories.register("precision_recall_curve")(tm.PrecisionRecallCurve)
-metric_factories.register("roc")(tm.ROC)
-metric_factories.register("map")(MeanAveragePrecision)
+Third-party ``torchmetrics`` classes rather than abstractions of our own, so they are
+registered explicitly below instead of by decorator. A convenience, not a gate: anything
+torchmetrics offers is reachable by ``_target_`` without being registered first.
+
+An objective's own ``metric_kwargs`` (``task``, ``num_classes`` / ``num_labels``) merge
+with each entry's declared params when the sets are built.
+"""
+
+metric_registry.register("accuracy")(Accuracy)
+metric_registry.register("f1")(F1Score)
+metric_registry.register("precision")(Precision)
+metric_registry.register("recall")(Recall)
+metric_registry.register("iou")(JaccardIndex)
+metric_registry.register("mae")(MeanAbsoluteError)
+metric_registry.register("mse")(MeanSquaredError)
+metric_registry.register("confusion_matrix")(ConfusionMatrix)
+metric_registry.register("precision_recall_curve")(PrecisionRecallCurve)
+metric_registry.register("roc")(ROC)
+metric_registry.register("map")(MeanAveragePrecisionOverInstances)

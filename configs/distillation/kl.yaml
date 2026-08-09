@@ -1,17 +1,15 @@
 # @package _global_
-# KL-divergence distillation from one or more frozen teachers.
+# Temperature-scaled KL against a frozen teacher.
 #
-# Per task the training loss becomes ``hard + weight * soft`` where ``soft`` is the
-# temperature-scaled KL between student logits and the teachers' averaged raw logits.
-# Distillation runs on TRAIN only; validation/test losses stay pure task losses.
+# Each task's TRAINING loss gains the soft term below; validation and test are untouched,
+# so their numbers stay comparable with an undistilled run's. The teacher runs under
+# no_grad, never learns, and is not exported — the artifact is the student.
+#
+# The soft term is an ordinary loss declaration: its temperature and its weight live on
+# it, exactly as a task's own loss terms carry theirs. `checkpoint_path` is optional:
+# a backbone declared `pretrained: true` is already a teacher.
 distillation:
   teachers:
-    # One entry per teacher; raw logits are averaged across them. Each teacher's heads
-    # are derived from the student's tasks, so logit shapes match by construction.
-    - model: ${model}          # reuse the student backbone spec, or inline a different one
-      ckpt_path: ???                  # path to the teacher .ckpt (EMA weights used when present)
-  temperature: 2.0                    # softening temperature, injected into the DEFAULT kl_divergence loss only
-  weight: 0.7                         # additive soft-loss weight (float, or {task_name: float})
-  # loss: {name: kl_divergence, temperature: 4.0}   # explicit brick-spec: used AS IS, top-level temperature is
-  #                                                  # ignored entirely (omit temperature here -> criterion default)
-  # tasks: [mask]                                    # subset to distill; omit -> every task
+    - model: {name: timm, model_name: resnet50, pretrained: false}
+      checkpoint_path: ???      # a run's .ckpt holding the teacher's weights
+  loss: {name: kl_divergence, temperature: 2.0, weight: 0.7}

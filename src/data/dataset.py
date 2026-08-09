@@ -1,101 +1,51 @@
-"""The map-style Dataset: turn a DataFrame row into a model-ready ``Sample``.
-
-Per item:
-1. Load all inputs via ``InputBinding.loader.load``:
-   file-based loaders (images) receive a root_path-resolved path;
-   raw-value loaders (text) receive the column value as-is.
-2. Load targets via ``encoder.load``:
-   spatial encoders (masks) read the file; scalar encoders return the raw value.
-3. Apply transform — inputs and spatial targets pass through together so
-   geometric operations stay aligned across image and mask.
-4. Finalise all targets to tensors via ``encoder.to_tensor``.
-"""
+"""A torch ``Dataset`` assembling ``Sample``s from table rows via a ``DataSchema``."""
 
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 
-import pandas as pd
-from torch.utils.data import Dataset as TorchDataset
+from torch.utils.data import Dataset
 
-from src.core.entities import Sample, SampleMeta
-from src.data.bindings import InputBinding, TargetBinding
-from src.transforms.sample import Transform
+from src.core.entities import Sample
+from src.data.schema import DataSchema
+from src.data.sources import Table
 
-
-def resolve_path(root: Path | None, raw: object) -> str:
-    """Resolve a raw column value to a filesystem path, prefixing ``root`` if set."""
-    text = str(raw)
-    return str(root / text) if root is not None else text
+if TYPE_CHECKING:
+    from src.core.ports import SampleTransform
 
 
-class Dataset(TorchDataset[Sample]):
-    """Map-style dataset assembling one ``Sample`` per row.
+class TableDataset(Dataset[Sample]):
+    """Materializes one ``Sample`` per table row.
 
-    Parameters:
-        frame (pd.DataFrame): Rows for this split.
-        input_bindings (list[InputBinding]): Per-input column + loader.
-        target_bindings (list[TargetBinding]): Per-task target column + encoder.
-        transform (Transform): Input transform applied after loading.
-        root_path (str | None): Prefix prepended to file-based input paths.
+    The schema is validated against the table upfront, so a typo in a column
+    name fails at construction rather than mid-epoch. Loading and encoding
+    happen in ``__getitem__`` — that is, inside DataLoader workers.
     """
 
-    def __init__(
-        self,
-        frame: pd.DataFrame,
-        input_bindings: list[InputBinding],
-        target_bindings: list[TargetBinding],
-        transform: Transform,
-        root_path: str | None = None,
-    ) -> None:
-        self._frame = frame.reset_index(drop=True)
-        self._input_bindings = input_bindings
-        self._target_bindings = target_bindings
+    def __init__(self, table: Table, schema: DataSchema, transform: SampleTransform | None = None) -> None:
+        missing = sorted(schema.columns() - set(table.columns))
+        if missing:
+            raise ValueError(f"Schema references columns missing from the table: {', '.join(missing)}.")
+        self._table = table
+        self._schema = schema
         self._transform = transform
-        self._root = Path(root_path) if root_path else None
 
     def __len__(self) -> int:
-        return len(self._frame)
-
-    def _resolve(self, raw: object) -> str:
-        return resolve_path(self._root, raw)
+        return len(self._table)
 
     def __getitem__(self, index: int) -> Sample:
-        row = self._frame.iloc[index]
-        # ``input_sources``/``target_sources`` record the resolved source path of each
-        # file-based input / file-based target (e.g. a mask), keyed by binding name — so a
-        # prediction can be traced back to its file (collate transposes these to per-sample lists).
-        sample = Sample(inputs={}, meta=SampleMeta(index=index, input_sources={}, target_sources={}))
-
-        # 1. Load all inputs (file-based → resolved path, also kept as a source; raw-value → as-is).
-        for input_binding in self._input_bindings:
-            if input_binding.loader.file_based:
-                value = self._resolve(row[input_binding.column])
-                sample.meta["input_sources"][input_binding.name] = value
-            else:
-                value = str(row[input_binding.column])
-            sample.inputs[input_binding.name] = input_binding.loader.load(value)
-
-        # 2. Load all targets (file-based → resolved path, also kept as a source; raw-value → as-is;
-        #    None column → a target-less task, e.g. triplet — the encoder ignores the value).
-        for target_binding in self._target_bindings:
-            if target_binding.column is None:
-                sample.targets[target_binding.name] = target_binding.encoder.load(None)
-                continue
-            column_value = row[target_binding.column]
-            if target_binding.encoder.file_based:
-                raw = self._resolve(column_value)
-                sample.meta["target_sources"][target_binding.name] = raw
-            else:
-                raw = column_value
-            sample.targets[target_binding.name] = target_binding.encoder.load(raw)
-
-        # 3. Transform: inputs + spatial targets pass through together.
-        sample = self._transform.apply(sample)
-
-        # 4. Finalise all targets to tensors.
-        for target_binding in self._target_bindings:
-            current = sample.targets[target_binding.name]
-            sample.targets[target_binding.name] = target_binding.encoder.to_tensor(current)
-
-        return sample
+        row = self._table.iloc[index]
+        cells = {name: row[input_column.column] for name, input_column in self._schema.inputs.items()}
+        sample = Sample(
+            inputs={name: input_column.loader(cells[name]) for name, input_column in self._schema.inputs.items()},
+            targets={
+                task: target_column.encoder.encode(row[target_column.column])
+                for task, target_column in self._schema.targets.items()
+            },
+            # A string cell is readable as it stands — a path, a URL, a caption. An
+            # array is not, and the tensor built from it already went to the model.
+            # Carry the readable ones and let the consumer decide their use: a report
+            # links a path and prints a caption, and only it knows which it wanted.
+            meta={"row": index, Sample.CELLS: {name: cell for name, cell in cells.items() if isinstance(cell, str)}},
+        )
+        return self._transform(sample) if self._transform is not None else sample

@@ -1,48 +1,43 @@
-"""Angular-margin losses for metric learning (ArcFace family).
-
-Two flavors, two prototype placements. The **classifier** flavor consumes the cosine
-logits ``[B, C]`` produced by a ``cosine`` head and the integer class labels, then
-applies a margin in angular space before cross-entropy — the learnable class
-prototypes live in the head, so the criterion itself is **stateless** (margin and
-scale are fixed hyper-parameters); adding CosFace/SphereFace later is just another
-stateless criterion over the same cosine head. The **embedder** flavor
-(``ProxyAngularCriterion``) instead holds the prototypes itself, training-only: it
-wraps a stateless margin criterion with its own learnable class prototypes so a plain
-embedding head can be trained via proxy classification and the prototypes discarded
-at export.
-"""
+"""Angular-margin criteria: embeddings learned from class labels (the ArcFace family)."""
 
 from __future__ import annotations
 
 import math
+from typing import TYPE_CHECKING, Any, ClassVar
 
 import torch
-import torch.nn.functional as F
-from torch import Tensor, nn
+from torch import nn
+from torch.nn import functional
 
-from src.core.entities import LossResult
-from src.core.instantiate import BrickSpec, instantiate
+from src.core.entities import Loss
 from src.core.ports import Criterion
-from src.losses.registry import criteria
+from src.losses.base import WrappedCriterion
+from src.losses.registry import criterion_registry
+
+if TYPE_CHECKING:
+    from torch import Tensor
+
+COSINE_TOLERANCE = 1.001
+"""How far past [-1, 1] a logit may sit before it is clearly not a cosine."""
 
 
-@criteria.register("arcface")
-class ArcFaceCriterion(Criterion):
-    """ArcFace additive angular margin loss on cosine logits ``[B, C]``.
+class ArcFaceLoss(nn.Module):
+    """Additive angular margin on cosine logits, then cross-entropy.
 
-    Adds an angular margin ``m`` to the target class — ``cos(θ_y + m)`` — then
-    scales by ``s`` and applies cross-entropy.  Penalizing the target in angle
-    space forces tighter intra-class / wider inter-class angular separation than
-    plain softmax.  The non-target logits are left untouched; the standard
-    monotonicity guard (``easy_margin=False``) keeps the target term well-behaved
-    for angles past ``π - m``.
+    The target class must win by ``margin`` radians, not merely win —
+    ``cos(θ_y + m)`` replaces its logit — which is what forces tight classes
+    and wide gaps between them. Past ``π - m`` the substitution stops being
+    monotone, so a linear penalty takes over there (the paper's
+    ``easy_margin=False``).
 
-    Margin and scale are fixed (no learnable state) — the only trained parameters
-    are the class prototypes in the ``cosine`` head.
+    ``margin`` and ``scale`` are plain numbers read anew on every step, so the
+    ``anneal`` callback can warm the margin up — the usual way to keep early
+    training from collapsing.
 
     Parameters:
-        margin (float): Additive angular margin in radians (ArcFace default 0.5).
-        scale (float): Logit scale ``s`` (ArcFace default 64).
+        margin (float): Additive angular margin in radians.
+        scale (float): Multiplier restoring logit magnitude after the cosine
+            squashed it into [-1, 1].
 
     Reference:
         Deng et al., "ArcFace: Additive Angular Margin Loss for Deep Face
@@ -51,59 +46,110 @@ class ArcFaceCriterion(Criterion):
 
     def __init__(self, margin: float = 0.5, scale: float = 64.0) -> None:
         super().__init__()
-        self._margin = margin
-        self._scale = scale
-        self._cos_margin = math.cos(margin)
-        self._sin_margin = math.sin(margin)
-        self._threshold = math.cos(math.pi - margin)  # below this, use the linear fallback
-        self._linear_margin = math.sin(math.pi - margin) * margin  # penalty for the linear-fallback branch
+        if not 0.0 <= margin < math.pi:
+            raise ValueError(f"ArcFace margin is an angle in [0, pi) radians, got {margin}.")
+        if scale <= 0:
+            raise ValueError(f"ArcFace scale must be positive, got {scale}.")
+        self.margin = margin
+        self.scale = scale
 
-    def forward(self, logits: Tensor, target: Tensor) -> LossResult:
+    def forward(self, logits: Tensor, target: Tensor) -> Tensor:
         if logits.ndim != 2:
-            raise ValueError(f"ArcFaceCriterion expects cosine logits of shape [B, C], got {tuple(logits.shape)}.")
+            raise ValueError(f"ArcFace expects cosine logits of shape [B, C], got {tuple(logits.shape)}.")
+        if bool(logits.abs().amax() > COSINE_TOLERANCE):
+            raise ValueError(
+                "ArcFace expects cosine logits in [-1, 1], and these reach "
+                f"{logits.abs().amax().item():.2f} — raw scores, not cosines. Use it as the "
+                "'inner' of arcface_proxy, which produces cosines from an embedding."
+            )
+        # Derived per step rather than cached at construction, so an annealed margin acts.
+        cos_margin, sin_margin = math.cos(self.margin), math.sin(self.margin)
+        threshold = math.cos(math.pi - self.margin)
+        linear_penalty = math.sin(math.pi - self.margin) * self.margin
+
         cosine = logits.clamp(-1.0, 1.0)
         sine = torch.sqrt((1.0 - cosine**2).clamp_min(0.0))
-        phi = cosine * self._cos_margin - sine * self._sin_margin  # cos(θ + m)
-        # Keep the target term monotonic for large angles (ArcFace, easy_margin=False).
-        phi = torch.where(cosine > self._threshold, phi, cosine - self._linear_margin)
+        with_margin = cosine * cos_margin - sine * sin_margin  # cos(θ + m)
+        with_margin = torch.where(cosine > threshold, with_margin, cosine - linear_penalty)
 
         labels = target.long()
-        one_hot = torch.zeros_like(cosine)
-        one_hot.scatter_(1, labels.view(-1, 1), 1.0)
-        output = (one_hot * phi + (1.0 - one_hot) * cosine) * self._scale
-
-        value: Tensor = F.cross_entropy(output, labels)
-        return LossResult(total=value, components={"arcface": value})
+        is_target = functional.one_hot(labels, cosine.shape[1]).bool()
+        return functional.cross_entropy(torch.where(is_target, with_margin, cosine) * self.scale, labels)
 
 
-@criteria.register("arcface_proxy")
-class ProxyAngularCriterion(Criterion):
-    """Training-only cosine classifier over learnable class prototypes (ArcFace-as-embedder).
+@criterion_registry.register("arcface")
+class ArcFaceCriterion(WrappedCriterion):
+    """ArcFace as a criterion — see :class:`ArcFaceLoss` for the math.
 
-    The original-paper recipe: train an embedding with a proxy classification head, then
-    discard the head and deploy only the embedder. The "head" here is deliberately inside
-    the criterion — it must never enter the exported graph — while the margin math is
-    delegated to a stateless inner criterion (``arcface`` by default), so CosFace later is
-    a YAML ``inner:`` change, not new proxy code.
+    Pairs with the ``cosine`` head, which owns the class prototypes the model
+    deploys::
 
-    ``requires_dimensions``: the task layer injects both sizes at build time —
-    ``num_classes`` from the fitted label encoder, ``embedding_dim`` from the head size.
+        tasks:
+          person:
+            preset: classification
+            target: person_id
+            head: {name: cosine}
+            loss: {name: arcface, margin: 0.3}
 
     Parameters:
-        num_classes (int): Number of class prototypes (label-vocabulary size from data).
-        embedding_dim (int): Embedding size D — must match the task head's out_features.
-        inner (BrickSpec): Stateless margin criterion applied to the cosine logits.
+        **kwargs: Forwarded verbatim to :class:`ArcFaceLoss`
+            (``margin``, ``scale``).
     """
 
-    requires_dimensions = True
+    part_name: ClassVar[str] = "arcface"
 
-    def __init__(self, num_classes: int, embedding_dim: int, inner: BrickSpec = "arcface") -> None:
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(ArcFaceLoss(**kwargs))
+
+
+@criterion_registry.register("arcface_proxy")
+class ProxyAngularCriterion(Criterion):
+    """Learnable class prototypes turning an embedding head into a cosine classifier.
+
+    Train the embedder through proxy classification, then deploy it without the
+    proxies: the prototypes are deliberately part of the *criterion*, so they
+    train and checkpoint with the run but never enter the exported model.
+
+    **Which of the two to declare is decided by the export boundary.** An *embedder*
+    (faces, retrieval) throws the prototypes away after training, so it wants this one.
+    A *classifier* with ArcFace geometry needs them at inference, so a ``cosine`` head
+    owns them in the model and ``arcface`` is the stateless margin over its logits.
+
+    ``num_classes`` and ``embedding_dim`` are never written in config — assembly
+    offers them, from the fitted labels and from the stream the task reads. The
+    loss logs under the inner criterion's name, so swapping the margin renames
+    the logged part honestly.
+
+    Parameters:
+        num_classes (int): One prototype per class of the fitted vocabulary.
+        embedding_dim (int): Width of the embedding the head produces.
+        inner (Criterion | None): The margin criterion the cosine logits go to;
+            ``None`` builds the default ArcFace from the remaining arguments.
+        **kwargs: Forwarded verbatim to the default :class:`ArcFaceCriterion`.
+    """
+
+    def __init__(self, num_classes: int, embedding_dim: int, inner: Criterion | None = None, **kwargs: Any) -> None:
         super().__init__()
-        self.prototypes = nn.Parameter(torch.empty(embedding_dim, num_classes))
+        if num_classes < 2:
+            raise ValueError(f"Proxy classification needs at least two classes, got {num_classes}.")
+        if embedding_dim < 1:
+            raise ValueError(f"An embedding needs a positive width, got {embedding_dim}.")
+        if inner is not None and kwargs:
+            raise ValueError(
+                f"arcface_proxy takes either an 'inner' criterion or arguments for the default "
+                f"arcface, not both; declare {sorted(kwargs)} on the module itself."
+            )
+        self.prototypes = nn.Parameter(torch.empty(num_classes, embedding_dim))
         nn.init.xavier_uniform_(self.prototypes)
-        self._margin_criterion: Criterion = instantiate(inner, criteria)
+        self._margin = inner if inner is not None else ArcFaceCriterion(**kwargs)
 
-    def forward(self, logits: Tensor, target: Tensor) -> LossResult:
-        # ``logits`` carries the [B, D] embedding (the head output for metric tasks).
-        cosine = F.normalize(logits, dim=1) @ F.normalize(self.prototypes, dim=0)
-        return self._margin_criterion(cosine, target)
+    def forward(self, logits: Tensor, target: Tensor) -> Loss:
+        # ``logits`` carries the [B, D] embedding: for a metric task the head is identity.
+        if logits.ndim != 2 or logits.shape[1] != self.prototypes.shape[1]:
+            raise ValueError(
+                f"Proxy prototypes are {self.prototypes.shape[1]}-dimensional but the head produced "
+                f"{tuple(logits.shape)}; the embedding and the prototypes must share a width."
+            )
+        cosine = functional.linear(functional.normalize(logits, dim=1), functional.normalize(self.prototypes, dim=1))
+        loss: Loss = self._margin(cosine, target)
+        return loss

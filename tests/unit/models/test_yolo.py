@@ -1,143 +1,139 @@
-"""YOLO facade: offline arch build, loss on a synthetic batch, NMS decode format."""
+"""``YoloModel``: ultralytics behind the ``Model`` port, translating in both directions."""
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Any, cast
+import inspect
+from typing import Any
 
+import pytest
 import torch
 
-from src.models.yolo import build_yolo_model, compute_detection_loss, decode_predictions, normalize_batch_images
+from src.core import Batch, Instances, Modality, Prediction
+from src.core.ports import Model
+
+pytest.importorskip("ultralytics", reason="the YOLO family is an optional dependency")
+
+from src.models import YoloModel
+
+CLASSES = 3
 
 
-def _synthetic_batch(batch_size: int = 2, image_size: int = 64) -> dict[str, torch.Tensor]:
-    """Ultralytics-format batch: two images, one centered box each (normalized cxcywh)."""
-    return {
-        "img": torch.rand(batch_size, 3, image_size, image_size),
-        "cls": torch.zeros(batch_size, 1),
-        "bboxes": torch.tensor([[0.5, 0.5, 0.4, 0.4]] * batch_size),
-        "batch_idx": torch.arange(batch_size, dtype=torch.float32),
-    }
+def model() -> YoloModel:
+    return YoloModel(model_name="yolov8n.yaml", num_classes=CLASSES)
 
 
-class TestNormalizeBatchImages:
-    def test_uint8_scaled_to_unit_float(self) -> None:
-        """The YOLO dataloader yields uint8 images; the facade owns ultralytics' /255 convention."""
-        batch = {"img": torch.full((1, 3, 4, 4), 255, dtype=torch.uint8)}
-        normalized = normalize_batch_images(batch)
-        assert normalized["img"].dtype == torch.float32
-        assert torch.allclose(normalized["img"], torch.ones(1, 3, 4, 4))
-
-    def test_float_images_pass_through_untouched(self) -> None:
-        image = torch.rand(1, 3, 4, 4)
-        assert normalize_batch_images({"img": image})["img"] is image
-
-
-class TestBuildYoloModel:
-    def test_builds_offline_from_architecture_yaml(self) -> None:
-        model = build_yolo_model("yolov8n.yaml", num_classes=2)
-        assert isinstance(model, torch.nn.Module)
-        assert model.args is not None  # the loss reads its gains from here
-
-    def test_hyperparameters_reach_model_args(self) -> None:
-        model = build_yolo_model("yolov8n.yaml", num_classes=2, hyperparameters={"box": 3.0})
-        assert float(cast("Any", model).args.box) == 3.0
-
-    def test_weights_path_loads_trainable(self, tmp_path: Path) -> None:
-        """``YOLO()`` loads ``.pt`` weights inference-frozen; the facade must return a trainable model."""
-        from ultralytics.nn.tasks import DetectionModel
-
-        weights_path = tmp_path / "tiny.pt"
-        torch.save({"model": DetectionModel(cfg="yolov8n.yaml", nc=2, verbose=False)}, weights_path)
-        model = build_yolo_model(str(weights_path), num_classes=2)
-        assert all(parameter.requires_grad for parameter in model.parameters())
+def batch(images: int = 2) -> Batch:
+    """Two images with one object each, in the framework's own currency."""
+    return Batch(
+        inputs={Modality.IMAGE: torch.rand(images, 3, 64, 64)},
+        targets={
+            "boxes": Instances(
+                boxes=torch.tensor([[8.0, 8.0, 24.0, 24.0]] * images),
+                labels=torch.zeros(images, dtype=torch.int64),
+                sample_index=torch.arange(images),
+            )
+        },
+    )
 
 
-class TestComputeDetectionLoss:
-    def test_scalar_total_and_named_components(self) -> None:
-        model = build_yolo_model("yolov8n.yaml", num_classes=2)
-        total, components = compute_detection_loss(model, _synthetic_batch())
-        assert total.ndim == 0  # scalar, ready for Lightning backprop
-        assert total.requires_grad
-        assert torch.isfinite(total)
-        assert set(components) == {"box", "cls", "dfl"}
-        assert all(not value.requires_grad for value in components.values())
+def test_it_is_a_model_like_any_other() -> None:
+    assert isinstance(model(), Model)
 
 
-class TestGroundTruthBoxes:
-    def test_torchmetrics_target_format(self) -> None:
-        from src.models.yolo import ground_truth_boxes
+def test_the_vendors_three_losses_arrive_as_named_parts() -> None:
+    """box, cls and dfl are ultralytics' own, computed against its own assigner.
 
-        targets = ground_truth_boxes(_synthetic_batch(image_size=64), image_size=64)
-        assert len(targets) == 2
-        for target in targets:
-            assert set(target) == {"boxes", "labels"}
-            assert target["boxes"].shape == (1, 4)
-            assert target["labels"].dtype == torch.int64
-        # cxcywh (0.5, 0.5, 0.4, 0.4) at 64px -> xyxy pixels (19.2, 19.2, 44.8, 44.8)
-        assert torch.allclose(targets[0]["boxes"][0], torch.tensor([19.2, 19.2, 44.8, 44.8]), atol=1e-4)
+    Re-deriving them would be a different loss wearing the same name. Named parts put
+    them on the same footing as every other criterion's, so `train/boxes/box` logs like
+    `train/label/ce` and nothing downstream learns a second vocabulary.
+    """
+    result = model().step(batch())
 
-
-class TestComputeLossWithPrecomputedForward:
-    def test_precomputed_predictions_reused(self) -> None:
-        """The val step runs one forward and feeds it to both the loss and the decoder."""
-        model = build_yolo_model("yolov8n.yaml", num_classes=2)
-        model.eval()
-        batch = _synthetic_batch()
-        with torch.no_grad():
-            output = model(batch["img"])
-            total, components = compute_detection_loss(model, batch, predictions=output)
-        assert torch.isfinite(total)
-        assert set(components) == {"box", "cls", "dfl"}
+    # Scoped by the task, exactly as a composed model scopes its criteria's parts, so
+    # `train/boxes/box` reads like `train/label/ce` and no consumer learns a second grammar.
+    assert set(result.loss.parts) == {"boxes/box", "boxes/cls", "boxes/dfl"}
+    assert result.loss.total.requires_grad
+    assert result.loss.total.ndim == 0
 
 
-class TestYoloModel:
-    """The CompleteModel adapter: registry entry, family, contract methods."""
+def test_the_loss_is_given_exactly_the_keys_its_criterion_reads(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Measured: the detection criterion reads batch_idx, cls and bboxes, and nothing else.
 
-    def _model(self) -> Any:
-        from src.models.yolo import YoloModel
+    Handed our `Batch` it would fail inside ultralytics at a frame that explains nothing,
+    so the dialect is rebuilt here — which is what an adapter is for.
+    """
+    built = model()
+    seen: dict[str, Any] = {}
 
-        return YoloModel(name="yolov8n.yaml", num_classes=2, image_size=64)
+    def record(vendor_batch: dict[str, Any], preds: Any = None) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        seen.update(vendor_batch)
+        return torch.zeros(3, requires_grad=True), {"box_loss": torch.tensor(0.0)}
 
-    def test_registered_and_family(self) -> None:
-        from src.models.registry import complete_models
-        from src.models.yolo import YoloModel
+    monkeypatch.setattr(built.detector, "loss", record)
 
-        assert "yolo" in complete_models
-        assert YoloModel.family == "detection"
+    built.step(batch())
 
-    def test_prepare_batch_scales_uint8(self) -> None:
-        batch = {"img": torch.full((1, 3, 4, 4), 255, dtype=torch.uint8)}
-        assert torch.allclose(self._model().prepare_batch(batch)["img"], torch.ones(1, 3, 4, 4))
-
-    def test_training_loss_finite_with_components(self) -> None:
-        result = self._model().training_loss(_synthetic_batch())
-        assert torch.isfinite(result.total) and result.total.requires_grad
-        assert set(result.components) == {"box", "cls", "dfl"}
-
-    def test_evaluation_contract_predictions_and_targets(self) -> None:
-        model = self._model()
-        model.eval()
-        batch = _synthetic_batch()
-        with torch.no_grad():
-            output = model(batch)
-            loss = model.evaluation_loss(batch, output)
-        decoded = model.predictions(output)
-        ground_truth = model.targets(batch)
-        assert torch.isfinite(loss.total)
-        assert len(decoded) == len(ground_truth) == 2
-        assert set(ground_truth[0]) == {"boxes", "labels"}
+    assert {"img", "cls", "bboxes", "batch_idx"} <= set(seen)
+    assert seen["bboxes"].shape[-1] == 4
 
 
-class TestDecodePredictions:
-    def test_torchmetrics_format(self) -> None:
-        model = build_yolo_model("yolov8n.yaml", num_classes=2)
-        model.eval()
-        with torch.no_grad():
-            output = model(torch.rand(2, 3, 64, 64))
-        decoded = decode_predictions(output)
-        assert len(decoded) == 2
-        for prediction in decoded:
-            assert set(prediction) == {"boxes", "scores", "labels"}
-            assert prediction["boxes"].shape[-1] == 4 or prediction["boxes"].numel() == 0
-            assert prediction["labels"].dtype == torch.int64
+def test_nobody_has_to_be_told_the_image_size() -> None:
+    """The reference passed `image_size` in so the model could un-normalise boxes for
+    metrics — a second copy of a number the data module already has, and two copies can
+    disagree with nothing to notice. The image in the batch carries its own shape.
+    """
+    assert "image_size" not in inspect.signature(YoloModel.__init__).parameters
+
+
+def test_a_prediction_is_the_objects_left_after_suppression() -> None:
+    """A detection prediction is what survived NMS, per image — the framework's ragged
+    shape rather than a raw anchor tensor no consumer could read.
+    """
+    built = model()
+    built.eval()
+
+    prediction = built.predict(batch())
+
+    assert isinstance(prediction, Prediction)
+    found = prediction.outputs["boxes"]
+    assert isinstance(found, Instances)
+    assert found.scores is not None
+    assert found.boxes.shape[-1] == 4
+    assert set(found.sample_index.tolist()) <= {0, 1}
+
+
+def test_the_step_hands_metrics_the_targets_it_was_given() -> None:
+    """The port says the model owns target adaptation, so what reaches a metric is
+    ready to compare — and for this family that is the batch's own objects, untouched.
+    """
+    result = model().step(batch())
+
+    assert isinstance(result.targets["boxes"], Instances)
+
+
+def test_it_is_filed_under_its_own_name() -> None:
+    """A vendor family has no backbone to be named after, and the port's default says so."""
+    assert model().architecture == "YoloModel"
+
+
+def test_a_per_task_rate_against_it_is_refused_rather_than_ignored() -> None:
+    """It exposes no per-task parameters, so a declared rate has nothing to move — and the
+    module refuses it instead of training at a pace nobody asked for.
+    """
+    assert list(model().task_parameters("boxes")) == []
+
+
+def test_a_training_step_hands_back_no_prediction_rather_than_an_empty_one() -> None:
+    """A detection head emits feature maps while training and assembles the decodable
+    tensor only in eval — ultralytics does not spend the decode where nobody reads it.
+
+    Empty objects would be a fabricated answer, and a train-stage mAP would report it as
+    zero: a measurement nobody took, dressed as a bad model.
+    """
+    built = model()
+    built.train()
+
+    result = built.step(batch())
+
+    assert result.prediction.outputs == {}
+    assert result.loss.total.requires_grad

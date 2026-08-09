@@ -1,5 +1,17 @@
-kind: yolo
-name: yolov8n.yaml # ultralytics architecture yaml (offline) or a .pt weights path
-# Extra keys forward verbatim as native ultralytics hyperparameters:
-# box: 7.5
-# mosaic: 0.0
+# A vendor family: ultralytics owns the head, the loss and the decoding, and this
+# framework drives the loop around them.
+#
+# `model_name` takes an ultralytics architecture file (offline) or a `.pt` weights path.
+# The network class follows from the name, so `-seg` and `-pose` files build their own
+# kinds; weights are grafted onto a head sized for *this* dataset's classes, which is
+# what their own trainer does when fine-tuning.
+#
+# Every other key here forwards verbatim to ultralytics' own configuration — the loss
+# gains (box / cls / dfl) and the augmentation knobs (mosaic, hsv_h, degrees) alike.
+# One namespace, because that is how the vendor keeps them, and splitting them across
+# two of our sections would mean maintaining a table of which key belongs where:
+#
+#   box: 7.5
+#   mosaic: 0.0
+name: yolo
+model_name: yolov8n.yaml

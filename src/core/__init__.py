@@ -1,80 +1,75 @@
-"""Core: framework-agnostic entities, ports, registry and runtime context.
+"""The framework-agnostic center: entities, ports and taxonomy, on torch and stdlib only."""
 
-This is the innermost circle. It depends only on ``torch`` (the numerical
-language) and the standard library — never on Lightning, Hydra, data formats or
-model zoos. Outer layers implement the ports defined here.
+from __future__ import annotations
 
-Re-exports the full domain surface — every entity and port — so ``from src.core
-import X`` is consistent. The string-key/constant/instantiate utilities keep their
-own convention (``from src.core.keys import IMAGE``, etc.).
-"""
-
+from src.core import log_keys
+from src.core.choices import one_of
 from src.core.entities import (
+    AdaptedTarget,
     Batch,
-    BatchMeta,
-    FeatureBundle,
-    HeadSpec,
-    LossResult,
-    ModelOutput,
+    Curve,
+    DataProfile,
+    Features,
+    Instances,
+    Loss,
+    Matrix,
+    PerClass,
+    Prediction,
     Sample,
-    SampleMeta,
-    StepOutput,
-    TargetView,
+    StepResult,
+    TargetFacts,
     Task,
-    TaskStepView,
-    is_step_output,
+    TaskOutput,
+    as_tensor,
 )
-from src.core.enums import Stage
-from src.core.metric_key import MetricKey
 from src.core.ports import (
     Activation,
     Backbone,
     Criterion,
-    CurveLogger,
+    DataModule,
     Head,
-    HistogramLogger,
-    HtmlLogger,
-    LossAggregator,
-    MatrixLogger,
-    MetricDirectionProvider,
+    MetricFamily,
     MetricSet,
-    PlotLogger,
-    SingleValueLogger,
+    Model,
+    SampleTransform,
     TargetAdapter,
 )
 from src.core.registry import Registry
-from src.core.runtime import RuntimeContext
+from src.core.taxonomy import Modality, Objective, Stage, Stream, Topology
 
 __all__ = [
     "Activation",
+    "AdaptedTarget",
     "Backbone",
     "Batch",
-    "BatchMeta",
     "Criterion",
-    "CurveLogger",
-    "FeatureBundle",
+    "Curve",
+    "DataModule",
+    "DataProfile",
+    "Features",
     "Head",
-    "HeadSpec",
-    "HistogramLogger",
-    "HtmlLogger",
-    "LossAggregator",
-    "LossResult",
-    "MatrixLogger",
-    "MetricDirectionProvider",
-    "MetricKey",
+    "Instances",
+    "Loss",
+    "Matrix",
+    "MetricFamily",
     "MetricSet",
-    "ModelOutput",
-    "PlotLogger",
+    "Modality",
+    "Model",
+    "Objective",
+    "PerClass",
+    "Prediction",
     "Registry",
-    "RuntimeContext",
     "Sample",
-    "SampleMeta",
-    "SingleValueLogger",
+    "SampleTransform",
     "Stage",
-    "StepOutput",
+    "StepResult",
+    "Stream",
     "TargetAdapter",
-    "TargetView",
+    "TargetFacts",
     "Task",
-    "TaskStepView",
-    "is_step_output",
+    "TaskOutput",
+    "Topology",
+    "as_tensor",
+    "log_keys",
+    "one_of",
 ]

@@ -1,10 +1,8 @@
-"""Logger adapters and the ``logger_builders`` registry.
+"""The loggers capability: experiment trackers behind Lightning's ``Logger``."""
 
-Concrete adapters live in submodules and are imported lazily so optional dependencies
-(clearml, wandb) are not required at import time. The config→logger dispatch is
-``build_logger`` in ``composition/wiring/training.py``.
-"""
+from __future__ import annotations
 
-from src.loggers.registry import logger_builders
+from src.loggers.clearml import ClearMLLogger
+from src.loggers.registry import logger_registry
 
-__all__ = ["logger_builders"]
+__all__ = ["ClearMLLogger", "logger_registry"]

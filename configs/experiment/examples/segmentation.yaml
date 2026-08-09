@@ -1,0 +1,29 @@
+# @package _global_
+# Pet, background, boundary — per pixel: `uv run main.py +experiment=examples/segmentation`.
+#
+# A dense task reads the decoder stream and takes smp's own segmentation head, so the
+# output is full image size and nothing here writes a width.
+defaults:
+  - examples/pet
+  - override /model: unet
+
+# Masks are augmented jointly with their image — one crop, one flip, applied to both —
+# because the transform is handed the whole sample. Nothing declares that here: the
+# schema knows which targets are spatial from the encoder that reads them.
+image_size: [256, 256]
+batch_size: 16
+
+tasks:
+  mask:
+    preset: segmentation
+    target: mask_path
+    classes: {0: pet, 1: background, 2: boundary}
+    native_head: true
+    # The one encoder that is not implied by its objective: a mask is a file of its
+    # own, and reading it needs the class count that sizes the index map.
+    target_encoder: {name: mask, num_classes: 3}
+    # The preset brings iou beside the classification set. Dice is the usual companion
+    # for an imbalanced mask, and it goes in the loss rather than the metrics:
+    loss:
+      - {name: cross_entropy, weight: 1.0}
+      - {name: dice, weight: 1.0}

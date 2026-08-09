@@ -1,19 +1,4 @@
-"""Border-crop augmentation that guarantees a minimum crop and marks the sample online.
-
-``RandomBorderCropWithLabel`` mixes the framework's ``LabelAwareMixin`` into Albumentations'
-``RandomCropFromBorders`` (trim a random strip from each border — no resize, the output is
-smaller) and adds two things:
-
-* ``min_crop_threshold`` forces at least one border to be cropped by at least that fraction, so a
-  uniform draw can never degenerate into an (almost) no-op crop.
-* whenever the crop is applied it rewrites the bound discrete label to ``1``, the same online-label
-  idea as ``Rotate90WithLabel`` — turning "an unaltered image vs. a border-cropped one" into a
-  supervised binary signal without duplicating any images.
-
-The per-border maxima and the crop-sum bounds (``crop_left + crop_right <= 1`` etc.) are validated
-by the crop base; only the threshold invariant is checked here. Used via ``_target_`` in a
-transforms config (no registration needed).
-"""
+"""A border crop that is always worth learning from, and says when it happened."""
 
 from __future__ import annotations
 
@@ -21,29 +6,41 @@ from typing import Any
 
 import albumentations as A
 
-from src.transforms.augmentations.base import LabelAwareMixin
+SIDES = ("left", "right", "top", "bottom")
+"""The borders a crop may trim, in a fixed order so a draw is reproducible.
 
-# The four borders, ordered for stable iteration; the strings are the per-side limit keys below.
-_SIDES = ("left", "right", "top", "bottom")
+A crop that leaves nothing is impossible by construction: the parent rejects
+opposite limits summing above 1, so no widening here can meet its counterpart.
+"""
 
 
-class RandomBorderCropWithLabel(LabelAwareMixin, A.RandomCropFromBorders):
-    """Crop a random fraction from each border (one side guaranteed >= a threshold) and set the label to 1.
+class RandomBorderCrop(A.CustomTransformsApplyMixin, A.RandomCropFromBorders):
+    """Trim a random strip from each border and mark the sample as cropped.
 
-    Behaves like ``RandomCropFromBorders`` (per-border maxima ``crop_left``/``crop_right``/
-    ``crop_top``/``crop_bottom``); when every uniform draw lands below ``min_crop_threshold`` one
-    eligible side is resampled into ``[min_crop_threshold, its maximum]`` so the guarantee always
-    holds. The bound label (``label_key``) is rewritten to ``1`` on every application.
+    ``min_crop`` is the reason this exists rather than the parent alone: a
+    uniform draw may trim two pixels, and a sample cropped by two pixels teaches
+    a model nothing while being labelled as cropped. When no side reaches the
+    threshold, one eligible side is widened to it — a correction on top of the
+    parent's draw, so the parent keeps owning the distribution.
+
+    The other class comes from the transform *not* applying, so the dataset's
+    own labels have to be the negative class already.
+
+    Bind the column it rewrites with
+    ``AlbumentationsTransform(label_targets=["was_cropped"])``.
 
     Parameters:
-        crop_left (float): Max fraction of width croppable from the left.
-        crop_right (float): Max fraction of width croppable from the right.
-        crop_top (float): Max fraction of height croppable from the top.
-        crop_bottom (float): Max fraction of height croppable from the bottom.
-        min_crop_threshold (float): Lower bound the strongest crop must reach on at least one side;
-            ``0.0`` disables the guarantee. Must not exceed the largest per-side maximum.
-        label_key (str): Data key of the label to set to ``1`` — the task's ``target`` column.
-        p (float): Probability of applying the transform.
+        crop_left (float): Largest fraction of the width trimmed from the left.
+        crop_right (float): Largest fraction of the width trimmed from the right.
+        crop_top (float): Largest fraction of the height trimmed from the top.
+        crop_bottom (float): Largest fraction of the height trimmed from the bottom.
+        min_crop (float): Fraction at least one side must reach; ``0`` asks for
+            no guarantee. It cannot exceed every per-side maximum, or no side
+            could ever satisfy it.
+        applied_label (int): What the bound label becomes when the crop applies.
+            Not fixed at 1: a label encoder sorts its vocabulary, so the class
+            standing for "cropped" depends on what the classes are called.
+        p (float): Probability of cropping at all.
     """
 
     def __init__(
@@ -52,11 +49,10 @@ class RandomBorderCropWithLabel(LabelAwareMixin, A.RandomCropFromBorders):
         crop_right: float = 0.1,
         crop_top: float = 0.1,
         crop_bottom: float = 0.1,
-        min_crop_threshold: float = 0.0,
-        label_key: str = "label",
+        min_crop: float = 0.0,
+        applied_label: int = 1,
         p: float = 1.0,
     ) -> None:
-        self.label_key = label_key  # set before super().__init__ so _set_keys can register it
         super().__init__(
             crop_left=crop_left,
             crop_right=crop_right,
@@ -64,47 +60,38 @@ class RandomBorderCropWithLabel(LabelAwareMixin, A.RandomCropFromBorders):
             crop_bottom=crop_bottom,
             p=p,
         )
-        largest_side_limit = max(crop_left, crop_right, crop_top, crop_bottom)
-        if min_crop_threshold > largest_side_limit:
+        largest = max(crop_left, crop_right, crop_top, crop_bottom)
+        if min_crop > largest:
             raise ValueError(
-                f"min_crop_threshold ({min_crop_threshold}) cannot exceed the largest per-side "
-                f"crop limit ({largest_side_limit})"
+                f"min_crop ({min_crop}) exceeds every per-side maximum (largest is {largest}), "
+                f"so no side could ever reach it."
             )
-        self.min_crop_threshold = min_crop_threshold
+        self.min_crop = min_crop
+        self.applied_label = applied_label
 
     def apply_to_label(self, label: Any, **params: Any) -> int:
-        """Mark the sample as cropped — the label becomes ``1`` whenever the transform applies."""
-        return 1
+        return self.applied_label
 
     def get_params_dependent_on_data(
         self, params: dict[str, Any], data: dict[str, Any]
     ) -> dict[str, tuple[int, int, int, int]]:
-        if self.min_crop_threshold <= 0.0:
-            return super().get_params_dependent_on_data(params, data)
+        taken = super().get_params_dependent_on_data(params, data)
+        if self.min_crop <= 0.0 or max(self.applied_config.values()) >= self.min_crop:
+            return taken
+
+        # Widen one side in the record the parent just filled, then read the crop back
+        # out of it: the parent keeps owning both the draw and what it reports.
+        limits = {f"crop_{side}": getattr(self, f"crop_{side}") for side in SIDES}
+        widened = self.py_random.choice([side for side, limit in limits.items() if limit >= self.min_crop])
+        self.applied_config[widened] = self.py_random.uniform(self.min_crop, limits[widened])
 
         height, width = params["shape"][:2]
-        limits = {
-            "left": self.crop_left,
-            "right": self.crop_right,
-            "top": self.crop_top,
-            "bottom": self.crop_bottom,
+        fractions = self.applied_config
+        return {
+            "crop_coords": (
+                int(fractions["crop_left"] * width),
+                int(fractions["crop_top"] * height),
+                width - int(fractions["crop_right"] * width),
+                height - int(fractions["crop_bottom"] * height),
+            )
         }
-        fractions = {side: self.py_random.uniform(0.0, limits[side]) for side in _SIDES}
-
-        # Guarantee the threshold: if no side reached it, force one eligible side to.
-        if max(fractions.values()) < self.min_crop_threshold:
-            eligible = [side for side in _SIDES if limits[side] >= self.min_crop_threshold]
-            chosen = self.py_random.choice(eligible)
-            fractions[chosen] = self.py_random.uniform(self.min_crop_threshold, limits[chosen])
-
-        x_min = int(fractions["left"] * width)
-        x_max = int((1.0 - fractions["right"]) * width)
-        y_min = int(fractions["top"] * height)
-        y_max = int((1.0 - fractions["bottom"]) * height)
-
-        # Never emit a degenerate (empty) crop on either axis.
-        if x_max <= x_min:
-            x_min, x_max = 0, width
-        if y_max <= y_min:
-            y_min, y_max = 0, height
-        return {"crop_coords": (x_min, y_min, x_max, y_max)}

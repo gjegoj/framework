@@ -1,20 +1,27 @@
-# Profiling run — Lightning's SimpleProfiler reports mean time per hook so the
-# bottleneck is obvious: data fetch (`[_TrainingEpochLoop].train_dataloader_next`)
-# vs forward (`training_step`) vs `backward` / `optimizer_step`.
+# Where a run's wall clock goes: `uv run main.py +experiment=... trainer=profile`.
 #
-# Run, e.g.:
-#   uv run python main.py trainer=profile epochs=1 run_test=false run_export=false logger=none
+# Inherits the default trainer rather than restating it, so a profiling run
+# measures the settings a real run trains with — precision above all. A preset
+# that copies its neighbour drifts from it, and then it profiles a program
+# nobody runs.
 #
-# `profiler` is a brick-spec: a string alias (`simple`/`advanced`/`pytorch`) prints
-# to the console, while a `{_target_: ...}` mapping is instantiated — use it to write
-# the report to a file via `dirpath`/`filename`. `${save_dir}` resolves to the run dir.
-# For per-op detail, target `lightning.pytorch.profilers.PyTorchProfiler` instead.
-accelerator: auto
-devices: auto
-precision: 32-true
-log_every_n_steps: 10
-num_sanity_val_steps: 0
+# `simple` times Lightning's own hooks, which answers the question worth asking
+# first: data fetch (`run_training_epoch` minus the rest), forward
+# (`training_step`), `backward`, `optimizer_step`. Swap to `advanced` for a
+# cProfile breakdown per hook, or `pytorch` for per-operator detail:
+#
+#   uv run main.py +experiment=... trainer=profile trainer.profiler.name=pytorch
+#
+# The report is written into the run's directory as `fit-profile.txt` — see
+# docs/guides/logging.md for what the numbers do and do not include.
+defaults:
+  - default
+
 profiler:
-  _target_: lightning.pytorch.profilers.SimpleProfiler
-  dirpath: ${save_dir}
+  name: simple
+  # Both keys, because `filename` is a switch rather than a name: a profiler writes
+  # a file only when it has the two, and with a directory alone the report still
+  # goes to the job log — three hundred lines of it, in a column padded out to the
+  # widest action name. Lightning prefixes the stage, so this is `fit-profile.txt`.
+  dirpath: ${run.directory}
   filename: profile

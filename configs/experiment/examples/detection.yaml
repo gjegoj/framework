@@ -1,0 +1,40 @@
+# @package _global_
+# A YOLO detector on COCO128: `uv run main.py +experiment=examples/detection`.
+#
+# The one example that does not read the pet table, because a detection dataset does not
+# arrive as one. It arrives as a `data.yaml` descriptor naming its own class list and one
+# image directory per stage — so `inputs` is empty and there is no `split`, the
+# descriptor already says which images are which stage.
+#
+# **Nothing to download by hand.** `coco128.yaml` ships inside ultralytics and carries its
+# own URL, so the first run fetches the 7 MB dataset and every run after reuses it. It
+# lands in ultralytics' own datasets directory, not under this repository — run
+# `yolo settings` to see or change where that is. Point `source` at your own `data.yaml`
+# to train on real data.
+#
+# What this run does not have is a `transforms` section. A vendor family augments through
+# its own box-aware pipeline, and declaring ours would be refused at assembly rather than
+# silently ignored — put mosaic, hsv_h and degrees in the model section instead.
+defaults:
+  - override /model: yolov8n
+  - override /callbacks: default
+  - override /transforms: none
+
+lr: 1.0e-3
+epochs: 50
+batch_size: 16
+image_size: [640, 640]
+
+data:
+  source: coco128.yaml
+  inputs: {}
+
+run:
+  project: detection
+
+tasks:
+  boxes:
+    preset: detection
+    # `map` publishes a family from one pass — mAP@50-95 beside mAP@50 and mAP@75 — so
+    # this one entry is three series on one graph. Name `readings` to widen it:
+    # metrics: {map: {name: map, readings: [map, map_50, map_75, map_per_class]}}

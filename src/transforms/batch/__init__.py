@@ -1,11 +1,8 @@
-"""Batch transforms: cross-sample mixing on the collated batch.
+"""Augmentations that mix different samples, and therefore need the collated batch."""
 
-Importing this package populates the ``batch_transforms`` registry.
-"""
+from __future__ import annotations
 
-from src.transforms.batch.mixup import CutMix, MixUp
+from src.transforms.batch.mix import PAIRED_WITH, CutMix, LabelMix, MixUp
 from src.transforms.batch.mosaic import Mosaic
-from src.transforms.batch.registry import batch_transforms
-from src.transforms.batch.spec import BatchTransform, TargetSpec
 
-__all__ = ["BatchTransform", "CutMix", "MixUp", "Mosaic", "TargetSpec", "batch_transforms"]
+__all__ = ["PAIRED_WITH", "CutMix", "LabelMix", "MixUp", "Mosaic"]

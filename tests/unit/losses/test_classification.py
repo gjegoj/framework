@@ -1,176 +1,94 @@
-"""Classification criteria: focal loss behaviour and wrapper kwargs forwarding.
-
-Focal loss is a standard supervised criterion (no new topology/objective). It is
-generalised across GLOBAL (``[B, C]`` vs ``[B]``) and DENSE (``[B, C, H, W]`` vs
-``[B, H, W]``) shapes, operates on logits, and supports an optional per-class
-``alpha`` vector — the distinguishing feature over ``smp.losses.FocalLoss``.
-"""
+"""Classification criteria: cross-entropy and binary cross-entropy."""
 
 from __future__ import annotations
 
-from collections.abc import Callable
-
 import pytest
 import torch
-import torch.nn.functional as F
 
-from src.losses.classification import FocalCriterion, FocalLoss
-
-
-class TestRegistration:
-    def test_registered(self) -> None:
-        import src.losses  # noqa: F401 — importing the package self-registers every criterion
-        from src.losses.registry import criteria
-
-        assert "focal" in criteria
-
-    def test_create_from_registry(self) -> None:
-        from src.losses.registry import criteria
-
-        criterion = criteria.create("focal", gamma=3.0, alpha=[0.25, 0.75])
-        assert isinstance(criterion, FocalCriterion)
-
-    def test_components_key(self) -> None:
-        result = FocalCriterion()(torch.randn(3, 5), torch.tensor([0, 1, 2]))
-        assert "focal" in result.components
-        assert torch.equal(result.components["focal"], result.total)
+from src.losses import BinaryCrossEntropyCriterion, CrossEntropyCriterion
 
 
-class TestGlobalShape:
-    """Classification: logits ``[B, C]`` vs class-index targets ``[B]``."""
+def test_cross_entropy_returns_a_named_loss_with_grad() -> None:
+    logits = torch.randn(4, 3, requires_grad=True)
+    target = torch.tensor([0, 1, 2, 0])
 
-    def test_confident_correct_has_low_loss(self) -> None:
-        logits = torch.tensor([[10.0, 0.0, 0.0], [0.0, 10.0, 0.0]])
-        target = torch.tensor([0, 1])
-        assert FocalCriterion()(logits, target).total.item() < 0.01
+    loss = CrossEntropyCriterion()(logits, target)
 
-    def test_wrong_prediction_has_higher_loss(self) -> None:
-        criterion = FocalCriterion()
-        target = torch.tensor([0])
-        correct = criterion(torch.tensor([[5.0, 0.0, 0.0]]), target).total
-        wrong = criterion(torch.tensor([[0.0, 5.0, 0.0]]), target).total
-        assert wrong.item() > correct.item()
+    assert set(loss.parts) == {"ce"}
+    assert loss.total.requires_grad
 
 
-# The criterion is generalised over GLOBAL ([B, C] vs [B]) and DENSE ([B, C, H, W] vs [B, H, W])
-# shapes — the shape-agnostic behaviors are pinned once for both.
-_SHAPE_CASES = [
-    pytest.param((8, 4), (8,), id="global"),
-    pytest.param((2, 4, 8, 8), (2, 8, 8), id="dense"),
-]
+def test_binary_cross_entropy_accepts_single_logit_heads() -> None:
+    logits = torch.randn(4, 1, requires_grad=True)
+    target = torch.tensor([0.0, 1.0, 1.0, 0.0])
+
+    loss = BinaryCrossEntropyCriterion()(logits, target)
+
+    assert set(loss.parts) == {"bce"}
+    assert loss.total.shape == ()
 
 
-class TestShapeGeneralisation:
-    @pytest.mark.parametrize(("logits_shape", "target_shape"), _SHAPE_CASES)
-    def test_returns_scalar(self, logits_shape: tuple[int, ...], target_shape: tuple[int, ...]) -> None:
-        result = FocalCriterion()(torch.randn(*logits_shape), torch.randint(0, 4, target_shape))
-        assert result.total.ndim == 0
-        assert result.total.item() > 0
+def test_binary_cross_entropy_squeezes_the_channel_on_dense_shapes() -> None:
+    logits = torch.randn(2, 1, 8, 8)
+    target = torch.randint(0, 2, (2, 8, 8)).float()
 
-    @pytest.mark.parametrize(("logits_shape", "target_shape"), _SHAPE_CASES)
-    def test_gamma_zero_matches_cross_entropy(
-        self, logits_shape: tuple[int, ...], target_shape: tuple[int, ...]
-    ) -> None:
-        """With gamma=0 the focal term is 1, so focal reduces to cross-entropy."""
-        logits = torch.randn(*logits_shape)
-        target = torch.randint(0, 4, target_shape)
-        focal = FocalCriterion(gamma=0.0)(logits, target).total
-        assert torch.allclose(focal, F.cross_entropy(logits, target), atol=1e-6)
+    loss = BinaryCrossEntropyCriterion()(logits, target)
+
+    assert loss.total.shape == ()
 
 
-class TestGammaBehaviour:
-    def test_gamma_downweights_easy_examples(self) -> None:
-        """On confident-correct examples, focusing (gamma>0) lowers the loss vs gamma=0."""
-        logits = torch.tensor([[4.0, 0.0, 0.0], [0.0, 4.0, 0.0], [0.0, 0.0, 4.0]])
-        target = torch.tensor([0, 1, 2])
-        no_focus = FocalCriterion(gamma=0.0)(logits, target).total
-        focused = FocalCriterion(gamma=2.0)(logits, target).total
-        assert focused.item() < no_focus.item()
+def test_binary_cross_entropy_handles_multilabel_shapes() -> None:
+    logits = torch.randn(4, 5)
+    target = torch.randint(0, 2, (4, 5)).float()
+
+    loss = BinaryCrossEntropyCriterion()(logits, target)
+
+    assert loss.total.shape == ()
 
 
-class TestPerClassAlpha:
-    def test_uniform_alpha_scales_loss(self) -> None:
-        """A constant per-class alpha=c scales every element, so the mean scales by c."""
-        logits = torch.randn(12, 3)
-        target = torch.randint(0, 3, (12,))
-        unweighted = FocalCriterion()(logits, target).total
-        weighted = FocalCriterion(alpha=[2.0, 2.0, 2.0])(logits, target).total
-        assert torch.allclose(weighted, 2.0 * unweighted, atol=1e-6)
+def test_cross_entropy_matches_torch_reference() -> None:
+    logits = torch.randn(8, 3)
+    target = torch.randint(0, 3, (8,))
 
-    def test_alpha_registered_as_buffer(self) -> None:
-        """alpha is a buffer so it follows .to(device) and lands in the state_dict."""
-        loss = FocalLoss(alpha=[0.5, 1.5])
-        assert "alpha" in dict(loss.named_buffers())
+    loss = CrossEntropyCriterion()(logits, target)
 
-    def test_no_alpha_has_no_buffer_value(self) -> None:
-        assert FocalLoss(alpha=None).alpha is None
+    expected = torch.nn.functional.cross_entropy(logits, target)
+    assert loss.total.item() == pytest.approx(expected.item())
 
 
-class TestReduction:
-    def test_none_keeps_per_element_shape(self) -> None:
-        loss = FocalLoss(reduction="none")
-        target = torch.randint(0, 4, (3, 6, 6))
-        assert loss(torch.randn(3, 4, 6, 6), target).shape == target.shape
+def test_cross_entropy_forwards_any_torch_knob_via_kwargs() -> None:
+    logits = torch.randn(8, 3)
+    target = torch.randint(0, 3, (8,))
 
-    def test_sum_is_mean_times_count(self) -> None:
-        logits = torch.randn(10, 3)
-        target = torch.randint(0, 3, (10,))
-        total_sum = FocalLoss(reduction="sum")(logits, target)
-        total_mean = FocalLoss(reduction="mean")(logits, target)
-        assert torch.allclose(total_sum, total_mean * 10, atol=1e-5)
+    loss = CrossEntropyCriterion(label_smoothing=0.2)(logits, target)
+
+    expected = torch.nn.functional.cross_entropy(logits, target, label_smoothing=0.2)
+    assert loss.total.item() == pytest.approx(expected.item())
 
 
-class TestValidationAndGradients:
-    @pytest.mark.parametrize(
-        ("build", "match"),
-        [
-            pytest.param(lambda: FocalLoss(gamma=-1.0), "gamma must be non-negative", id="negative_gamma"),
-            pytest.param(lambda: FocalLoss(reduction="average"), "reduction must be", id="unknown_reduction"),
-            pytest.param(lambda: FocalLoss(eps=0.0), "eps must be positive", id="non_positive_eps"),
-        ],
+def test_cross_entropy_converts_the_weight_list_to_a_tensor() -> None:
+    logits = torch.randn(8, 3)
+    target = torch.randint(0, 3, (8,))
+
+    loss = CrossEntropyCriterion(weight=[1.0, 2.0, 0.5])(logits, target)
+
+    expected = torch.nn.functional.cross_entropy(logits, target, weight=torch.tensor([1.0, 2.0, 0.5]))
+    assert loss.total.item() == pytest.approx(expected.item())
+
+
+def test_class_weights_live_in_a_buffer_and_move_with_the_module() -> None:
+    criterion = CrossEntropyCriterion(weight=[1.0, 2.0, 0.5])
+
+    assert any("weight" in name for name in dict(criterion.named_buffers()))
+
+
+def test_binary_cross_entropy_converts_pos_weight_and_forwards_it() -> None:
+    logits = torch.randn(6, 1)
+    target = torch.randint(0, 2, (6,)).float()
+
+    loss = BinaryCrossEntropyCriterion(pos_weight=[3.0])(logits, target)
+
+    expected = torch.nn.functional.binary_cross_entropy_with_logits(
+        logits.squeeze(-1), target, pos_weight=torch.tensor([3.0])
     )
-    def test_invalid_constructor_argument_raises(self, build: Callable[[], FocalLoss], match: str) -> None:
-        with pytest.raises(ValueError, match=match):
-            build()
-
-    def test_gradients_flow_to_logits(self) -> None:
-        logits = torch.randn(8, 4, requires_grad=True)
-        FocalCriterion(gamma=2.0, alpha=[1.0, 2.0, 1.0, 0.5])(logits, torch.randint(0, 4, (8,))).total.backward()
-        assert logits.grad is not None and torch.isfinite(logits.grad).all()
-
-    @pytest.mark.parametrize(
-        "gamma",
-        [
-            pytest.param(0.0, id="cross_entropy"),
-            pytest.param(0.5, id="fractional_focus"),
-            pytest.param(1.0, id="unit_focus"),
-            pytest.param(2.0, id="default_focus"),
-        ],
-    )
-    def test_gradients_finite_at_saturated_confidence(self, gamma: float) -> None:
-        """A fully-learned target rounds p_t to exactly 1.0 in fp32, so the focal base is 0;
-        pow's backward at a zero base is infinite for gamma < 1 — the whole declared gamma
-        domain must stay finite (criterion_schedule anneals gamma straight through (0, 1))."""
-        logits = torch.tensor([[40.0, -40.0], [0.5, -0.5]], requires_grad=True)
-        FocalCriterion(gamma=gamma)(logits, torch.tensor([0, 0])).total.backward()
-        assert logits.grad is not None and torch.isfinite(logits.grad).all()
-
-
-class TestWrapperKwargsForwarding:
-    """Unlisted torch-loss params are configurable from YAML via verbatim **kwargs forwarding."""
-
-    def test_cross_entropy_forwards_reduction_and_ignore_index(self) -> None:
-        from src.losses.registry import criteria
-
-        criterion = criteria.create("cross_entropy", reduction="sum", ignore_index=255)
-        wrapped = criterion._loss
-        assert isinstance(wrapped, torch.nn.CrossEntropyLoss)
-        assert wrapped.reduction == "sum"
-        assert wrapped.ignore_index == 255
-
-    def test_bce_forwards_reduction(self) -> None:
-        from src.losses.registry import criteria
-
-        wrapped = criteria.create("bce", reduction="none")._loss
-        assert isinstance(wrapped, torch.nn.BCEWithLogitsLoss)
-        assert wrapped.reduction == "none"
+    assert loss.total.item() == pytest.approx(expected.item())

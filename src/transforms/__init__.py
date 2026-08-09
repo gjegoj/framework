@@ -1,24 +1,15 @@
-"""Transforms: per-sample input augmentation and cross-sample batch transforms.
+"""The transforms capability: augmentation, per sample and per batch."""
 
-Custom per-sample augmentations are re-exported here so configs can reference them by the short
-path (``_target_: src.transforms.Rotate90WithLabel``). The ``augmentations`` package pulls in only
-albumentations + numpy, so this stays light.
+from __future__ import annotations
 
-Batch transforms are deliberately NOT re-exported: import ``src.transforms.batch`` directly so
-that pulling the per-sample transform into the data layer does not drag in torchvision/tasks via
-the batch package.
-"""
-
-from src.transforms.augmentations import (
-    LabelAwareDualTransform,
-    LabelAwareMixin,
-    RandomBorderCropWithLabel,
-    Rotate90WithLabel,
-)
+from src.transforms.albumentations import AlbumentationsTransform
+from src.transforms.batch import CutMix, MixUp, Mosaic
+from src.transforms.multiview import MultiViewTransform
 
 __all__ = [
-    "LabelAwareDualTransform",
-    "LabelAwareMixin",
-    "RandomBorderCropWithLabel",
-    "Rotate90WithLabel",
+    "AlbumentationsTransform",
+    "CutMix",
+    "MixUp",
+    "Mosaic",
+    "MultiViewTransform",
 ]

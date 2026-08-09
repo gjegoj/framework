@@ -1,43 +1,66 @@
-"""Distillation criteria: soft-target losses against teacher outputs.
-
-The target of a distillation criterion is not a data-layer label but another
-model's logits — still just a tensor, so the standard ``Criterion`` port
-signature applies unchanged.
-"""
+"""Distillation criteria: a student judged against a teacher's outputs."""
 
 from __future__ import annotations
 
-import torch.nn.functional as F
-from torch import Tensor
+from typing import TYPE_CHECKING, Any, ClassVar
 
-from src.core.entities import LossResult
-from src.core.ports import Criterion
-from src.losses.registry import criteria
+from torch import nn
+from torch.nn import functional
+
+from src.losses.base import WrappedCriterion
+from src.losses.registry import criterion_registry
+
+if TYPE_CHECKING:
+    from torch import Tensor
 
 
-@criteria.register("kl_divergence")
-class KLDivergenceCriterion(Criterion):
-    """Temperature-scaled KL divergence between student logits and teacher logits.
+class KLDivergenceLoss(nn.Module):
+    """Temperature-scaled KL divergence from teacher logits to student logits.
 
-    Computes ``KL(softmax(teacher/T) || softmax(student/T)) * T^2`` — the ``T^2``
-    factor keeps soft-target gradients on the same scale as hard-target ones.
-    Softmax runs over ``dim=1``, so one instance serves GLOBAL ``[B, C]`` and
-    DENSE ``[B, C, H, W]`` alike. The teacher side is detached: gradients flow
-    to the student argument only.
+    ``KL(softmax(teacher/T) || softmax(student/T)) * T²`` — the ``T²`` factor
+    keeps soft-target gradients on the scale of hard-target ones, which is what
+    lets the two be added with an honest weight. The class dimension is dim 1
+    and everything after it rides along, so one module serves ``[B, C]`` and
+    dense ``[B, C, H, W]`` alike. The teacher side is detached: gradients reach
+    the student argument only.
+
+    ``temperature`` is a plain number read anew each step, so the ``anneal``
+    callback can cool it over the run.
 
     Parameters:
-        temperature (float): Softening temperature (``> 0``). ``1.0`` -> plain KL.
+        temperature (float): Softening; 1.0 is plain KL, higher exposes more of
+            the teacher's dark knowledge in the small logits.
     """
 
     def __init__(self, temperature: float = 1.0) -> None:
         super().__init__()
         if temperature <= 0:
-            raise ValueError(f"temperature must be positive, got {temperature}.")
+            raise ValueError(f"KLDivergenceLoss temperature must be positive, got {temperature}.")
         self.temperature = temperature
 
-    def forward(self, logits: Tensor, target: Tensor) -> LossResult:
-        student_log_probabilities = F.log_softmax(logits / self.temperature, dim=1)
-        teacher_probabilities = F.softmax(target.detach() / self.temperature, dim=1)
-        divergence = F.kl_div(student_log_probabilities, teacher_probabilities, reduction="none")
-        value = divergence.sum(dim=1).mean() * (self.temperature * self.temperature)
-        return LossResult(total=value, components={"kl": value})
+    def forward(self, logits: Tensor, target: Tensor) -> Tensor:
+        if target.shape != logits.shape or not target.is_floating_point():
+            raise ValueError(
+                f"Distillation compares logits with logits: the student produced "
+                f"{tuple(logits.shape)} but the target is {tuple(target.shape)} "
+                f"{target.dtype}. Its target is a teacher's output, not a class label."
+            )
+        student = functional.log_softmax(logits / self.temperature, dim=1)
+        teacher = functional.softmax(target.detach() / self.temperature, dim=1)
+        divergence = functional.kl_div(student, teacher, reduction="none")
+        return divergence.sum(dim=1).mean() * (self.temperature * self.temperature)
+
+
+@criterion_registry.register("kl_divergence")
+class KLDivergenceCriterion(WrappedCriterion):
+    """Distillation KL as a criterion.
+
+    Parameters:
+        **kwargs: Forwarded verbatim to :class:`KLDivergenceLoss`
+            (``temperature``).
+    """
+
+    part_name: ClassVar[str] = "kl"
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(KLDivergenceLoss(**kwargs))

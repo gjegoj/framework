@@ -1,96 +1,100 @@
-"""A minimal, type-safe registry for pluggable components (Registry / Factory Method).
-
-Replaces the over-engineered factory from the old prototype: no instance cache,
-no predicate checkers, no config injection — just name → constructor lookup with
-decorator registration. This is the single extension point users hit to plug in
-their own backbones, heads, losses, metrics, etc.
-"""
+"""A minimal, type-safe registry: pluggable components looked up by key."""
 
 from __future__ import annotations
 
-from collections.abc import Callable, Hashable, Iterator, KeysView
+from collections.abc import Callable, Hashable, Iterator, Mapping
+from inspect import signature
+from typing import Any
 
 
 class Registry[T]:
-    """Maps hashable keys to constructors so components plug in by key.
+    """Maps hashable keys to component factories.
 
-    Keys are usually short strings, but any ``Hashable`` works — e.g. a
-    ``(topology, objective)`` tuple for the visualization annotators, so a composite
-    key needs no string encoding.
+    The framework's single extension mechanism: each capability package declares its
+    registries in ``<package>/registry.py``, implementations register at import time,
+    and assembly resolves config names through them.
+
+    A key is anything hashable — a short string for config-facing components, an enum
+    member for axis behaviours, a tuple for composite dispatch.
 
     Parameters:
-        name (str): Human-readable registry name, used in error messages.
+        kind (str): What is being registered, as it should read in an error
+            message — ``"criterion"``, ``"head"``.
 
     Examples:
-        >>> backbones: Registry[Backbone] = Registry("backbone")
-        >>> @backbones.register("timm")
-        ... class TimmBackbone(...): ...
-        >>> model = backbones.create("timm", model_name="resnet18")
+        >>> criterion_registry: Registry[Criterion] = Registry("criterion")
+        >>> @criterion_registry.register("cross_entropy")
+        ... class CrossEntropyCriterion(WrappedCriterion): ...
+        >>> criterion = criterion_registry.create("cross_entropy", label_smoothing=0.1)
     """
 
-    def __init__(self, name: str) -> None:
-        self._name = name
+    def __init__(self, kind: str) -> None:
+        self._kind = kind
         self._factories: dict[Hashable, Callable[..., T]] = {}
 
     def register(self, key: Hashable) -> Callable[[Callable[..., T]], Callable[..., T]]:
-        """Return a decorator that registers a class/factory under ``key``.
-
-        Parameters:
-            key (str): Lookup key; must be unique within this registry.
-
-        Raises:
-            ValueError: If ``key`` is already registered.
-        """
+        """Return a decorator that registers a class or factory under ``key``."""
 
         def decorator(factory: Callable[..., T]) -> Callable[..., T]:
-            if key in self._factories:
-                raise ValueError(f"{self._name}: key {key!r} is already registered.")
-            self._factories[key] = factory
+            self._add(key, factory)
             return factory
 
         return decorator
 
     def register_instance(self, key: Hashable, instance: T) -> None:
-        """Register a ready-made singleton (a value/strategy registry).
+        """Register a prebuilt object; ``create(key)`` returns it as-is.
 
-        Unlike ``register`` (which stores a *factory*), this stores a single
-        prebuilt object; ``create(key)`` and ``get(key)()`` both return it as-is.
-        Use for components that are configured once and shared, such as task presets.
-
-        Parameters:
-            key (str): Lookup key; must be unique within this registry.
-            instance (T): The object to return whenever ``key`` is requested.
-
-        Raises:
-            ValueError: If ``key`` is already registered.
+        For components configured once and shared — axis behaviours, presets.
         """
-        if key in self._factories:
-            raise ValueError(f"{self._name}: key {key!r} is already registered.")
-        self._factories[key] = lambda *_args, **_kwargs: instance
+        self._add(key, lambda: instance)
+
+    def create(self, key: Hashable, **kwargs: Any) -> T:
+        """Build the component registered under ``key`` with ``kwargs``."""
+        return self.get(key)(**kwargs)
 
     def get(self, key: Hashable) -> Callable[..., T]:
-        """Return the constructor registered under ``key``.
+        """Return the factory registered under ``key``.
 
         Raises:
-            KeyError: If ``key`` is not registered.
+            LookupError: If ``key`` is unknown; names the kind and lists
+                the registered keys.
         """
         try:
             return self._factories[key]
-        except KeyError as error:
-            available = sorted(self._factories, key=repr)  # key=repr: keys may be non-orderable (e.g. tuples)
-            raise KeyError(f"{self._name}: unknown key {key!r}. Available: {available}.") from error
+        except KeyError:
+            known = ", ".join(sorted(str(existing) for existing in self._factories)) or "none"
+            raise LookupError(f"Unknown {self._kind} '{key}'. Registered: {known}.") from None
 
-    def create(self, key: Hashable, *args: object, **kwargs: object) -> T:
-        """Construct the component registered under ``key`` with the given arguments."""
-        return self.get(key)(*args, **kwargs)
-
-    def __contains__(self, key: Hashable) -> bool:
+    def __contains__(self, key: object) -> bool:
         return key in self._factories
 
     def __iter__(self) -> Iterator[Hashable]:
-        """Iterate over the registered keys (mirrors ``dict`` iteration)."""
         return iter(self._factories)
 
-    def keys(self) -> KeysView[Hashable]:
-        """Return the registered keys."""
-        return self._factories.keys()
+    def _add(self, key: Hashable, factory: Callable[..., T]) -> None:
+        if key in self._factories:
+            raise ValueError(f"{self._kind} '{key}' is already registered.")
+        self._factories[key] = factory
+
+
+def named_by(callee: Callable[..., Any], offered: Mapping[str, Any]) -> dict[str, Any]:
+    """The offered values ``callee`` names in its signature, and only those.
+
+    How a component receives a fact assembly computed — ``num_classes``,
+    ``class_values`` — without config having to restate it. Facts are *offered*: a
+    factory that does not name one simply does not receive it, which lets a caller
+    offer the same fact to a whole family of components without knowing which of
+    them wants it.
+
+    Matching is by name, never by ``**kwargs``, so a component that forwards
+    unknown arguments to an upstream library is not handed framework facts it
+    never asked for.
+
+    Parameters:
+        callee (Callable): Whose signature decides what it gets.
+        offered (Mapping[str, Any]): Everything available to offer.
+    """
+    if not offered:
+        return {}
+    named = signature(callee).parameters
+    return {name: value for name, value in offered.items() if name in named}

@@ -1,59 +1,58 @@
-"""Shared base for single-term criteria — the extension point for wrapping any loss module.
-
-The layout convention for this package: one module per loss *family* —
-``classification`` / ``regression`` / ``segmentation`` / ``composite`` and the
-metric-learning families ``angular`` / ``contrastive`` / ``ranking``. A new loss goes
-into its family module (or a new family module) and registers in ``criteria``.
-"""
+"""Shared base for single-part criteria — the extension point for wrapping any loss."""
 
 from __future__ import annotations
 
+from typing import ClassVar
+
 from torch import Tensor, nn
 
-from src.core.entities import LossResult
+from src.core.entities import Loss
 from src.core.ports import Criterion
 
 
-def require_view_shape(logits: Tensor, views: int, owner: str) -> None:
-    """Validate the multi-view/multi-stream carrier shape ``[B, views, D]``.
+def split_views(logits: Tensor, count: int, owner: str) -> tuple[Tensor, ...]:
+    """Validate a stacked ``[B, count, D]`` carrier and return its views.
 
-    Shared by the ranking and contrastive families so shape mismatches surface with one
-    consistent, early error instead of failing inside PyTorch's loss functions.
-
-    Parameters:
-        logits (Tensor): The candidate ``[B, N, D]`` carrier.
-        views (int): Expected ``N`` (2 for pairs, 3 for triplets).
-        owner (str): Criterion class name for the error message.
-
-    Raises:
-        ValueError: If ``logits`` is not ``[B, views, D]``.
+    Shared by the families that consume view carriers (contrastive, ranking),
+    so a shape mistake names the criterion instead of surfacing deep inside a
+    torch loss.
     """
-    if logits.ndim != 3 or logits.size(1) != views:
-        raise ValueError(f"{owner} expects logits of shape [B, {views}, D], got {tuple(logits.shape)}.")
+    if logits.dim() != 3 or logits.size(1) != count:
+        raise ValueError(f"{owner} expects stacked embeddings [B, {count}, D], got {tuple(logits.shape)}.")
+    return tuple(logits.unbind(dim=1))
 
 
-class SingleTermCriterion(Criterion):
-    """Base for criteria that wrap one loss module and log it under one component.
+class WrappedCriterion(Criterion):
+    """Base for criteria that wrap one torch loss and log it as one named part.
 
-    Subclasses build their ``nn.Module`` loss in ``__init__`` and hand it to
-    ``super().__init__``; they set ``component_name`` — the label the scalar is
-    logged under (conventionally the registry key).
+    **Wrap a module, subclass a composer.** Math that ends in one tensor-in →
+    tensor-out ``nn.Module`` — torch's, smp's, or written beside the wrapper — belongs
+    here; a criterion that composes *other criteria*, like a distance slot or a weighted
+    sum, subclasses ``Criterion`` directly, because its children already return ``Loss``.
+    Either way the logged part is ``part_name``, never an inline string.
 
-    Wrapper convention: declare explicitly only the parameters that need conversion
-    (e.g. a ``weight`` list → tensor) or a framework default; forward everything else
-    verbatim to the wrapped loss via ``**kwargs`` so every upstream knob stays
-    reachable from YAML without wrapper changes.
+    Subclasses build their loss module in ``__init__`` and hand it over. The wrapped
+    module is a registered submodule, so its parameters train and its buffers move
+    across devices. A new loss goes into its family module (``classification``,
+    ``regression``, ``segmentation``, ``contrastive``, ...) and registers in the
+    ``criterion_registry`` under a config-facing name.
 
-    Parameters:
-        loss (nn.Module): Wrapped loss, called as ``loss(logits, target)``.
+    Declare explicitly only the parameters that need conversion — a YAML list into a
+    tensor — or a framework default; forward everything else verbatim through
+    ``**kwargs``, so every upstream knob stays reachable without a wrapper change.
     """
 
-    component_name: str
+    part_name: ClassVar[str]
 
     def __init__(self, loss: nn.Module) -> None:
         super().__init__()
         self._loss = loss
 
-    def forward(self, logits: Tensor, target: Tensor) -> LossResult:
+    def forward(self, logits: Tensor, target: Tensor) -> Loss:
+        logits, target = self._prepare(logits, target)
         value: Tensor = self._loss(logits, target)
-        return LossResult(total=value, components={self.component_name: value})
+        return Loss.part(self.part_name, value)
+
+    def _prepare(self, logits: Tensor, target: Tensor) -> tuple[Tensor, Tensor]:
+        """Shape/type hook applied before the wrapped loss; identity by default."""
+        return logits, target

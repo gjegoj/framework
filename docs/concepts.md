@@ -1,106 +1,151 @@
 # Core concepts
 
-## Core concepts
+Five ideas explain most of the framework. Everything else is a consequence of
+them.
 
-**A Task is a composition of three orthogonal axes.** A *topology* defines the output
-structure (global per-sample, dense per-pixel, ranking / multistream for embeddings); an
-*objective* defines label semantics (multiclass / multilabel / binary / continuous / metric);
-a *modality* defines the input side (image / precomputed embedding / multi-encoder). Familiar
-names — `classification`, `segmentation`, `regression`, `triplet`, `contrastive` — are thin
-presets over this composition. `segmentation(objective="multilabel")` works out of the box with
-no extra code; adding a new variant is one `objective:` change in YAML.
+## A task is a composition, not a type
 
-**`num_classes` is never hardcoded.** The data module reads and fits target encoders at
-setup time, populates a `RuntimeContext`, and only then are tasks and model heads built
-with concrete output dimensions. Class counts flow from data → runtime → model
-automatically.
+There is no `TaskType` enum. A task is a point on three orthogonal axes:
 
-**Hydra groups = swappable building blocks.** Backbone, optimizer, scheduler, dataloader,
-transforms, logger, callbacks, trainer, and export are independent config groups. Combine
-them freely; override any key via CLI without touching shared config files.
-
-**Train → test → export, one pipeline.** A run executes `fit`, `test`, and model `export`
-(ONNX / TorchScript / TensorRT with numerical-parity verification), each gated by a `run_*` flag.
-`SampleLogCallback` renders ground-truth-vs-prediction grids to interactive HTML along the way.
-
-**Training regimes compose.** Turning on [knowledge distillation](guides/distillation.md)
-(`distillation:` — per-task loss becomes `hard + weight · KL` against frozen teachers) or
-[LoRA fine-tuning](guides/lora.md) (`lora:` — frozen backbone + low-rank adapters, merged
-back into plain weights at export) is one YAML section each; both compose with EMA, freeze,
-batch transforms, and loss-parameter scheduling without special setup.
-
----
-
-## How components are built
-
-
-Most of the config maps directly onto Python objects. There are **two construction
-families** — knowing which one a section uses tells you how to customize it.
-
-**1. Typed sections** — a fixed schema with one dedicated builder. A `kind` (or `name`)
-field selects the registry adapter; the remaining fields are forwarded to it as
-constructor arguments. Used by `backbone`, `optimizer`, `scheduler`, `data`, `dataloader`,
-`logger`, `trainer`.
-
-```yaml
-model: {kind: smp, name: unet, encoder_name: resnet34}      # kind → adapter; encoder_name forwarded
-optimizer: {name: adamw, lr: ${lr}, weight_decay: 1.0e-4}    # name → optimizer class; rest forwarded
-```
-
-Typed sections are `extra="allow"`: unknown keys forward verbatim to the underlying
-constructor (smp's `encoder_name`, an optimizer's `momentum`, a DataLoader's `timeout`).
-
-**2. Brick-specs** — free-form, with three interchangeable forms. Used by `loss`,
-`metrics`, `target_encoder`, `head`, `callbacks`, the `transform` inside a batch
-transform, and `trainer.profiler`.
-
-| Form | YAML | Meaning |
+| Axis | Question it answers | Members |
 |---|---|---|
-| string | `loss: cross_entropy` | registry key, default args |
-| name + params | `loss: {name: cross_entropy, label_smoothing: 0.1}` | registry key + kwargs |
-| `_target_` | `loss: {_target_: my_pkg.MyLoss, alpha: 0.3}` | import path, no registration needed |
+| `Topology` | What does one prediction look like? | `global`, `dense`, `multiview`, `multistream`, `instances` |
+| `Objective` | How do labels supervise it? | `multiclass`, `binary`, `multilabel`, `continuous`, `metric` |
+| `Modality` | What kind of input feeds it? | `image`, `embedding`, `text`, … (open) |
 
-The first two forms look the component up in a **registry** (short, discoverable names);
-`_target_` imports any class by dotted path — the escape hatch for code you didn't
-register. Both reach the same constructor; pick by whether the thing is registered.
-
-**Nested graphs.** A `_target_` spec is resolved recursively, so object trees can be
-built inline (e.g. an Albumentations pipeline):
+Familiar names are thin **presets** over that composition, resolved while the
+config loads and gone by the time anything is built:
 
 ```yaml
-transforms:
-  train:
-    _target_: albumentations.Compose
-    transforms:
-      - {_target_: albumentations.HorizontalFlip}
-      - {_target_: albumentations.Normalize}
-      - {_target_: albumentations.pytorch.ToTensorV2}
+tasks:
+  species: {preset: classification, target: species}
+  mask:    {preset: segmentation, target: mask_path}
 ```
 
-Inside a `_target_`, only `_target_` is available — registry short-names are a
-top-level convenience.
+`segmentation` is `dense × multiclass`; `multilabel_segmentation` is
+`dense × multilabel` — a different kind of task with no new code behind it. A
+preset carries its point on the axes and its *customary metrics*, never a loss:
+a loss default follows from one axis alone, so a preset has nothing to add.
 
-**`trainer.profiler` mixes both.** `trainer` is a typed section, but its `profiler`
-sub-key is a brick-spec: a string alias (`profiler: simple`) passes straight to
-Lightning, while a `_target_` mapping is instantiated so the profiler can declare its
-own output path:
+Each axis owns its behaviour. `MulticlassObjective` knows what a multiclass task
+is judged by, what criterion it takes, and how its logits become predictions;
+`DenseTopology` knows a dense task reads `Stream.DECODER` through a conv head.
+`build_task_components` composes the two and validates the pairing.
+
+→ [Tasks and presets](guides/tasks.md)
+
+## Sizes come from the data, never from config
+
+`num_classes` is never written in a config file. The data module fits its target
+encoders on the train split, records what it learned into a `DataProfile`, and
+*only then* are tasks and heads built:
+
+```
+setup(profile)  →  DataProfile  →  Task  →  Head(in_features, out_features)
+```
+
+The mechanism is one function, `named_by`: assembly *offers* the facts it
+computed, and each factory receives only the ones it names in its signature. A
+metric that takes `num_classes` gets it; one that does not, does not.
+
+The rule reads the other way too, and that half is the one that gets broken: a
+value **config already holds** reaches a component through config, by
+interpolation — `${lr}`, `${epochs}`, `${mean}`, `${run.directory}` — never
+through a function in assembly. The derived channel outranks config, so a user
+who declares such a value would have it silently ignored.
+
+## One grammar for every component
+
+Any component the framework builds is declared the same way:
 
 ```yaml
-trainer:
-  profiler:
-    _target_: lightning.pytorch.profilers.AdvancedProfiler
-    dirpath: ${save_dir}     # write the report under the run directory
-    filename: profile
+loss: cross_entropy                                  # a registry name
+loss: {name: cross_entropy, label_smoothing: 0.1}    # a registry name, with arguments
+loss: {_target_: my_pkg.FocalLoss, gamma: 2.0}       # an import path, for anything unregistered
 ```
 
-**Runtime values are injected, never written.** `num_classes` and similar are inferred
-from data at `setup()` and injected into the components that need them — which is why you
-never write `num_classes` in a loss / metric / transform spec. Any param you set
-explicitly overrides an injected default.
+Exactly one of `name` or `_target_`; every other key becomes a constructor
+argument, so an upstream knob is reachable without a schema change. A nested
+component builds from `_target_` only — a nested position has no registry
+context. Hydra's other meta-keys (`_partial_`, `_args_`) are *rejected* rather
+than ignored: silently dropping one would hand back an instance where a factory
+was asked for.
 
-**To customize a component** (both shown in [Extending the framework](reference/extending.md)):
-register your class under a short key (`@registry.register("my_key")`) and use the `name`
-form, **or** skip registration and point `_target_` straight at it.
+A section's shape follows what identifies an entry: a **dict** when the keys are
+identities something downstream consumes (task names, metric labels, stages), a
+**list** when order is the semantics and identity is intrinsic (callbacks, loss
+parts).
 
-> Unlike raw Hydra, `_partial_` and positional `_args_` are not supported — components
-> take keyword arguments.
+→ [Extending the framework](guides/extending.md)
+
+## The dependency rule
+
+```
+cli.py + assembly/     composition root: Hydra composes, one grammar builds
+      │ creates and wires
+capability packages    data · models · tasks · losses · metrics · transforms ·
+      │                training · callbacks · loggers · export · visualization
+      │ implement and consume
+core/                  entities + ports + taxonomy — torch and stdlib only
+```
+
+Arrows point down only. The core never imports a capability; a capability never
+imports `config/`; only the composition root reads config. That is what keeps
+third-party libraries contained: Lightning lives in `training/`, pydantic in
+`config/`, Hydra in `cli.py`, and a capability that needs a fact from config
+receives it as a plain argument.
+
+Each capability keeps its registries in `<package>/registry.py`, named
+`<singular>_registry`. Our own components register by decorator at their
+definition; third-party classes are registered explicitly in that file.
+
+## Assembly is an order, and the order is the contract
+
+```mermaid
+flowchart TB
+    yaml["configs/ — Hydra groups"] -->|"compose"| cfg["ExperimentConfig<br/>validated once, by pydantic"]
+    cfg --> refuse["refuse_what_a_vendor_cannot_serve<br/>before a file is read"]
+    refuse --> data["build_data_module → setup(profile)"]
+    data -->|"encoders fit on train"| profile[("DataProfile<br/>num_classes · class_names · class_values")]
+    profile --> model["build_model(config, profile)<br/>→ (Model, list[Task])"]
+    cfg --> model
+    model --> module["TrainingModule<br/>+ optimizer / scheduler factories"]
+    module --> wired["Experiment<br/>module · data · trainer · tasks · exporters"]
+    wired --> phases["run: fit → test → export<br/>each gated by the run section"]
+```
+
+`setup(profile)` before `build_model` is the whole reason head sizes come from
+data. It holds for every model family — a vendor data module writes its own facts
+into the same profile — which is why it lives in the body of `assemble()` and not
+inside any family.
+
+`assemble()` names no concrete family. `build_data_module` returns the
+`DataModule` port and `build_model` returns `(Model, list[Task])`; those two
+seams are where a YOLO-style family plugs in without a second assembler.
+
+## One training step, whatever the family
+
+```python
+result = model.step(batch)     # one forward: loss + predictions + metric-view targets
+result.loss.total.backward()
+```
+
+`CompositeModel.step` runs `Backbone → per-task Head → Criterion` and sums the
+weighted task losses. A vendor adapter maps its native losses into `Loss.parts`
+instead. A distilled model is a decorator that adds one term. The training loop,
+checkpointing, metrics and tracking never learn which of the three they are
+holding.
+
+`Loss` is why there is no aggregator class: it carries a total and its named
+parts, and `+`, `*` and `.scoped()` are enough for weighting and multi-task
+totals alike.
+
+```python
+total = Loss.sum(task.weight * loss.scoped(task.name) for ...)
+```
+
+Parts become log keys under the one grammar `{stage}/{task}/{leaf}` —
+`train/species/ce`, `val/mask/dice` — which is also what puts train, val and test
+of one number on a single graph.
+
+→ [Logging](guides/logging.md) · [Vocabulary](vocabulary.md)

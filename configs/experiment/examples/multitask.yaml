@@ -1,0 +1,52 @@
+# @package _global_
+# Three tasks, one backbone: `uv run main.py +experiment=examples/multitask`.
+#
+# This is what the framework is for. One encoder runs once per batch and three heads
+# read it: a dense task off the decoder, and two global ones off the encoder. The losses
+# are summed with their weights, every task keeps its own metrics, and the log keys stay
+# `{stage}/{task}/{leaf}` so a graph never mixes two tasks up.
+#
+# What each task declares is only what makes it different. The sizes — 2 classes, 3 mask
+# classes, one regression output — come from the fitted encoders, never from here.
+#
+# `make test-run` runs exactly this over a slice of the data.
+defaults:
+  - examples/pet
+  - override /model: unet
+
+image_size: [256, 256]
+batch_size: 16
+
+tasks:
+  # Dense: reads the decoder's full-size map through smp's own segmentation head.
+  mask:
+    preset: segmentation
+    target: mask_path
+    classes: {0: pet, 1: background, 2: boundary}
+    native_head: true
+    target_encoder: {name: mask, num_classes: 3}
+    weight: 1.0
+
+  # Global, beside it on the same backbone: reads the *encoder* stage and asks for smp's
+  # pooling classifier, because a linear head cannot take a feature map.
+  label:
+    preset: classification
+    target: species
+    classes: {0: cat, 1: dog}
+    stream: encoder
+    native_head: true
+    weight: 0.5
+    # Its own pace: the head is small and starts from nothing, while the backbone
+    # arrives pretrained. Every task holds a named optimizer group either way, so
+    # `lr_monitor` draws all three on one graph.
+    lr: 1.0e-3
+
+  # And a third, to show that the axes compose: same stream, different label semantics.
+  # `random_age` is noise (see the regression example) — it proves the plumbing, and a
+  # mae near the column's deviation is the right answer.
+  age:
+    preset: regression
+    target: random_age
+    stream: encoder
+    native_head: true
+    weight: 0.2

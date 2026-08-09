@@ -1,115 +1,99 @@
-"""Ranking loss criteria for MULTIVIEW topology.
-
-Each criterion receives ``logits: [B, N, D]`` — N embedding vectors per sample —
-and a ``target: [B]`` label tensor (see notes below for each criterion).
-
-The ``[B, N, D]`` contract is enforced via ``base.require_view_shape`` so shape
-mismatches surface early rather than inside PyTorch's loss functions. Wrappers
-declare only the parameters with framework defaults; everything else forwards
-verbatim to the underlying functional loss.
-"""
+"""Ranking criteria: which of two items should come first."""
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
-import torch.nn.functional as F
-from torch import Tensor
+from torch import nn
+from torch.nn import functional
 
-from src.core.entities import LossResult
-from src.core.ports import Criterion
-from src.losses.base import require_view_shape
-from src.losses.registry import criteria
+from src.losses.base import WrappedCriterion, split_views
+from src.losses.registry import criterion_registry
+
+if TYPE_CHECKING:
+    from torch import Tensor
 
 
-def _view_score(view: Tensor) -> Tensor:
-    """Reduce a view ``[B, D]`` to a scalar ranking score ``[B]``.
+def _score_of(view: Tensor) -> Tensor:
+    """One number per sample: the raw scalar of a 1-wide head, else the norm.
 
-    ``D == 1`` → the raw scalar: the head is a learned scalar relevance score ``f(x)`` (sign
-    preserved — the canonical pairwise-ranking form).  ``D > 1`` → the embedding's L2 norm
-    (magnitude as score), so the same criterion also works on a shared D-dim embedding backbone.
+    A single-output head is the canonical learned relevance ``f(x)``, and its sign is
+    preserved; a wider embedding is scored by its L2 norm, so the same criteria serve a
+    shared embedding backbone without a second code path.
     """
     return view.squeeze(-1) if view.size(-1) == 1 else view.norm(dim=-1)
 
 
-@criteria.register("triplet_margin")
-class TripletMarginCriterion(Criterion):
-    """Triplet margin loss on ``[B, 3, D]`` embeddings.
+class PairRankingLoss(nn.Module):
+    """torch's margin ranking over a scored pair carrier ``[B, 2, D]``.
 
-    Expects ``logits[:, 0]`` = anchor, ``[:, 1]`` = positive, ``[:, 2]`` =
-    negative.  ``target`` is ignored (triplet supervision is implicit in the
-    view ordering).
+    ``target[i] = +1`` says the first view should score higher, ``-1`` the
+    second; the hinge fires while the gap is below ``margin``.
 
-    Parameters:
-        margin (float): Minimum desired gap between d(a,p) and d(a,n).
-        **kwargs: Forwarded verbatim to ``F.triplet_margin_loss``
-            (``p``, ``swap``, ``eps``, ``reduction``, ...).
-    """
-
-    def __init__(self, margin: float = 1.0, **kwargs: Any) -> None:
-        super().__init__()
-        self._margin = margin
-        self._loss_kwargs = kwargs
-
-    def forward(self, logits: Tensor, target: Tensor) -> LossResult:
-        require_view_shape(logits, views=3, owner=type(self).__name__)
-        anchor, positive, negative = logits[:, 0], logits[:, 1], logits[:, 2]
-        value: Tensor = F.triplet_margin_loss(anchor, positive, negative, margin=self._margin, **self._loss_kwargs)
-        return LossResult(total=value, components={"triplet_margin": value})
-
-
-@criteria.register("margin_ranking")
-class MarginRankingCriterion(Criterion):
-    """Margin ranking loss on ``[B, 2, D]`` embeddings.
-
-    Scores each view (raw scalar when the head is 1-D, else the embedding's L2 norm — see
-    ``_view_score``), then applies ``F.margin_ranking_loss``.  ``target[i] = +1`` means the first
-    view should score higher; ``-1`` means the second should score higher.
+    The hinge form — a hard gap or nothing. Where the preference is graded rather than
+    binary, :class:`RankNetLoss` is the smooth counterpart.
 
     Parameters:
-        margin (float): Minimum desired score gap between views.
-        **kwargs: Forwarded verbatim to ``F.margin_ranking_loss`` (``reduction``, ...).
-    """
-
-    def __init__(self, margin: float = 0.0, **kwargs: Any) -> None:
-        super().__init__()
-        self._margin = margin
-        self._loss_kwargs = kwargs
-
-    def forward(self, logits: Tensor, target: Tensor) -> LossResult:
-        require_view_shape(logits, views=2, owner=type(self).__name__)
-        first_score: Tensor = _view_score(logits[:, 0])
-        second_score: Tensor = _view_score(logits[:, 1])
-        value: Tensor = F.margin_ranking_loss(
-            first_score, second_score, target, margin=self._margin, **self._loss_kwargs
-        )
-        return LossResult(total=value, components={"margin_ranking": value})
-
-
-@criteria.register("ranknet")
-class RankNetCriterion(Criterion):
-    """RankNet pairwise loss on ``[B, 2, D]`` embeddings (Burges et al., 2005).
-
-    Scores each view (raw scalar when the head is 1-D — the canonical ``f(x)`` relevance score —
-    else the embedding's L2 norm; see ``_view_score``) and applies binary cross-entropy to the gap:
-    ``P(first ranks higher) = sigmoid(score_first - score_second)``.  ``target`` is that
-    probability — ``1`` = first preferred, ``0`` = second preferred, ``0.5`` = tie (soft targets
-    allowed).  Unlike ``margin_ranking`` (hinge, ±1 target), this is the smooth logistic form and
-    pairs with a 0/1 label.
-
-    Parameters:
-        **kwargs: Forwarded verbatim to ``F.binary_cross_entropy_with_logits``
-            (``reduction``, ...).
+        **kwargs: Forwarded verbatim to ``nn.MarginRankingLoss``
+            (``margin``, ``reduction``, ...).
     """
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__()
-        self._loss_kwargs = kwargs
+        self._hinge = nn.MarginRankingLoss(**kwargs)
 
-    def forward(self, logits: Tensor, target: Tensor) -> LossResult:
-        require_view_shape(logits, views=2, owner=type(self).__name__)
-        first_score: Tensor = _view_score(logits[:, 0])
-        second_score: Tensor = _view_score(logits[:, 1])
-        gap: Tensor = first_score - second_score
-        value: Tensor = F.binary_cross_entropy_with_logits(gap, target.to(gap.dtype), **self._loss_kwargs)
-        return LossResult(total=value, components={"ranknet": value})
+    def forward(self, logits: Tensor, target: Tensor) -> Tensor:
+        first, second = split_views(logits, 2, type(self).__name__)
+        score = _score_of(first)
+        result: Tensor = self._hinge(score, _score_of(second), target.to(score.dtype))
+        return result
+
+
+@criterion_registry.register("margin_ranking")
+class MarginRankingCriterion(WrappedCriterion):
+    """Margin ranking as a criterion.
+
+    Parameters:
+        **kwargs: Forwarded verbatim to :class:`PairRankingLoss`.
+    """
+
+    part_name: ClassVar[str] = "margin_ranking"
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(PairRankingLoss(**kwargs))
+
+
+class RankNetLoss(nn.Module):
+    """Binary cross-entropy on the score gap (Burges et al., 2005).
+
+    ``P(first ranks higher) = sigmoid(score_first - score_second)``, judged
+    against a target probability: ``1`` first preferred, ``0`` second, ``0.5``
+    a tie — graded preferences are the point of the logistic form.
+
+    Parameters:
+        **kwargs: Forwarded verbatim to
+            ``functional.binary_cross_entropy_with_logits`` (``reduction``, ...).
+    """
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__()
+        self._options = kwargs
+
+    def forward(self, logits: Tensor, target: Tensor) -> Tensor:
+        first, second = split_views(logits, 2, type(self).__name__)
+        gap = _score_of(first) - _score_of(second)
+        return functional.binary_cross_entropy_with_logits(gap, target.to(gap.dtype), **self._options)
+
+
+@criterion_registry.register("ranknet")
+class RankNetCriterion(WrappedCriterion):
+    """RankNet as a criterion.
+
+    Parameters:
+        **kwargs: Forwarded verbatim to :class:`RankNetLoss`.
+    """
+
+    part_name: ClassVar[str] = "ranknet"
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(RankNetLoss(**kwargs))

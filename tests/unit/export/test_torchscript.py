@@ -1,68 +1,90 @@
-"""TorchScript exporter: the trace-time device-portability hazard warning.
-
-Tracing bakes tensors computed in ``forward`` as constants pinned to the trace device.
-timm ViTs built with ``dynamic_img_size=True`` compute their rotary position embedding
-per-forward, so the traced artifact mixes trace-device constants with ``.to()``-movable
-buffers and fails with a device mismatch when loaded on another device. The exporter
-detects that model shape and warns with the config fix.
-"""
+"""The TorchScript backend: what it writes is what the model computes."""
 
 from __future__ import annotations
 
-import logging
 from pathlib import Path
 
 import pytest
 import torch
-from torch import nn
 
-from src.export.entities import ExportRequest
-from src.export.torchscript import TorchScriptExporter
-
-
-class _DynamicRopeStub(nn.Module):
-    """Minimal stand-in for a timm ViT with per-forward (dynamic) rotary embeddings."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.dynamic_img_size = True
-        self.rope = nn.Identity()  # presence is what the hazard check keys on
-        self.linear = nn.Linear(4, 2)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        out: torch.Tensor = self.linear(x)
-        return out
+from src.core import Batch, Prediction
+from src.export import DeployableModel, TorchScriptExporter, as_outputs, exporter_registry
+from src.export.backends.torchscript import accelerators
+from tests.support.fakes import PredictOnlyModel
 
 
-class _StaticStub(nn.Module):
-    def __init__(self) -> None:
-        super().__init__()
-        self.linear = nn.Linear(4, 2)
+class ScaleModel(PredictOnlyModel):
+    """Scales the 'image' input into task 'label' — enough graph to trace, small enough to read."""
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        out: torch.Tensor = self.linear(x)
-        return out
+    def predict(self, batch: Batch) -> Prediction:
+        return Prediction(outputs={"label": torch.sigmoid(batch.inputs["image"] * 1.5)})
 
 
-def _request(module: nn.Module, path: Path) -> ExportRequest:
-    return ExportRequest(
-        module=module,
-        example_inputs=(torch.randn(1, 4),),
-        path=path,
-        input_names=["input"],
-        output_names=["output"],
-    )
+def graph() -> DeployableModel:
+    return DeployableModel(ScaleModel(), ["image"], ["label"])
 
 
-class TestDynamicRopeHazardWarning:
-    def test_dynamic_rope_module_warns_with_config_fix(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
-        module = nn.Sequential(_DynamicRopeStub())
-        with caplog.at_level(logging.WARNING, logger="src.export.torchscript"):
-            TorchScriptExporter().export(_request(module, tmp_path / "model.pt"))
-        assert any("dynamic_img_size" in record.message for record in caplog.records)
-        assert any("map_location" in record.message for record in caplog.records)
+def test_the_written_artifact_returns_what_the_model_returns(tmp_path: Path) -> None:
+    """An artifact that drifts from its source is worse than no artifact: it ships silently."""
+    exporter = TorchScriptExporter()
+    model = graph()
+    example = (torch.randn(2, 3),)
 
-    def test_static_module_does_not_warn(self, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
-        with caplog.at_level(logging.WARNING, logger="src.export.torchscript"):
-            TorchScriptExporter().export(_request(_StaticStub(), tmp_path / "model.pt"))
-        assert not [record for record in caplog.records if "dynamic_img_size" in record.message]
+    path = exporter.export(model, example, tmp_path / "model")
+    written = exporter.load(path)(example)
+
+    assert torch.allclose(written[0], as_outputs(model(*example))[0], atol=0.0)
+
+
+def test_a_single_task_artifact_hands_back_a_bare_tensor(tmp_path: Path) -> None:
+    """What a serving stack loads must match the convention it already knows: one head, one tensor."""
+    path = TorchScriptExporter().export(graph(), (torch.randn(2, 3),), tmp_path / "model")
+
+    loaded = torch.jit.load(str(path))
+
+    assert str(loaded.forward.schema).endswith("-> Tensor")
+
+
+@pytest.mark.skipif(not accelerators(), reason="device portability can only be measured against a second device")
+def test_an_artifact_that_cannot_leave_the_trace_device_is_reported(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A graph that bakes a constant passes every CPU check and then fails on the deployment device.
+
+    ``torch.jit.trace`` freezes a tensor built inside forward at the trace device;
+    ``float64`` is enough to make one unmovable, which is exactly how a timm ViT's
+    rotary grid behaves.
+    """
+
+    class BakesAConstant(PredictOnlyModel):
+        def predict(self, batch: Batch) -> Prediction:
+            pinned = torch.ones(3, dtype=torch.float64, device=batch.inputs["image"].device)
+            return Prediction(outputs={"label": (batch.inputs["image"].double() * pinned).float()})
+
+    model = DeployableModel(BakesAConstant(), ["image"], ["label"])
+    model.eval()
+
+    with caplog.at_level("WARNING"):
+        TorchScriptExporter().export(model, (torch.randn(2, 3),), tmp_path / "model")
+
+    assert "refused it" in caplog.text
+    assert "dynamic_img_size" in caplog.text
+
+
+def test_the_returned_path_is_the_file_that_was_written(tmp_path: Path) -> None:
+    """The caller verifies and reports what was written, so it must be told, not guess a suffix."""
+    path = TorchScriptExporter().export(graph(), (torch.randn(2, 3),), tmp_path / "nested" / "model")
+
+    assert path == tmp_path / "nested" / "model.pt"
+    assert path.is_file()
+
+
+def test_the_format_is_reachable_by_name_with_its_own_tolerances() -> None:
+    """Config declares a format by name and tunes it by constructor argument; both must work."""
+    default = exporter_registry.create("torchscript")
+    tuned = exporter_registry.create("torchscript", atol=1e-2)
+
+    assert isinstance(default, TorchScriptExporter)
+    assert default.atol == pytest.approx(1e-4)
+    assert default.rtol == pytest.approx(1e-3)
+    assert tuned.atol == pytest.approx(1e-2)

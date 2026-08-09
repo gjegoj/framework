@@ -1,202 +1,172 @@
-# Tasks & presets
+# Tasks and presets
 
-## Tasks & presets
-
-
-Tasks are declared as a named dict. The key becomes the task name used in metric logs
-(`label/accuracy/val`), loss logs (`loss/val/label`), and per-head LR overrides.
-
-**Classification** (multiclass by default):
+A task is what an experiment learns and how it is judged. Everything else in a
+config — the model, the loader, the callbacks — serves the tasks.
 
 ```yaml
 tasks:
   species:
     preset: classification
-    target: species_col
-    class_mapping: {0: cat, 1: dog, 2: cow}   # infers num_classes=3
+    target: species
 ```
 
-**Segmentation**:
+The key (`species`) is the task's name. It is the key its targets arrive under,
+the key its losses and metrics log under, and the name of its parameter group on
+the learning-rate graph — so choose it the way you would choose a column name.
+
+## The axes behind the preset
+
+There is no `TaskType` enum. A task is a point on two axes, plus the input side:
+
+| Axis | Question | Members |
+|---|---|---|
+| `topology` | What does one prediction look like? | `global`, `dense`, `multiview`, `multistream`, `instances` |
+| `objective` | How do labels supervise it? | `multiclass`, `binary`, `multilabel`, `continuous`, `metric` |
+
+A preset is a familiar name for one point, and it is resolved while the config
+loads — no preset survives into the built experiment:
+
+| `preset` | topology × objective | Default metrics |
+|---|---|---|
+| `classification` | `global × multiclass` | f1, precision, recall (per class), confusion matrix |
+| `binary_classification` | `global × binary` | the same |
+| `multilabel_classification` | `global × multilabel` | the same |
+| `regression` | `global × continuous` | mae |
+| `metric_learning` | `global × metric` | — |
+| `segmentation` | `dense × multiclass` | iou, plus the classification set |
+| `binary_segmentation` | `dense × binary` | the same |
+| `multilabel_segmentation` | `dense × multilabel` | the same |
+| `contrastive` | `multistream × metric` | — |
+| `ranking` | `multiview × metric` | — |
+| `detection` | `instances × multiclass` | map |
+
+`segmentation` names the *semantic* kind; an instance variant would land under
+`instance_segmentation` rather than competing for the name.
+
+A pair with no preset is written out:
+
+```yaml
+tasks:
+  defect:
+    topology: dense
+    objective: multilabel      # overlapping classes per pixel
+    target: mask_path
+```
+
+Declaring both a `preset` and an axis is a config error, not a preference.
+
+Presets whose entry is `—` above are structure-supervised: supervision comes from
+the batch's shape (pairs, triplets, the in-batch diagonal) rather than from a
+per-sample label, so there is nothing for a per-sample metric to compare.
+
+## What a task declares
+
+| Key | Default | Meaning |
+|---|---|---|
+| `target` | — | The table column holding this task's ground truth. The data schema derives from the tasks, so a column is named once |
+| `classes` | learned | `{0: cat, 1: dog}` — the declared vocabulary, as the source of truth |
+| `target_encoder` | from the objective | How a target cell becomes a tensor |
+| `loss` | from the objective | One criterion, or a list added with weights |
+| `head` | from the topology | Which *kind* of head; sizes stay derived |
+| `native_head` | `false` | Keep the pretrained model's own head instead |
+| `stream` | from the topology | Which backbone output the head reads |
+| `weight` | `1.0` | This task's share of the total loss |
+| `lr` | the run's rate | Own rate for this task's head and criterion |
+| `metrics` | from the objective | Metrics keyed by the label they log under |
+
+Sizes are never among them. `num_classes` comes from the fitted encoder,
+`in_features` from the backbone stream — see [derived values](../concepts.md#sizes-come-from-the-data-never-from-config).
+
+## Declaring the class vocabulary
+
+`classes` turns the class space from something learned into something declared:
+
+```yaml
+tasks:
+  species:
+    preset: classification
+    target: species
+    classes: {0: cat, 1: dog, 2: rabbit}
+```
+
+Three things follow. The data is validated against it at fit, so a typo in a
+label is an error rather than a silent extra class. The index space survives
+resampling — dropping every `rabbit` row from the train split no longer shifts
+`dog` to index 2. And the names label per-class log keys
+(`val/species/f1/rabbit`), confusion-matrix axes and the samples grid.
+
+Indices must be exactly `0..n-1` and names must be unique; a continuous objective
+refuses `classes` outright, because bins own its value space.
+
+## Several tasks at once
+
+Tasks are a dict, so uniqueness comes free and every task is named:
 
 ```yaml
 tasks:
   mask:
     preset: segmentation
     target: mask_path
-    class_mapping: {0: background, 1: defect, 2: edge}   # infers num_classes=3
+    classes: {0: background, 1: defect}
+    loss:
+      - {name: cross_entropy, weight: 1.0}
+      - {name: dice, weight: 1.0}
+  label:
+    preset: classification
+    target: is_defective
+    stream: encoder          # read the encoder, not the decoder
+    weight: 0.3
+    lr: 5.0e-4
 ```
 
-Or with explicit `num_classes` when class names don't matter:
+One backbone encodes the batch once; each task's head reads the stream it names.
+`weight` scales a task's contribution to the total loss; `lr` gives its own
+bricks a different pace while the backbone keeps the optimizer's — see
+[per-task rates](training.md#per-task-learning-rates).
+
+## Overriding the head
+
+The topology picks the head kind, and an override names a kind only:
 
 ```yaml
 tasks:
-  mask:
-    preset: segmentation
-    target: mask_path
-    num_classes: 3
+  person:
+    preset: classification
+    target: person_id
+    head: {name: cosine}          # learnable prototypes, cosine logits
+    loss: {name: arcface, margin: 0.3}
 ```
 
-**Regression**:
+`native_head: true` is the other direction: keep the head the pretrained model
+ships with, which is what you want when those weights are the point. Declaring
+both `head` and `native_head` is refused — they answer the same question.
+
+## Binned regression
+
+A continuous target can be learned as a distribution over bins without leaving
+regression semantics. Choosing the encoder is the whole change:
 
 ```yaml
 tasks:
-  age:
+  score:
     preset: regression
-    target: age
-    dim: 1
+    target: score
+    target_encoder: {name: gaussian_bins, bins: 20}
 ```
 
-**Objective override** — same preset, different label semantics:
+The bins then size the head, cross-entropy plus an expectation term replace mean
+squared error, and predictions are read back as `softmax(logits) · class_values`
+so metrics still compare numbers. See [the data guide](data.md#targets) for what
+the encoder learns and why the range is padded.
 
-```yaml
-tasks:
-  tags:
-    preset: classification
-    objective: multilabel       # sigmoid + BCE instead of softmax + CE
-    target: tags_col
-    class_mapping: {0: indoor, 1: outdoor, 2: people}
-```
+## What is validated when
 
-Available objectives: `multiclass` · `multilabel` · `binary` · `continuous` · `metric`
-(metric learning — see [Embeddings & metric learning](#embeddings--metric-learning)).
+At **config load**: the preset resolves, `classes` is checked for completeness
+and duplicates, `head` and `native_head` cannot both be set, and an unknown key
+in the section is an error naming it.
 
-**Custom loss** (registry keys: `cross_entropy` · `bce` · `mse` · `l1` · `dice` · `focal` ·
-`weighted_sum` · `kl_divergence` · `arcface` · metric-learning losses `triplet_margin` ·
-`margin_ranking` · `ranknet` · `info_nce` · `siglip`):
+At **assembly**: the topology validates the objective it was paired with, the
+metrics are built with the objective's own arguments, and a task declaring bricks
+a vendor family builds itself is refused with the reason.
 
-```yaml
-tasks:
-  mask:
-    preset: segmentation
-    target: mask_path
-    num_classes: 3
-    loss:
-      name: weighted_sum
-      losses: {cross_entropy: 1.0, dice: 2.0}
-```
-
-**Custom metrics**:
-
-```yaml
-tasks:
-  species:
-    preset: classification
-    target: species_col
-    class_mapping: {0: cat, 1: dog, 2: cow}
-    metrics:
-      accuracy: null
-      per_class_f1:
-        name: f1
-        average: none           # returns [C] vector → logged per class
-      confusion_matrix: null
-```
-
-**Per-head learning rate** (see [Optimizer, LR & scheduler](training.md)):
-
-```yaml
-tasks:
-  mask:
-    preset: segmentation
-    target: mask_path
-    num_classes: 3
-    optimizer:
-      lr: 1.0e-4                # this head gets its own param group
-```
-
-**Soft labels / label distribution (LDL).** A continuous target can be trained as a
-*distribution over bins* (DFL-style): the `gaussian_bins` encoder smooths the value into
-a `[C]` distribution, soft-label cross-entropy learns it (the multiclass adapter is
-soft-target aware), and the `distribution_mean` criterion regresses the **expectation**
-`softmax(logits) · bin_centers` onto the target's expectation. One head, one composite
-loss — no separate regression head (the expectation has no parameters of its own):
-
-```yaml
-tasks:
-  quality:
-    preset: classification
-    target: score                       # continuous column
-    num_classes: 10                     # = bin count
-    target_encoder:
-      name: gaussian_bins
-      bin_edges: [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
-      sigma: 0.05
-    loss:
-      name: weighted_sum
-      losses:
-        cross_entropy: 1.0              # soft-CE over the distribution
-        distribution_mean:              # expectation regression on the same logits
-          weight: 0.5
-          bin_edges: [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
-          kind: huber                   # or l1 (default); extras forward to the torch loss
-          delta: 0.1
-```
-
-Note: away from the range edges the target expectation equals the original value; where
-the Gaussian is clipped by the range it is biased toward the center (up to ~`sigma` +
-half a bin). Two remedies: pad `bin_edges` ~3–4 sigma beyond the data range (zero code),
-or switch the encoder to **`linear_bins`** — DFL-style two-point weights on the two
-neighboring centers (no `sigma`), whose expectation reproduces the value *exactly*
-anywhere inside the center range, at the cost of losing the smooth Gaussian mass:
-
-```yaml
-    target_encoder:
-      name: linear_bins
-      bin_edges: [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
-```
-
-## Embeddings & metric learning
-
-
-Metric-learning tasks have no per-sample class label — supervision comes from the
-pair/triplet structure or the batch diagonal. The `metric` objective makes the adapter
-pass-through and the activation identity; `num_classes` is reinterpreted as the **embedding
-dimension** (the projection-head size). The *loss method* is pinned by the preset.
-
-| Preset | Topology | Default loss | Shape of supervision |
-|---|---|---|---|
-| `triplet` | MULTIVIEW | `triplet_margin` | 3 views: anchor / positive / negative |
-| `pairwise_ranking` | MULTIVIEW | `margin_ranking` | 2 views ranked against each other |
-| `contrastive` | MULTISTREAM | `info_nce` | N separate encoders aligned (InfoNCE / SigLIP) |
-
-**MULTIVIEW (Siamese)** — N input views go through *one shared backbone* (stacked to
-`[B·N, …]`, reshaped to `[B, N, D]`). The view names come from `data.inputs`:
-
-```yaml
-data:
-  inputs:
-    anchor:   anchor_path
-    positive: positive_path
-    negative: negative_path
-
-tasks:
-  embed:
-    preset: triplet
-    target: anchor_path        # structural; the loss ignores its values
-    dim: 128                   # embedding dimension
-```
-
-**MULTISTREAM (dual / multi-encoder)** — N *separate* encoders (e.g. image + text), one
-named stream each, aligned in a shared space. Use the `multi` backbone whose sub-encoder
-names match the `data.inputs` aliases:
-
-```yaml
-model:
-  kind: multi
-  encoders:
-    image: {kind: timm, name: resnet50}
-    text:  {kind: timm, name: ...}      # any registered encoder
-
-tasks:
-  align:
-    preset: contrastive
-    target: image            # structural
-    dim: 256
-    loss: siglip             # swap info_nce → siglip
-```
-
-**Precomputed embeddings** — skip the image encoder entirely with the `embedding`
-backbone (the input is a stored feature vector); pair it with `classification` or a metric
-preset for ANN/retrieval heads.
-
-> See `configs/experiment/{arcface,contrastive,ranking,embeddings}_smoke.yaml` for runnable
-> examples. `arcface` is an angular-margin **loss** you can drop onto a `classification` task.
+At **fit**: the data is validated against the declared vocabulary.

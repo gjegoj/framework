@@ -1,20 +1,24 @@
-"""Export package — ONNX / TorchScript / TensorRT model export for deployment."""
+"""The export capability: a trained model becomes a file a serving stack loads."""
 
-from src.export import onnx as _onnx  # noqa: F401 — register exporters
-from src.export import tensorrt as _tensorrt  # noqa: F401
-from src.export import torchscript as _torchscript  # noqa: F401
-from src.export.entities import ExportArtifact, ExportArtifactKind, ExportFormat, ExportRequest
-from src.export.pipeline import export_model, resolve_export_io_names
-from src.export.ports import ModelExporter
-from src.export.registry import exporters
+from __future__ import annotations
+
+from src.export.backends import OnnxExporter, TensorRtExporter, TorchScriptExporter
+from src.export.deployable import DeployableModel, as_outputs
+from src.export.exporters import Exporter, Runnable
+from src.export.registry import exporter_registry
+from src.export.verification import ExportedArtifact, Parity, render_report, verify
 
 __all__ = [
-    "ExportArtifact",
-    "ExportArtifactKind",
-    "ExportFormat",
-    "ExportRequest",
-    "ModelExporter",
-    "export_model",
-    "exporters",
-    "resolve_export_io_names",
+    "DeployableModel",
+    "ExportedArtifact",
+    "Exporter",
+    "OnnxExporter",
+    "Parity",
+    "Runnable",
+    "TensorRtExporter",
+    "TorchScriptExporter",
+    "as_outputs",
+    "exporter_registry",
+    "render_report",
+    "verify",
 ]

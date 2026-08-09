@@ -1,17 +1,26 @@
-kind: clearml
-# project defaults to experiment project (config.project) when omitted
-# project: my-project
-# task: run-name   # optional ClearML task/run name
-
-# Task tags for filtering/grouping in the ClearML experiments list.
-# Values are resolved from the live config via ${...} interpolation.
-# A tag resolving to null (e.g. ${model.name} on a composite backbone) is dropped.
-tags:
-  - "${model.kind}"                       # timm / smp / multi
-  - "${model.name}"                       # e.g. resnet18
-  - "${optimizer.name}"
-  - "${oc.select:scheduler.name,''}"         # oc.select: scheduler may be wholly null (scheduler: none)
-  - "lr=${lr}"
-  - "bs=${batch_size}"
-  - "epochs=${epochs}"
-  - "imgsz=${image_size.0}x${image_size.1}"  # e.g. 224x224
+# @package _global_
+# ClearML experiment tracking; every Task.init knob forwards verbatim.
+# The names default to the run's identity — override either right here.
+#
+# Tags are what the experiments list filters by, so they name the shape of a run
+# rather than its results. The whole resolved config reaches ClearML as
+# hyperparameters besides, so nothing has to be squeezed in here to be findable.
+#
+# A tag is an interpolation, and a group that is off leaves an empty string
+# (`oc.select` reaches into a section that may be wholly null); empty tags are
+# dropped. The architecture is not written here at all — the key naming one
+# differs per backbone family and a composite backbone has none, so the model is
+# asked for it and the answer joins these.
+logger:
+  name: clearml
+  project_name: ${run.project}
+  task_name: ${run.name}
+  tags:
+    - ${model.name}                          # the family: timm / smp / multi_encoder
+    - ${optimizer.name}
+    - ${oc.select:scheduler.name,''}         # the section itself may be null
+    - ${oc.select:adapters.name,''}          # lora, when a run trains a delta
+    - lr=${lr}
+    - bs=${batch_size}
+    - epochs=${epochs}
+    - imgsz=${image_size.0}x${image_size.1}

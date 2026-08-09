@@ -1,8 +1,8 @@
-"""Exporter registry — maps format name to ``ModelExporter`` implementation."""
+"""Deployment formats by name — the export capability's single extension point."""
 
 from __future__ import annotations
 
-from src.core.registry import Registry
-from src.export.ports import ModelExporter
+from src.core import Registry
+from src.export.exporters import Exporter
 
-exporters: Registry[ModelExporter] = Registry("exporter")
+exporter_registry: Registry[Exporter] = Registry("exporter")

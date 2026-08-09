@@ -1,32 +1,18 @@
-# Default callback stack for a full training run.
-# Disable any callback via CLI: callbacks.ema=~
-# Enable freeze via CLI: +callbacks.freeze.targets=[model.backbone] +callbacks.freeze.unfreeze_at=0.3
-
-lr_monitor:
-  logging_interval: epoch
-
-# Before the first stage, print per-task target distributions and log them as histograms.
-dataset_stats: null
-
-# Startup parameter breakdown, rendered as a module tree (backbone / heads / their
-# children). max_depth=3 shows each head separately; 2 collapses heads into one row.
-# TreeModelSummary subclasses RichModelSummary, so Lightning skips its auto-added summary.
-model_summary:
-  max_depth: 3
-
-# ema:
-#   decay: 0.999
-#   warmup_fraction: 0.1   # start EMA after 10% of steps (avoids noisy early average)
-#   use_buffers: true      # include BatchNorm running stats
-
-checkpoint:
-  monitor: ${key:LOSS}/val/${key:TOTAL}
-  mode: min
-  save_top_k: 1
-  save_weights_only: true
-
-progress_bar: null
-
-# After test, report the headline test metrics (scalars + vector means) to the logger's
-# single-value summary table (e.g. ClearML "Single Values"). No-op without such a logger.
-metric_summary: null
+# @package _global_
+# Keep the best weights and record the learning rate.
+# Order matters: a callback that changes the weights belongs before one that saves them.
+# `monitor` names a key the run logs: `val/loss` is the total, and every run has one.
+# Per-task keys are `val/<task>/<metric>` and `val/<task>/<loss part>` — e.g. `val/label/accuracy`.
+#
+# `dirpath` is written on every saver, here and in your own experiments. Left out,
+# Lightning resolves it from the *logger* — with a tracker that uploads rather than
+# writes that is `runs/<project>/<name>/<name>/<task id>/checkpoints`, the run's
+# identity spelled twice plus a hash, three levels below everything else it produced.
+callbacks:
+  - {name: lr_monitor, logging_interval: epoch}
+  - name: checkpoint
+    monitor: val/loss
+    mode: min
+    save_top_k: 1
+    save_weights_only: true
+    dirpath: ${run.directory}/checkpoints

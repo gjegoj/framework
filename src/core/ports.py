@@ -1,324 +1,371 @@
-"""Abstract ports (interfaces) for the model, loss, metric and aggregation layers.
-
-Inner layers depend on these ABCs; concrete adapters (timm/smp/HF backbones,
-torchmetrics, ...) live in outer layers and implement them.
-
-Parametric components that live in the autograd graph (``Backbone``, ``Head``,
-``Criterion``) and stateful metric containers (``MetricSet``) inherit
-``nn.Module`` — torch is the framework's "language", so this is honest rather
-than leaky. Pure-logic ports (``Activation``, ``LossAggregator``) stay plain
-ABCs.
-
-Each ``nn.Module`` port re-declares a typed ``__call__`` that delegates to
-``nn.Module.__call__`` (so hooks still run): torch types ``Module.__call__`` as
-``Callable[..., Any]``, which erases ``forward``'s return type at every call site
-(``backbone(inputs)`` would be ``Any``). The typed ``__call__`` restores it.
-"""
+"""Behaviour contracts of the core, implemented by capability packages."""
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Sequence
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, ClassVar, Protocol, cast, runtime_checkable
+from collections.abc import Callable, Iterable
+from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
 
 from torch import nn
 
-from src.core.plotting import Plot
+# At runtime, not under TYPE_CHECKING: `DataModule.statistics` builds one as its default.
+from src.core.entities import DatasetStatistics
 
 if TYPE_CHECKING:
     from torch import Tensor
+    from torch.utils.data import Dataset
 
-    from src.core.entities import FeatureBundle, LossResult, TargetView
+    from src.core.entities import (
+        AdaptedTarget,
+        Bars,
+        Batch,
+        Curve,
+        DataProfile,
+        Features,
+        Loss,
+        Matrix,
+        Prediction,
+        Sample,
+        Spread,
+        StepResult,
+        TaskOutput,
+    )
+    from src.core.taxonomy import Stage
+
+type Activation = Callable[[Tensor], Tensor]
+"""Maps raw logits to predictions for metrics and inference — never for the loss."""
+
+type TargetAdapter = Callable[[Tensor], AdaptedTarget]
+"""Shapes one raw batched target into its loss and metric views."""
+
+type SampleTransform = Callable[[Sample], Sample]
+"""Transforms one loaded sample — the augmentation seam of the data pipeline.
+
+Takes a whole ``Sample`` rather than a single array because geometric
+augmentation is joint: the crop applied to an image must be the same crop
+applied to its masks.
+"""
+
+type BatchTransform = Callable[[Batch], Batch]
+"""Transforms one collated batch — the seam for augmentations that mix samples.
+
+A ``SampleTransform`` cannot do this: while one sample is being loaded, the
+samples it would mix with do not exist yet. Returns a new ``Batch`` rather than
+mutating, because the callback that applies one is the single place a batch is
+written into.
+"""
+
+
+class Model(nn.Module, ABC):
+    """The trainable unit the training loop consumes — however it is built inside.
+
+    One contract for every family: a composed backbone-plus-heads model, a
+    vendor self-contained model (YOLO-style), or a decorator over another
+    model (distillation). Implementations branch on train/eval mode via
+    ``self.training`` — never on a stage argument.
+    """
+
+    @abstractmethod
+    def step(self, batch: Batch) -> StepResult:
+        """Run one forward pass and return the loss plus the predictions.
+
+        Serves train/val/test: a single forward produces both what backward
+        needs and what metrics consume.
+        """
+
+    @abstractmethod
+    def predict(self, batch: Batch) -> Prediction:
+        """Inference-only forward; must not require ``batch.targets``."""
+
+    def task_parameters(self, task_name: str) -> Iterable[nn.Parameter]:
+        """Parameters belonging to one task's own bricks — its head, its criterion.
+
+        What a per-task learning rate binds to. The composite family serves
+        them from its per-task registrations; a family without per-task parts
+        keeps this default, and a rate declared against it is then refused
+        rather than silently ignored.
+        """
+        return ()
+
+    @property
+    def architecture(self) -> str:
+        """What this model is, in one token a run can be found by in a tracker.
+
+        The composite family answers from its backbone and a decorator from what
+        it wraps, so a run is filed under the thing that learned rather than
+        under the scaffolding around it. A vendor family keeps this default and
+        is filed under its own class name, which is honest — there is nothing
+        else it could mean.
+        """
+        return type(self).__name__
 
 
 class Backbone(nn.Module, ABC):
-    """Encodes raw model inputs into named feature streams."""
+    """Encodes named model inputs into named feature streams."""
 
     @abstractmethod
-    def forward(self, inputs: dict[str, Tensor]) -> FeatureBundle:
-        """Encode ``inputs`` into a ``FeatureBundle`` of named streams.
+    def forward(self, inputs: dict[str, Tensor]) -> Features:
+        """Encode ``inputs`` into the feature streams heads consume."""
 
-        Parameters:
-            inputs (dict[str, Tensor]): Batched, named model inputs.
-
-        Returns:
-            FeatureBundle: Named feature streams consumed by heads.
+    def __call__(self, inputs: dict[str, Tensor]) -> Features:
+        """Typed delegate to ``nn.Module.__call__``: hooks keep working, and the return
+        type torch erases to ``Any`` is restored for every call site.
         """
-
-    def __call__(self, inputs: dict[str, Tensor]) -> FeatureBundle:
-        # Typed delegate to nn.Module.__call__ (see module docstring); preserves hooks.
-        return cast("FeatureBundle", super().__call__(inputs))
+        return cast("Features", super().__call__(inputs))
 
     @abstractmethod
-    def feature_dim(self, key: str) -> int:
-        """Return the channel/feature dimension of stream ``key`` (sizes heads)."""
+    def feature_dim(self, stream: str) -> int:
+        """Return the channel dimension of ``stream`` — used to size heads."""
 
-    def native_head(self, feature_key: str, in_features: int, out_features: int) -> nn.Module | None:
-        """Return a backbone-native head for ``feature_key``, or ``None``.
+    @property
+    def architecture(self) -> str:
+        """What this backbone is, in one token a run can be filtered by.
 
-        Override in concrete backbones to expose the architecture's own head
-        (e.g. smp's ``SegmentationHead``, timm's ``create_classifier``).
-        Returning ``None`` falls back to the head registry.
+        The class name is the honest default; a wrapper over a library overrides
+        it. There is no one rule for how, which is exactly why each wrapper
+        answers for itself — measured, timm normalises ``resnet18.a1_in1k`` to
+        ``resnet18``, so its own answer beats the declaration, while smp calls a
+        Unet ``u-resnet34``, so the declaration beats its answer. A composite
+        backbone joins what it holds, which is the case a config interpolation
+        cannot reach at all.
+        """
+        return type(self).__name__
+
+    def native_head(self, stream: str, in_features: int, out_features: int) -> nn.Module | None:
+        """Return the architecture's own head for ``stream``, or ``None``.
+
+        Override in concrete backbones to expose the source library's head
+        (smp's ``SegmentationHead``, timm's classifier). ``None`` means the
+        framework builds its own head; the builder only consults this when a
+        task explicitly prefers the native head.
         """
         return None
 
 
 class Head(nn.Module, ABC):
-    """Maps one selected feature stream to task logits."""
+    """Maps one feature stream to a task's raw logits (pre-activation)."""
 
     @abstractmethod
     def forward(self, features: Tensor) -> Tensor:
-        """Map a feature stream to raw logits (pre-activation) for the task."""
+        """Project ``features`` to logits for one task."""
 
     def __call__(self, features: Tensor) -> Tensor:
-        # Typed delegate to nn.Module.__call__ (see module docstring); preserves hooks.
+        """Typed delegate to ``nn.Module.__call__``, so hooks run and the type survives."""
         return cast("Tensor", super().__call__(features))
 
 
-@dataclass(frozen=True, slots=True)
-class CriterionDimensions:
-    """Runtime dimensions injected into a criterion that declares ``requires_dimensions``.
+class Criterion(nn.Module, ABC):
+    """Computes a task's ``Loss`` from raw logits and a loss-view target.
 
-    Parameters:
-        num_classes (int | None): Label-vocabulary size inferred from data; ``None`` when the
-            task has no ``target`` column (structure-only supervision).
-        embedding_dim (int): The head's ``out_features`` — the embedding size for metric tasks.
+    Criteria operate on logits, never on activated outputs — activations are
+    a metrics/inference concern (``Activation``), which keeps losses
+    numerically stable.
     """
 
-    num_classes: int | None
-    embedding_dim: int
+    @abstractmethod
+    def forward(self, logits: Tensor, target: Tensor) -> Loss:
+        """Compute the loss with its named components."""
+
+    def __call__(self, logits: Tensor, target: Tensor) -> Loss:
+        """Typed delegate to ``nn.Module.__call__``, so hooks run and the type survives."""
+        return cast("Loss", super().__call__(logits, target))
 
 
-class Criterion(nn.Module, ABC):
-    """Computes a task loss from logits and target (operates on logits)."""
+class DataModule(ABC):
+    """The data side of an experiment: per-stage datasets plus inferred facts.
 
-    # Opt-in marker (cf. BatchTransform.supported_topologies): when True, the task layer
-    # injects num_classes/embedding_dim kwargs at construction (see ObjectiveStrategy.build_criterion).
-    requires_dimensions: ClassVar[bool] = False
+    The contract every data pipeline implements — table-driven (``TableDataModule``),
+    folder-driven, or vendor-native (a YOLO data pipeline). Consumers depend on this
+    interface, never on a concrete pipeline.
+
+    The one data port that lives in the core: it is the data ↔ training boundary and
+    mentions nothing beyond core entities and torch. The ports that would drag an I/O
+    library in — table sources, target encoders, trackers — stay with their packages.
+    """
 
     @abstractmethod
-    def forward(self, logits: Tensor, target: Tensor) -> LossResult:
-        """Compute named loss components and their total.
+    def setup(self, profile: DataProfile) -> None:
+        """Prepare datasets and record inferred facts into ``profile``.
 
-        Parameters:
-            logits (Tensor): Raw model outputs (pre-activation).
-            target (Tensor): Ground-truth target shaped for this loss.
-
-        Returns:
-            LossResult: Total scalar loss and its named components.
+        Runs before tasks and heads are assembled — the ordering that lets
+        output sizes come from data instead of config.
         """
 
-    def __call__(self, logits: Tensor, target: Tensor) -> LossResult:
-        # Typed delegate to nn.Module.__call__ (see module docstring); preserves hooks.
-        return cast("LossResult", super().__call__(logits, target))
-
-
-class Activation(ABC):
-    """Maps logits to probabilities/labels for metrics and inference (not loss)."""
-
     @abstractmethod
-    def __call__(self, logits: Tensor) -> Tensor:
-        """Convert logits to predictions used by metrics/inference."""
+    def dataset(self, stage: Stage) -> Dataset[Sample]:
+        """Return the dataset for ``stage``; ``setup`` must have run first.
 
+        Raises ``LookupError``, naming the stages it does have, when it has none
+        for this one. That is an answer rather than a failure: a pipeline may
+        legitimately carry no test data — a YOLO descriptor often ships without
+        it, and per-stage sources need not declare all three — so a consumer is
+        expected to catch it and say what it does instead. Stated here because
+        both consumers and implementations rely on it.
+        """
 
-class TargetAdapter(ABC):
-    """Adapts a raw batched target into loss/metric views (task-layer shaping)."""
+    def statistics(self) -> DatasetStatistics:
+        """What this pipeline is about to serve, for the report drawn before epoch one.
 
-    @abstractmethod
-    def adapt(self, target: Tensor) -> TargetView:
-        """Shape/type the raw target for this task's loss and metrics."""
+        Concrete with an empty default, exactly as ``collate`` below: a pipeline
+        that can describe its data overrides this, and one that cannot — a
+        vendor-native loader that never sees an annotation table — answers with
+        nothing. A consumer therefore always has something to call and something to
+        say, where an optional-capability Protocol would have made a whole pipeline
+        vanish from the report with no line explaining which one.
+        """
+        return DatasetStatistics()
+
+    @property
+    def collate(self) -> Callable[[list[Sample]], Batch] | None:
+        """How this pipeline's samples become one batch; ``None`` takes the default.
+
+        Batching belongs to the data, not to the training loop: detection
+        targets are ragged — one image carries three boxes and the next
+        eleven — so a vendor pipeline stacks them its own way and says so here.
+        ``None`` rather than the framework's own function because this package
+        may not import the one that implements it.
+        """
+        return None
 
 
 class MetricSet(nn.Module, ABC):
-    """A stateful collection of metrics for one task and stage."""
+    """A stateful collection of metrics for one task and stage.
+
+    Accumulates over batches, computes at epoch end, then resets. Keys
+    returned by ``compute`` and ``directions`` match.
+    """
 
     @abstractmethod
-    def update(self, predictions: Tensor, target: Tensor) -> None:
-        """Accumulate one batch of predictions against targets."""
+    def update(self, predictions: TaskOutput, target: TaskOutput) -> None:
+        """Accumulate one batch of activated predictions against targets.
+
+        Both sides are whatever the task's shape is — a tensor for a per-sample or
+        per-pixel task, a set of objects for a per-instance one. A metric given a shape
+        it cannot compare refuses by name rather than failing inside its library.
+        """
 
     @abstractmethod
     def compute(self) -> dict[str, Any]:
-        """Return computed metric values keyed by metric name."""
+        """Return computed values keyed by metric name."""
 
     @abstractmethod
     def reset(self) -> None:
-        """Clear accumulated state at the start of an epoch."""
+        """Clear accumulated state."""
 
     @abstractmethod
     def directions(self) -> dict[str, bool | None]:
-        """Return each metric's optimization direction, keyed by metric name.
+        """Return each metric's ``higher_is_better`` flag, ``None`` when directionless.
 
-        The value is the metric's intrinsic ``higher_is_better`` flag:
-        ``True`` when a larger value is better (accuracy, IoU), ``False`` when
-        smaller is better (error, MSE), and ``None`` when the metric has no
-        direction (confusion matrix, curves). Keys match those returned by
-        ``compute``, letting callers (e.g. a progress bar) bind direction to a
-        metric without re-deriving it from the metric's name.
-        """
-
-
-class LossAggregator(ABC):
-    """Combines per-task losses into a single optimization objective."""
-
-    @abstractmethod
-    def combine(self, losses: dict[str, LossResult], weights: dict[str, float]) -> LossResult:
-        """Aggregate per-task losses (e.g. weighted sum) into one ``LossResult``.
-
-        Parameters:
-            losses (dict[str, LossResult]): Per-task loss results by task name.
-            weights (dict[str, float]): Per-task weights by task name.
-
-        Returns:
-            LossResult: Combined total plus per-task components for logging.
-        """
-
-
-# ------------------------------------------------------------ artifact-logger ports
-#
-# The per-step scalar path (Lightning's ``self.log`` → ``Logger.log_metrics``) cannot
-# express matrices, curves, HTML, histograms, end-of-run single values, or rich plot
-# DTOs. Each artifact has its own one-method port below — named ``{Artifact}Logger`` with
-# a single ``log_{artifact}`` method — so a consumer depends only on the verb it actually
-# calls (Interface Segregation) and a backend implements only the artifacts it supports.
-# A backend that supports several (e.g. ``ClearMLLogger``) inherits several ports; a
-# consumer narrows the active logger to the one port it needs via ``isinstance``.
-
-
-class MatrixLogger(ABC):
-    """Logs a 2-D matrix (e.g. a confusion matrix) — consumed by ``MatrixMetricHandler``."""
-
-    @abstractmethod
-    def log_matrix(
-        self,
-        title: str,
-        matrix: Tensor,
-        iteration: int,
-        labels: list[str] | None = None,
-        xaxis: str | None = None,
-        yaxis: str | None = None,
-    ) -> None:
-        """Log a 2-D matrix (e.g. confusion matrix) to the backend.
-
-        Parameters:
-            title (str): Display title / metric key.
-            matrix (Tensor): 2-D float tensor on any device.
-            iteration (int): Current training step (epoch or global step).
-            labels (list[str] | None): Optional class label strings for both axes.
-            xaxis (str | None): X-axis label (e.g. ``"Predicted"``).
-            yaxis (str | None): Y-axis label (e.g. ``"True"``).
-        """
-
-
-class CurveLogger(ABC):
-    """Logs a 2-D curve (PR / ROC) — consumed by ``CurveMetricHandler``."""
-
-    @abstractmethod
-    def log_curve(
-        self,
-        title: str,
-        x: Tensor,
-        y: Tensor,
-        iteration: int,
-        series: str = "curve",
-        xaxis: str | None = None,
-        yaxis: str | None = None,
-    ) -> None:
-        """Log a 2-D curve (e.g. PR curve, ROC) as a scatter/line plot.
-
-        Parameters:
-            title (str): Display title / metric key.
-            x (Tensor): 1-D tensor of X-axis values (e.g. recall, FPR).
-            y (Tensor): 1-D tensor of Y-axis values (e.g. precision, TPR).
-            iteration (int): Current training step (epoch or global step).
-            series (str): Series name within the plot (e.g. class name).
-            xaxis (str | None): X-axis label.
-            yaxis (str | None): Y-axis label.
-        """
-
-
-class HtmlLogger(ABC):
-    """Logs a self-contained HTML document — consumed by ``SampleLogCallback``."""
-
-    @abstractmethod
-    def log_html(self, title: str, html: str, iteration: int) -> None:
-        """Log a self-contained HTML document (e.g. an interactive Plotly grid).
-
-        Parameters:
-            title (str): Display title / metric key.
-            html (str): Full HTML string to ship to the backend.
-            iteration (int): Current training step (epoch or global step).
-        """
-
-
-class SingleValueLogger(ABC):
-    """Logs one final constant scalar to a summary table — consumed by ``MetricSummaryCallback``."""
-
-    @abstractmethod
-    def log_single_value(self, name: str, value: float) -> None:
-        """Report one final constant scalar to a summary table (no iteration axis).
-
-        Distinct from per-step scalars: backends like ClearML collect these in a
-        dedicated "Single Values" summary, suited to end-of-run headline metrics.
-
-        Parameters:
-            name (str): Display name / key for the value.
-            value (float): The scalar to record.
-        """
-
-
-class HistogramLogger(ABC):
-    """Logs a grouped bar histogram — consumed by ``CategoricalDistributionRenderer``."""
-
-    @abstractmethod
-    def log_histogram(
-        self,
-        title: str,
-        series: str,
-        values: Sequence[float],
-        labels: list[str] | None = None,
-    ) -> None:
-        """Log a bar histogram. Calls sharing a ``title`` group as one plot.
-
-        Used for dataset distributions: one ``series`` per stage (train/val/test)
-        groups them as side-by-side bars, making class imbalance and train/test
-        skew visible at a glance.
-
-        Parameters:
-            title (str): Plot title; shared across series to group them.
-            series (str): Series name within the plot (e.g. the stage).
-            values (Sequence[float]): Bar heights (per class or per bin).
-            labels (list[str] | None): Category label per bar (x-axis ticks).
-        """
-
-
-class PlotLogger(ABC):
-    """Logs a backend-agnostic ``Plot`` DTO — consumed by ``ContinuousDistributionRenderer``."""
-
-    @abstractmethod
-    def log_plot(self, plot: Plot) -> None:
-        """Log a rich plot described by a backend-agnostic ``Plot`` DTO.
-
-        The concrete backend (e.g. ``ClearMLLogger``) translates the DTO into a
-        native figure via the ``plot_builders`` registry in ``src/loggers/plotly.py``
-        and ships it to the experiment tracker.
-
-        Parameters:
-            plot (Plot): Backend-agnostic plot data object (e.g. ``BoxPlot``).
+        Lets consumers (checkpoint monitors, progress displays) rank values
+        without re-deriving semantics from metric names.
         """
 
 
 @runtime_checkable
-class MetricDirectionProvider(Protocol):
-    """A training module that can report its metrics' optimization directions.
+class MetricFamily(Protocol):
+    """A metric whose computed value is several named readings rather than one number.
 
-    A structural (not inherited) capability: any module exposing
-    ``metric_directions`` satisfies it, so consumers (e.g. a progress bar) can
-    colour directional deltas without reaching into the module's task graph, and
-    a module lacking it degrades gracefully. Keys match those the module logs
-    (``task/metric/stage``); values are each metric's ``higher_is_better`` flag.
+    Structural, like every other optional capability here: a metric declares which
+    readings it publishes and consumers that need the list — a checkpoint monitor asking
+    which keys exist, before a run has computed anything — read it without inheriting
+    anything. A metric returning a single number never mentions it.
     """
 
-    def metric_directions(self) -> dict[str, bool | None]:
-        """Return each logged metric's ``higher_is_better`` flag, by metric key."""
-        ...
+    readings: tuple[str, ...]
+
+
+@runtime_checkable
+class MatrixLogger(Protocol):
+    """A backend that can draw a 2-D matrix artifact.
+
+    Structural on purpose: a backend qualifies by having the method, and a
+    consumer narrows the active logger with ``isinstance`` — a backend without
+    it simply keeps its scalars. The artifact crosses whole, so a new
+    presentation field never changes this signature.
+    """
+
+    def log_matrix(self, title: str, matrix: Matrix, iteration: int) -> None: ...
+
+
+@runtime_checkable
+class CurveLogger(Protocol):
+    """A backend that can draw an x-y curve artifact (PR, ROC) — all lines at once."""
+
+    def log_curve(self, title: str, curve: Curve, iteration: int) -> None: ...
+
+
+@runtime_checkable
+class BarsLogger(Protocol):
+    """A backend that can draw grouped bars — a dataset's class balance across stages.
+
+    One port per kind of picture, each carrying the typed entity a backend draws,
+    rather than one media-typed artifact port whose payload would lose its type.
+    """
+
+    def log_bars(self, title: str, bars: Bars, iteration: int) -> None: ...
+
+
+@runtime_checkable
+class SpreadLogger(Protocol):
+    """A backend that can draw boxes — a numeric target's spread, one box per stage."""
+
+    def log_spread(self, title: str, spread: Spread, iteration: int) -> None: ...
+
+
+@runtime_checkable
+class SingleValueLogger(Protocol):
+    """A backend with an end-of-run summary table for headline scalars.
+
+    Distinct from per-step scalars: a value here has no iteration axis —
+    ClearML collects them in its "Single Values" table.
+    """
+
+    def log_single_value(self, name: str, value: float) -> None: ...
+
+
+@runtime_checkable
+class HtmlLogger(Protocol):
+    """A backend that can carry a self-contained HTML page as a run artifact.
+
+    The fourth artifact port beside matrices, curves and single values, and the
+    same bargain: a tracker that can show a page gets one, a tracker that cannot
+    is told so once instead of failing a run over a picture.
+    """
+
+    def log_html(self, title: str, html: str, iteration: int) -> None: ...
+
+
+@runtime_checkable
+class StepPreviewConsumer(Protocol):
+    """Something that reads a step's preview, and says beforehand whether it wants this one.
+
+    A preview is cheap to make and not cheap to hold: ``.detach()`` shares storage with
+    the outputs, and Lightning keeps a step's return value alive through the optimizer
+    step, so an unconditional preview pins the activated outputs across ``backward()``.
+    Measured at 352 MB for a ``[16, 21, 512, 512]`` segmentation batch, on every step,
+    for a page most runs never draw.
+
+    Asking removes that: Lightning runs ``on_*_batch_start`` before the step, so a
+    consumer knows whether this batch is its own while the step can still act on it, and
+    a run with no such consumer builds nothing ever.
+
+    Argument-free on purpose — the consumer owns the whole decision (stage, cadence,
+    batch index, rank) and answers with the one bit the module needs.
+    """
+
+    @property
+    def awaiting_preview(self) -> bool: ...
+
+
+@runtime_checkable
+class MetricDirectionProvider(Protocol):
+    """A training module that reports its metrics' optimization directions.
+
+    Structural on purpose: consumers (a progress display) colour improvements
+    without re-deriving semantics from metric names, and a module without it
+    degrades gracefully. Keys match the logged scalar keys
+    (``{stage}/{task}/{label}``); values are ``higher_is_better`` flags,
+    ``None`` when directionless.
+    """
+
+    def metric_directions(self) -> dict[str, bool | None]: ...
