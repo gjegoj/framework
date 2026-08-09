@@ -64,12 +64,8 @@ class MultiEncoderBackbone(Backbone):
         """What each encoder calls itself, joined — the case a config interpolation cannot reach."""
         return "+".join(cast("Backbone", encoder).architecture for encoder in self.encoders.values())
 
-    def feature_dim(self, stream: str) -> int:
-        if stream != Stream.EMBEDDINGS:
-            raise LookupError(
-                f"MultiEncoderBackbone exposes only the '{Stream.EMBEDDINGS}' stream, requested '{stream}'."
-            )
-        return self._embedding_dim
+    def feature_dims(self) -> Mapping[str, int]:
+        return {Stream.EMBEDDINGS: self._embedding_dim}
 
 
 @backbone_registry.register("multiview")
@@ -116,7 +112,5 @@ class MultiViewBackbone(Backbone):
         """The shared encoder's: running it over N views is a way of reading, not another model."""
         return self.inner.architecture
 
-    def feature_dim(self, stream: str) -> int:
-        if stream != Stream.EMBEDDINGS:
-            raise LookupError(f"MultiViewBackbone exposes only the '{Stream.EMBEDDINGS}' stream, requested '{stream}'.")
-        return self._feature_dim
+    def feature_dims(self) -> Mapping[str, int]:
+        return {Stream.EMBEDDINGS: self._feature_dim}

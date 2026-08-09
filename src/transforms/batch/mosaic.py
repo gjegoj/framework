@@ -5,10 +5,10 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import torch
-from torch.nn.functional import one_hot
 
 from src.core.entities import Batch, as_tensor
 from src.core.taxonomy import Modality, Objective, Topology
+from src.transforms.batch.labels import as_soft, class_counts
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -64,14 +64,9 @@ class Mosaic:
                 f"whatever is laid over it, so a task without one has nothing to compose, and soft "
                 f"labels break metric learning. Drop the transform, or the task it cannot serve."
             )
-        # A mask is swapped like the picture; a label is weighted by the areas. Only class
-        # indices need one-hot encoding first — a price or an indicator vector is a number already.
+        # A mask is swapped like the picture; a label is weighted by the four areas.
         self._masks = [task.name for task in tasks if task.topology is Topology.DENSE]
-        self._classes = {
-            task.name: profile.require_num_classes(task.name) if task.objective is Objective.MULTICLASS else None
-            for task in tasks
-            if task.topology is Topology.GLOBAL
-        }
+        self._classes = class_counts([task for task in tasks if task.topology is Topology.GLOBAL], profile)
         self._input_name = input_name
         self._split_range = split_range
 
@@ -108,8 +103,7 @@ class Mosaic:
         return int(torch.randint(low, high, (1,)).item())
 
     def _weigh(self, label: Tensor, name: str, shares: Sequence[float]) -> Tensor:
-        classes = self._classes[name]
-        soft = one_hot(label.long(), classes).float() if classes is not None else label.float()
+        soft = as_soft(label, self._classes[name])
         return sum((share * soft.roll(k, 0) for k, share in enumerate(shares)), start=torch.zeros_like(soft))
 
 

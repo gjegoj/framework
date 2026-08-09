@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from src.config.components import ComponentConfig, MetricConfig
 from src.config.presets import resolve_preset
 from src.core.taxonomy import Objective, Topology
+from src.core.vocabulary import ordered_names
 
 HeadConfig = ComponentConfig
 """The head to build for a task: a registry name ('cosine') or an import path.
@@ -128,15 +129,11 @@ class TaskConfig(BaseModel):
             return self
         if self.objective is Objective.CONTINUOUS:
             raise ValueError("'classes' declared for a continuous objective; bins own its value space.")
-        missing = sorted(set(range(len(self.classes))) - set(self.classes))
-        if missing:
-            raise ValueError(
-                f"Class indices must be exactly 0..{len(self.classes) - 1}; missing: {', '.join(map(str, missing))}."
-            )
-        names = list(self.classes.values())
-        duplicated = sorted({name for name in names if names.count(name) > 1})
-        if duplicated:
-            raise ValueError(f"Class names are duplicated: {', '.join(duplicated)}.")
+        # Called for the refusal, not the list: config keeps the mapping it was given, and
+        # the ordered names are what an encoder wants. The rule itself has one owner, so
+        # the message a user sees is the same whether they declared the vocabulary on a
+        # task or handed it to an encoder from Python.
+        ordered_names(self.classes)
         return self
 
     @model_validator(mode="before")

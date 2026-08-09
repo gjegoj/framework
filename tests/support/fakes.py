@@ -6,6 +6,7 @@ as the executable documentation of the ports and must stay self-contained.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 import lightning as L
@@ -62,8 +63,8 @@ class FlattenBackbone(Backbone):
     def forward(self, inputs: dict[str, Tensor]) -> Features:
         return Features(streams={Stream.FEATURES: inputs["image"].flatten(start_dim=1)})
 
-    def feature_dim(self, stream: str) -> int:
-        return self._dim
+    def feature_dims(self) -> Mapping[str, int]:
+        return {Stream.FEATURES: self._dim}
 
 
 class LearningBackbone(FlattenBackbone):
@@ -95,8 +96,8 @@ class FakeEncoder(Backbone):
         batch = inputs[self._input_name].shape[0]
         return Features(streams={Stream.FEATURES: inputs[self._input_name].new_ones(batch, self._dim)})
 
-    def feature_dim(self, stream: str) -> int:
-        return self._dim
+    def feature_dims(self) -> Mapping[str, int]:
+        return {Stream.FEATURES: self._dim}
 
 
 class CountingMetricSet(MetricSet):

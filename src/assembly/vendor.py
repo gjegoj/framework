@@ -45,6 +45,12 @@ _UNSERVICEABLE: tuple[tuple[str, str], ...] = (
 A table of messages rather than of booleans: the reason belongs with the refusal, and a
 section added to the framework is refused here or not at all — there is no second list
 to keep in step.
+
+The sentences are written for the family that is shipped, and at least one of them is a
+fact about *it* rather than about vendors in general — a box-aware pipeline is YOLO's
+answer, not a law. So each refusal names the model it came from, and the reader knows
+whose rule they hit. Making the table itself per-family is worth doing when there is a
+second family to disagree with the first, and not before.
 """
 
 _UNSERVICEABLE_CALLBACK = "batch_transform"
@@ -76,35 +82,36 @@ def refuse_what_a_vendor_cannot_serve(config: ExperimentConfig) -> None:
     """
     if not is_vendor_family(config):
         return
+    family = str(config.model.name)
     for section, why in _UNSERVICEABLE:
         if getattr(config, section, None):
-            raise ValueError(why)
+            raise ValueError(f"'{family}' cannot serve the '{section}' section. {why}")
     declared = [entry.name for entry in config.callbacks or []]
     if _UNSERVICEABLE_CALLBACK in declared:
         raise ValueError(
-            f"The '{_UNSERVICEABLE_CALLBACK}' callback blends targets, and a vendor family's "
+            f"The '{_UNSERVICEABLE_CALLBACK}' callback blends targets, and '{family}' targets "
             f"are objects rather than tensors. Drop it for this run."
         )
-    _refuse_more_than_one_task(config)
-    _refuse_our_bricks_on_its_task(config)
+    _refuse_more_than_one_task(config, family)
+    _refuse_our_bricks_on_its_task(config, family)
 
 
-def _refuse_more_than_one_task(config: ExperimentConfig) -> None:
+def _refuse_more_than_one_task(config: ExperimentConfig, family: str) -> None:
     """Its head is built for one task; a second would train nothing and report nothing."""
     if len(config.tasks) > 1:
         declared = ", ".join(sorted(config.tasks))
         raise ValueError(
-            f"A vendor family serves one task, and this run declares {len(config.tasks)}: {declared}. "
+            f"'{family}' serves one task, and this run declares {len(config.tasks)}: {declared}. "
             f"Its head is built for one, so the others would train nothing and report nothing."
         )
 
 
-def _refuse_our_bricks_on_its_task(config: ExperimentConfig) -> None:
+def _refuse_our_bricks_on_its_task(config: ExperimentConfig, family: str) -> None:
     """A head, a criterion or an encoder declared for a task whose family builds its own."""
     for name, task in config.tasks.items():
         declared = [field for field in ("head", "loss", "target_encoder") if getattr(task, field, None) is not None]
         if declared:
             raise ValueError(
-                f"Task '{name}' declares {', '.join(declared)}, but a vendor family builds its own — "
+                f"Task '{name}' declares {', '.join(declared)}, but '{family}' builds its own — "
                 f"its assigner, its loss and its decoding are one design. Remove them from the task."
             )

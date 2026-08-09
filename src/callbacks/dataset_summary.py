@@ -224,9 +224,8 @@ def _(shown: ClassDistribution, title: str, per_stage: Mapping[Stage, Distributi
         xaxis="class",
         yaxis="count",
     )
-    for logger in loggers:
-        if isinstance(logger, BarsLogger):
-            logger.log_bars(title=title, bars=bars, iteration=0)
+    for drawer in (one for one in loggers if isinstance(one, BarsLogger)):
+        drawer.log_bars(title=title, bars=bars, iteration=0)
 
 
 @draw.register
@@ -238,9 +237,8 @@ def _(shown: ValueDistribution, title: str, per_stage: Mapping[Stage, Distributi
         xaxis="stage",
         yaxis="value",
     )
-    for logger in loggers:
-        if isinstance(logger, SpreadLogger):
-            logger.log_spread(title=title, spread=spread, iteration=0)
+    for drawer in (one for one in loggers if isinstance(one, SpreadLogger)):
+        drawer.log_spread(title=title, spread=spread, iteration=0)
 
 
 def _measured(

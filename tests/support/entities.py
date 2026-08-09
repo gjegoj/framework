@@ -8,9 +8,24 @@ than on the numbers the test named.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from src.core import DataProfile, Objective, TargetFacts, Task, Topology
+from src.core import AdaptedTarget, DataProfile, Objective, TargetFacts, Task, Topology
+
+if TYPE_CHECKING:
+    from torch import Tensor
+
+
+def as_is(target: Tensor) -> AdaptedTarget:
+    """Both views are the raw target — the adapter a test uses when adapting is not its subject.
+
+    It lived in ``src/tasks/adapters.py`` beside the four the objectives actually choose,
+    and had no production caller at all: every objective picks ``as_class_indices``,
+    ``as_indicators``, ``float_for_loss`` or ``expectation_of``. A fixture in the shipped
+    package reads as a fifth supported adapter, so it moved to where its callers are.
+    """
+    return AdaptedTarget(for_loss=target, for_metrics=target)
+
 
 CLASS_NAMES = ["dog", "cat"]
 """The vocabulary ``write_dataset`` produces, in the order a fitted encoder learns it."""

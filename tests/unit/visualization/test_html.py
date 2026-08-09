@@ -32,6 +32,22 @@ def rendered() -> str:
     return HtmlRenderer().render(demo_views(), title="samples/val")
 
 
+@pytest.mark.parametrize(
+    ("declared", "expected"),
+    [({"max_side": 0}, "max_side >= 1"), ({"max_chip_chars": 0}, "max_chip_chars >= 1")],
+)
+def test_a_bound_that_could_only_draw_dots_is_refused_by_the_renderer(declared: dict[str, int], expected: str) -> None:
+    """The samples callback refused these; anything building a page directly did not.
+
+    This renderer is public and constructed straight from tests and from any consumer
+    rendering a page of its own, and on that path ``max_side=0`` scaled every picture and
+    every mask to a single pixel and uploaded a grid of dots without a word. A knob is
+    refused by whoever owns it, not by whoever happens to pass it on.
+    """
+    with pytest.raises(ValueError, match=expected):
+        HtmlRenderer(**declared)
+
+
 def test_every_overlay_has_a_sidebar_row_with_the_same_key() -> None:
     """The checkbox toggles the overlay through their shared data-key; an orphan is dead UI."""
     page = rendered()

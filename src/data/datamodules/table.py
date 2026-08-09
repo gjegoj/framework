@@ -11,7 +11,7 @@ import pandas as pd
 from torch.utils.data import ConcatDataset
 
 from src.core.entities import DataProfile, DatasetStatistics, Distribution, Sample
-from src.core.ports import DataModule, SampleTransform
+from src.core.ports import DataModule, SampleTransform, require_stage
 from src.core.taxonomy import Stage
 from src.data.cache import LoaderCache
 from src.data.dataset import TableDataset
@@ -120,13 +120,7 @@ class TableDataModule(DataModule):
     @override
     def dataset(self, stage: Stage) -> StageDataset:
         """Return the dataset for ``stage``; ``setup`` must have run first."""
-        if self._datasets is None:
-            raise RuntimeError("TableDataModule.setup(profile) must run before requesting datasets.")
-        try:
-            return self._datasets[stage]
-        except KeyError:
-            available = ", ".join(self._datasets)
-            raise LookupError(f"No dataset for stage '{stage}'. Available stages: {available}.") from None
+        return require_stage(self._datasets, stage, type(self).__name__)
 
     @override
     def statistics(self) -> DatasetStatistics:

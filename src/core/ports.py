@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
 
 from torch import nn
@@ -44,6 +44,12 @@ type SampleTransform = Callable[[Sample], Sample]
 Takes a whole ``Sample`` rather than a single array because geometric
 augmentation is joint: the crop applied to an image must be the same crop
 applied to its masks.
+
+**May write into the sample it is given**, and both shipped implementations do —
+unlike ``BatchTransform`` below, which promises a new ``Batch``. The asymmetry is
+deliberate and worth stating rather than discovering: a sample has exactly one
+owner, the worker that just loaded it, so copying per item would buy nothing;
+a batch is written into by a callback while other readers hold it.
 """
 
 type BatchTransform = Callable[[Batch], Batch]
@@ -87,6 +93,26 @@ class Model(nn.Module, ABC):
         """
         return ()
 
+    def criterion_of(self, task_name: str) -> nn.Module | None:
+        """The criterion this family composes for one task; ``None`` when it composes none.
+
+        The sibling of ``task_parameters``, and there for the same reason: something
+        outside the model — a schedule moving a loss's own number over the run — has to
+        reach one task's brick without knowing how this family is built, or whether a
+        decorator wraps it. Asked here, the answer follows the model wherever it is
+        nested; read off an attribute, it stops working the first time something else
+        holds the model.
+
+        ``None`` is the honest answer from a vendor family, whose loss is internal and
+        has no per-task part to hand over.
+
+        Raises:
+            LookupError: From a family that does compose criteria, when it has none
+                under this name — naming the ones it has, as ``DataModule.dataset``
+                does for stages.
+        """
+        return None
+
     @property
     def architecture(self) -> str:
         """What this model is, in one token a run can be found by in a tracker.
@@ -114,8 +140,32 @@ class Backbone(nn.Module, ABC):
         return cast("Features", super().__call__(inputs))
 
     @abstractmethod
+    def feature_dims(self) -> Mapping[str, int]:
+        """The channel dimension of every stream this backbone exposes, by name.
+
+        Declared as a mapping rather than answered one stream at a time, because the
+        answer *is* a mapping: an adapter knows its streams at construction and the set
+        does not vary per call. Five adapters wrote the same branch-and-refuse over it,
+        with five spellings of one sentence, and a caller had no way to ask what a
+        backbone offers at all — which is the other half of what a stream name is for.
+        """
+
     def feature_dim(self, stream: str) -> int:
-        """Return the channel dimension of ``stream`` — used to size heads."""
+        """The channel dimension of one stream — what a head is sized from.
+
+        Concrete over ``feature_dims``, so the refusal below is written once and reads
+        the same whichever adapter is holding the streams.
+
+        Raises:
+            LookupError: When this backbone exposes no such stream, naming the ones it
+                does — as ``DataModule.dataset`` does for stages.
+        """
+        offered = self.feature_dims()
+        try:
+            return offered[stream]
+        except KeyError:
+            names = ", ".join(f"'{name}'" for name in sorted(offered)) or "no streams"
+            raise LookupError(f"{type(self).__name__} exposes {names}, requested '{stream}'.") from None
 
     @property
     def architecture(self) -> str:
@@ -226,6 +276,30 @@ class DataModule(ABC):
         may not import the one that implements it.
         """
         return None
+
+
+def require_stage[T](datasets: Mapping[Stage, T] | None, stage: Stage, owner: str) -> T:
+    """One stage's dataset, or the two refusals :meth:`DataModule.dataset` documents.
+
+    A free function rather than a template method on the port: making ``dataset``
+    concrete over an abstract ``_stage_datasets`` would impose a dict-of-stages on every
+    future pipeline, including a lazy or streaming one that holds no such dict. This
+    imposes nothing — a pipeline shaped that way calls it, one shaped otherwise does not
+    — while the two implementations that *are* shaped that way stop carrying
+    byte-identical copies of a contract the port had already written down in prose.
+
+    Parameters:
+        datasets (Mapping[Stage, T] | None): What ``setup`` built, or ``None`` before it ran.
+        stage (Stage): The stage being asked for.
+        owner (str): The pipeline's own name, for the sentence that names what to call first.
+    """
+    if datasets is None:
+        raise RuntimeError(f"{owner}.setup(profile) must run before requesting datasets.")
+    try:
+        return datasets[stage]
+    except KeyError:
+        available = ", ".join(datasets) or "none"
+        raise LookupError(f"No dataset for stage '{stage}'. Available stages: {available}.") from None
 
 
 class MetricSet(nn.Module, ABC):

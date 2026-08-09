@@ -44,8 +44,14 @@ class TaskObjective(ABC):
     needs_num_classes: ClassVar[bool] = False
 
     @abstractmethod
-    def out_features(self, facts: TargetFacts) -> int:
-        """Head output size for this label semantics."""
+    def out_features(self, facts: TargetFacts) -> int | None:
+        """Head output size for this label semantics; ``None`` where a head projects nothing.
+
+        ``None`` rather than zero: metric learning's carrier *is* the output, so there is
+        no width to ask for. Spelled as a sentinel, the meaning of the number lived in the
+        topology that decoded it — one file said ``0`` and another said ``> 0`` — and
+        neither said what it stood for.
+        """
 
     @abstractmethod
     def build_criterion(self, facts: TargetFacts) -> Criterion:
@@ -210,8 +216,10 @@ class MetricObjective(TaskObjective):
     delivered. A criterion that ignores its target is unaffected either way.
     """
 
-    def out_features(self, facts: TargetFacts) -> int:
-        return 0  # Identity heads ignore it; embeddings are sized by the backbone.
+    @override
+    def out_features(self, facts: TargetFacts) -> None:
+        """Nothing to project: the embedding the backbone produced is already the output."""
+        return
 
     def build_criterion(self, facts: TargetFacts) -> Criterion:
         return InfoNceCriterion()

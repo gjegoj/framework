@@ -14,7 +14,7 @@ Entities, ports and taxonomy — torch and stdlib only.
 | `Sample`, `Batch` | entity | One example before collation / a collated batch (`inputs`, `targets`, `meta`) |
 | `Features` | entity | Named feature streams produced by a backbone |
 | `Prediction` | entity | Per-task outputs in the family's shape, optionally with the features and the pre-activation logits they came from |
-| `Loss` | entity | Loss value with named parts; `+`, `*`, `.scoped()`, `Loss.sum()` — covers single, weighted and multi-task totals, so there is no separate aggregator |
+| `Loss` | entity | Loss *value* with named parts; `+`, `*`, `.scoped()`, `Loss.sum()` — covers single, weighted and multi-task totals, so there is no separate aggregator. **Not** an `nn.Module`: the `*Loss` classes in `src.losses` (`FocalLoss`, `InfoNceLoss`, …) are the torch modules a `*Criterion` wraps, and one of them *returns* this |
 | `StepResult` | entity | What one model step yields: `loss` + `prediction` + metric-view `targets` |
 | `StepPreview` | entity | A step's outputs and targets, detached — enough to draw a page, nothing that holds a graph. Built only when a `StepPreviewConsumer` asked for this batch |
 | `Instances` | entity | The objects a batch holds or predicted, concatenated across it: `boxes` (xyxy pixels), `labels`, `sample_index`, and `scores` — `None` for ground truth, which has no confidence. Flat because that is the only shape a ragged quantity has that a tensor can carry |
@@ -37,8 +37,8 @@ Entities, ports and taxonomy — torch and stdlib only.
 | `Modality` | taxonomy | Standard input names (open vocabulary): `image`, `embedding`, `text` — the third task axis |
 | `Stream` | taxonomy | Standard stream names, each naming a shape class: `features` `[B,D]`, `encoder` `[B,D,H',W']`, `decoder` `[B,D,H,W]`, `logits` (task-shaped), `embeddings` `[B,N,D]` |
 | `Stage` | taxonomy | `train` / `val` / `test` |
-| `Model` | port | The unit training consumes: `step(batch) → StepResult` (one forward: loss + predictions), `predict(batch)` (no targets). Families: composite, vendor-native, decorators |
-| `Backbone` | port | Named inputs → `Features`; `feature_dim(stream)` sizes heads — construction vocabulary of the composite family |
+| `Model` | port | The unit training consumes: `step(batch) → StepResult` (one forward: loss + predictions), `predict(batch)` (no targets). Two optional members let something outside reach one task's bricks without knowing how the family is built or what wraps it: `task_parameters(task)` for a per-task rate, `criterion_of(task)` for a schedule. Families: composite, vendor-native, decorators |
+| `Backbone` | port | Named inputs → `Features`; `feature_dims()` declares every stream and its width, and the port's own `feature_dim(stream)` is the lookup that sizes heads — refusing an unknown stream by name, listing the ones offered. Construction vocabulary of the composite family |
 | `Head` | port | One feature stream → raw logits |
 | `Criterion` | port | (logits, target) → `Loss`; operates on logits, never activated outputs |
 | `DataModule` | port | The data side of an experiment: `setup(profile)` + `dataset(stage)`, plus optional `statistics()` and `collate` — batching belongs to the data, since ragged detection targets cannot be stacked the framework's way |
@@ -108,8 +108,8 @@ backbone for its own (`Backbone.native_head`) and fails loudly when it has none.
 
 | Name | Kind | Meaning |
 |---|---|---|
-| `TaskObjective` | port | Behaviour of one `Objective` member: `out_features`, criterion, activation, target adapter (`None` = structure-supervised) — all built from `TargetFacts`. Built-ins: `MulticlassObjective`, `BinaryObjective`, `MultilabelObjective`, `ContinuousObjective`, `MetricObjective` |
-| `TaskTopology` | port | Behaviour of one `Topology` member: head kind, stream, `supports(objective)` pairing check. Built-ins: `GlobalTopology` (linear head, `Stream.FEATURES`), `DenseTopology` (conv head, `Stream.DECODER`), `MultiStreamTopology` and `MultiViewTopology` (identity head over `Stream.EMBEDDINGS`, metric-only) |
+| `TaskObjective` | port | Behaviour of one `Objective` member: `out_features` (`None` where the stream itself is the output, as in metric learning), criterion, activation, target adapter (`None` = structure-supervised) — all built from `TargetFacts`. Built-ins: `MulticlassObjective`, `BinaryObjective`, `MultilabelObjective`, `ContinuousObjective`, `MetricObjective` |
+| `TaskTopology` | port | Behaviour of one `Topology` member: head kind, stream, and the two questions the builder asks before building anything — `supports(objective)` and `composes_head` (`False` for `INSTANCES`, whose head belongs to the vendor family that owns it). Built-ins: `GlobalTopology` (linear head, `Stream.FEATURES`), `DenseTopology` (conv head, `Stream.DECODER`), `MultiStreamTopology` and `MultiViewTopology` (identity head over `Stream.EMBEDDINGS`, metric-only) |
 | `build_task_components` | function | `Task` + `DataProfile` + `Backbone` → `TaskComponents` — the assembly point of the axes model |
 | `resolve_preset` | function | Familiar names as kinds of task (`TaskPreset`), living on the config surface in `config.presets` |
 | `expectation_over`, `expectation_of` | functions | The inverse of a binned encoding, used on both sides: a prediction and a target both become the number their distribution stands for, so a binned regression is judged by ordinary regression metrics |

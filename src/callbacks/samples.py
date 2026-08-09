@@ -118,7 +118,12 @@ class SampleGrid(L.Callback):
     ) -> None:
         super().__init__()
         _refuse_impossible_values(
-            mean, std, num_images, every_n_epochs, batch_index, threshold, max_side, max_chip_chars
+            mean=mean,
+            std=std,
+            num_images=num_images,
+            every_n_epochs=every_n_epochs,
+            batch_index=batch_index,
+            threshold=threshold,
         )
         self._stages = _valid_stages(stages)
         self._mean = torch.tensor(list(mean)).view(1, -1, 1, 1)
@@ -271,7 +276,12 @@ class SampleGrid(L.Callback):
 
     @staticmethod
     def _page_targets(trainer: L.Trainer) -> list[HtmlLogger]:
-        return [logger for logger in trainer.loggers if isinstance(logger, HtmlLogger)]
+        """Every backend that can carry a page, in the shape every artifact consumer uses.
+
+        Silent when none can: the warn-once in ``setup`` has already said so, at the one
+        moment a user can act on it, and naming it again per epoch would be noise.
+        """
+        return [one for one in trainer.loggers if isinstance(one, HtmlLogger)]
 
     def _views(self, batch: Batch, preview: StepPreview) -> list[SampleView]:
         drawable = {alias: tensor for alias, tensor in batch.inputs.items() if self._is_drawable(alias, tensor)}
@@ -421,16 +431,23 @@ def _valid_stages(stages: Sequence[str]) -> tuple[Stage, ...]:
 
 
 def _refuse_impossible_values(
+    *,
     mean: Sequence[float],
     std: Sequence[float],
     num_images: int,
     every_n_epochs: int,
     batch_index: int,
     threshold: float,
-    max_side: int | None,
-    max_chip_chars: int,
 ) -> None:
-    """Fail at assembly on a value that can only draw nothing, naming it and the bound."""
+    """Fail at assembly on a value that can only draw nothing, naming it and the bound.
+
+    Keyword-only, because this list and the constructor's have to stay in step by hand
+    and eight positionals in that order was a transposition waiting to happen.
+
+    The page's own bounds — ``max_side``, ``max_chip_chars`` — are not here: they belong
+    to ``HtmlRenderer``, which is public and was reachable without them being checked at
+    all. A knob is refused by whoever owns it.
+    """
     if len(mean) != len(std):
         raise ValueError(
             f"The samples grid needs one std per mean: got {len(mean)} mean value(s) and {len(std)} std value(s)."
@@ -439,11 +456,6 @@ def _refuse_impossible_values(
         ("num_images", num_images, 1),
         ("every_n_epochs", every_n_epochs, 1),
         ("batch_index", batch_index, 0),
-        # `max_side` opts out with None, not with zero: at zero every picture and
-        # every mask scales to a single pixel, and the page builds and uploads a
-        # grid of dots without a word.
-        ("max_side", max_side if max_side is not None else 1, 1),
-        ("max_chip_chars", max_chip_chars, 1),
     ):
         if value < lowest:
             raise ValueError(f"The samples grid needs {name} >= {lowest}; got {value}.")

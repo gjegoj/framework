@@ -16,7 +16,7 @@ from src.core.entities import Curve, Matrix, PerClass
 from src.core.ports import CurveLogger, MatrixLogger
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterable
 
 log = logging.getLogger(__name__)
 
@@ -26,7 +26,7 @@ def report_metric(
     value: Any,
     *,
     scalar_log: Callable[[str, Any], None],
-    logger: object | None,
+    loggers: Iterable[object],
     step: int,
     class_names: list[str] | None,
 ) -> None:
@@ -34,9 +34,9 @@ def report_metric(
 
     Scalars go through ``scalar_log``; a per-class reading becomes its mean plus one
     scalar per class it is about; a *family* of readings is a namespace whose members
-    are each routed by their own geometry; drawable artifacts go to the backend's port,
-    and are skipped at debug level when the backend has none — a CSV run keeps its
-    scalars without an epoch-wise warning.
+    are each routed by their own geometry; drawable artifacts go to **every** backend
+    whose port can take them, and to none where none can — a CSV run keeps its scalars
+    without an epoch-wise warning about a picture it never asked for.
 
     **An artifact is drawn only when it is identified.** A ``Curve`` or ``Matrix`` was
     built by whoever knew the metric, so it may be drawn; a raw tuple or a raw 2-D
@@ -52,8 +52,10 @@ def report_metric(
         value (Any): Whatever the metric returned; its geometry decides the route.
         scalar_log (Callable[[str, Any], None]): Where a single number goes — the
             training module's own ``self.log``.
-        logger (object | None): The tracker, tested against the artifact ports it may
-            or may not implement.
+        loggers (Iterable[object]): The run's trackers, tested against the artifact ports
+            each may or may not implement. Every one that can draw a shape is given it: a
+            run configures a second backend precisely so that both receive its results,
+            and ``trainer.logger`` — which this took — is only the first of them.
         step (int): Iteration the value belongs to.
         class_names (list[str] | None): The task's class space, where it declared one.
     """
@@ -65,20 +67,20 @@ def report_metric(
                 log_keys.join(key, str(reading)),
                 inner,
                 scalar_log=scalar_log,
-                logger=logger,
+                loggers=loggers,
                 step=step,
                 class_names=class_names,
             )
     elif isinstance(value, Curve):
-        if isinstance(logger, CurveLogger):
-            logger.log_curve(title=key, curve=_completed_curve(key, value, class_names), iteration=step)
-        else:
-            log.debug("Backend cannot draw curves; '%s' skipped.", key)
+        # Completed once, outside the loop: naming a curve's series is about the task,
+        # not about which backend happens to draw it.
+        drawn_curve = _completed_curve(key, value, class_names)
+        for drawer in (one for one in loggers if isinstance(one, CurveLogger)):
+            drawer.log_curve(title=key, curve=drawn_curve, iteration=step)
     elif isinstance(value, Matrix):
-        if isinstance(logger, MatrixLogger):
-            logger.log_matrix(title=key, matrix=_completed_matrix(value, class_names), iteration=step)
-        else:
-            log.debug("Backend cannot draw matrices; '%s' skipped.", key)
+        drawn_matrix = _completed_matrix(value, class_names)
+        for plotter in (one for one in loggers if isinstance(one, MatrixLogger)):
+            plotter.log_matrix(title=key, matrix=drawn_matrix, iteration=step)
     elif isinstance(value, tuple) or (isinstance(value, Tensor) and value.ndim >= 2):
         warnings.warn(
             f"Metric '{key}' returned an unidentified artifact ({type(value).__name__}, "

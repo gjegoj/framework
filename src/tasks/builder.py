@@ -49,8 +49,18 @@ def build_task_components(
     """
     objective = objective_registry.create(task.objective)
     topology = topology_registry.create(task.topology)
+    # Both halves of "can this framework serve this task?", asked together and before
+    # anything is built. The second used to be a refusal thrown from inside `build_head`,
+    # i.e. from a method the builder was never meant to reach for such a task.
     if not topology.supports(task.objective):
         raise ValueError(f"Topology '{task.topology}' cannot be supervised by objective '{task.objective}'.")
+    if not topology.composes_head:
+        raise ValueError(
+            f"Task '{task.name}' is '{task.topology}', whose head belongs to the model family that "
+            f"owns it — its assigner and its loss are part of the same design, and this framework "
+            f"composes none of them. Declare a vendor family instead, e.g. "
+            f"model: {{name: yolo, model_name: yolov8n.yaml}}."
+        )
     if objective.needs_num_classes:
         profile.require_num_classes(task.name)
     facts = profile.facts(task.name)
@@ -59,9 +69,9 @@ def build_task_components(
     out_features = objective.out_features(facts)
     head: Head
     if head_factory is not None:
-        head = head_factory(in_features, out_features)
+        head = head_factory(in_features, _projected(task, out_features))
     elif prefer_native_head:
-        native = backbone.native_head(chosen_stream, in_features, out_features)
+        native = backbone.native_head(chosen_stream, in_features, _projected(task, out_features))
         if native is None:
             raise LookupError(f"{type(backbone).__name__} offers no native head for stream '{chosen_stream}'.")
         # A native module that already is a Head keeps its own shape: wrapping it
@@ -78,3 +88,20 @@ def build_task_components(
         stream=chosen_stream,
         weight=task.weight,
     )
+
+
+def _projected(task: Task, out_features: int | None) -> int:
+    """The width a *declared* head is built at, refused where the task projects nothing.
+
+    ``out_features is None`` is metric learning's contract — the embedding is already the
+    output — and only the topology's own head knows to answer that with an identity. A
+    head named in config does not: as a zero it reached ``CosineHead(in_features, 0)`` and
+    built a classifier with no prototypes at all, which fails several frames later and
+    nowhere near the declaration that caused it.
+    """
+    if out_features is None:
+        raise ValueError(
+            f"Task '{task.name}' is supervised by comparison, so its embedding is the output and a "
+            f"declared head has nothing to project onto. Drop 'head' / 'native_head' from the task."
+        )
+    return out_features

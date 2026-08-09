@@ -43,9 +43,20 @@ class WrappedCriterion(Criterion):
     """
 
     part_name: ClassVar[str]
+    """What this criterion's value logs as. Declared without a default because there is
+    no honest one — a part is named after what it computes."""
 
     def __init__(self, loss: nn.Module) -> None:
         super().__init__()
+        # Checked here rather than left to the annotation: a subclass that forgot it used
+        # to surface as an AttributeError inside the first `forward`, a thousand steps into
+        # a run, reading as a torch problem. Built from config, this fires at assembly.
+        # An abstract intermediate sharing a `_prepare` names no part and is never built.
+        if not hasattr(type(self), "part_name"):
+            raise TypeError(
+                f"{type(self).__name__} declares no 'part_name', so its value would have no key to "
+                f"log under. Every wrapped criterion names the part it contributes — 'ce', 'dice'."
+            )
         self._loss = loss
 
     def forward(self, logits: Tensor, target: Tensor) -> Loss:

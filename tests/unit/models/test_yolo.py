@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import inspect
-from typing import Any
+from typing import Any, cast
 
 import pytest
 import torch
@@ -100,6 +100,35 @@ def test_a_prediction_is_the_objects_left_after_suppression() -> None:
     assert found.scores is not None
     assert found.boxes.shape[-1] == 4
     assert set(found.sample_index.tolist()) <= {0, 1}
+
+
+def test_an_eval_step_walks_the_network_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    """One step is one forward, whatever the stage — which is what the docstring claims.
+
+    The vendor's ``loss()`` forwards internally when it is not handed predictions, so
+    asking it for the loss and then asking ``predict`` for the objects walks the whole
+    network twice: every validation and test batch at double cost, for outputs that are
+    identical either way (measured — same loss to six decimals, same detections).
+
+    Counted on ``detector.predict`` rather than through a ``register_forward_hook``:
+    ``BaseModel.loss`` calls ``self.forward(...)`` directly, which bypasses ``__call__``
+    and therefore bypasses hooks — a hook here would report one walk and prove nothing.
+    """
+    built = model()
+    built.eval()
+    detector = cast("Any", built.detector)
+    walked: list[int] = []
+    forward = detector.predict
+
+    def counted(*args: Any, **kwargs: Any) -> Any:
+        walked.append(1)
+        return forward(*args, **kwargs)
+
+    monkeypatch.setattr(built.detector, "predict", counted)
+
+    built.step(batch())
+
+    assert len(walked) == 1
 
 
 def test_the_step_hands_metrics_the_targets_it_was_given() -> None:

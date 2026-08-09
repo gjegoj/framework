@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, override
 import numpy as np
 
 from src.core.entities import ClassDistribution, Distribution, TargetFacts
+from src.core.vocabulary import ordered_names
 from src.data.cache import cached
 from src.data.loaders import ImageLoader
 from src.data.registry import target_encoder_registry
@@ -94,23 +95,6 @@ class TargetEncoder(ABC):
         )
 
 
-def _ordered_names(classes: Mapping[int, str]) -> list[str]:
-    """Index-keyed names as the list their order means; loud on a broken range.
-
-    Mirrors the config-level contract for callers that build encoders from
-    Python: a gap or a duplicated name silently reshapes the index space, so
-    both refuse here too.
-    """
-    missing = [index for index in range(len(classes)) if index not in classes]
-    if missing:
-        raise ValueError(f"Class indices must be exactly 0..{len(classes) - 1}; missing: {missing}.")
-    names = [classes[index] for index in range(len(classes))]
-    duplicated = sorted({name for name in names if names.count(name) > 1})
-    if duplicated:
-        raise ValueError(f"Class names are duplicated: {', '.join(duplicated)}.")
-    return names
-
-
 @target_encoder_registry.register("label")
 class LabelTargetEncoder(TargetEncoder):
     """Categorical labels into class indices.
@@ -125,7 +109,7 @@ class LabelTargetEncoder(TargetEncoder):
     """
 
     def __init__(self, classes: Mapping[int, str] | None = None) -> None:
-        names = _ordered_names(classes) if classes is not None else None
+        names = ordered_names(classes) if classes is not None else None
         self._declared = names is not None
         self._index: dict[str, int] | None = (
             {name: position for position, name in enumerate(names)} if names is not None else None
@@ -189,7 +173,20 @@ class MultiLabelTargetEncoder(TargetEncoder):
             raise ValueError("MultiLabelTargetEncoder needs a non-empty separator.")
         self._separator = separator
         self._declared = classes is not None
-        self._classes: list[str] | None = _ordered_names(classes) if classes is not None else None
+        self._classes: list[str] | None = None
+        self._positions: dict[str, int] = {}
+        if classes is not None:
+            self._adopt(ordered_names(classes))
+
+    def _adopt(self, names: list[str]) -> None:
+        """Hold the vocabulary and the index into it together, so the two cannot drift.
+
+        The index used to be rebuilt inside ``encode`` — once per row, every epoch, for a
+        mapping that is fixed the moment the vocabulary is. It is derived here instead,
+        at both of the two points a vocabulary arrives: declared, or learned at ``fit``.
+        """
+        self._classes = names
+        self._positions = {name: position for position, name in enumerate(names)}
 
     def fit(self, values: Iterable[Any]) -> None:
         if self._declared:
@@ -200,16 +197,15 @@ class MultiLabelTargetEncoder(TargetEncoder):
                 known = ", ".join(self._classes)
                 raise LookupError(f"Labels outside the declared classes: {', '.join(unknown)}. Declared: {known}.")
             return
-        self._classes = sorted({label for value in values for label in self._labels_in(value)})
+        self._adopt(sorted({label for value in values for label in self._labels_in(value)}))
 
     def encode(self, value: Any) -> np.ndarray:
         if self._classes is None:
             raise RuntimeError("MultiLabelTargetEncoder is not fitted; call fit(train_values) first.")
         indicator = np.zeros(len(self._classes), dtype=np.float32)
-        positions = {name: position for position, name in enumerate(self._classes)}
         for label in self._labels_in(value):
             try:
-                indicator[positions[label]] = 1.0
+                indicator[self._positions[label]] = 1.0
             except KeyError:
                 known = ", ".join(self._classes)
                 raise LookupError(f"Unknown label '{label}'. Known classes: {known}.") from None
@@ -272,9 +268,17 @@ class BinnedTargetEncoder(TargetEncoder):
         high (float | None): Largest value to represent; learned when omitted.
     """
 
+    MINIMUM_BINS: ClassVar[int] = 2
+    """Fewer than two bins is not a distribution over anything.
+
+    Named because a subclass with a stricter rule of its own has to know where the plain
+    one starts, and speak only above it — a particular refusal over a basic mistake
+    tells the user about the wrong thing.
+    """
+
     def __init__(self, bins: int = 20, low: float | None = None, high: float | None = None) -> None:
-        if bins < 2:
-            raise ValueError(f"{type(self).__name__} needs at least 2 bins, got {bins}.")
+        if bins < self.MINIMUM_BINS:
+            raise ValueError(f"{type(self).__name__} needs at least {self.MINIMUM_BINS} bins, got {bins}.")
         if (low is None) != (high is None):
             raise ValueError(f"{type(self).__name__} takes both 'low' and 'high' or neither, not one.")
         if low is not None and high is not None and low >= high:
@@ -360,6 +364,13 @@ class GaussianBinsTargetEncoder(BinnedTargetEncoder):
     NARROW_SIGMA_RATIO: ClassVar[float] = 0.35
     """Below this sigma-to-bin-width ratio the density is one-hot in all but name."""
 
+    SIGMAS_OF_ROOM: ClassVar[float] = 3.0
+    """How many sigma of room the range is padded by on each side, so nothing is clipped.
+
+    Three is where a normal density is spent: beyond it lies 0.3% of the mass, which is
+    below what the expectation this encoding is read back by can notice.
+    """
+
     def __init__(
         self,
         bins: int = 20,
@@ -369,16 +380,40 @@ class GaussianBinsTargetEncoder(BinnedTargetEncoder):
     ) -> None:
         if sigma is not None and sigma <= 0:
             raise ValueError(f"gaussian_bins needs a positive sigma, got {sigma}.")
+        # Above the base's own minimum only: `bins < 2` is the plainer mistake and the base
+        # names it, so this more particular rule must not speak over it.
+        if sigma is None and self.MINIMUM_BINS <= bins <= 2 * self.SIGMAS_OF_ROOM:
+            # An undeclared sigma *is* the bin width, and the padding widens the bins it
+            # is measured against — so the two are one equation, and below this many bins
+            # it has no solution: the room needed grows without bound.
+            raise ValueError(
+                f"gaussian_bins takes its sigma from the bin width and pads the range by "
+                f"{self.SIGMAS_OF_ROOM:g} of them, which {bins} bins cannot both satisfy. "
+                f"Declare a 'sigma', or use at least {int(2 * self.SIGMAS_OF_ROOM) + 1} bins."
+            )
         self._declared_sigma = sigma
         self._sigma = 0.0  # Resolved with the bins, from the declaration or the bin width.
         super().__init__(bins=bins, low=low, high=high)
 
     @override
     def _padding(self, low: float, high: float) -> float:
-        # Three sigma of room on each side leaves the density whole for edge values.
-        # An undeclared sigma follows the bin width, which one span-wide step approximates.
+        """Three sigma of room on each side, so an edge value's density is never clipped.
+
+        A declared sigma is a length, so the room is three of it. An undeclared one *is*
+        the bin width — and the bin width is what this padding changes — so the two are
+        solved together rather than approximated: with ``width = (span + 2·room)/bins``
+        and ``room = 3·width``, the room is ``3·span/(bins - 6)``.
+
+        Approximating it by ``3·span/(bins - 1)`` — the spacing the centres would have
+        if nothing were padded — falls short at every bin count, and that shortfall is
+        what an edge value pays. Measured over a span of 100: 2.00 sigma of room at 10
+        bins, 2.40 at 20, 2.73 at 50, drifting the expectation of the lowest value
+        inward by 0.797, 0.120 and 0.016 respectively.
+        """
         declared = self._declared_sigma
-        return 3.0 * declared if declared is not None else 3.0 * (high - low) / (self._bins - 1)
+        if declared is not None:
+            return self.SIGMAS_OF_ROOM * declared
+        return self.SIGMAS_OF_ROOM * (high - low) / (self._bins - 2 * self.SIGMAS_OF_ROOM)
 
     @override
     def _lay_out_bins(self, low: float, high: float) -> None:
@@ -475,7 +510,7 @@ class MaskTargetEncoder(TargetEncoder):
         root: str | Path | None = None,
         cache: LoaderCache | None = None,
     ) -> None:
-        names = _ordered_names(classes) if classes is not None else None
+        names = ordered_names(classes) if classes is not None else None
         if names is None and num_classes is None:
             raise ValueError("A mask needs its class count: declare 'num_classes' or 'classes'.")
         if names is not None and num_classes is not None and num_classes != len(names):

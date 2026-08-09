@@ -80,6 +80,17 @@ class HtmlRenderer:
     """
 
     def __init__(self, max_chip_chars: int = MAX_CHIP_CHARS, max_side: int | None = MAX_DISPLAY_SIDE) -> None:
+        # Checked by the class that owns these, not by the callback that happens to pass
+        # them on: this renderer is public and built directly by tests and by anything
+        # rendering a page of its own, and on that path the values reached the page
+        # unchecked. The callback's own refusals stay with the callback's own knobs.
+        if max_chip_chars < 1:
+            raise ValueError(f"A chip needs room for a character: needs max_chip_chars >= 1, got {max_chip_chars}.")
+        # `max_side` opts out with None, not with zero: at zero every picture and every
+        # mask scales to a single pixel, and the page builds and uploads a grid of dots
+        # without a word.
+        if max_side is not None and max_side < 1:
+            raise ValueError(f"A picture needs a pixel a side: needs max_side >= 1 or None, got {max_side}.")
         self._max_chip_chars = max_chip_chars
         self._max_side = max_side
         self._css = (_ASSETS / "grid.css").read_text(encoding="utf-8")

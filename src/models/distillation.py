@@ -95,6 +95,11 @@ class DistilledModel(Model):
     def task_parameters(self, task_name: str) -> Iterable[nn.Parameter]:
         return self.student.task_parameters(task_name)
 
+    @override
+    def criterion_of(self, task_name: str) -> nn.Module | None:
+        """The student's: the teachers are frozen, and the soft term is not a task's own."""
+        return self.student.criterion_of(task_name)
+
     @property
     @override
     def architecture(self) -> str:

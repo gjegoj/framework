@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import ClassVar
 
+import pytest
 import torch
 from torch import Tensor, nn
 
@@ -40,3 +41,20 @@ def test_wrapped_module_is_registered_for_training_and_devices() -> None:
 
     assert any(isinstance(module, ScaledLoss) for module in criterion.modules())
     assert sum(1 for _ in criterion.parameters()) == 1
+
+
+def test_a_subclass_that_forgot_its_part_name_is_refused_where_it_is_built() -> None:
+    """``part_name`` is annotated without a value, so forgetting it is a live possibility.
+
+    Unchecked, the omission surfaced as an ``AttributeError`` inside the first
+    ``forward`` — a thousand steps into a run, reading as a torch problem rather than as
+    a missing declaration. A criterion is built at assembly, so that is where this fires:
+    before a single batch is read.
+    """
+
+    class Nameless(WrappedCriterion):
+        def __init__(self) -> None:
+            super().__init__(nn.L1Loss())
+
+    with pytest.raises(TypeError, match="declares no 'part_name'"):
+        Nameless()

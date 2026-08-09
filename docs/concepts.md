@@ -86,7 +86,7 @@ cli.py + assembly/     composition root: Hydra composes, one grammar builds
 capability packages    data · models · tasks · losses · metrics · transforms ·
       │                training · callbacks · loggers · export · visualization
       │ implement and consume
-core/                  entities + ports + taxonomy — torch and stdlib only
+core/                  entities · ports · taxonomy · the log-key grammar — torch and stdlib only
 ```
 
 Arrows point down only. The core never imports a capability; a capability never
@@ -94,6 +94,15 @@ imports `config/`; only the composition root reads config. That is what keeps
 third-party libraries contained: Lightning lives in `training/`, pydantic in
 `config/`, Hydra in `cli.py`, and a capability that needs a fact from config
 receives it as a plain argument.
+
+"Entities and ports" is the shape of it, not the whole list. `core/` also owns the
+few rules that two layers would otherwise each spell for themselves: the log-key
+grammar (`log_keys`), the routing of a computed metric to the port its geometry
+belongs to (`reporting`), what a declared class vocabulary must satisfy
+(`vocabulary`), the closed-set check behind a `Literal` knob (`choices`), and the
+normalisation constants the transforms and the samples grid have to agree on
+(`normalisation`). Each is a rule with more than one reader and no dependency of
+its own — torch and stdlib, like everything else here.
 
 Each capability keeps its registries in `<package>/registry.py`, named
 `<singular>_registry`. Our own components register by decorator at their

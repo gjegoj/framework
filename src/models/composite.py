@@ -127,6 +127,16 @@ class CompositeModel(Model):
             if task_name in owner:
                 yield from owner[task_name].parameters()
 
+    @override
+    def criterion_of(self, task_name: str) -> nn.Module:
+        """This task's criterion — the brick a schedule moves a number on."""
+        try:
+            found: nn.Module = self.criteria[task_name]
+        except KeyError:
+            available = ", ".join(self.criteria) or "none"
+            raise LookupError(f"No criterion for task '{task_name}'. Tasks: {available}.") from None
+        return found
+
     @staticmethod
     def _target(batch: Batch, task_name: str) -> Tensor:
         try:

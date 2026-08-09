@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 import pytest
 import torch
 from torch import Tensor
@@ -17,8 +19,8 @@ class MeanEncoder(Backbone):
     def forward(self, inputs: dict[str, Tensor]) -> Features:
         return Features(streams={Stream.FEATURES: inputs["image"].mean(dim=(2, 3))})
 
-    def feature_dim(self, stream: str) -> int:
-        return 3
+    def feature_dims(self) -> Mapping[str, int]:
+        return {Stream.FEATURES: 3}
 
 
 def test_encodes_every_view_with_the_shared_inner_encoder() -> None:

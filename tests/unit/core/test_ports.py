@@ -7,6 +7,7 @@ a training loop.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any, cast
 
 import pytest
@@ -41,8 +42,8 @@ class FlattenBackbone(Backbone):
     def forward(self, inputs: dict[str, Tensor]) -> Features:
         return Features(streams={"features": inputs["image"].flatten(start_dim=1)})
 
-    def feature_dim(self, stream: str) -> int:
-        return self._dim
+    def feature_dims(self) -> Mapping[str, int]:
+        return {"features": self._dim}
 
 
 class LinearHead(Head):
@@ -93,6 +94,18 @@ def test_backbone_call_is_typed_and_still_runs_module_hooks() -> None:
 
     assert isinstance(features, Features)
     assert seen == [Features]
+
+
+def test_an_unknown_stream_is_refused_by_the_port_naming_what_is_offered() -> None:
+    """One refusal for every adapter, written where the port already knows the answer.
+
+    Five adapters each branched on the stream and raised their own spelling of this
+    sentence — and none of them could be asked what they *do* offer, which is the other
+    half of what naming a stream is for. ``feature_dims`` is now the declaration and
+    ``feature_dim`` the lookup over it.
+    """
+    with pytest.raises(LookupError, match=r"exposes 'features', requested 'decoder'"):
+        FlattenBackbone(dim=4).feature_dim("decoder")
 
 
 def test_metric_set_accumulates_and_resets() -> None:

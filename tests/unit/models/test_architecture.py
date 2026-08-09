@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 import torch
 from torch import nn
 
@@ -25,8 +27,8 @@ class Nameless(Backbone):
     def forward(self, inputs: dict[str, torch.Tensor]) -> Features:
         return Features(streams={Stream.FEATURES: inputs["image"].flatten(1)})
 
-    def feature_dim(self, stream: str) -> int:
-        return 4
+    def feature_dims(self) -> Mapping[str, int]:
+        return {Stream.FEATURES: 4}
 
 
 class Vendor(Model):

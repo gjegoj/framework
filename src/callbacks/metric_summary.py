@@ -53,12 +53,15 @@ class MetricSummary(L.Callback):
     def on_test_end(self, trainer: L.Trainer, pl_module: L.LightningModule) -> None:
         if not trainer.is_global_zero:
             return
-        logger = trainer.logger
-        if not isinstance(logger, SingleValueLogger):
-            log.debug("Backend has no summary table; test headline metrics stay in the logs.")
+        # Every configured backend, not `trainer.logger`: that is the first of them, so a
+        # run with two trackers used to fill one summary table and leave the other empty.
+        summaries = [one for one in trainer.loggers if isinstance(one, SingleValueLogger)]
+        if not summaries:
+            log.debug("No configured backend has a summary table; test headline metrics stay in the logs.")
             return
         reported = headline_metrics(trainer.callback_metrics, Stage.TEST)
-        for name, value in reported.items():
-            logger.log_single_value(name, value)
+        for backend in summaries:
+            for name, value in reported.items():
+                backend.log_single_value(name, value)
         if reported:
-            log.info("Reported %d test metrics to the summary table.", len(reported))
+            log.info("Reported %d test metrics to %d summary table(s).", len(reported), len(summaries))

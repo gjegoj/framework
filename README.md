@@ -47,7 +47,7 @@ cli.py + assembly/   composition root: Hydra composes, one grammar builds
 capability packages  data · models · tasks · losses · metrics · transforms ·
       │              training · callbacks · loggers · export · visualization
       │ implement and consume
-core/                entities + ports + taxonomy — torch and stdlib only
+core/                entities · ports · taxonomy · the log-key grammar — torch and stdlib only
 ```
 
 Arrows point down only. The core never imports a capability; a capability never

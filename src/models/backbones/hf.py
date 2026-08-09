@@ -13,6 +13,8 @@ from src.core.taxonomy import Modality, Stream
 from src.models.registry import backbone_registry
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from torch import Tensor
 
 type Pooling = Literal["cls", "mean"]
@@ -76,7 +78,5 @@ class HFTextBackbone(Backbone):
         """The hub id, which is what a run is looked up by."""
         return self._architecture
 
-    def feature_dim(self, stream: str) -> int:
-        if stream != Stream.FEATURES:
-            raise LookupError(f"HFTextBackbone exposes only the '{Stream.FEATURES}' stream, requested '{stream}'.")
-        return self._feature_dim
+    def feature_dims(self) -> Mapping[str, int]:
+        return {Stream.FEATURES: self._feature_dim}

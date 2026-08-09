@@ -154,6 +154,12 @@ class RamCache(LoaderCache):
 
     @override
     def warm(self, keys: Iterable[str], load: Callable[[Any], Any]) -> None:
+        # Skips what this store already holds *under the keys it is given*. That is the
+        # whole of what it can do, and it is worth saying which case it does not reach:
+        # a loader wrapped with :func:`cached` over a `scoped` view writes namespaced
+        # keys, so a raw cell value never matches one and every key is walked again.
+        # Nothing is re-read — the wrapper serves the held value — so the second pass
+        # costs a dict lookup per key rather than a decode.
         pending = [key for key in dict.fromkeys(keys) if key not in self._store]
         if not pending:
             return

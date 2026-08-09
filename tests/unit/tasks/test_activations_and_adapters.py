@@ -12,7 +12,8 @@ from src.tasks.activations import (
     softmax_probabilities,
     squeeze_single_output,
 )
-from src.tasks.adapters import as_class_indices, as_is, float_for_loss
+from src.tasks.adapters import as_class_indices, float_for_loss
+from tests.support.entities import as_is
 
 
 def test_softmax_probabilities_sum_to_one() -> None:

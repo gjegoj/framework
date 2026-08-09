@@ -40,8 +40,16 @@ distillation was not the change that should carry that. It wants its own pass:
 the resolution root, the guard, the guides, and a refusal that recognises an old
 `model.`-prefixed path and says what to write instead.
 
-**Where to look:** `src/src/callbacks/freeze.py` (`_resolve`),
-`src/src/assembly/models.py` (`backbone_path`,
+**Narrowed, 2026-08-09.** There were two readers walking the module tree, and the
+second has been removed rather than taught: `AnnealCriterion` reached
+`pl_module.model.criteria`, which only the composite family has, so a run declaring
+both `anneal` and `distillation` died at `on_fit_start`. It now asks the model
+through `Model.criterion_of(task)` and knows nothing about the tree at all — the
+same answer this entry proposes, applied where it cost no config change. `Freeze`
+is the one reader left, and it is the one whose paths a user writes.
+
+**Where to look:** `src/callbacks/freeze.py` (`_resolve`),
+`src/assembly/models.py` (`backbone_path`,
 `_refuse_a_second_owner_of_the_backbone`), `docs/guides/callbacks.md`.
 
 ## `logger: none` does not turn the logger off
@@ -71,7 +79,7 @@ default honest instead. The second is probably right: a run that records nothing
 anywhere is a poor default, and a nameless fallback is what makes it feel like
 one.
 
-**Where to look:** `src/src/assembly/training.py` (`build_trainer`),
+**Where to look:** `src/assembly/training.py` (`build_trainer`),
 `configs/logger/none.yaml`, `docs/guides/logging.md`.
 
 ## `num_workers: 0` guarantees three warnings on every run
@@ -96,9 +104,9 @@ in `cli.py` does not, because in a real run the tip describes a default this
 framework chose and hiding it would hide the choice. Whoever settles this entry
 should keep that difference stated rather than merge the lists.
 
-**Where to look:** `src/src/config/training.py` (`LoaderConfig`),
+**Where to look:** `src/config/training.py` (`LoaderConfig`),
 `pyproject.toml` (`[tool.pytest.ini_options] filterwarnings`),
-`src/src/cli.py` (`silence_third_party_notices`).
+`src/cli.py` (`silence_third_party_notices`).
 
 ## `rich` is imported but not declared
 
@@ -150,8 +158,8 @@ its activation (the model has to emit and keep N numbers), the metric side (a
 vector metric per component), and `RegressionAnnotator` plus one
 `render_label` registration.
 
-**Where to look:** `src/src/tasks/objectives.py` (`ContinuousObjective`),
-`src/src/visualization/entities.py`, `src/src/visualization/annotators.py`.
+**Where to look:** `src/tasks/objectives.py` (`ContinuousObjective`),
+`src/visualization/entities.py`, `src/visualization/annotators.py`.
 
 ## No text input loader ships, though text inputs are supported
 
@@ -175,8 +183,8 @@ The visualization side does not wait for it: the grid reads the raw table cell,
 so whatever a text loader eventually produces, the human-readable text is
 already what gets drawn.
 
-**Where to look:** `src/src/data/loaders.py`,
-`src/src/data/registry.py`, `src/src/models/backbones/hf.py`.
+**Where to look:** `src/data/loaders.py`,
+`src/data/registry.py`, `src/models/backbones/hf.py`.
 
 ## A dense task with continuous targets has no label to draw
 
@@ -202,10 +210,10 @@ normalising each sample to its own min/max makes cells incomparable, so the rang
 should come from the batch, and that is the decision worth thinking about rather
 than guessing now.
 
-**Where to look:** `src/src/visualization/entities.py`,
-`src/src/visualization/annotators.py` (`DenseAnnotation.draws`),
-`src/src/visualization/html.py` (`render_label`),
-`src/src/tasks/topologies.py` (`DenseTopology.supports`).
+**Where to look:** `src/visualization/entities.py`,
+`src/visualization/annotators.py` (`DenseAnnotation.draws`),
+`src/visualization/html.py` (`render_label`),
+`src/tasks/topologies.py` (`DenseTopology.supports`).
 
 ## Who owns what a sample looks like
 
@@ -277,10 +285,10 @@ code.
 `SampleTransform` handles inputs separately. Then there is something to measure
 against instead of a guess.
 
-**Where to look:** `src/src/callbacks/samples.py` (`_is_picture`,
+**Where to look:** `src/callbacks/samples.py` (`_is_picture`,
 `_to_uint8`, `_warn_once_about_shared_normalisation`),
-`src/src/transforms/albumentations.py` (`image_inputs`),
-`src/src/data/schema.py`, `src/src/data/loaders.py`.
+`src/transforms/albumentations.py` (`image_inputs`),
+`src/data/schema.py`, `src/data/loaders.py`.
 
 ## `HtmlLogger` will want to be an artifact port when there is a second format
 
@@ -304,15 +312,30 @@ ports stop naming *kinds of picture* and start naming *file formats*, which is
 the signal to collapse them into one port that takes a media type — and to give
 ClearML's side one `report_media` call instead of a method per format.
 
-The consumer side is the part already worth fixing, and it is independent of the
-count: six hand-written narrowings now exist (`core/reporting.py` twice,
-`callbacks/metric_summary.py`, `callbacks/samples.py`, and twice in
-`callbacks/dataset_summary.py`) with three different degradation policies — a debug
-line, a silent skip, and a warn-once. So "why did my artifact not appear" has three answers depending on
-which artifact it was.
+### Resolved, 2026-08-09: the ports stay, and the consumer was the duplication
 
-**Where to look:** `src/src/core/ports.py`,
-`src/src/loggers/clearml.py`.
+Everything above stands, and the entry's own last paragraph turned out to name the
+whole of the problem: the six ports were fine, and it was the six *narrowings* that
+were written out by hand, with three different answers to "and if no backend can?"
+— a debug line, a silent skip, and a warn-once. Two of them also narrowed
+`trainer.logger`, which is the *first* configured backend rather than all of them,
+so a run with two trackers filled one and silently left the other empty.
+
+All six now read alike — `for drawer in (one for one in loggers if isinstance(one,
+CurveLogger)):` — and every one of them reads `trainer.loggers`. That is one line
+where the branch-and-else was four, so no helper was needed; one was written and
+then cut, because under `mypy --strict` a runtime-checkable Protocol cannot be
+passed where `type[T]` is expected and it would have cost six `# type: ignore`
+comments at exactly the sites being cleaned.
+
+**The ports themselves are not to be collapsed on the count alone.** They are role
+interfaces, each carrying the typed entity a backend draws, and a media-typed
+`ArtifactLogger` loses that check. The trigger stated above is still the right one:
+the *second page-shaped artifact*, where the ports would start naming file formats
+rather than kinds of picture. Until then, nothing to do.
+
+**Where to look:** `src/core/ports.py`, `src/core/reporting.py`,
+`src/loggers/clearml.py`.
 
 ## `ultralytics` is a hard dependency, and it is AGPL-3.0
 
@@ -335,7 +358,7 @@ two functions and imports ultralytics lazily either way, so moving it to an extr
 later costs a dependency-group edit and one import guard.
 
 **Where to look:** `pyproject.toml` (`dependencies`),
-`src/src/data/datamodules/yolo.py`, and the model module the detection
+`src/data/datamodules/yolo.py`, and the model module the detection
 design adds beside it.
 
 ## A vendor family builds `-seg` and `-pose` networks that nothing downstream can read
@@ -364,9 +387,9 @@ they are the same three for both kinds:
 decision about a shape rather than a line of plumbing. Guessing them from the
 vendor's side would fix the shape before a second consumer exists to argue with it.
 
-**Where to look:** `src/src/core/entities.py` (`Instances`),
-`src/src/metrics/detection.py`,
-`src/src/visualization/annotators.py`, `docs/guides/detection.md`.
+**Where to look:** `src/core/entities.py` (`Instances`),
+`src/metrics/detection.py`,
+`src/visualization/annotators.py`, `docs/guides/detection.md`.
 
 ## `configs/` lives outside the package, so only an editable install can find it
 
@@ -385,7 +408,7 @@ wheel, where the directory is not shipped at all — a `pip install ml-framework
 would resolve to a path that does not exist on the target machine.
 
 Two candidate answers. Either `configs/` moves inside the package
-(`src/src/configs/`) and is declared as package data, which makes the
+(`src/configs/`) and is declared as package data, which makes the
 shipped groups importable anywhere and turns a user's own `configs/` into a
 Hydra search-path addition; or the CLI grows a `--config-dir` of its own and the
 shipped groups stay a repository convenience. The first is the usual answer for a
@@ -395,5 +418,36 @@ compose configs, and the guides all name the directory.
 **Why it was not done then:** the work was a documentation pass, and packaging is
 `pyproject.toml`'s business, which this project keeps in the user's hands.
 
-**Where to look:** `src/src/cli.py` (`CONFIG_DIRECTORY`),
+**Where to look:** `src/cli.py` (`CONFIG_DIRECTORY`),
 `pyproject.toml` (`[tool.hatch.build]`), `configs/`.
+
+## Export assumes every model input is an image of one shape
+
+**Surfaced:** 2026-08-09, auditing the export phase.
+
+`example_inputs` builds one `torch.randn(batch, len(config.mean), *config.image_size)`
+per entry in `data.inputs`. For a vision run that is exactly right, and deliberately so:
+the shape comes from the two config fields the transform pipeline hands to `Resize` and
+`Normalize`, so it is what the model receives by construction rather than by a guess —
+which is what lets export run from a checkpoint with no dataset at all.
+
+It is wrong for a run with more than one *kind* of input. `MultiEncoderBackbone` runs an
+image encoder beside a text one, and `HFTextBackbone` consumes `input_ids`; a CLIP-style
+run is a supported model shape whose export cannot work, because the second input would
+be handed a picture-shaped float tensor.
+
+Nothing is silent about it: `_prove_the_example_fits` runs the graph once before any
+exporter touches it and turns the resulting torch error into a sentence naming
+`image_size`, the channel count, and the fact that a non-image input cannot be exported
+yet. So this is a documented limit rather than a defect — but the backlog recorded the
+missing *text loader* and not this, and the two are the same gap seen from opposite ends.
+
+What it wants is for an input to be able to say what shape it takes, which is the same
+question `data.inputs` already half answers by naming a loader. The natural home is
+beside the loader: something that can produce one example value of the right shape and
+dtype without reading a file. That also makes the tokenizer coupling in the text-loader
+entry unavoidable rather than deferrable — an `input_ids` example needs a vocabulary size
+— so the two entries should be picked up together.
+
+**Where to look:** `src/assembly/export.py` (`example_inputs`,
+`_prove_the_example_fits`), `src/data/loaders.py`, `src/models/backbones/hf.py`.

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
 import torch
 
 from src.core import Objective, Stream, Topology
@@ -46,8 +45,12 @@ def test_global_supports_every_objective() -> None:
 
 
 def test_global_serves_metric_learning_with_an_identity_head() -> None:
-    """Zero outputs is the metric contract — the embedding is the output, nothing to project."""
-    head = GlobalTopology().build_head(in_features=16, out_features=0)
+    """No width asked for is the metric contract — the embedding is the output.
+
+    Spelled as ``0`` this was a sentinel whose meaning lived in the reader: one file
+    returned it and another decoded it with ``> 0``, and neither said what it stood for.
+    """
+    head = GlobalTopology().build_head(in_features=16, out_features=None)
 
     assert isinstance(head, IdentityHead)
 
@@ -94,15 +97,20 @@ def test_dense_rejects_metric_learning() -> None:
     assert topology.supports(Objective.BINARY)
 
 
-def test_a_per_instance_task_refuses_to_have_a_composed_head_built_for_it() -> None:
+def test_a_per_instance_task_declares_that_nothing_composes_its_head() -> None:
     """Its assigner, its anchors and its loss are one design, and this framework composes
     none of them. Building something anyway would put a linear layer where a detection
     head belongs, and the run would fail on a shape far from the declaration that caused it.
-    """
-    topology = InstancesTopology()
 
-    with pytest.raises(TypeError, match="model: {name: yolo"):
-        topology.build_head(in_features=64, out_features=3)
+    Declared beside ``supports`` rather than thrown from ``build_head``: the two are one
+    question — can this framework serve this task? — and the builder asks them together,
+    before anything is built. A refusal inside ``build_head`` lived in a method the
+    builder was never meant to reach, which is a promise the base class makes and this
+    subclass breaks. ``test_a_per_instance_task_is_refused_where_the_decision_is_taken``
+    in ``test_builder.py`` is where the sentence a user reads is pinned.
+    """
+    assert not InstancesTopology().composes_head
+    assert GlobalTopology().composes_head
 
 
 def test_a_per_instance_task_is_supervised_as_one_of_n_classes() -> None:

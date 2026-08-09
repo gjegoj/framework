@@ -7,6 +7,7 @@ as long class indices.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
 
 import albumentations as A
@@ -48,8 +49,8 @@ class TinyDecoderBackbone(Backbone):
     def forward(self, inputs: dict[str, Tensor]) -> Features:
         return Features(streams={Stream.DECODER: self._convolution(inputs["image"])})
 
-    def feature_dim(self, stream: str) -> int:
-        return self._width
+    def feature_dims(self) -> Mapping[str, int]:
+        return {Stream.DECODER: self._width}
 
 
 @pytest.mark.e2e

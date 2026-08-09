@@ -25,8 +25,8 @@ from src.data import (
 )
 from src.losses import CrossEntropyCriterion
 from src.models import CompositeModel, LinearHead, TaskComponents
-from src.tasks.adapters import as_is
 from src.training import FitProfile, SchedulerFactory, TrainingData, TrainingModule
+from tests.support.entities import as_is
 from tests.support.fakes import CountingMetricSet, FlattenBackbone
 from tests.support.lightning import quiet_trainer
 

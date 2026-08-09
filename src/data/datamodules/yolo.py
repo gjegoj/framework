@@ -7,8 +7,9 @@ from typing import TYPE_CHECKING, Any, cast, override
 import torch
 
 from src.core.entities import Batch, DataProfile, Instances, TargetFacts
-from src.core.ports import DataModule
+from src.core.ports import DataModule, require_stage
 from src.core.taxonomy import Modality, Stage
+from src.data.registry import vendor_data_module_registry
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -21,8 +22,14 @@ _STACKED_TENSORS = frozenset({"img", "bboxes", "cls", "batch_idx"})
 """Keys translated into ``Batch`` fields; whatever else ultralytics carries becomes meta."""
 
 
+@vendor_data_module_registry.register("yolo")
 class YoloDataModule(DataModule):
     """Per-stage ultralytics datasets built from a YOLO ``data.yaml``.
+
+    Registered under the same key ``YoloModel`` takes in ``model_registry``: a run names
+    the family once, in ``config.model``, and assembly reaches both halves from it. The
+    two packages do not import one another, so the key is spelled twice —
+    ``test_vendor_families_bring_both_halves`` is what keeps the two spellings honest.
 
     A detection dataset does not arrive as an annotation table: it arrives as a
     descriptor beside ``images/`` and ``labels/`` directories, and ultralytics' own
@@ -103,13 +110,7 @@ class YoloDataModule(DataModule):
     @override
     def dataset(self, stage: Stage) -> Dataset[Sample]:
         """Return the dataset for ``stage``; ``setup`` must have run first."""
-        if self._datasets is None:
-            raise RuntimeError("YoloDataModule.setup(profile) must run before requesting datasets.")
-        try:
-            return self._datasets[stage]
-        except KeyError:
-            available = ", ".join(self._datasets)
-            raise LookupError(f"No dataset for stage '{stage}'. Available stages: {available}.") from None
+        return require_stage(self._datasets, stage, type(self).__name__)
 
     @property
     @override

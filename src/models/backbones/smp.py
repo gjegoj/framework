@@ -21,6 +21,7 @@ from src.models.backbones.checkpoints import (
 from src.models.registry import backbone_registry
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
     from pathlib import Path
 
     from torch import Tensor
@@ -150,14 +151,8 @@ class SmpBackbone(Backbone):
         """Composed rather than asked: measured, smp calls a Unet on a ResNet-34 `u-resnet34`."""
         return self._architecture
 
-    def feature_dim(self, stream: str) -> int:
-        if stream == Stream.ENCODER:
-            return self._encoder_dim
-        if stream == Stream.DECODER:
-            return self._decoder_dim
-        raise LookupError(
-            f"SmpBackbone exposes the '{Stream.ENCODER}' and '{Stream.DECODER}' streams, requested '{stream}'."
-        )
+    def feature_dims(self) -> Mapping[str, int]:
+        return {Stream.ENCODER: self._encoder_dim, Stream.DECODER: self._decoder_dim}
 
     @override
     def native_head(self, stream: str, in_features: int, out_features: int) -> nn.Module | None:

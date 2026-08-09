@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, cast
 
 import lightning as L
 import pytest
@@ -13,46 +13,86 @@ from torch import nn
 from src.callbacks import AnnealCriterion
 from src.callbacks.anneal import SCHEDULES, scheduled_value
 from src.callbacks.registry import callback_registry
-from src.core import Criterion, Loss
-from src.losses import CrossEntropyCriterion, WeightedSumCriterion
-from src.models import CompositeModel, LinearHead, TaskComponents
+from src.core import Batch, Criterion, Loss, Model, Prediction, StepResult
+from src.losses import CrossEntropyCriterion, KLDivergenceCriterion, WeightedSumCriterion
+from src.models import CompositeModel, DistilledModel, LinearHead, TaskComponents, without_teachers
 from src.tasks.activations import softmax_probabilities
 from src.tasks.adapters import as_class_indices
 from tests.support.fakes import FlattenBackbone
 from tests.support.lightning import quiet_trainer
 
 
-class AnnealedRun(L.LightningModule):
-    """The little a schedule needs: ``model.criteria`` keyed by task, and steps."""
+def composed(criterion: Criterion) -> CompositeModel:
+    """One classification task on one backbone — what ``build_model`` assembles."""
+    return CompositeModel(
+        backbone=FlattenBackbone(dim=4),
+        components={
+            "label": TaskComponents(
+                head=LinearHead(4, 3),
+                criterion=criterion,
+                activation=softmax_probabilities,
+                target_adapter=as_class_indices,
+            )
+        },
+    )
 
-    def __init__(self, criterion: Criterion) -> None:
+
+class _WholeModel(Model):
+    """A family that arrives whole: its loss is internal, so it composes no task's brick.
+
+    The port's default ``criterion_of`` answers ``None`` for exactly this shape.
+    """
+
+    def __init__(self) -> None:
         super().__init__()
-        self.model = CompositeModel(
-            backbone=FlattenBackbone(dim=4),
-            components={
-                "label": TaskComponents(
-                    head=LinearHead(4, 3),
-                    criterion=criterion,
-                    activation=softmax_probabilities,
-                    target_adapter=as_class_indices,
-                )
-            },
+        self.trunk = nn.Linear(4, 3)
+
+    def forward(self, images: torch.Tensor) -> torch.Tensor:
+        return cast("torch.Tensor", self.trunk(images.flatten(1)))
+
+    def step(self, batch: Batch) -> StepResult:
+        raise NotImplementedError("This test drives the module's own training_step.")
+
+    def predict(self, batch: Batch) -> Prediction:
+        raise NotImplementedError("This test drives the module's own training_step.")
+
+
+class AnnealedRun(L.LightningModule):
+    """The little a schedule needs: a model carrying the task's criterion, and steps.
+
+    ``distilled`` wraps the student exactly as the ``distillation:`` section does, so
+    the callback meets the module tree a real distilled run hands it rather than a
+    shape only this test has.
+    """
+
+    def __init__(self, criterion: Criterion, distilled: bool = False) -> None:
+        super().__init__()
+        student = composed(criterion)
+        self.model: Model = (
+            DistilledModel(
+                student=student,
+                teachers=[composed(CrossEntropyCriterion())],
+                criterion=KLDivergenceCriterion(),
+            )
+            if distilled
+            else student
         )
 
     def training_step(self, batch: Any, index: int) -> torch.Tensor:
-        logits = self.model.heads["label"](batch[0].flatten(1))
-        total: torch.Tensor = self.model.criteria["label"](logits, batch[1]).total
+        student = cast("CompositeModel", without_teachers(self.model))
+        logits = student.heads["label"](batch[0].flatten(1))
+        total: torch.Tensor = student.criteria["label"](logits, batch[1]).total
         return total
 
     def configure_optimizers(self) -> torch.optim.Optimizer:
         return torch.optim.SGD(self.parameters(), lr=0.1)
 
 
-def fit(callback: AnnealCriterion, criterion: Criterion, epochs: int = 4) -> None:
+def fit(callback: AnnealCriterion, criterion: Criterion, epochs: int = 4, distilled: bool = False) -> None:
     data = torch.utils.data.DataLoader(
         torch.utils.data.TensorDataset(torch.randn(2, 4, 1, 1), torch.tensor([0, 1])), batch_size=2
     )
-    quiet_trainer(max_epochs=epochs, callbacks=[callback]).fit(AnnealedRun(criterion), data)
+    quiet_trainer(max_epochs=epochs, callbacks=[callback]).fit(AnnealedRun(criterion, distilled), data)
 
 
 def test_the_number_moves_from_start_to_end_over_the_run() -> None:
@@ -79,6 +119,28 @@ def test_a_part_prefix_picks_one_criterion_of_a_composite() -> None:
     fit(AnnealCriterion(task="label", parameter="ce.label_smoothing", start=0.3, end=0.3), composite)
 
     assert ce._loss.label_smoothing == pytest.approx(0.3)
+
+
+def test_a_distilled_run_still_reaches_the_criterion_of_its_task() -> None:
+    """``distillation:`` nests the student, and a schedule has to follow it there.
+
+    Both sections are supported and documented, and neither says the other is excluded.
+    But the callback read ``model.criteria``, which only the composite family has, so a
+    run declaring both died at ``on_fit_start`` — before a single batch, with a message
+    about a model that "exposes none" rather than about the two features not composing.
+
+    ``backbone_path`` in assembly already accounts for exactly this nesting, so the
+    knowledge existed in the codebase; this reader simply did not have it.
+    """
+    criterion = CrossEntropyCriterion(label_smoothing=0.9)
+
+    fit(
+        AnnealCriterion(task="label", parameter="label_smoothing", start=0.2, end=0.0),
+        criterion,
+        distilled=True,
+    )
+
+    assert criterion._loss.label_smoothing == pytest.approx(0.0)
 
 
 def test_an_ambiguous_name_lists_the_parts_that_carry_it() -> None:
@@ -115,8 +177,41 @@ def test_a_missing_attribute_lists_the_numeric_ones() -> None:
 
 
 def test_an_unknown_task_lists_the_configured_ones() -> None:
-    with pytest.raises(ValueError, match="label"):
+    """The refusal now comes from the model, which is the thing that knows its tasks.
+
+    ``LookupError`` rather than ``ValueError``: an unknown key naming the known ones is
+    what ``Registry.get``, ``Features[...]`` and ``DataModule.dataset`` already raise.
+    """
+    with pytest.raises(LookupError, match="label"):
         fit(AnnealCriterion(task="mask", parameter="gamma", start=0.0, end=1.0), CrossEntropyCriterion())
+
+
+def test_a_family_that_composes_no_criterion_is_told_so_by_name() -> None:
+    """A vendor family owns its loss internally, so there is no per-task brick to move.
+
+    The port's default answer is ``None``, and the schedule turns that into a sentence
+    naming the family — rather than the ``AttributeError`` a tree walk would have raised.
+    """
+
+    class VendorRun(L.LightningModule):
+        def __init__(self) -> None:
+            super().__init__()
+            self.model = _WholeModel()
+
+        def training_step(self, batch: Any, index: int) -> torch.Tensor:
+            # nn.Module.__call__ erases the return type to Any; pin it back.
+            return cast("torch.Tensor", self.model(batch[0])).sum()
+
+        def configure_optimizers(self) -> torch.optim.Optimizer:
+            return torch.optim.SGD(self.parameters(), lr=0.1)
+
+    data = torch.utils.data.DataLoader(
+        torch.utils.data.TensorDataset(torch.randn(2, 4, 1, 1), torch.tensor([0, 1])), batch_size=2
+    )
+    callback = AnnealCriterion(task="label", parameter="gamma", start=0.0, end=1.0)
+
+    with pytest.raises(ValueError, match="composes none"):
+        quiet_trainer(callbacks=[callback]).fit(VendorRun(), data)
 
 
 @pytest.mark.parametrize("over", [0.0, 1.5])

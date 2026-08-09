@@ -6,6 +6,7 @@ Table source, schema, profiling, task building, composite model, the single
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from functools import partial
 from pathlib import Path
 from typing import Any
@@ -46,8 +47,8 @@ class PointBackbone(Backbone):
     def forward(self, inputs: dict[str, Tensor]) -> Features:
         return Features(streams={"features": inputs["point"]})
 
-    def feature_dim(self, stream: str) -> int:
-        return 2
+    def feature_dims(self) -> Mapping[str, int]:
+        return {"features": 2}
 
 
 def load_point(value: Any) -> Tensor:

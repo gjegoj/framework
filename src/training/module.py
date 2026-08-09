@@ -245,7 +245,7 @@ class TrainingModule(L.LightningModule):
                     log_keys.join(stage, task.name, name),
                     value,
                     scalar_log=self.log,
-                    logger=self.logger,
+                    loggers=self.loggers,
                     step=self.current_epoch,
                     class_names=task.class_names,
                 )

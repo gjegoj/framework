@@ -32,7 +32,7 @@ def _reject(key: str, value: Any) -> None:
 def test_a_scalar_takes_the_plain_path() -> None:
     logged: dict[str, Any] = {}
     report_metric(
-        "val/label/f1", torch.tensor(0.5), scalar_log=logged.__setitem__, logger=None, step=0, class_names=None
+        "val/label/f1", torch.tensor(0.5), scalar_log=logged.__setitem__, loggers=[], step=0, class_names=None
     )
 
     assert set(logged) == {"val/label/f1"}
@@ -44,7 +44,7 @@ def test_a_vector_logs_its_mean_and_one_scalar_per_class() -> None:
         "val/label/f1",
         torch.tensor([0.5, 0.7]),
         scalar_log=lambda key, value: logged.__setitem__(key, float(value)),
-        logger=None,
+        loggers=[],
         step=0,
         class_names=["cat", "dog"],
     )
@@ -62,7 +62,7 @@ def test_missing_names_fall_back_to_indexed_labels() -> None:
         "val/label/f1",
         torch.tensor([0.5, 0.7]),
         scalar_log=lambda key, value: logged.__setitem__(key, float(value)),
-        logger=None,
+        loggers=[],
         step=0,
         class_names=None,
     )
@@ -77,7 +77,7 @@ def test_a_name_length_mismatch_warns_and_falls_back() -> None:
             "val/label/f1",
             torch.tensor([0.5, 0.7, 0.9]),
             scalar_log=lambda key, value: logged.__setitem__(key, float(value)),
-            logger=None,
+            loggers=[],
             step=0,
             class_names=["cat", "dog"],
         )
@@ -91,7 +91,7 @@ def test_a_matrix_entity_reaches_the_port_with_class_labels_filled() -> None:
         "val/label/cm",
         Matrix(value=torch.eye(2), xaxis="Predicted", yaxis="True"),
         scalar_log=_reject,
-        logger=backend,
+        loggers=[backend],
         step=0,
         class_names=["cat", "dog"],
     )
@@ -107,7 +107,7 @@ def test_translator_set_labels_are_never_overwritten() -> None:
     backend = RecordingLogger()
     own = Matrix(value=torch.eye(2), xaxis="Bin", yaxis="Bin", labels=("low", "high"))
 
-    report_metric("val/label/m", own, scalar_log=_reject, logger=backend, step=0, class_names=["cat", "dog"])
+    report_metric("val/label/m", own, scalar_log=_reject, loggers=[backend], step=0, class_names=["cat", "dog"])
 
     assert backend.matrices[0][1].labels == ("low", "high")
 
@@ -115,14 +115,14 @@ def test_translator_set_labels_are_never_overwritten() -> None:
 def test_a_matrix_without_a_capable_backend_is_skipped_quietly() -> None:
     """The default table carries a confusion matrix; a CSV run must not warn every epoch."""
     matrix = Matrix(value=torch.eye(2), xaxis="Predicted", yaxis="True")
-    report_metric("val/label/cm", matrix, scalar_log=_reject, logger=object(), step=0, class_names=None)
+    report_metric("val/label/cm", matrix, scalar_log=_reject, loggers=[object()], step=0, class_names=None)
 
 
 def test_a_raw_matrix_warns_instead_of_wearing_class_names() -> None:
     """An unidentified 2-D value must not be drawn with labels it may not have."""
     with pytest.warns(UserWarning, match="val/label/corr"):
         report_metric(
-            "val/label/corr", torch.eye(2), scalar_log=_reject, logger=RecordingLogger(), step=0, class_names=None
+            "val/label/corr", torch.eye(2), scalar_log=_reject, loggers=[RecordingLogger()], step=0, class_names=None
         )
 
 
@@ -133,7 +133,7 @@ def test_a_raw_curve_tuple_warns_instead_of_guessing_its_orientation() -> None:
             "val/label/pr",
             (torch.tensor([1.0]), torch.tensor([0.0]), torch.tensor([0.5])),
             scalar_log=_reject,
-            logger=RecordingLogger(),
+            loggers=[RecordingLogger()],
             step=0,
             class_names=None,
         )
@@ -148,12 +148,32 @@ def test_a_curve_is_completed_with_series_names_and_passed_whole() -> None:
         yaxis="Precision",
     )
 
-    report_metric("val/label/pr", curve, scalar_log=_reject, logger=backend, step=0, class_names=["cat", "dog"])
+    report_metric("val/label/pr", curve, scalar_log=_reject, loggers=[backend], step=0, class_names=["cat", "dog"])
 
     title, completed = backend.curves[0]
     assert title == "val/label/pr"
     assert completed.series == ("cat", "dog")
     assert (completed.xaxis, completed.yaxis) == ("Recall", "Precision")
+
+
+def test_every_backend_that_can_draw_a_shape_is_given_it() -> None:
+    """The router took one logger, and a run may configure several.
+
+    Lightning's ``trainer.logger`` is the *first* of ``trainer.loggers``, so a run with a
+    second tracker had its curves and matrices drawn into one of them and silently not
+    the other — while the dataset report and the samples grid, reading the plural, filled
+    both. The completed artifact is built once and handed to each; nothing about naming a
+    curve's series depends on who draws it.
+    """
+    first, second = RecordingLogger(), RecordingLogger()
+    curve = Curve(x=(torch.tensor([0.0]),), y=(torch.tensor([1.0]),), xaxis="Recall", yaxis="Precision")
+
+    report_metric(
+        "val/label/pr", curve, scalar_log=_reject, loggers=[first, second], step=0, class_names=["cat", "dog"]
+    )
+
+    assert [title for title, _ in first.curves] == ["val/label/pr"]
+    assert [title for title, _ in second.curves] == ["val/label/pr"]
 
 
 def test_a_positive_only_curve_takes_the_positive_class_name() -> None:
@@ -166,7 +186,7 @@ def test_a_positive_only_curve_takes_the_positive_class_name() -> None:
         positive_only=True,
     )
 
-    report_metric("val/label/roc", curve, scalar_log=_reject, logger=backend, step=0, class_names=["neg", "pos"])
+    report_metric("val/label/roc", curve, scalar_log=_reject, loggers=[backend], step=0, class_names=["neg", "pos"])
 
     assert backend.curves[0][1].series == ("pos",)
 
@@ -175,16 +195,16 @@ def test_translator_set_series_are_never_overwritten() -> None:
     backend = RecordingLogger()
     curve = Curve(x=(torch.tensor([0.0]),), y=(torch.tensor([1.0]),), xaxis="x", yaxis="y", series=("own",))
 
-    report_metric("val/label/c", curve, scalar_log=_reject, logger=backend, step=0, class_names=["cat", "dog"])
+    report_metric("val/label/c", curve, scalar_log=_reject, loggers=[backend], step=0, class_names=["cat", "dog"])
 
     assert backend.curves[0][1].series == ("own",)
 
 
 def test_a_curve_without_a_capable_backend_is_skipped_quietly() -> None:
     curve = Curve(x=(torch.tensor([0.0]),), y=(torch.tensor([1.0]),), xaxis="x", yaxis="y")
-    report_metric("val/label/pr", curve, scalar_log=_reject, logger=object(), step=0, class_names=None)
+    report_metric("val/label/pr", curve, scalar_log=_reject, loggers=[object()], step=0, class_names=None)
 
 
 def test_an_unknown_geometry_warns_and_names_the_key() -> None:
     with pytest.warns(UserWarning, match="val/label/odd"):
-        report_metric("val/label/odd", torch.zeros(2, 2, 2), scalar_log=_reject, logger=None, step=0, class_names=None)
+        report_metric("val/label/odd", torch.zeros(2, 2, 2), scalar_log=_reject, loggers=[], step=0, class_names=None)

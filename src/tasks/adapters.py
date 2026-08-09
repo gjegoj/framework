@@ -19,11 +19,6 @@ CLASS_DIM = 1
 """Where the classes sit in a soft target — a mix is per sample, never per pixel."""
 
 
-def as_is(target: Tensor) -> AdaptedTarget:
-    """Both views are the raw target (multiclass indices, continuous values)."""
-    return AdaptedTarget(for_loss=target, for_metrics=target)
-
-
 def as_class_indices(target: Tensor) -> AdaptedTarget:
     """Class indices for both views — unless the target is already a distribution.
 

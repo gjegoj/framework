@@ -7,6 +7,8 @@ the batch through a task, which is where the two halves have to agree.
 
 from __future__ import annotations
 
+from typing import cast
+
 import pytest
 import torch
 
@@ -58,7 +60,9 @@ def model(objective: Objective = Objective.MULTICLASS) -> CompositeModel:
         backbone=FlattenBackbone(dim=FEATURES),
         components={
             "label": TaskComponents(
-                head=LinearHead(FEATURES, behaviour.out_features(facts)),
+                # Every objective this file parametrises over projects onto classes; a
+                # metric one would answer None and belongs to an identity head instead.
+                head=LinearHead(FEATURES, cast("int", behaviour.out_features(facts))),
                 criterion=CrossEntropyCriterion(),
                 activation=behaviour.build_activation(facts),
                 target_adapter=behaviour.build_target_adapter(facts),

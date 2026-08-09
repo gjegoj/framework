@@ -38,10 +38,17 @@ class RecordingSummary:
         self.reported[name] = value
 
 
-def _trainer(logger: object, is_global_zero: bool = True) -> L.Trainer:
+def _trainer(*loggers: object, is_global_zero: bool = True) -> L.Trainer:
+    """A trainer carrying whichever backends the test configured.
+
+    Both spellings are filled, as Lightning fills them: ``logger`` is the first of
+    ``loggers``. A stub offering only one of the two would hide which one a consumer
+    reads, and that is the difference this file has to be able to see.
+    """
     stub = SimpleNamespace(
         is_global_zero=is_global_zero,
-        logger=logger,
+        logger=loggers[0] if loggers else None,
+        loggers=list(loggers),
         callback_metrics={"test/label/f1": torch.tensor(0.8)},
     )
     return cast("L.Trainer", stub)
@@ -53,6 +60,22 @@ def test_the_callback_reports_after_the_test_stage() -> None:
     MetricSummary().on_test_end(_trainer(backend), cast("L.LightningModule", None))
 
     assert backend.reported["label/f1"] == pytest.approx(0.8)
+
+
+def test_every_configured_backend_receives_the_summary() -> None:
+    """A run may configure more than one tracker, and ``trainer.logger`` is only the first.
+
+    Two consumers of the same artifacts — the dataset report and the samples grid —
+    already read ``trainer.loggers``; this one and the metric router read the singular,
+    so a second backend was handed nothing and said nothing about it. The split is
+    invisible until someone adds a tracker and finds half their numbers missing.
+    """
+    first, second = RecordingSummary(), RecordingSummary()
+
+    MetricSummary().on_test_end(_trainer(first, second), cast("L.LightningModule", None))
+
+    assert first.reported["label/f1"] == pytest.approx(0.8)
+    assert second.reported["label/f1"] == pytest.approx(0.8)
 
 
 def test_a_backend_without_a_summary_table_is_skipped_quietly() -> None:

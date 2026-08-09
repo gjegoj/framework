@@ -136,23 +136,19 @@ class FocalLoss(nn.Module):
 
 @criterion_registry.register("focal")
 class FocalCriterion(WrappedCriterion):
-    """Focal loss as a criterion — cross-entropy whose easy examples fade.
+    """Focal loss as a criterion — see :class:`FocalLoss` for the math and every knob.
 
-    Multiclass across both topologies, hard or mixed targets; ``gamma`` is a
-    plain number, so the ``anneal`` callback can move it over the run. For the
-    binary and multilabel forms, reach ``smp.losses.FocalLoss`` by import path
-    instead of growing modes here.
+    Multiclass across both topologies, hard or mixed targets; ``gamma`` is a plain
+    number, so the ``anneal`` callback can move it over the run. For the binary and
+    multilabel forms, reach ``smp.losses.FocalLoss`` by import path instead of growing
+    modes here.
 
     Parameters:
-        alpha (list[float] | None): Per-class weights, length C.
-        gamma (float): How hard easy examples fade; 0 recovers cross-entropy.
-        reduction (str): ``mean``, ``sum`` or ``none``.
-        eps (float): Floor for the focal base — see :class:`FocalLoss`.
+        **kwargs: Forwarded verbatim to :class:`FocalLoss` (``alpha``, ``gamma``,
+            ``reduction``, ``eps``).
     """
 
     part_name: ClassVar[str] = "focal"
 
-    def __init__(
-        self, alpha: list[float] | None = None, gamma: float = 2.0, reduction: Reduction = "mean", eps: float = 1e-6
-    ) -> None:
-        super().__init__(FocalLoss(alpha=alpha, gamma=gamma, reduction=reduction, eps=eps))
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(FocalLoss(**kwargs))

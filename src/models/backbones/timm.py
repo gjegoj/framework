@@ -18,6 +18,7 @@ from src.models.backbones.checkpoints import (
 from src.models.registry import backbone_registry
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
     from pathlib import Path
 
     from torch import Tensor
@@ -96,10 +97,8 @@ class TimmBackbone(Backbone):
         declared = cast("dict[str, Any]", getattr(self.model, "default_cfg", {}))
         return str(declared.get("architecture") or type(self).__name__)
 
-    def feature_dim(self, stream: str) -> int:
-        if stream != Stream.FEATURES:
-            raise LookupError(f"TimmBackbone exposes only the '{Stream.FEATURES}' stream, requested '{stream}'.")
-        return self._feature_dim
+    def feature_dims(self) -> Mapping[str, int]:
+        return {Stream.FEATURES: self._feature_dim}
 
     @override
     def native_head(self, stream: str, in_features: int, out_features: int) -> nn.Module | None:

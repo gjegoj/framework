@@ -16,7 +16,6 @@ from src.data import (
     SourceWithTransforms,
     TableDataModule,
     TargetColumn,
-    YoloDataModule,
     cached,
     group_split,
     random_split,
@@ -27,6 +26,7 @@ from src.data.registry import (
     input_loader_registry,
     table_source_registry,
     target_encoder_registry,
+    vendor_data_module_registry,
 )
 from src.models.registry import model_registry
 from src.tasks.registry import objective_registry, topology_registry
@@ -249,6 +249,11 @@ def _infer_format(path: str) -> str:
 def _vendor_data_module(config: ExperimentConfig) -> DataModule:
     """The family's own pipeline, told the run's facts and handed the vendor's own knobs.
 
+    Looked up under the name that already chose the model, so this function names no
+    concrete family — which is what ``assemble``'s docstring claims of the whole
+    composition root, and what was true of every level of it but this one. A family
+    registered as a model but not as a pipeline fails here, naming what is registered.
+
     The descriptor is ``data.source`` read as written. The square size and the batch come
     from the run rather than from a second declaration: ``image_size`` is what the
     transforms would have resized to, and ``loader.batch_size`` is the one the loader is
@@ -262,7 +267,8 @@ def _vendor_data_module(config: ExperimentConfig) -> DataModule:
     ours = named_by(architecture, config.model.params)
     vendor = {name: value for name, value in config.model.params.items() if name not in ours}
     (task_name,) = config.tasks
-    built: DataModule = YoloDataModule(
+    pipeline = vendor_data_module_registry.get(str(config.model.name))
+    built: DataModule = pipeline(
         data_yaml=_descriptor(config),
         task_name=task_name,
         image_size=config.image_size[0],

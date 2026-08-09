@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, override
 
 from torchmetrics import MetricCollection
 
@@ -31,9 +31,11 @@ class WrappedMetricSet(MetricSet):
         super().__init__()
         self.collection = MetricCollection(dict(metrics))
 
+    @override
     def update(self, predictions: TaskOutput, target: TaskOutput) -> None:
         self.collection.update(predictions, target)
 
+    @override
     def compute(self) -> dict[str, Any]:
         # Per member rather than `self.collection.compute()`, which flattens a metric
         # whose value is a *family* of readings up to the top level and drops the label
@@ -46,9 +48,11 @@ class WrappedMetricSet(MetricSet):
         presented = {label: present(metric, metric.compute()) for label, metric in self.collection.items()}
         return {label: value for label, value in presented.items() if value is not None}
 
+    @override
     def reset(self) -> None:
         self.collection.reset()
 
+    @override
     def directions(self) -> dict[str, bool | None]:
         """Which way is better, keyed exactly as each value is logged.
 

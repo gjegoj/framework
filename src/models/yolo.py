@@ -103,13 +103,17 @@ class YoloModel(Model):
 
     @override
     def step(self, batch: Batch) -> StepResult:
-        """One forward serving both what backward needs and what metrics compare.
+        """One walk of the network serving both what backward needs and what metrics compare.
 
-        The vendor computes its loss from its own batch, so the two are asked for
-        together rather than a forward being run twice at different weights.
+        The output is handed to both readers rather than fetched twice: the vendor's own
+        criterion takes it as ``preds``, and suppression decodes the same tensor. Asked
+        separately — which is what ``loss()`` does when it is given nothing, since it then
+        forwards internally — every eval batch walks the whole network twice for numbers
+        that are identical either way (measured: same loss to six decimals, same boxes).
         """
-        task_name = _task_of(batch)
-        components, named = cast("Any", self.detector).loss(_vendor_batch(batch))
+        task_name, objects = _objects_of(batch)
+        output = self.detector(batch.inputs[Modality.IMAGE])
+        components, named = cast("Any", self.detector).loss(_vendor_batch(batch, objects), preds=output)
         # Scoped by the task, exactly as a composed model scopes its criteria's parts, so
         # `train/boxes/box` reads like `train/label/ce` and the log grammar has no family
         # to learn. Unscoped, the vendor's spelling would sit one level too high and two
@@ -118,11 +122,15 @@ class YoloModel(Model):
             total=components.sum(),
             parts={name.removesuffix(_LOSS_SUFFIX): value for name, value in named.items()},
         ).scoped(task_name)
-        return StepResult(loss=loss, prediction=self.predict(batch), targets=dict(batch.targets))
+        return StepResult(loss=loss, prediction=self._decoded(output, batch), targets=dict(batch.targets))
 
     @override
     def predict(self, batch: Batch) -> Prediction:
-        """What survived suppression, per image, as the framework's own ragged shape.
+        """Inference: walk the network, and decode what survives suppression."""
+        return self._decoded(self.detector(batch.inputs[Modality.IMAGE]), batch)
+
+    def _decoded(self, output: Any, batch: Batch) -> Prediction:
+        """One walk's output as the framework's own ragged shape, per image.
 
         Training is the one mode with nothing to hand back. A detection head emits its
         feature maps while training and only assembles the decodable tensor in eval —
@@ -131,51 +139,56 @@ class YoloModel(Model):
         Returning empty objects instead would be a fabricated answer that a train-stage
         mAP would then report as zero, which looks like a broken model rather than a
         measurement nobody took.
+
+        The mode is read here rather than at each caller because it is a fact about the
+        *output* — whether the head assembled something decodable — not about who asked.
         """
         from ultralytics.utils.nms import non_max_suppression
 
         if self.training:
             return Prediction(outputs={})
-        output = self.detector(batch.inputs[Modality.IMAGE])
         raw = output[0] if isinstance(output, (list, tuple)) else output
         kept = non_max_suppression(raw, conf_thres=self._confidence_threshold, iou_thres=self._iou_threshold)
         return Prediction(outputs={name: _found(kept) for name in batch.targets})
 
 
-def _task_of(batch: Batch) -> str:
-    """The name the batch's objects are keyed by — the one task a vendor family serves."""
+def _objects_of(batch: Batch) -> tuple[str, Instances]:
+    """The one per-instance target a vendor family is given: its task's name, and its objects.
+
+    Both halves are wanted at once and by the same caller — the loss scopes its parts by
+    the name, the vendor's dialect is built from the objects — so they are found together.
+    Searched twice, the refusal below was written twice too, and two copies of a sentence
+    are two things to keep in step.
+    """
     for name, value in batch.targets.items():
         if isinstance(value, Instances):
-            return name
+            return name, value
     raise ValueError(
         "A detection step needs the batch's objects, and this batch carries none. "
         "A per-instance task's targets arrive as 'Instances' from the pipeline that read them."
     )
 
 
-def _vendor_batch(batch: Batch) -> dict[str, Tensor]:
+def _vendor_batch(batch: Batch, objects: Instances) -> dict[str, Tensor]:
     """The three keys the detection criterion reads, plus the image it reads them against.
 
     Measured: it takes ``batch_idx``, ``cls`` and ``bboxes`` and nothing else, and scales
     the normalised boxes by the image size itself — so the framework's xyxy pixels are
     converted back here, using the shape the image tensor already carries. Nobody has to
     be told the size, so there is no second place that could hold a stale one.
+
+    The objects arrive rather than being looked for: this is the translation, and finding
+    what to translate belongs to whoever also needed the name (:func:`_objects_of`).
     """
     from ultralytics.utils.ops import xyxy2xywhn
 
     image = batch.inputs[Modality.IMAGE]
     height, width = image.shape[-2:]
-    found = next((value for value in batch.targets.values() if isinstance(value, Instances)), None)
-    if found is None:
-        raise ValueError(
-            "A detection step needs the batch's objects, and this batch carries none. "
-            "A per-instance task's targets arrive as 'Instances' from the pipeline that read them."
-        )
     return {
         "img": image,
-        "cls": found.labels.reshape(-1, 1).float(),
-        "bboxes": xyxy2xywhn(found.boxes, w=width, h=height),
-        "batch_idx": found.sample_index.float(),
+        "cls": objects.labels.reshape(-1, 1).float(),
+        "bboxes": xyxy2xywhn(objects.boxes, w=width, h=height),
+        "batch_idx": objects.sample_index.float(),
     }
 
 

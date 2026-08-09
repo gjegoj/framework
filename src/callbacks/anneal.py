@@ -10,6 +10,7 @@ import lightning as L
 from torch import Tensor, nn
 
 from src.callbacks.moment import at_epoch
+from src.core.ports import Model
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -114,16 +115,22 @@ class AnnealCriterion(L.Callback):
         pl_module.log(f"schedule/{self._task}/{self._attribute}", value)
 
     def _criterion_of(self, pl_module: L.LightningModule) -> nn.Module:
-        criteria = getattr(getattr(pl_module, "model", None), "criteria", None)
-        if criteria is None:
+        """The task's criterion, asked of the model rather than looked for in its tree.
+
+        Through the port, so the answer follows the model wherever this run nested it:
+        reading ``model.criteria`` reached the composite family only, and a distilled
+        run — which wraps the student one level down — died here before its first batch
+        although both sections are supported. An unknown task is the model's own
+        refusal, naming the tasks it does compose.
+        """
+        model = getattr(pl_module, "model", None)
+        criterion = model.criterion_of(self._task) if isinstance(model, Model) else None
+        if criterion is None:
             raise ValueError(
-                f"AnnealCriterion needs a model that registers its criteria per task; "
-                f"{type(pl_module).__name__} exposes none."
+                f"AnnealCriterion schedules a number on a task's own criterion, and "
+                f"{type(model).__name__} composes none — a vendor family owns its loss internally."
             )
-        if self._task not in criteria:
-            raise ValueError(f"AnnealCriterion knows no task '{self._task}'; configured: {', '.join(criteria)}.")
-        found: nn.Module = criteria[self._task]
-        return found
+        return criterion
 
     def _find_owner(self, criterion: nn.Module) -> nn.Module:
         """The one module holding the attribute as a plain number, found by torch's walk.

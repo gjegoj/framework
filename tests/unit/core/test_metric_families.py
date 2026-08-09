@@ -26,7 +26,7 @@ def logged_by(key: str, value: Any, class_names: list[str] | None = None) -> dic
         key,
         value,
         scalar_log=lambda name, number: written.__setitem__(name, float(number)),
-        logger=None,
+        loggers=[],
         step=0,
         class_names=class_names,
     )

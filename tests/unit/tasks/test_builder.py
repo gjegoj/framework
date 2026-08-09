@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 import pytest
 import torch
 from torch import Tensor, nn
@@ -14,7 +16,7 @@ from src.core import (
     Objective,
     Topology,
 )
-from src.models import CompositeModel, ExpandedHead, TaskComponents
+from src.models import CompositeModel, ExpandedHead, LinearHead, TaskComponents
 from src.tasks import build_task_components
 from tests.support.entities import a_task, profiling
 from tests.support.fakes import FakeEncoder, FlattenBackbone
@@ -40,6 +42,20 @@ def test_missing_num_classes_names_the_task_and_hints_setup() -> None:
         build_task_components(a_task(), DataProfile(), FlattenBackbone(dim=12))
 
 
+def test_a_per_instance_task_is_refused_where_the_decision_is_taken() -> None:
+    """A ``preset: detection`` pointed at a composed backbone, named as the mismatch it is.
+
+    The refusal used to live inside ``InstancesTopology.build_head`` — a method this
+    builder is never meant to reach for such a task, and one the base class promises will
+    return a head. It now sits beside the ``supports`` check, which asks the other half of
+    the same question, and the sentence points at the section a user has to change.
+    """
+    detection = a_task(topology=Topology.INSTANCES)
+
+    with pytest.raises(ValueError, match=r"model: \{name: yolo"):
+        build_task_components(detection, profiling(label=3), FlattenBackbone(dim=12))
+
+
 def test_incompatible_axes_are_rejected_with_both_names() -> None:
     dense_metric = a_task(topology=Topology.DENSE, objective=Objective.METRIC)
     with pytest.raises(ValueError, match="cannot be supervised"):
@@ -53,8 +69,8 @@ class TwoStreamBackbone(Backbone):
         flat = inputs["image"].flatten(start_dim=1)
         return Features(streams={"features": flat, "extra": flat * 2})
 
-    def feature_dim(self, stream: str) -> int:
-        return 12
+    def feature_dims(self) -> Mapping[str, int]:
+        return {"features": 12, "extra": 12}
 
     def native_head(self, stream: str, in_features: int, out_features: int) -> nn.Module | None:
         if stream == "extra":
@@ -76,6 +92,21 @@ def test_prefer_native_head_uses_the_backbones_head() -> None:
     assert components.head(torch.zeros(2, 12)).shape == (2, 3)
 
 
+def test_a_declared_head_on_a_task_that_projects_nothing_is_refused() -> None:
+    """Metric learning's embedding *is* the output, so a named head has no width to build at.
+
+    While the width was spelled ``0``, this reached ``LinearHead(in_features, 0)`` and
+    built a projection onto no classes — or, with ``head: {name: cosine}``, a classifier
+    with no prototypes. It failed several frames later, nowhere near the declaration.
+    """
+    metric = a_task(objective=Objective.METRIC)
+
+    with pytest.raises(ValueError, match="nothing to project onto"):
+        build_task_components(
+            metric, DataProfile(), FlattenBackbone(dim=12), head_factory=lambda inputs, outputs: LinearHead(12, 3)
+        )
+
+
 def test_prefer_native_head_fails_loud_when_unavailable() -> None:
     with pytest.raises(LookupError, match="native"):
         build_task_components(a_task(), profiling(label=3), FlattenBackbone(dim=12), prefer_native_head=True)
@@ -89,8 +120,8 @@ class DecoderBackbone(Backbone):
         decoder = image.repeat(1, 4, 1, 1)  # [B, 12, H, W] from [B, 3, H, W]
         return Features(streams={"decoder": decoder})
 
-    def feature_dim(self, stream: str) -> int:
-        return 12
+    def feature_dims(self) -> Mapping[str, int]:
+        return {"decoder": 12}
 
 
 def test_a_contrastive_task_builds_and_steps_without_targets() -> None:

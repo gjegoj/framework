@@ -5,11 +5,11 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any, override
 
-from torch.nn.functional import one_hot
 from torchvision.transforms import v2
 
 from src.core.entities import Batch, as_tensor
 from src.core.taxonomy import Modality, Objective, Topology
+from src.transforms.batch.labels import as_soft, class_counts
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -69,11 +69,7 @@ class LabelMix(ABC):
                 f"image has no coherent per-pixel target, and soft labels break metric learning. "
                 f"Drop the transform, or the task it cannot serve."
             )
-        # Only class indices need one-hot encoding; a price or an indicator vector is a number already.
-        self._classes = {
-            task.name: profile.require_num_classes(task.name) if task.objective is Objective.MULTICLASS else None
-            for task in tasks
-        }
+        self._classes = class_counts(tasks, profile)
         self._input_name = input_name
         self._mixer = self._build_mixer(alpha)
 
@@ -94,7 +90,10 @@ class LabelMix(ABC):
                 **batch.targets,
                 **{
                     name: self._mix_label(
-                        self._as_soft(name, as_tensor(batch.targets[name], task=name, wanted_by="a batch transform")),
+                        as_soft(
+                            as_tensor(batch.targets[name], task=name, wanted_by="a batch transform"),
+                            self._classes[name],
+                        ),
                         weight,
                     )
                     for name in self._classes
@@ -112,10 +111,6 @@ class LabelMix(ABC):
     @abstractmethod
     def _weight_key(self) -> str:
         """Which key of ``make_params`` holds the weight the labels should use."""
-
-    def _as_soft(self, name: str, label: Tensor) -> Tensor:
-        classes = self._classes[name]
-        return one_hot(label.long(), classes).float() if classes is not None else label.float()
 
     @staticmethod
     def _mix_label(label: Tensor, weight: float) -> Tensor:
