@@ -9,7 +9,8 @@ from src.callbacks.dataset_summary import draw, table_for
 from src.callbacks.registry import callback_registry
 from src.console import HEADER_STYLE, TITLE_STYLE
 from src.core import Stage
-from src.core.entities import Bars, ClassDistribution, Distribution, Spread, ValueDistribution
+from src.core.entities import ClassDistribution, Distribution, ValueDistribution
+from src.core.reporting import Bars, BoxPlot
 
 
 def drawn(table: object) -> str:
@@ -48,10 +49,10 @@ class OnlySpread:
     both cannot show *which* port a shape was narrowed on — the call would land either way."""
 
     def __init__(self) -> None:
-        self.spreads: list[Spread] = []
+        self.box_plots: list[BoxPlot] = []
 
-    def log_spread(self, title: str, spread: Spread, iteration: int) -> None:
-        self.spreads.append(spread)
+    def log_box_plot(self, title: str, box_plot: BoxPlot, iteration: int) -> None:
+        self.box_plots.append(box_plot)
 
 
 class Deaf:
@@ -123,14 +124,14 @@ def test_a_class_balance_reaches_the_bars_port_and_not_the_other_one() -> None:
     draw(balance()[Stage.TRAIN], "dataset/label", balance(), [drawing, boxes])
 
     (bars,) = drawing.bars
-    assert not boxes.spreads
+    assert not boxes.box_plots
     assert bars.series == ("train", "val")
     assert bars.labels == ("cat", "dog", "rare")
     assert bars.values == ((30.0, 10.0, 0.0), (6.0, 4.0, 0.0))
 
 
-def test_a_value_spread_reaches_the_spread_port_carrying_the_summary_itself() -> None:
-    """The box *is* the five-number summary, so `Spread` holds it rather than a copy.
+def test_a_value_spread_reaches_the_box_plot_port_carrying_the_summary_itself() -> None:
+    """The box *is* the five-number summary, so `BoxPlot` holds it rather than a copy.
 
     The reference kept a parallel `BoxStats` whose docstring admitted it mirrored
     the distribution field for field — two records to keep in step by hand.
@@ -139,7 +140,7 @@ def test_a_value_spread_reaches_the_spread_port_carrying_the_summary_itself() ->
 
     draw(spread()[Stage.TRAIN], "dataset/age", spread(), [bars, boxes])
 
-    (drawing,) = boxes.spreads
+    (drawing,) = boxes.box_plots
     assert not bars.bars
     assert drawing.series == ("train",)
     assert drawing.boxes == (spread()[Stage.TRAIN],)

@@ -9,8 +9,8 @@ import lightning as L
 from torch import nn
 
 from src.core import log_keys
-from src.core.entities import StepOutput, StepPreview
-from src.core.ports import StepPreviewConsumer
+from src.core.entities import LightningStepOutput, StepPreview
+from src.core.ports import AwaitsPreview
 from src.core.reporting import report_metric
 from src.core.taxonomy import Stage
 from src.training.optim import FitProfile
@@ -73,15 +73,15 @@ class TrainingModule(L.LightningModule):
         self._metric_containers = nn.ModuleList(metric_set for task in tasks for metric_set in task.metrics.values())
 
     @override
-    def training_step(self, batch: Batch, batch_index: int) -> StepOutput:
+    def training_step(self, batch: Batch, batch_index: int) -> LightningStepOutput:
         return self._shared_step(batch, Stage.TRAIN)
 
     @override
-    def validation_step(self, batch: Batch, batch_index: int) -> StepOutput:
+    def validation_step(self, batch: Batch, batch_index: int) -> LightningStepOutput:
         return self._shared_step(batch, Stage.VAL)
 
     @override
-    def test_step(self, batch: Batch, batch_index: int) -> StepOutput:
+    def test_step(self, batch: Batch, batch_index: int) -> LightningStepOutput:
         return self._shared_step(batch, Stage.TEST)
 
     @override
@@ -141,7 +141,7 @@ class TrainingModule(L.LightningModule):
     def metric_directions(self) -> dict[str, bool | None]:
         """Each metric's ``higher_is_better`` flag, keyed exactly as this module logs it.
 
-        The structural half of ``MetricDirectionProvider``: consumers rank
+        The structural half of ``DeclaresMetricDirections``: consumers rank
         values without re-deriving semantics from metric names.
 
         Metrics only. The losses this module also logs are not here because their
@@ -168,7 +168,7 @@ class TrainingModule(L.LightningModule):
             epochs=max(int(self.trainer.max_epochs or 0), 1),
         )
 
-    def _shared_step(self, batch: Batch, stage: Stage) -> StepOutput:
+    def _shared_step(self, batch: Batch, stage: Stage) -> LightningStepOutput:
         result = self.model.step(batch)
         self._log_losses(result.loss, stage, self._batch_size(batch))
         for task in self._tasks:
@@ -182,7 +182,7 @@ class TrainingModule(L.LightningModule):
         # Returned, not remembered: Lightning hands a step's return value to every
         # ``on_*_batch_end`` hook, so a consumer is given the batch it was called
         # for and the module keeps no state that could go stale or outlive its use.
-        step: StepOutput = {"loss": result.loss.total}
+        step: LightningStepOutput = {"loss": result.loss.total}
         if self._preview_is_wanted():
             step["preview"] = _preview(result)
         return step
@@ -233,7 +233,7 @@ class TrainingModule(L.LightningModule):
             return True
         # Lightning assigns ``callbacks`` in ``__init__`` rather than declaring it on the class.
         registered = self.trainer.callbacks  # type: ignore[attr-defined]
-        return any(isinstance(consumer, StepPreviewConsumer) and consumer.awaiting_preview for consumer in registered)
+        return any(isinstance(consumer, AwaitsPreview) and consumer.awaiting_preview for consumer in registered)
 
     def _shared_epoch_end(self, stage: Stage) -> None:
         for task in self._tasks:

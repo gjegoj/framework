@@ -26,7 +26,7 @@ _STACKED_TENSORS = frozenset({"img", "bboxes", "cls", "batch_idx"})
 class YoloDataModule(DataModule):
     """Per-stage ultralytics datasets built from a YOLO ``data.yaml``.
 
-    Registered under the same key ``YoloModel`` takes in ``model_registry``: a run names
+    Registered under the same key ``YoloModel`` takes in ``vendor_model_registry``: a run names
     the family once, in ``config.model``, and assembly reaches both halves from it. The
     two packages do not import one another, so the key is spelled twice —
     ``test_vendor_families_bring_both_halves`` is what keeps the two spellings honest.

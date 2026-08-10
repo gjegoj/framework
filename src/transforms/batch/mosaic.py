@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 import torch
 
-from src.core.entities import Batch, as_tensor
+from src.core.entities import Batch, require_tensor
 from src.core.taxonomy import Modality, Objective, Topology
 from src.transforms.batch.labels import as_soft, class_counts
 
@@ -83,13 +83,13 @@ class Mosaic:
                 **batch.targets,
                 **{
                     name: _stitch(
-                        as_tensor(batch.targets[name], task=name, wanted_by="a batch transform"), split_y, split_x
+                        require_tensor(batch.targets[name], task=name, wanted_by="a batch transform"), split_y, split_x
                     )
                     for name in self._masks
                 },
                 **{
                     name: self._weigh(
-                        as_tensor(batch.targets[name], task=name, wanted_by="a batch transform"), name, shares
+                        require_tensor(batch.targets[name], task=name, wanted_by="a batch transform"), name, shares
                     )
                     for name in self._classes
                 },

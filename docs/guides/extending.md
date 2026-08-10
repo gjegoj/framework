@@ -28,15 +28,15 @@ One per capability, in `<package>/registry.py`, named `<singular>_registry`:
 | Registry | Module | Holds |
 |---|---|---|
 | `criterion_registry` | `losses` | Losses, keyed by the part they log under |
-| `metric_registry` | `metrics` | torchmetrics under DS names |
+| `metric_registry` | `metrics` | Metrics under DS names — torchmetrics' own class where the value is a number, one of ours where it is an artifact |
 | `backbone_registry` | `models` | Feature producers the framework composes with |
-| `model_registry` | `models` | Whole model families the framework delegates to |
+| `vendor_model_registry` | `models` | Whole model families the framework delegates to |
 | `head_registry` | `models` | Kinds of head |
 | `adapter_registry` | `models` | Reparameterizations of a built model (LoRA) |
 | `objective_registry`, `topology_registry` | `tasks` | Behaviour of one axis member |
 | `task_preset_registry` | `config` | Familiar names for a point on the axes |
 | `table_source_registry`, `input_loader_registry`, `target_encoder_registry`, `cache_registry` | `data` | The data pipeline's replaceable parts |
-| `vendor_data_module_registry` | `data` | The pipeline a whole model family reads with, under that family's own key in `model_registry` |
+| `vendor_data_module_registry` | `data` | The pipeline a whole model family reads with, under that family's own key in `vendor_model_registry` |
 | `callback_registry` | `callbacks` | What a run does around its steps |
 | `logger_registry` | `loggers` | Experiment trackers |
 | `optimizer_registry`, `scheduler_registry`, `profiler_registry` | `training` | torch's and Lightning's, by name |
@@ -48,22 +48,40 @@ are registered explicitly in that `registry.py`, because they are not ours to
 decorate. A registry is a convenience, not a gate — anything upstream offers is
 reachable by `_target_` without being registered first.
 
+**A registry holds what a declaration names**, which is a smaller set than "every
+implementation of the port". Everything a registered class needs comes from its own
+declaration — values, the derived facts assembly offers, and nested components filled
+with `_target_`. What a declaration only *implies* has no name to be registered under:
+`CompositeModel` is what `model:` naming a **backbone** implies, `DistilledModel` is what
+`distillation:` being present implies, and `WeightedSumCriterion` is what `loss:` being a
+**list** implies. All three are `Model`s or `Criterion`s; none is registered.
+
+The line is not whether the constructor takes a built object — `ExpectationCriterion`
+takes a whole `Criterion` in its `distance` slot and *is* registered, because the user
+wrote that slot. It is whether a name in the declaration builds it, or the assembler does
+from the declaration's shape.
+
 ### Registries are not the only way something is chosen
 
 A registry answers one question: *which component does this config name?* — a string
-to a factory. Reading the codebase you will meet four other mechanisms, and it is
+to a factory. Reading the codebase you will meet three other mechanisms, and it is
 worth knowing they answer different questions rather than the same one four ways:
 
 | Mechanism | Where | The question it answers |
 |---|---|---|
 | `Registry` | 21 of them, `<package>/registry.py` | Which component does this **name** mean? |
 | `functools.singledispatch` | `visualization/fields.py`, `callbacks/dataset_summary.py` | Which of **our own** types is this value, of a closed set we wrote? |
-| MRO walk + `NotImplemented` | `metrics/presentation.py` | Which of an **open** third-party hierarchy is this, where a subclass may change what `compute` returns and must vouch for its own geometry? |
 | `dict[type, str]` + `getattr` | `visualization/annotators.py` | Which *method* of this topology draws that kind of reading — and does it have one at all (`draws`)? |
 | `isinstance` chain | `core/reporting.py` | What is this value's **geometry** — which is type *and* shape (a 2-D tensor is not a scalar one), and so not expressible as type dispatch |
 
-Extending the framework almost always means adding to a registry. The other four are
+Extending the framework almost always means adding to a registry. The other three are
 internal, and each is where it is because the question it answers is not "which name".
+
+There is deliberately no fourth mechanism for *what a metric's value means*: a metric
+says it by returning an artifact from `compute`. A table keyed on the third-party metric
+hierarchy used to answer that, and it had to be talked out of claiming values case by
+case, because torchmetrics subclasses for state reuse while changing what `compute`
+returns.
 
 Config-facing components all share one declaration shape, `ComponentConfig`, and you
 will meet it under a dozen aliases — `HeadConfig`, `CallbackConfig`, `LoggerConfig`,
@@ -141,9 +159,9 @@ The objective's own arguments (`task`, `num_classes` / `num_labels`) are offered
 to every metric and reach the ones that name them, so `mae` beside `accuracy` is
 not handed a `task` it would refuse.
 
-A metric returning something other than a scalar or a per-class vector needs to
-say what its value *means* — see
-[presenting your own metric](logging.md#presenting-your-own-metric).
+That one line is the whole of it for a metric computing a **number**. One returning
+something else — a curve, a matrix — says what its value *means* by wrapping the metric
+in a class of ours; see [a metric that draws](logging.md#a-metric-that-draws).
 
 ## A callback
 
@@ -224,11 +242,11 @@ what a run should be filed under in a tracker.
 ## A model family
 
 A model that owns its head, loss and decoding implements the `Model` port and
-registers in `model_registry` — that is what tells assembly to take the short
+registers in `vendor_model_registry` — that is what tells assembly to take the short
 path:
 
 ```python
-@model_registry.register("detr")
+@vendor_model_registry.register("detr")
 class DetrModel(Model):
     def step(self, batch: Batch) -> StepResult: ...
     def predict(self, batch: Batch) -> Prediction: ...
@@ -313,7 +331,7 @@ detail to remember, use `_target_` instead: an import path resolves itself.
 | Extension | The full version |
 |---|---|
 | A criterion, and criteria that hold other criteria | [Losses — writing your own](losses.md#writing-your-own) |
-| What a metric's computed value *means* | [Logging — presenting your own metric](logging.md#presenting-your-own-metric) |
+| What a metric's computed value *means* | [Logging — a metric that draws](logging.md#a-metric-that-draws) |
 | A tracker backend and the artifact ports | [Logging — a backend of your own](logging.md#a-backend-of-your-own) |
 | An augmentation that rewrites a label | [Transforms — something entirely your own](transforms.md#something-entirely-your-own) |
 | How a task's outputs are drawn | [The samples grid — adding an annotator](visualization.md#adding-an-annotator) |

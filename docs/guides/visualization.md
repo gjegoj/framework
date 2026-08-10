@@ -25,7 +25,7 @@ runs a callback's `on_*_batch_start` before the step, which is early enough for 
 grid to say whether the batch about to run is one it will draw:
 
 ```python
-class StepPreviewConsumer(Protocol):     # core/ports.py
+class AwaitsPreview(Protocol):     # core/ports.py
     @property
     def awaiting_preview(self) -> bool: ...
 ```

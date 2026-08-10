@@ -17,16 +17,12 @@ if TYPE_CHECKING:
 
     from src.core.entities import (
         AdaptedTarget,
-        Bars,
         Batch,
-        Curve,
         DataProfile,
         Features,
         Loss,
-        Matrix,
         Prediction,
         Sample,
-        Spread,
         StepResult,
         TaskOutput,
     )
@@ -336,7 +332,7 @@ class MetricSet(nn.Module, ABC):
 
 
 @runtime_checkable
-class MetricFamily(Protocol):
+class MultiReadingMetric(Protocol):
     """A metric whose computed value is several named readings rather than one number.
 
     Structural, like every other optional capability here: a metric declares which
@@ -349,68 +345,7 @@ class MetricFamily(Protocol):
 
 
 @runtime_checkable
-class MatrixLogger(Protocol):
-    """A backend that can draw a 2-D matrix artifact.
-
-    Structural on purpose: a backend qualifies by having the method, and a
-    consumer narrows the active logger with ``isinstance`` — a backend without
-    it simply keeps its scalars. The artifact crosses whole, so a new
-    presentation field never changes this signature.
-    """
-
-    def log_matrix(self, title: str, matrix: Matrix, iteration: int) -> None: ...
-
-
-@runtime_checkable
-class CurveLogger(Protocol):
-    """A backend that can draw an x-y curve artifact (PR, ROC) — all lines at once."""
-
-    def log_curve(self, title: str, curve: Curve, iteration: int) -> None: ...
-
-
-@runtime_checkable
-class BarsLogger(Protocol):
-    """A backend that can draw grouped bars — a dataset's class balance across stages.
-
-    One port per kind of picture, each carrying the typed entity a backend draws,
-    rather than one media-typed artifact port whose payload would lose its type.
-    """
-
-    def log_bars(self, title: str, bars: Bars, iteration: int) -> None: ...
-
-
-@runtime_checkable
-class SpreadLogger(Protocol):
-    """A backend that can draw boxes — a numeric target's spread, one box per stage."""
-
-    def log_spread(self, title: str, spread: Spread, iteration: int) -> None: ...
-
-
-@runtime_checkable
-class SingleValueLogger(Protocol):
-    """A backend with an end-of-run summary table for headline scalars.
-
-    Distinct from per-step scalars: a value here has no iteration axis —
-    ClearML collects them in its "Single Values" table.
-    """
-
-    def log_single_value(self, name: str, value: float) -> None: ...
-
-
-@runtime_checkable
-class HtmlLogger(Protocol):
-    """A backend that can carry a self-contained HTML page as a run artifact.
-
-    The fourth artifact port beside matrices, curves and single values, and the
-    same bargain: a tracker that can show a page gets one, a tracker that cannot
-    is told so once instead of failing a run over a picture.
-    """
-
-    def log_html(self, title: str, html: str, iteration: int) -> None: ...
-
-
-@runtime_checkable
-class StepPreviewConsumer(Protocol):
+class AwaitsPreview(Protocol):
     """Something that reads a step's preview, and says beforehand whether it wants this one.
 
     A preview is cheap to make and not cheap to hold: ``.detach()`` shares storage with
@@ -432,7 +367,7 @@ class StepPreviewConsumer(Protocol):
 
 
 @runtime_checkable
-class MetricDirectionProvider(Protocol):
+class DeclaresMetricDirections(Protocol):
     """A training module that reports its metrics' optimization directions.
 
     Structural on purpose: consumers (a progress display) colour improvements

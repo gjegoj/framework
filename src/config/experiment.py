@@ -80,7 +80,7 @@ class ExperimentConfig(BaseModel):
     distillation: DistillationConfig | None = Field(
         None,
         description=(
-            "Train beside frozen teachers: {teachers: [{model: {...}, checkpoint_path: ...}], loss: "
+            "Train beside frozen teachers: {teachers: [{backbone: {...}, checkpoint_path: ...}], loss: "
             "{name: kl_divergence, temperature: 2.0, weight: 0.7}}. Each task's training loss gains "
             "the declared term, comparing the student's logits with the teachers' averaged ones; "
             "evaluation is untouched. None trains against the data alone."

@@ -2,6 +2,6 @@
 
 from __future__ import annotations
 
-from src.metrics.adapter import WrappedMetricSet
+from src.metrics.adapter import WrappedMetric, WrappedMetricSet
 
-__all__ = ["WrappedMetricSet"]
+__all__ = ["WrappedMetric", "WrappedMetricSet"]

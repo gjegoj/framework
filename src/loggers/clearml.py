@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 
     from clearml.logger import Logger as ClearMLBackendLogger
 
-    from src.core.entities import Bars, Curve, Matrix, Spread
+    from src.core.reporting import Bars, BoxPlot, Curve, Matrix
 
 log = logging.getLogger(__name__)
 
@@ -135,7 +135,7 @@ class ClearMLLogger(Logger):
         )
 
     @rank_zero_only
-    def log_spread(self, title: str, spread: Spread, iteration: int) -> None:
+    def log_box_plot(self, title: str, box_plot: BoxPlot, iteration: int) -> None:
         """One box per stage, built from the summary rather than from the values.
 
         ClearML has no native box plot, so this is the one artifact the framework
@@ -144,18 +144,15 @@ class ClearMLLogger(Logger):
         method, as ``log_curve`` imports numpy, so a CLI start does not pay for a
         plotting library it will not use.
 
-        The whiskers are the observed extremes, not Tukey fences; ``Spread`` says so.
+        The whiskers are the observed extremes, not Tukey fences; ``BoxPlot`` says so.
         """
         import plotly.graph_objects as go
 
         figure = go.Figure()
-        for series, box in zip(spread.series, spread.boxes, strict=True):
+        for series, box in zip(box_plot.series, box_plot.boxes, strict=True):
             figure.add_trace(
                 go.Box(
                     name=series,
-                    # The series is also its position on the axis. Without one every
-                    # box is drawn at zero, so the stages stack on top of each other
-                    # and the axis carries a bare "0" instead of their names.
                     x=[series],
                     q1=[box.q25],
                     median=[box.median],
@@ -166,8 +163,8 @@ class ClearMLLogger(Logger):
                     boxmean=True,
                 )
             )
-        figure.update_layout(title=title, xaxis_title=spread.xaxis, yaxis_title=spread.yaxis)
-        self._backend.report_plotly(title=title, series=spread.yaxis, figure=figure, iteration=iteration)
+        figure.update_layout(title=title, xaxis_title=box_plot.xaxis, yaxis_title=box_plot.yaxis)
+        self._backend.report_plotly(title=title, series=box_plot.yaxis, figure=figure, iteration=iteration)
 
     @rank_zero_only
     def log_bars(self, title: str, bars: Bars, iteration: int) -> None:

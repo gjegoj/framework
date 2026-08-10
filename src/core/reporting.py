@@ -1,24 +1,219 @@
-"""Routing one computed metric value to wherever its geometry belongs."""
+"""What a run reports, the backends that can show it, and the routing between them.
+
+The three used to sit in three files: a ``Matrix`` in ``entities``, the
+``MatrixLogger`` that draws one in ``ports``, and the router that matches them here.
+Four such pairs were split that way, so adding a kind of artifact meant editing three
+places and reading three to understand one.
+
+They are here together because they are one vocabulary and have exactly one another as
+dependencies. An artifact arrives **completed** — whoever built it knew the metric, and a
+backend draws what it is handed without asking what the numbers mean — so the entities
+carry no behaviour and the ports carry no types of their own.
+
+The ports are six role interfaces rather than one media-typed ``ArtifactLogger``:
+each carries the typed entity its backend draws, and a payload-agnostic port would lose
+that check. Collapsing them is the right move at the *second page-shaped* artifact, when
+they would start naming file formats rather than kinds of picture — see the backlog.
+
+**An artifact a metric returns is not frozen**, and the three that do are the only ones.
+torchmetrics walks whatever ``compute`` returns with ``apply_to_collection``, which
+refuses a frozen dataclass outright — measured, the alternative is not returning artifacts
+from metrics at all, which is the mechanism that lets a metric simply say what its value
+means. ``Bars`` and ``BoxPlot`` never pass through a metric and stay frozen.
+"""
 
 from __future__ import annotations
 
 import logging
 import warnings
 from collections.abc import Mapping
-from dataclasses import replace
-from typing import TYPE_CHECKING, Any
+from dataclasses import dataclass, replace
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 import torch
 from torch import Tensor
 
 from src.core import log_keys
-from src.core.entities import Curve, Matrix, PerClass
-from src.core.ports import CurveLogger, MatrixLogger
+from src.core.entities import ValueDistribution
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
 
 log = logging.getLogger(__name__)
+
+
+@dataclass(slots=True)
+class PerClass:
+    """Values a metric produced per class, carrying which classes they are about.
+
+    Mutable for the reason the module docstring gives, as every artifact a metric
+    returns is.
+
+    Position is *not* the class index. COCO's ``map_per_class`` covers only the classes
+    that appeared and reads its own ``classes`` tensor to say which; named by position it
+    would put one class's number under another's name, which is the kind of wrong nobody
+    catches by reading a chart.
+
+    A dense reading is the case where ``classes`` is ``arange(len(values))``, so there is
+    one shape here rather than two kept in step by hand.
+    """
+
+    values: Tensor
+    classes: Tensor
+
+    def __post_init__(self) -> None:
+        if len(self.values) != len(self.classes):
+            raise ValueError(
+                f"PerClass needs one class per value, got {len(self.values)} values and {len(self.classes)} classes."
+            )
+
+
+@dataclass(slots=True)
+class Curve:
+    """A curve metric's plotted lines, already oriented for drawing.
+
+    PR and ROC tuples share one geometry with opposite axis orientation —
+    ``(precision, recall, _)`` against ``(fpr, tpr, _)`` — so orientation is
+    stated by the metric that knew it, never guessed from tuple order. One
+    entry per class; a binary metric carries a single line for the *positive*
+    class and says so.
+
+    ``series is None`` means the lines live in the task's class space — the
+    router fills the names; a metric whose lines mean something else sets its
+    own, and task context never touches them.
+
+    Mutable for the reason the module docstring gives.
+    """
+
+    x: tuple[Tensor, ...]
+    y: tuple[Tensor, ...]
+    xaxis: str
+    yaxis: str
+    positive_only: bool = False
+    series: tuple[str, ...] | None = None
+
+    def __post_init__(self) -> None:
+        if len(self.x) != len(self.y):
+            raise ValueError(f"A curve needs x and y per line, got {len(self.x)} x and {len(self.y)} y.")
+        if self.series is not None and len(self.series) != len(self.x):
+            raise ValueError(f"A curve with {len(self.x)} lines cannot carry {len(self.series)} series names.")
+
+
+@dataclass(slots=True)
+class Matrix:
+    """A drawable 2-D artifact, axes named by the metric that knew them.
+
+    ``labels is None`` means the index space is the task's classes — the
+    router fills the names; a metric whose axes mean something else sets its
+    own, and task context never touches them.
+
+    Mutable for the reason the module docstring gives.
+    """
+
+    value: Tensor
+    xaxis: str
+    yaxis: str
+    labels: tuple[str, ...] | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class Bars:
+    """Named quantities drawn as grouped bars — a class balance across stages.
+
+    One series per group and one value per label within it, so a reader sees the
+    three splits side by side and a class missing from one of them is a gap rather
+    than a number to hunt for.
+
+    Arrives completed, as ``Matrix`` and ``Curve`` do: the backend draws what it is
+    handed and never asks what the numbers mean.
+    """
+
+    series: tuple[str, ...]
+    values: tuple[tuple[float, ...], ...]
+    labels: tuple[str, ...]
+    xaxis: str
+    yaxis: str
+
+
+@dataclass(frozen=True, slots=True)
+class BoxPlot:
+    """Five-number summaries drawn as boxes — one per series, on shared axes.
+
+    Carries the ``ValueDistribution``s themselves rather than a copy of their six
+    numbers: the box *is* the summary, so a parallel record would be two things to keep
+    in step by hand and nothing else.
+
+    The whiskers are the observed **minimum and maximum**, not Tukey's 1.5 IQR fences
+    with outlier points beyond them — finding outliers needs the raw values, and those
+    are a whole column held in memory for a picture drawn once. Said here because a box
+    plot is normally read as Tukey's.
+    """
+
+    series: tuple[str, ...]
+    boxes: tuple[ValueDistribution, ...]
+    xaxis: str
+    yaxis: str
+
+
+@runtime_checkable
+class CurveLogger(Protocol):
+    """A backend that can draw an x-y curve artifact (PR, ROC) — all lines at once."""
+
+    def log_curve(self, title: str, curve: Curve, iteration: int) -> None: ...
+
+
+@runtime_checkable
+class MatrixLogger(Protocol):
+    """A backend that can draw a 2-D matrix artifact.
+
+    Structural on purpose: a backend qualifies by having the method, and a
+    consumer narrows the active logger with ``isinstance`` — a backend without
+    it simply keeps its scalars. The artifact crosses whole, so a new field on
+    ``Matrix`` never changes this signature.
+    """
+
+    def log_matrix(self, title: str, matrix: Matrix, iteration: int) -> None: ...
+
+
+@runtime_checkable
+class BarsLogger(Protocol):
+    """A backend that can draw grouped bars — a dataset's class balance across stages.
+
+    One port per kind of picture, each carrying the typed entity a backend draws,
+    rather than one media-typed artifact port whose payload would lose its type.
+    """
+
+    def log_bars(self, title: str, bars: Bars, iteration: int) -> None: ...
+
+
+@runtime_checkable
+class BoxPlotLogger(Protocol):
+    """A backend that can draw boxes — a numeric target's spread, one box per stage."""
+
+    def log_box_plot(self, title: str, box_plot: BoxPlot, iteration: int) -> None: ...
+
+
+@runtime_checkable
+class SingleValueLogger(Protocol):
+    """A backend with an end-of-run summary table for headline scalars.
+
+    Distinct from per-step scalars: a value here has no iteration axis —
+    ClearML collects them in its "Single Values" table.
+    """
+
+    def log_single_value(self, name: str, value: float) -> None: ...
+
+
+@runtime_checkable
+class HtmlLogger(Protocol):
+    """A backend that can carry a self-contained HTML page as a run artifact.
+
+    The fourth artifact port beside matrices, curves and single values, and the
+    same bargain: a tracker that can show a page gets one, a tracker that cannot
+    is told so once instead of failing a run over a picture.
+    """
+
+    def log_html(self, title: str, html: str, iteration: int) -> None: ...
 
 
 def report_metric(
@@ -84,7 +279,8 @@ def report_metric(
     elif isinstance(value, tuple) or (isinstance(value, Tensor) and value.ndim >= 2):
         warnings.warn(
             f"Metric '{key}' returned an unidentified artifact ({type(value).__name__}, "
-            f"{_geometry(value)}); register a presentation for its metric class to draw it.",
+            f"{_geometry(value)}); a metric draws by returning a Curve, a Matrix or a "
+            "PerClass from compute — see WrappedMetric.",
             stacklevel=2,
         )
     elif isinstance(value, PerClass):

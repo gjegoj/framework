@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 from torch import nn
 
-from src.core.entities import Batch, as_tensor
+from src.core.entities import Batch, require_tensor
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -62,7 +62,8 @@ class DeployableModel(nn.Module):
         batch = Batch(inputs=dict(zip(self.input_names, inputs, strict=True)), targets={})
         prediction = self.model.predict(batch)
         outputs = tuple(
-            as_tensor(prediction.outputs[name], task=name, wanted_by="an exported graph") for name in self.output_names
+            require_tensor(prediction.outputs[name], task=name, wanted_by="an exported graph")
+            for name in self.output_names
         )
         return outputs[0] if len(outputs) == 1 else outputs
 

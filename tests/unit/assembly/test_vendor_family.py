@@ -6,10 +6,12 @@ from typing import Any
 
 import pytest
 
+from src.assembly.models import build_model
 from src.assembly.vendor import is_vendor_family, refuse_what_a_vendor_cannot_serve
 from src.config import ExperimentConfig
+from src.core import DataProfile
 from src.data.registry import vendor_data_module_registry
-from src.models.registry import model_registry
+from src.models.registry import vendor_model_registry
 from tests.support.configs import MODEL, TASKS, paper_config
 
 VENDOR = {"name": "yolo", "model_name": "yolov8n.yaml"}
@@ -82,15 +84,43 @@ def test_vendor_families_bring_both_halves() -> None:
     """A family that arrives whole brings its network *and* the pipeline that feeds it.
 
     The two live in packages that do not import one another, so the key is spelled twice
-    — once in ``model_registry``, once in ``vendor_data_module_registry``. Registered as a
-    model only, a run would compose its network and then fail looking for a pipeline; this
-    is what turns "two things to keep in step" into one that a test keeps.
+    — once in ``vendor_model_registry``, once in ``vendor_data_module_registry``. The
+    obligation is **symmetric**, and this was written as ``<=``, which guards one half and
+    not the half its own docstring described:
+
+    - registered as a *model* only — ``is_vendor_family`` says yes, the network is built,
+      and ``_vendor_data_module`` then dies on a ``LookupError`` part-way through
+      assembly. Measured: ``<=`` passes this, which is the case the docstring named.
+    - registered as a *pipeline* only — no branch ever reaches it, so the entry is dead
+      and a run naming it is told about backbones.
+
+    Equality is the only form that catches both.
     """
     pytest.importorskip("ultralytics", reason="the only vendor family shipped is optional")
     import src.data
     import src.models  # noqa: F401
 
-    assert set(vendor_data_module_registry) <= set(model_registry)
+    assert set(vendor_data_module_registry) == set(vendor_model_registry)
+
+
+def test_a_name_in_neither_registry_is_answered_with_both_groups() -> None:
+    """One key chooses between two registries, so a typo falls through to one of them.
+
+    Measured before this: ``name: yolov8`` was answered with *"Unknown backbone
+    'yolov8'. Registered: hf_text, multi, multiview, smp, timm"* — a list that cannot
+    contain what the reader reached for, handed to someone the detection guide had just
+    taught to write ``model: {name: yolo}``, with no hint that a second group exists.
+
+    The framework's rule for a refusal is to name the value and list the valid options.
+    This one listed half of them and did not say it was half.
+    """
+    declared = experiment(model={"name": "yolov8"}, tasks=TASKS)
+
+    with pytest.raises(LookupError, match="arrives whole") as refusal:
+        build_model(declared, DataProfile())
+
+    assert "yolo" in str(refusal.value)  # the group it belongs to is named, not just listed
+    assert "timm" in str(refusal.value)  # and so is the other one
 
 
 def test_a_refusal_names_the_family_that_cannot_serve_the_section() -> None:

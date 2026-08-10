@@ -14,15 +14,9 @@ import lightning as L
 from rich.table import Table
 
 from src.console import HEADER_STYLE, TITLE_STYLE, console
-from src.core.entities import (
-    Bars,
-    ClassDistribution,
-    DatasetStatistics,
-    Distribution,
-    Spread,
-    ValueDistribution,
-)
-from src.core.ports import BarsLogger, DataModule, SpreadLogger
+from src.core.entities import ClassDistribution, DatasetStatistics, Distribution, ValueDistribution
+from src.core.ports import DataModule
+from src.core.reporting import Bars, BarsLogger, BoxPlot, BoxPlotLogger
 from src.core.taxonomy import Stage
 
 log = logging.getLogger(__name__)
@@ -231,14 +225,14 @@ def _(shown: ClassDistribution, title: str, per_stage: Mapping[Stage, Distributi
 @draw.register
 def _(shown: ValueDistribution, title: str, per_stage: Mapping[Stage, Distribution], loggers: Iterable[object]) -> None:
     stages = ordered(per_stage)
-    spread = Spread(
+    drawn = BoxPlot(
         series=tuple(str(stage) for stage, _ in _measured(per_stage, stages)),
         boxes=tuple(measured for _, measured in _measured(per_stage, stages)),
         xaxis="stage",
         yaxis="value",
     )
-    for drawer in (one for one in loggers if isinstance(one, SpreadLogger)):
-        drawer.log_spread(title=title, spread=spread, iteration=0)
+    for drawer in (one for one in loggers if isinstance(one, BoxPlotLogger)):
+        drawer.log_box_plot(title=title, box_plot=drawn, iteration=0)
 
 
 def _measured(

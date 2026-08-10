@@ -97,12 +97,19 @@ receives it as a plain argument.
 
 "Entities and ports" is the shape of it, not the whole list. `core/` also owns the
 few rules that two layers would otherwise each spell for themselves: the log-key
-grammar (`log_keys`), the routing of a computed metric to the port its geometry
-belongs to (`reporting`), what a declared class vocabulary must satisfy
-(`vocabulary`), the closed-set check behind a `Literal` knob (`choices`), and the
-normalisation constants the transforms and the samples grid have to agree on
-(`normalisation`). Each is a rule with more than one reader and no dependency of
-its own — torch and stdlib, like everything else here.
+grammar (`log_keys`), what a declared class vocabulary must satisfy (`vocabulary`),
+the closed-set check behind a `Literal` knob (`choices`), and the normalisation
+constants the transforms and the samples grid have to agree on (`normalisation`).
+Each is a rule with more than one reader and no dependency of its own.
+
+`reporting` is the one module that is neither: it holds a **whole vocabulary** —
+what a run can report (`Curve`, `Matrix`, `Bars`, `BoxPlot`, `PerClass`), the six
+ports a backend implements to show one, and the routing that matches a computed
+value to the port its geometry belongs to. Those three used to sit in three files,
+so a kind of artifact was declared in `entities`, drawn through `ports`, and routed
+here — four such pairs split across a boundary that bought nothing. Grouping by
+knowledge rather than by kind is the same rule this section states for capabilities,
+applied inside the core.
 
 Each capability keeps its registries in `<package>/registry.py`, named
 `<singular>_registry`. Our own components register by decorator at their
@@ -157,4 +164,4 @@ Parts become log keys under the one grammar `{stage}/{task}/{leaf}` —
 `train/species/ce`, `val/mask/dice` — which is also what puts train, val and test
 of one number on a single graph.
 
-→ [Logging](guides/logging.md) · [Vocabulary](vocabulary.md)
+→ [Logging](guides/logging.md)

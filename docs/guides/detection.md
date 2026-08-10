@@ -37,7 +37,7 @@ loss and its decoding are one design, and half-replacing it produces a model tha
 trains against a different objective than it reports.
 
 One name decides which kind of run this is: `model.name` found in the
-`model_registry` rather than the `backbone_registry`. That single reading picks
+`vendor_model_registry` rather than the `backbone_registry`. That single reading picks
 the model *and* the data pipeline, so the two halves cannot disagree.
 
 ## The data
@@ -84,7 +84,7 @@ truth is what lets one entity serve both sides of a comparison.
 alike.
 
 A task predicting objects cannot reach a consumer that serves only tensors — a
-composed model's head, a batch transform, an exported graph. `as_tensor` refuses
+composed model's head, a batch transform, an exported graph. `require_tensor` refuses
 it by name, saying which task and which reader, instead of failing deeper down on
 a missing attribute.
 

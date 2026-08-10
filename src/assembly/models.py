@@ -9,7 +9,7 @@ from src.assembly.instantiate import instantiate
 from src.assembly.tasks import build_criterion, build_task_entities, build_tasks
 from src.assembly.vendor import is_vendor_family
 from src.models import CompositeModel, DistilledModel
-from src.models.registry import adapter_registry, backbone_registry, model_registry
+from src.models.registry import adapter_registry, backbone_registry, vendor_model_registry
 from src.training import TrainingModule
 
 if TYPE_CHECKING:
@@ -37,7 +37,7 @@ def build_model(config: ExperimentConfig, profile: DataProfile) -> tuple[Model, 
     """Build the model and its tasks.
 
     This is the family seam, and both families now come through it. ``config.model``
-    naming an entry of ``model_registry`` is a *vendor* family — one that owns its head,
+    naming an entry of ``vendor_model_registry`` is a *vendor* family — one that owns its head,
     its loss and its decoding — and it takes the short path: the task entities, and the
     model built with the class count the data profiled. Naming a backbone instead is the
     composite family, and the sequence is backbone → adapters → tasks → components →
@@ -53,6 +53,7 @@ def build_model(config: ExperimentConfig, profile: DataProfile) -> tuple[Model, 
     """
     if is_vendor_family(config):
         return _vendor_model(config, profile), build_task_entities(config, profile)
+    _refuse_a_name_from_neither_registry(config)
     backbone = instantiate(config.model, backbone_registry)
     if config.adapters is not None:
         _refuse_a_second_owner_of_the_backbone(config)
@@ -86,12 +87,34 @@ def _teacher(declared: TeacherConfig, config: ExperimentConfig, profile: DataPro
     the rest would be a parameter standing in for a decision, over a few unused
     objects per run.
     """
-    backbone = instantiate(declared.model, backbone_registry)
+    backbone = instantiate(declared.backbone, backbone_registry)
     _, components = build_tasks(config, profile, backbone)
     teacher = CompositeModel(backbone=backbone, components=components)
     if declared.checkpoint_path is not None:
         load_weights(teacher, declared.checkpoint_path)
     return teacher
+
+
+def _refuse_a_name_from_neither_registry(config: ExperimentConfig) -> None:
+    """Name both groups when the model section names neither, and say how they differ.
+
+    One key chooses between two registries, so a misspelling falls through to the
+    backbone one and is answered with a list of backbones. Measured: ``name: yolov8``
+    yields *"Unknown backbone 'yolov8'. Registered: timm, smp, hf, ..."* — a list that
+    cannot contain what the user was reaching for, and no hint that a second group
+    exists. The framework's rule for a refusal is to list the valid options; here it
+    listed half of them.
+    """
+    name = config.model.name
+    if name is None or name in backbone_registry or name in vendor_model_registry:
+        return
+    composed = ", ".join(sorted(str(key) for key in backbone_registry))
+    whole = ", ".join(sorted(str(key) for key in vendor_model_registry))
+    raise LookupError(
+        f"Unknown model '{name}'. The 'model' section takes either a backbone this framework "
+        f"composes heads onto ({composed}), or a family that arrives whole and brings its own "
+        f"head, loss and decoding ({whole}). Use '_target_' for anything unregistered."
+    )
 
 
 def _refuse_a_second_owner_of_the_backbone(config: ExperimentConfig) -> None:
@@ -128,4 +151,6 @@ def _vendor_model(config: ExperimentConfig, profile: DataProfile) -> Model:
     which is what lets the same declaration serve the model and the data pipeline.
     """
     (task_name,) = config.tasks
-    return cast("Model", instantiate(config.model, model_registry, num_classes=profile.require_num_classes(task_name)))
+    return cast(
+        "Model", instantiate(config.model, vendor_model_registry, num_classes=profile.require_num_classes(task_name))
+    )

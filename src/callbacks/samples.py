@@ -12,7 +12,7 @@ import torch
 # it looks for an annotator, and that question is answered by an isinstance.
 from src.core.entities import Instances, StepPreview, preview_of
 from src.core.normalisation import IMAGENET_MEAN, IMAGENET_STD
-from src.core.ports import HtmlLogger
+from src.core.reporting import HtmlLogger
 from src.core.taxonomy import Stage
 from src.visualization import (
     MAX_CHIP_CHARS,
@@ -46,7 +46,7 @@ class SampleGrid(L.Callback):
 
     The traffic runs the other way too. Lightning calls ``on_*_batch_start`` before the
     step, so this says there and then whether the batch about to run is one it will draw
-    (``StepPreviewConsumer.awaiting_preview``), and the module builds a preview only when
+    (``AwaitsPreview.awaiting_preview``), and the module builds a preview only when
     asked. Holding one is not free — it shares storage with the activated outputs, which
     Lightning keeps alive through the optimizer step — so a run without this callback
     pays nothing, and a run with it pays on the one batch in a few hundred that becomes
@@ -142,7 +142,7 @@ class SampleGrid(L.Callback):
 
     @property
     def awaiting_preview(self) -> bool:
-        """Whether the step about to run is one this grid will draw — the ``StepPreviewConsumer`` port.
+        """Whether the step about to run is one this grid will draw — the ``AwaitsPreview`` port.
 
         Answered from the batch-start hooks below, which Lightning runs before the
         step, so a preview is built only for the batches that become a page. The

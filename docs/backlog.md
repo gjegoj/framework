@@ -295,7 +295,7 @@ against instead of a guess.
 **Surfaced:** 2026-08-07, reviewing the samples grid.
 
 `core/ports.py` now has six artifact ports — `MatrixLogger`, `CurveLogger`,
-`BarsLogger`, `SpreadLogger`, `SingleValueLogger`, `HtmlLogger` — and each names
+`BarsLogger`, `BoxPlotLogger`, `SingleValueLogger`, `HtmlLogger` — and each names
 one thing a tracker can be asked to show. The last two of those were added
 deliberately rather than by drift: a class balance and a box plot are each another
 *kind of picture*, carrying a typed entity the backend draws, so they belong with
@@ -451,3 +451,44 @@ entry unavoidable rather than deferrable — an `input_ids` example needs a voca
 
 **Where to look:** `src/assembly/export.py` (`example_inputs`,
 `_prove_the_example_fits`), `src/data/loaders.py`, `src/models/backbones/hf.py`.
+
+## Splitting the model section into `backbone:` and `model:`
+
+**Surfaced:** 2026-08-09, reviewing the vendor-family seam. **Considered and declined.**
+
+One key, `model:`, chooses between two registries: a backbone this framework composes
+heads onto, or a family that arrives whole. Which one it is decides the model, the data
+pipeline, and a whole table of refusals — and it is decided by a runtime lookup rather
+than by the schema. The proposal was to split it: `backbone:` and `model:`, exactly one
+of the two, so `is_vendor_family` stops being a function and becomes `config.model is not
+None`, checked by pydantic at load.
+
+It is a real improvement to the YAML and it was declined for four reasons.
+
+**It reverses a stated decision.** `docs/concepts.md` says the model section is *"a plain
+component: one shape for every model family, with the family following from the name
+rather than a switch field."* That is argued, not accidental.
+
+**"Exactly one of two keys" is a switch field wearing different clothes.** It needs a
+`model_validator` to enforce the exclusivity, which is the construct the design rejected.
+
+**The Hydra group does not split with it.** `configs/model/` holds `resnet18`, `unet`,
+`dpt_dinov3` *and* `yolov8n`, and `override /model: unet` is a public interface. Keeping
+one group whose files write into two different schema keys buys the split at the cost of
+a new indirection between the group's name and the key it fills.
+
+**And most of the benefit was available without it.** What actually reached a user was
+the error on a misspelling: `name: yolov8` fell through to the backbone registry and was
+answered with a list of backbones, from a guide that had just taught `model: {name:
+yolo}`. That is now `_refuse_a_name_from_neither_registry` in `assembly/models.py` —
+fifteen lines, naming both groups and what distinguishes them, and no schema change. The
+remaining benefit of the split is that the YAML is self-describing *before* you get it
+wrong, which is worth less than it sounds when getting it wrong is answered well.
+
+**Pick it up when** a second vendor family exists **and** the ambiguity is reported by
+someone who hit it despite the refusal. Until both hold, the cost is a breaking change to
+the most-used key in every config for a confusion nobody is stuck in.
+
+**Where to look:** `src/config/experiment.py` (`model`), `src/assembly/vendor.py`
+(`is_vendor_family`), `src/assembly/models.py` (`_refuse_a_name_from_neither_registry`),
+`configs/model/`.

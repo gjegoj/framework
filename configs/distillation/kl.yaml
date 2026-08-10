@@ -10,6 +10,6 @@
 # a backbone declared `pretrained: true` is already a teacher.
 distillation:
   teachers:
-    - model: {name: timm, model_name: resnet50, pretrained: false}
+    - backbone: {name: timm, model_name: resnet50, pretrained: false}
       checkpoint_path: ???      # a run's .ckpt holding the teacher's weights
   loss: {name: kl_divergence, temperature: 2.0, weight: 0.7}

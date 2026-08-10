@@ -41,7 +41,7 @@ def test_a_distilled_run_ships_an_artifact_the_size_of_its_student(dataset_root:
     config = distilling(
         dataset_root,
         distillation={
-            "teachers": [{"model": TEACHER}],
+            "teachers": [{"backbone": TEACHER}],
             "loss": {"name": "kl_divergence", "temperature": 2.0, "weight": 0.5},
         },
         export=[{"name": "torchscript"}],
@@ -71,7 +71,7 @@ def test_a_distilled_runs_checkpoint_opens_a_plain_run(dataset_root: Path, tmp_p
     """
     teaching = distilling(
         dataset_root,
-        distillation={"teachers": [{"model": TEACHER}]},
+        distillation={"teachers": [{"backbone": TEACHER}]},
         run={"directory": str(dataset_root / "run"), "train": True, "test": False},
     )
     experiment = assemble(teaching)

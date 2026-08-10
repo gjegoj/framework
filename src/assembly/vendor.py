@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from src.models.registry import model_registry
+from src.models.registry import vendor_model_registry
 
 if TYPE_CHECKING:
     from src.config import ExperimentConfig
@@ -60,11 +60,11 @@ _UNSERVICEABLE_CALLBACK = "batch_transform"
 def is_vendor_family(config: ExperimentConfig) -> bool:
     """Whether this run's model brings its own head, loss and decoding.
 
-    One name decides it: ``config.model.name`` found in ``model_registry`` rather than
+    One name decides it: ``config.model.name`` found in ``vendor_model_registry`` rather than
     in ``backbone_registry``. Read from the model section and nowhere else, so the model
     and the data pipeline cannot disagree about which kind of run is being assembled.
     """
-    return config.model.name is not None and config.model.name in model_registry
+    return config.model.name is not None and config.model.name in vendor_model_registry
 
 
 def refuse_what_a_vendor_cannot_serve(config: ExperimentConfig) -> None:

@@ -28,7 +28,7 @@ from src.data.registry import (
     target_encoder_registry,
     vendor_data_module_registry,
 )
-from src.models.registry import model_registry
+from src.models.registry import vendor_model_registry
 from src.tasks.registry import objective_registry, topology_registry
 
 if TYPE_CHECKING:
@@ -263,7 +263,7 @@ def _vendor_data_module(config: ExperimentConfig) -> DataModule:
     table of key names — what its constructor does not name is forwarded, so one
     declaration serves the model and the pipeline alike.
     """
-    architecture = resolve_target(config.model, model_registry)
+    architecture = resolve_target(config.model, vendor_model_registry)
     ours = named_by(architecture, config.model.params)
     vendor = {name: value for name, value in config.model.params.items() if name not in ours}
     (task_name,) = config.tasks

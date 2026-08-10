@@ -57,33 +57,55 @@ metric configurations, the same `f1` routes differently under
 | anything else | a loud warning naming the key and the geometry |
 
 The rule behind the table: *artifacts are drawn only when identified; raw
-geometry feeds only scalars.* What identifies an artifact is a *presentation*
-— a translator registered for the metric's class, which turns the raw
-computed value into a `Matrix` or `Curve` with its axes stated (PR and ROC
-tuples are mirror images, so orientation is stated, never guessed). Class
-names come from the task's vocabulary — declared `classes` or the fitted
-encoder — filled only where the artifact left its labels open. A backend
-that cannot draw an artifact skips it quietly and keeps the scalars: a CSV
-run stays useful.
+geometry feeds only scalars.* **A metric identifies its own value** — its
+`compute` returns a `Curve`, a `Matrix` or a `PerClass` with the axes
+already named (PR and ROC tuples are mirror images, so orientation is
+stated, never guessed). Class names come from the task's vocabulary —
+declared `classes` or the fitted encoder — filled only where the artifact
+left its labels open. A backend that cannot draw an artifact skips it
+quietly and keeps the scalars: a CSV run stays useful.
 
-## Presenting your own metric
+## A metric that draws
 
-One registered translator per metric class, in your own package:
+Wrap the metric and say what its value means — the same "wrap a module"
+shape as a loss:
 
 ```python
 from src.core import Curve
-from src.metrics.presentation import presentation_of
+from src.metrics import WrappedMetric
 
-@presentation_of(BinaryDET)
-def _det(value):
-    fpr, fnr, _ = value
-    return Curve(x=(fpr,), y=(fnr,), xaxis="FPR", yaxis="FNR", positive_only=True)
+
+class DetMetric(WrappedMetric):
+    """Detection error tradeoff, drawn with FPR on x."""
+
+    higher_is_better = None
+
+    def __init__(self, task: str, **kwargs):
+        super().__init__(BinaryDET(**kwargs))
+
+    def compute(self) -> Curve:
+        fpr, fnr, _ = self.inner.compute()
+        return Curve(x=(fpr,), y=(fnr,), xaxis="FPR", yaxis="FNR", positive_only=True)
 ```
 
-Lookup walks the MRO, so a subclass inherits its family's presentation until
-it registers its own. Returning `None` means "identified, not drawable" —
-the value is dropped quietly (the multilabel confusion matrix, `[L, 2, 2]`,
-is the built-in example).
+Register it under a name like any other metric; there is nothing else to
+declare. A subclass inherits the drawing by ordinary inheritance, and
+returning `None` means "identified, draws as nothing" — the value is
+dropped quietly (the multilabel confusion matrix, `[L, 2, 2]`, is the
+built-in example).
+
+> **Name the facts you need.** `task`, `num_classes` and `num_labels` are
+> *offered* by the objective and reach whatever **names** them, so a
+> constructor of `**kwargs` alone receives none of them and fails inside the
+> upstream library about an argument no config mentioned.
+> `ClassificationArtifactMetric` writes that signature once for the three
+> shipped curves; subclass it and you inherit it.
+
+A metric that computes a **number** needs none of this: it stays
+torchmetrics' own class, registered as it comes. Only a value that has to
+say what it *means* becomes a class of ours, which is why `iou` — a
+`ConfusionMatrix` subclass upstream — draws nothing and logs as the
+per-class vector it is.
 
 ## ClearML
 
@@ -173,11 +195,11 @@ class WandbLogger(Logger): ...
 ```
 
 Matrices and curves are structural: implement `log_matrix(title, matrix,
-iteration)` / `log_curve(title, curve, iteration)` (entities in
-`core.entities`, protocols in `core.ports`) and the run's artifacts arrive —
-no inheritance beyond Lightning's own base, and a backend without them
-simply keeps its scalars. The artifact crosses whole, so a new presentation
-field never changes a port signature.
+iteration)` / `log_curve(title, curve, iteration)` (entities and protocols
+alike in `core.reporting`) and the run's artifacts arrive — no inheritance
+beyond Lightning's own base, and a backend without them simply keeps its
+scalars. The artifact crosses whole, so a new field on `Curve` or `Matrix`
+never changes a port signature.
 
 ## Where the time went
 

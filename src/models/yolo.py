@@ -9,7 +9,7 @@ import torch
 from src.core.entities import Instances, Loss, Prediction, StepResult
 from src.core.ports import Model
 from src.core.taxonomy import Modality
-from src.models.registry import model_registry
+from src.models.registry import vendor_model_registry
 
 if TYPE_CHECKING:
     from torch import Tensor, nn
@@ -35,7 +35,7 @@ _DETECTION_COLUMNS = 6
 """Columns of one suppressed detection: ``x1 y1 x2 y2 conf cls``."""
 
 
-@model_registry.register("yolo")
+@vendor_model_registry.register("yolo")
 class YoloModel(Model):
     """A YOLO network trained through this framework's loop rather than ultralytics'.
 

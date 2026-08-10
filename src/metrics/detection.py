@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Final, cast
 
-from torchmetrics import Metric
-
-from src.core.entities import Instances, PerClass
+from src.core.entities import Instances
+from src.core.reporting import PerClass
+from src.metrics.adapter import WrappedMetric
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -38,12 +38,13 @@ _INDEX = "classes"
 """The key saying which class each per-class reading belongs to — not a reading itself."""
 
 
-class MeanAveragePrecisionOverInstances(Metric):
+class MeanAveragePrecisionOverInstances(WrappedMetric):
     """Mean average precision, taking ``Instances`` on both sides and publishing a family.
 
-    A wrapper around one ``MeanAveragePrecision`` rather than a second ``MetricSet``: the
-    input shape is knowledge of the metric, so the metric set stays a pass-through and
-    every other metric is unaffected — the same "wrap a module" rule the criteria follow.
+    A ``WrappedMetric`` rather than a second ``MetricSet``: the input shape is knowledge
+    of the metric, so the metric set stays a pass-through and every other metric is
+    unaffected. Its ``compute`` returns ``PerClass`` for the per-class readings, which is
+    the whole of how a metric says what its value means.
 
     torchmetrics computes all fifteen of its readings in one pass, so asking for three
     costs exactly what asking for one would. A second entry earns its place only when its
@@ -57,24 +58,25 @@ class MeanAveragePrecisionOverInstances(Metric):
     """
 
     higher_is_better = True
-    full_state_update = False
 
     def __init__(self, readings: Sequence[str] = DEFAULT_READINGS, **kwargs: Any) -> None:
-        super().__init__()
         from torchmetrics.detection import MeanAveragePrecision
 
-        self.readings = tuple(readings)
-        self.inner = MeanAveragePrecision(
-            box_format="xyxy",
-            # Named rather than left to the default: torchmetrics reaches for `pycocotools`
-            # and raises for it even where `faster-coco-eval` is the installed backend.
-            backend="faster_coco_eval",
-            # Derived from what was asked for, never restated in config: the flag is how
-            # torchmetrics is told to produce a per-class reading, and a run that wants
-            # none should not pay for one.
-            class_metrics=bool(PER_CLASS_READINGS & set(self.readings)),
-            **kwargs,
+        super().__init__(
+            MeanAveragePrecision(
+                box_format="xyxy",
+                # Named rather than left to the default: torchmetrics reaches for
+                # `pycocotools` and raises for it even where `faster-coco-eval` is the
+                # installed backend.
+                backend="faster_coco_eval",
+                # Derived from what was asked for, never restated in config: the flag is
+                # how torchmetrics is told to produce a per-class reading, and a run that
+                # wants none should not pay for one.
+                class_metrics=bool(PER_CLASS_READINGS & set(readings)),
+                **kwargs,
+            )
         )
+        self.readings = tuple(readings)
         self._refuse_unknown_readings()
 
     def update(self, predictions: TaskOutput, target: TaskOutput) -> None:
@@ -101,10 +103,6 @@ class MeanAveragePrecisionOverInstances(Metric):
                 continue
             published[reading] = PerClass(value, classes) if reading in PER_CLASS_READINGS else value
         return published
-
-    def reset(self) -> None:
-        self.inner.reset()
-        super().reset()
 
     def _refuse_unknown_readings(self) -> None:
         """A misspelt reading fails here, not as a key missing from the first epoch's log."""

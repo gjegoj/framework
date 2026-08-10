@@ -27,7 +27,7 @@ from src.core import (
     Model,
     TargetAdapter,
     TaskOutput,
-    as_tensor,
+    require_tensor,
 )
 from tests.support.narrowing import tensor
 
@@ -67,7 +67,7 @@ class CountingMetricSet(MetricSet):
         self.seen = 0
 
     def update(self, predictions: TaskOutput, target: TaskOutput) -> None:
-        self.seen += as_tensor(predictions, task="counted", wanted_by="this fake").shape[0]
+        self.seen += require_tensor(predictions, task="counted", wanted_by="this fake").shape[0]
 
     def compute(self) -> dict[str, Any]:
         return {"seen": self.seen}

@@ -22,7 +22,7 @@ them. Detection is the first:
 
 ```yaml
 model:
-  name: yolo                # found in `model_registry`, so this is a vendor family
+  name: yolo                # found in `vendor_model_registry`, so this is a vendor family
   model_name: yolov8n.yaml  # an ultralytics architecture, or a .pt weights path
   mosaic: 0.0               # forwarded verbatim to ultralytics' own configuration
   box: 7.5
@@ -207,7 +207,7 @@ defaults:
 
 distillation:
   teachers:
-    - model: {name: timm, model_name: resnet50, pretrained: false}
+    - backbone: {name: timm, model_name: resnet50, pretrained: false}
       checkpoint_path: runs/teacher/best.ckpt
   loss: {name: kl_divergence, temperature: 2.0, weight: 0.7}
 ```

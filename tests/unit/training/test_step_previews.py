@@ -50,7 +50,7 @@ def batch() -> Batch:
 
 
 class Reader(L.Callback):
-    """A `StepPreviewConsumer`: it asks before the step, and reads where Lightning delivers.
+    """A `AwaitsPreview`: it asks before the step, and reads where Lightning delivers.
 
     `wanted` is which batch indices it declares an interest in; `None` means all.
     """

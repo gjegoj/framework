@@ -165,34 +165,7 @@ class Instances:
         )
 
 
-@dataclass(slots=True)
-class PerClass:
-    """Values a metric produced per class, carrying which classes they are about.
-
-    Mutable, unlike ``Curve`` and ``Matrix``, and not by preference: torchmetrics walks a
-    metric's computed value with ``apply_to_collection``, which refuses a frozen dataclass
-    outright. Measured — the alternative is not returning this from a metric at all.
-
-    Position is *not* the class index. COCO's ``map_per_class`` covers only the classes
-    that appeared and reads its own ``classes`` tensor to say which; named by position it
-    would put one class's number under another's name, which is the kind of wrong nobody
-    catches by reading a chart.
-
-    A dense reading is the case where ``classes`` is ``arange(len(values))``, so there is
-    one shape here rather than two kept in step by hand.
-    """
-
-    values: Tensor
-    classes: Tensor
-
-    def __post_init__(self) -> None:
-        if len(self.values) != len(self.classes):
-            raise ValueError(
-                f"PerClass needs one class per value, got {len(self.values)} values and {len(self.classes)} classes."
-            )
-
-
-def as_tensor(value: TaskOutput, *, task: str, wanted_by: str) -> Tensor:
+def require_tensor(value: TaskOutput, *, task: str, wanted_by: str) -> Tensor:
     """A task's output where the reader can only serve a tensor, refused by name if not.
 
     Most of the framework works on tensors: a composed model's heads and criteria, the
@@ -316,7 +289,7 @@ class StepResult(NamedTuple):
     targets: dict[str, TaskOutput]
 
 
-class StepOutput(TypedDict):
+class LightningStepOutput(TypedDict):
     """What a training step hands back — Lightning's own contract, used as one.
 
     ``loss`` is what the loop backpropagates. ``preview`` rides along to every
@@ -325,7 +298,7 @@ class StepOutput(TypedDict):
     framework, and nothing has to be kept, requested or invalidated.
 
     It is ``NotRequired`` because a preview is built only when a
-    ``StepPreviewConsumer`` asked for this batch — holding one costs the activated
+    ``AwaitsPreview`` asked for this batch — holding one costs the activated
     outputs' storage through the optimizer step, and most steps of most runs have
     no reader. Absent means nobody asked; it does not mean the module cannot.
     """
@@ -432,35 +405,6 @@ class Task:
 
 
 @dataclass(frozen=True, slots=True)
-class Curve:
-    """A curve metric's plotted lines, already oriented for drawing.
-
-    PR and ROC tuples share one geometry with opposite axis orientation —
-    ``(precision, recall, _)`` against ``(fpr, tpr, _)`` — so orientation is
-    stated by whoever knew the metric, never guessed from tuple order. One
-    entry per class; a binary metric carries a single line for the *positive*
-    class and says so.
-
-    ``series is None`` means the lines live in the task's class space — the
-    router fills the names; a translator whose lines mean something else sets
-    its own, and task context never touches them.
-    """
-
-    x: tuple[Tensor, ...]
-    y: tuple[Tensor, ...]
-    xaxis: str
-    yaxis: str
-    positive_only: bool = False
-    series: tuple[str, ...] | None = None
-
-    def __post_init__(self) -> None:
-        if len(self.x) != len(self.y):
-            raise ValueError(f"A curve needs x and y per line, got {len(self.x)} x and {len(self.y)} y.")
-        if self.series is not None and len(self.series) != len(self.x):
-            raise ValueError(f"A curve with {len(self.x)} lines cannot carry {len(self.series)} series names.")
-
-
-@dataclass(frozen=True, slots=True)
 class ClassDistribution:
     """How many of each class a column holds — the imbalance, before it surprises anyone.
 
@@ -526,60 +470,6 @@ class DatasetStatistics:
     def __bool__(self) -> bool:
         """Whether there is anything at all to report."""
         return bool(self.rows or self.targets)
-
-
-@dataclass(frozen=True, slots=True)
-class Bars:
-    """Named quantities drawn as grouped bars — a class balance across stages.
-
-    One series per group and one value per label within it, so a reader sees the
-    three splits side by side and a class missing from one of them is a gap rather
-    than a number to hunt for.
-
-    Arrives completed, as ``Matrix`` and ``Curve`` do: the backend draws what it is
-    handed and never asks what the numbers mean.
-    """
-
-    series: tuple[str, ...]
-    values: tuple[tuple[float, ...], ...]
-    labels: tuple[str, ...]
-    xaxis: str
-    yaxis: str
-
-
-@dataclass(frozen=True, slots=True)
-class Spread:
-    """Five-number summaries drawn as boxes — one per series, on shared axes.
-
-    Carries the ``ValueDistribution``s themselves rather than a copy of their six
-    numbers: the box *is* the summary, so a parallel record would be two things to keep
-    in step by hand and nothing else.
-
-    The whiskers are the observed **minimum and maximum**, not Tukey's 1.5 IQR fences
-    with outlier points beyond them — finding outliers needs the raw values, and those
-    are a whole column held in memory for a picture drawn once. Said here because a box
-    plot is normally read as Tukey's.
-    """
-
-    series: tuple[str, ...]
-    boxes: tuple[ValueDistribution, ...]
-    xaxis: str
-    yaxis: str
-
-
-@dataclass(frozen=True, slots=True)
-class Matrix:
-    """A drawable 2-D artifact, axes named by whoever knew the metric.
-
-    ``labels is None`` means the index space is the task's classes — the
-    router fills the names; a translator whose axes mean something else sets
-    its own, and task context never touches them.
-    """
-
-    value: Tensor
-    xaxis: str
-    yaxis: str
-    labels: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True, slots=True)

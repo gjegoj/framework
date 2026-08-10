@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any, override
 
 from torchvision.transforms import v2
 
-from src.core.entities import Batch, as_tensor
+from src.core.entities import Batch, require_tensor
 from src.core.taxonomy import Modality, Objective, Topology
 from src.transforms.batch.labels import as_soft, class_counts
 
@@ -91,7 +91,7 @@ class LabelMix(ABC):
                 **{
                     name: self._mix_label(
                         as_soft(
-                            as_tensor(batch.targets[name], task=name, wanted_by="a batch transform"),
+                            require_tensor(batch.targets[name], task=name, wanted_by="a batch transform"),
                             self._classes[name],
                         ),
                         weight,

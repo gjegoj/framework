@@ -1,20 +1,53 @@
-"""torchmetrics behind the ``MetricSet`` port."""
+"""torchmetrics behind the framework's ports — one metric, and a named set of them."""
 
 from __future__ import annotations
 
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, override
 
-from torchmetrics import MetricCollection
+from torchmetrics import Metric, MetricCollection
 
 from src.core.log_keys import join
-from src.core.ports import MetricFamily, MetricSet
-from src.metrics.presentation import present
+from src.core.ports import MetricSet, MultiReadingMetric
 
 if TYPE_CHECKING:
-    from torchmetrics import Metric
-
     from src.core.entities import TaskOutput
+
+
+class WrappedMetric(Metric):
+    """A torchmetrics metric behind a class of ours — the same "wrap a module" rule the
+    criteria follow, and the one ``MeanAveragePrecisionOverInstances`` already followed.
+
+    Here is where a metric carries what torchmetrics has no place for: what its computed
+    value *means*. A subclass says it by returning an artifact from ``compute`` — a
+    ``Curve``, a ``Matrix``, a ``PerClass`` — or ``None`` to publish nothing at all. There
+    is no second mechanism: a metric's ``compute`` returns what it means, and the log
+    grammar places it by geometry from there.
+
+    Meaning lives on a class of **ours**, and that is what makes it safe. torchmetrics
+    subclasses for *state reuse* while changing what ``compute`` returns —
+    ``JaccardIndex`` extends ``ConfusionMatrix``, ``AUROC`` extends the PR curve — so
+    anything keyed on that hierarchy hands a reduced descendant its parent's drawing, and
+    has to be talked out of it case by case. Nothing inherits a drawing here without
+    inheriting the class that draws, so the question never arises.
+
+    Parameters:
+        inner (Metric): The torchmetrics metric doing the arithmetic. Held as a child
+            module, so its state moves across devices with the model.
+    """
+
+    full_state_update = False
+
+    def __init__(self, inner: Metric) -> None:
+        super().__init__()
+        self.inner = inner
+
+    def update(self, predictions: TaskOutput, target: TaskOutput) -> None:
+        self.inner.update(predictions, target)
+
+    def reset(self) -> None:
+        self.inner.reset()
+        super().reset()
 
 
 class WrappedMetricSet(MetricSet):
@@ -39,14 +72,14 @@ class WrappedMetricSet(MetricSet):
     def compute(self) -> dict[str, Any]:
         # Per member rather than `self.collection.compute()`, which flattens a metric
         # whose value is a *family* of readings up to the top level and drops the label
-        # it was registered under — after which the lookup below misses, and two entries
-        # of one metric collide on identical keys. Measured, the values are identical:
-        # compute groups do their saving during `update`.
-        #
-        # This is also the last place that knows *which* metric produced a value, so
-        # presentation happens here, and "identified but not drawable" leaves the dict.
-        presented = {label: present(metric, metric.compute()) for label, metric in self.collection.items()}
-        return {label: value for label, value in presented.items() if value is not None}
+        # it was registered under, after which two entries of one metric collide on
+        # identical keys. Measured, the values are identical: compute groups do their
+        # saving during `update`.
+        computed = {label: metric.compute() for label, metric in self.collection.items()}
+        # `None` is a metric saying its value is identified and draws as nothing — the
+        # multilabel confusion matrix. It leaves here rather than reaching the router,
+        # which would have no way to tell it from an artifact nobody recognised.
+        return {label: value for label, value in computed.items() if value is not None}
 
     @override
     def reset(self) -> None:
@@ -74,6 +107,6 @@ def _published_by(label: str, metric: Metric) -> list[str]:
     before a run starts — a checkpoint monitor is configured at assembly, not at the
     first epoch.
     """
-    if not isinstance(metric, MetricFamily):
+    if not isinstance(metric, MultiReadingMetric):
         return [label]
     return [join(label, str(reading)) for reading in metric.readings]

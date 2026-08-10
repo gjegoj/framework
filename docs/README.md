@@ -27,7 +27,6 @@ what you came for below. The project overview and quick start live in the
 
 | | |
 |---|---|
-| [Vocabulary](vocabulary.md) | Every entity, port, adapter and registry, one line each |
 | [Backlog](backlog.md) | Known defects and deferred decisions, with the reasoning kept |
 | [Specs and plans](superpowers/) | The design record: why each feature has the shape it has |
 

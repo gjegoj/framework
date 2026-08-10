@@ -15,7 +15,7 @@ from torch import Tensor
 from torch.utils.data import Dataset
 from torchmetrics import Metric
 
-from src.core import Backbone, Batch, Features, MetricSet, Model, StepResult, Stream, TaskOutput, as_tensor
+from src.core import Backbone, Batch, Features, MetricSet, Model, StepResult, Stream, TaskOutput, require_tensor
 
 
 class PredictOnlyModel(Model):
@@ -108,7 +108,7 @@ class CountingMetricSet(MetricSet):
         self.seen = 0
 
     def update(self, predictions: TaskOutput, target: TaskOutput) -> None:
-        self.seen += as_tensor(predictions, task="counted", wanted_by="this fake").shape[0]
+        self.seen += require_tensor(predictions, task="counted", wanted_by="this fake").shape[0]
 
     def compute(self) -> dict[str, Any]:
         return {"seen": float(self.seen)}

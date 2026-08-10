@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from src.config.components import ModelConfig
+from src.config.components import ComponentConfig
 from src.config.tasks import LossConfig
 
 
@@ -14,14 +14,20 @@ class TeacherConfig(BaseModel):
     Its heads are derived from the student's tasks, so the two models' logits
     match in shape by construction rather than by a user keeping two declarations
     in step.
+
+    The field is ``backbone`` and not ``model`` although it sits where the student's
+    ``model`` section would: a teacher can only ever be a backbone. Distillation compares
+    per-task logits, which a family arriving whole does not expose — the run section
+    refuses the pairing outright — so the one thing this position accepts is named.
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    model: ModelConfig = Field(
+    backbone: ComponentConfig = Field(
         description=(
-            "The teacher's backbone, declared exactly as the student's 'model' section is — the same "
-            "alias, so the two positions cannot drift into different shapes."
+            "The teacher's encoder — a backbone this framework composes heads onto, and only that. "
+            "Its heads are derived from the student's tasks, so declaring anything about them here "
+            "would be a second source of truth for a shape that is already decided."
         )
     )
     checkpoint_path: str | None = Field(

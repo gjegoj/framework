@@ -86,7 +86,7 @@ def test_the_module_reports_its_metrics_directions_under_logged_keys() -> None:
     """Consumers (the progress bar) rank values without re-deriving semantics from names."""
     from torchmetrics import MeanAbsoluteError
 
-    from src.core.ports import MetricDirectionProvider
+    from src.core.ports import DeclaresMetricDirections
     from src.models import LinearHead, TaskComponents
 
     task = Task(
@@ -114,7 +114,7 @@ def test_the_module_reports_its_metrics_directions_under_logged_keys() -> None:
         optimizer_factory=partial(torch.optim.SGD, lr=0.1),
     )
 
-    assert isinstance(module, MetricDirectionProvider)
+    assert isinstance(module, DeclaresMetricDirections)
     directions = module.metric_directions()
     assert directions["train/label/f1"] is True
     assert directions["val/label/mae"] is False

@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 import lightning as L
 
 from src.core import log_keys
-from src.core.ports import SingleValueLogger
+from src.core.reporting import SingleValueLogger
 from src.core.taxonomy import Stage
 
 if TYPE_CHECKING:

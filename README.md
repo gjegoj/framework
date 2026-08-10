@@ -90,7 +90,6 @@ Full documentation is in [`docs/`](docs/README.md).
 | [Losses](docs/guides/losses.md) · [Metrics](docs/guides/metrics.md) · [Transforms](docs/guides/transforms.md) · [Callbacks](docs/guides/callbacks.md) | The pieces of a run |
 | [Detection](docs/guides/detection.md) · [Export](docs/guides/export.md) · [Samples grid](docs/guides/visualization.md) · [Logging](docs/guides/logging.md) | Feature guides |
 | [Extending](docs/guides/extending.md) | Your own loss, metric, callback, backbone or task kind |
-| [Vocabulary](docs/vocabulary.md) | Every entity, port, adapter and registry, one line each |
 | [Backlog](docs/backlog.md) | Known defects and deferred decisions, with the reasoning kept |
 
 ## Development

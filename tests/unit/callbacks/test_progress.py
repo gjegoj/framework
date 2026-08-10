@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from src.callbacks.progress import MetricHistory, MetricsProgressBar, row_key
-from src.core.ports import MetricDirectionProvider
+from src.core.ports import DeclaresMetricDirections
 from tests.support.lightning import quiet_trainer
 
 
@@ -183,7 +183,7 @@ def test_nothing_but_a_loss_arrives_undeclared(after_a_run: MetricsProgressBar) 
     silence. Naming them here makes that a red test instead.
     """
     module = after_a_run.trainer.lightning_module
-    assert isinstance(module, MetricDirectionProvider)
+    assert isinstance(module, DeclaresMetricDirections)
     undeclared = set(after_a_run._history.current) - set(module.metric_directions())
 
     assert undeclared == {

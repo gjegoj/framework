@@ -12,8 +12,8 @@ import torch
 from lightning.pytorch.utilities.rank_zero import rank_zero_only
 
 from src.core import Curve, Matrix
-from src.core.entities import Bars, Spread, ValueDistribution
-from src.core.ports import CurveLogger, MatrixLogger
+from src.core.entities import ValueDistribution
+from src.core.reporting import Bars, BoxPlot, CurveLogger, MatrixLogger
 
 # The class itself needs no backend — `clearml` is imported inside `__init__`.
 from src.loggers import ClearMLLogger
@@ -169,14 +169,14 @@ def test_a_box_is_built_from_the_summary_and_never_from_the_values(
 
     plotly accepts a box described entirely by its quartiles, so no column has to be
     carried into memory for it — which is what makes counting every stage affordable.
-    The fences are the observed extremes; `Spread` says so rather than implying Tukey.
+    The fences are the observed extremes; `BoxPlot` says so rather than implying Tukey.
     """
     measured = ValueDistribution(
         count=4, mean=2.5, deviation=1.3, minimum=1.0, q25=1.75, median=2.5, q75=3.25, maximum=4.0
     )
-    spread = Spread(series=("train",), boxes=(measured,), xaxis="stage", yaxis="value")
+    drawn = BoxPlot(series=("train",), boxes=(measured,), xaxis="stage", yaxis="value")
 
-    build_logger().log_spread(title="dataset/age", spread=spread, iteration=0)
+    build_logger().log_box_plot(title="dataset/age", box_plot=drawn, iteration=0)
 
     (reported,) = clearml_stub.figures
     (box,) = reported["figure"].data
@@ -241,14 +241,14 @@ def test_each_stage_gets_its_own_place_on_the_axis(clearml_stub: SimpleNamespace
     measured = ValueDistribution(
         count=4, mean=2.5, deviation=1.3, minimum=1.0, q25=1.75, median=2.5, q75=3.25, maximum=4.0
     )
-    spread = Spread(
+    drawn = BoxPlot(
         series=("train", "val", "test"),
         boxes=(measured, measured, measured),
         xaxis="stage",
         yaxis="value",
     )
 
-    build_logger().log_spread(title="dataset/age", spread=spread, iteration=0)
+    build_logger().log_box_plot(title="dataset/age", box_plot=drawn, iteration=0)
 
     (reported,) = clearml_stub.figures
     assert [box.x for box in reported["figure"].data] == [("train",), ("val",), ("test",)]

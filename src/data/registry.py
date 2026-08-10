@@ -33,7 +33,7 @@ augmentation is box-aware — and a run names it once, in ``config.model``. Asse
 needs to reach the pipeline from that one name; before this it reached a class it had
 been told about in the composition root, so a second family meant editing the root.
 
-Keyed to match ``model_registry`` rather than derived from it, because the two live in
+Keyed to match ``vendor_model_registry`` rather than derived from it, because the two live in
 capability packages that do not import one another. A key present in one and missing from
 the other fails at assembly, naming what *is* registered — and a test pins the pairing so
 the mismatch is caught before a run ever asks.

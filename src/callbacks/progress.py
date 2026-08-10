@@ -16,7 +16,7 @@ from rich.text import Text
 
 from src.console import HEADER_STYLE
 from src.core import log_keys
-from src.core.ports import MetricDirectionProvider
+from src.core.ports import DeclaresMetricDirections
 from src.core.taxonomy import Stage
 
 if TYPE_CHECKING:
@@ -119,7 +119,7 @@ class MetricsProgressBar(RichProgressBar):
     Each row is one series (``label/f1``, ``loss``) with its current Train/Val/Test
     values, the best Train/Val values observed, and colour-coded deltas beside them.
     Which direction counts as an improvement is the metric's own declared
-    ``higher_is_better``, asked from the module through the ``MetricDirectionProvider``
+    ``higher_is_better``, asked from the module through the ``DeclaresMetricDirections``
     port and never guessed from a name; what the module does not declare is a loss, and
     a loss is minimized.
 
@@ -144,7 +144,7 @@ class MetricsProgressBar(RichProgressBar):
         arrives — and those columns exist to be read against it.
         """
         super().setup(trainer, pl_module, stage)
-        if isinstance(pl_module, MetricDirectionProvider):
+        if isinstance(pl_module, DeclaresMetricDirections):
             self._history.declare(pl_module.metric_directions())
 
     def _init_progress(self, trainer: Any) -> None:

@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, ClassVar, override
 
 from torch import nn
 
-from src.core.entities import AdaptedTarget, Loss, Prediction, StepResult, TaskOutput, as_tensor
+from src.core.entities import AdaptedTarget, Loss, Prediction, StepResult, TaskOutput, require_tensor
 from src.core.ports import Model
 from src.core.taxonomy import Stream
 
@@ -110,7 +110,7 @@ class CompositeModel(Model):
             declared = batch.targets.get(task_name)
             if declared is None:
                 return AdaptedTarget.absent()
-            raw = as_tensor(declared, task=task_name, wanted_by="a composed model")
+            raw = require_tensor(declared, task=task_name, wanted_by="a composed model")
             return AdaptedTarget(for_loss=raw, for_metrics=raw)
         return component.target_adapter(self._target(batch, task_name))
 
@@ -140,7 +140,7 @@ class CompositeModel(Model):
     @staticmethod
     def _target(batch: Batch, task_name: str) -> Tensor:
         try:
-            return as_tensor(batch.targets[task_name], task=task_name, wanted_by="a composed model")
+            return require_tensor(batch.targets[task_name], task=task_name, wanted_by="a composed model")
         except KeyError:
             available = ", ".join(sorted(batch.targets)) or "none"
             raise LookupError(f"Batch has no target for task '{task_name}'. Available targets: {available}.") from None
