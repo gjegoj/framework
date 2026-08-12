@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, NoReturn
+from typing import Any, ClassVar, NoReturn
 
 import cv2
 import numpy as np
@@ -52,3 +52,27 @@ class ImageLoader:
         if not path.exists():
             raise FileNotFoundError(f"Image file not found: {path}")
         raise ValueError(f"Could not decode image: {path}")
+
+
+@input_loader_registry.register("mask")
+class MaskLoader(ImageLoader):
+    """Reads a mask file into a single ``[H, W]`` plane, and says that is what it is.
+
+    ``spatial`` is the marker assembly reads to give the column mask treatment in the
+    augmentation pipeline: nearest-neighbour geometry, and ``Normalize`` leaving it
+    alone. It is the whole difference from declaring ``{name: image, grayscale: true}``
+    — grayscale cannot imply it, because a grayscale *photograph* (an X-ray) is still
+    a picture and must keep picture treatment.
+
+    The marker lives on the class rather than in config, so a user declares a loader
+    and never a kind: the two cannot fall out of step.
+
+    Parameters:
+        root (str | Path | None): Prefix for the mask paths stored in the table;
+            ``None`` uses them as given.
+    """
+
+    spatial: ClassVar[bool] = True
+
+    def __init__(self, root: str | Path | None = None) -> None:
+        super().__init__(root=root, grayscale=True)

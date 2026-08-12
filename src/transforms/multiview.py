@@ -50,7 +50,12 @@ class MultiViewTransform:
         for _ in range(self._views):
             # Each view augments a throwaway copy: a base transform that also touches
             # targets (masks) must not leave one view's target behind for the next.
-            candidate = Sample(inputs=dict(sample.inputs), targets=dict(sample.targets), meta=sample.meta)
+            candidate = Sample(
+                inputs=dict(sample.inputs),
+                targets=dict(sample.targets),
+                auxiliary_inputs=dict(sample.auxiliary_inputs),
+                meta=sample.meta,
+            )
             if self._base is not None:
                 candidate = self._base(candidate)
             variants.append(torch.as_tensor(candidate.inputs[self._input_name]))

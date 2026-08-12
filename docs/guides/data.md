@@ -304,19 +304,69 @@ transforms:
   test: *pipeline
 ```
 
-Every image input and every spatial target of a sample passes through **one**
-pipeline call, so a mask is cropped and flipped with the image it belongs to.
-`spatial_targets` is never written by hand: it is derived from the encoders.
+Every image input, every auxiliary input and every spatial target of a sample
+passes through **one** pipeline call, so a mask is cropped and flipped with the
+image it belongs to. Neither `spatial_targets` nor `auxiliary_inputs` is written
+by hand: the first is derived from the encoders, the second from the section
+below.
 
 Anything `albumentations.Compose` accepts is forwarded verbatim — `seed`, `p`,
 `bbox_params`, `is_check_shapes`. For augmenting train only, several views of
 one input, per-source pipelines and the rest, see
 [transforms.md](transforms.md).
 
+## Columns the model never sees
+
+An augmentation may need an array the model should not: a mask that bounds a
+colour shift, say. Declare it under `auxiliary_inputs`, beside `inputs`:
+
+```yaml
+data:
+  inputs:
+    image: {column: image_path}
+  auxiliary_inputs:
+    lesion: {column: mask_path}     # loader defaults to `mask` — one grayscale plane
+```
+
+An auxiliary input is loaded like an input and handed to the sample transforms as
+a mask-kind value: geometry samples it nearest-neighbour, and `Normalize` leaves
+it alone. It is **not collated** — the batch has no slot for it, so it cannot
+reach a device, and there is nothing to remember to drop.
+
+Two neighbouring cases are different things, and the vocabulary keeps them apart:
+
+| What you want | Where it goes |
+|---|---|
+| the augmentations read it, nothing else | `data.auxiliary_inputs` |
+| the **model** consumes it beside the image | `data.inputs` with `loader: {name: mask}` |
+| the model **learns** it | a segmentation task's `target` |
+
+The middle row is the conditioned-model case — image *and* mask into the network:
+
+```yaml
+data:
+  inputs:
+    image:       {column: image_path}
+    lesion_mask: {column: mask_path, loader: {name: mask}}
+```
+
+The `mask` loader is the whole declaration. Assembly reads it and gives the column
+mask treatment in the pipeline — nearest-neighbour geometry, untouched by
+`Normalize` — while collating it into the batch like any other input. There is no
+kind flag to keep in step with the loader, and `{name: image, grayscale: true}` is
+*not* the same thing: a grayscale photograph is still a photograph, and
+interpolating and normalising it is correct.
+
 ## Targets
 
 Declared on the **task**, not under `data` — a target column and its encoder are
 declared once, and the data schema is derived from the tasks.
+
+An encoder works in two halves, on either side of the sample transforms: it
+**loads** the cell before them (for most targets that is the value as it stands;
+a mask becomes pixels, so geometry has something to move) and **encodes** after
+them, on whatever value survived. That is what lets an augmentation write a
+target — see [augmentations that create supervision](transforms.md#augmentations-that-create-supervision).
 
 ```yaml
 tasks:

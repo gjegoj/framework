@@ -18,6 +18,14 @@ with the ``input_loader_registry`` by a test rather than by an import — config
 names, it does not reach into the data layer to resolve them.
 """
 
+DEFAULT_AUXILIARY_LOADER = "mask"
+"""Registry key of the loader an *auxiliary* input gets when config names none.
+
+Different from the model-input default because the common case differs: what rides
+beside the image for the augmentations to read is a mask, and reading it as a picture
+would have geometry interpolate its edges and ``Normalize`` rewrite its values.
+"""
+
 
 InputLoaderConfig = ComponentConfig
 """The loader turning one cell into raw data: a registry name ('image') or an import path.
@@ -45,6 +53,23 @@ class InputColumnConfig(BaseModel):
             "How a cell becomes raw data: a registry name ('image') or an import path. Defaults to "
             "the image loader, this being a vision framework; declare it for anything else, or to "
             "give the image loader arguments such as a 'root' path."
+        ),
+    )
+
+
+class AuxiliaryInputColumnConfig(InputColumnConfig):
+    """One auxiliary input: a column the augmentations read and the model never sees.
+
+    The one difference from a model input is the loader's default — the ``mask``
+    loader, masks being what rides here. Declare a loader to read anything else.
+    """
+
+    loader: InputLoaderConfig = Field(
+        default_factory=lambda: InputLoaderConfig(name=DEFAULT_AUXILIARY_LOADER),
+        description=(
+            "How a cell becomes raw data: a registry name or an import path. Defaults to "
+            "the mask loader — one grayscale plane, sampled nearest-neighbour by geometry "
+            "and left alone by Normalize."
         ),
     )
 
@@ -230,6 +255,16 @@ class DataConfig(BaseModel):
     )
     inputs: dict[str, InputColumnConfig] = Field(
         description="Model inputs by name; the name is how a batch and a backbone refer to them.",
+    )
+    auxiliary_inputs: dict[str, AuxiliaryInputColumnConfig] = Field(
+        default_factory=dict,
+        description=(
+            "Columns loaded for the augmentations alone — a mask that bounds a colour shift. "
+            "Loaded like inputs and carried through the sample transforms as mask-kind values "
+            "(nearest-neighbour geometry, untouched by Normalize), but never collated: the "
+            "model does not see them and no batch memory is spent on them. A mask the model "
+            "should consume is a regular input with loader {name: mask}."
+        ),
     )
     split: SplitConfig | None = Field(
         None,

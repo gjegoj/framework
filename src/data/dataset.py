@@ -19,7 +19,10 @@ class TableDataset(Dataset[Sample]):
 
     The schema is validated against the table upfront, so a typo in a column
     name fails at construction rather than mid-epoch. Loading and encoding
-    happen in ``__getitem__`` — that is, inside DataLoader workers.
+    happen in ``__getitem__`` — that is, inside DataLoader workers — and they sit
+    on opposite sides of the transform: every column is *loaded* before it, every
+    target *encoded* after, so an augmentation writing a raw class name or a plain
+    number hands its value to the encoder rather than overwriting one.
     """
 
     def __init__(self, table: Table, schema: DataSchema, transform: SampleTransform | None = None) -> None:
@@ -37,15 +40,20 @@ class TableDataset(Dataset[Sample]):
         row = self._table.iloc[index]
         cells = {name: row[input_column.column] for name, input_column in self._schema.inputs.items()}
         sample = Sample(
-            inputs={name: input_column.loader(cells[name]) for name, input_column in self._schema.inputs.items()},
-            targets={
-                task: target_column.encoder.encode(row[target_column.column])
-                for task, target_column in self._schema.targets.items()
+            # Every column is LOADED here, with one call whatever its kind — an input's
+            # loader, or the pre-transform half of a target's encoder. A mask path
+            # becomes pixels (geometry needs pixels); a plain value passes as it stands.
+            inputs={name: column.loader(cells[name]) for name, column in self._schema.inputs.items()},
+            targets={task: column.loader(row[column.column]) for task, column in self._schema.targets.items()},
+            auxiliary_inputs={
+                name: column.loader(row[column.column]) for name, column in self._schema.auxiliary_inputs.items()
             },
-            # A string cell is readable as it stands — a path, a URL, a caption. An
-            # array is not, and the tensor built from it already went to the model.
-            # Carry the readable ones and let the consumer decide their use: a report
-            # links a path and prints a caption, and only it knows which it wanted.
             meta={"row": index, Sample.CELLS: {name: cell for name, cell in cells.items() if isinstance(cell, str)}},
         )
-        return self._transform(sample) if self._transform is not None else sample
+        if self._transform is not None:
+            sample = self._transform(sample)
+        # Targets are ENCODED here, after the transforms — on the value an augmentation
+        # may just have written, which is what makes an online target encodable at all.
+        for task, column in self._schema.targets.items():
+            sample.targets[task] = column.encoder.encode(sample.targets[task])
+        return sample

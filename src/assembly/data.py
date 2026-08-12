@@ -72,8 +72,7 @@ def build_data_schema(config: ExperimentConfig, cache: LoaderCache | None = None
     # Qualified by kind, because an input and a task may legally share a name.
     return DataSchema(
         inputs={
-            name: InputColumn(column=column.column, loader=_build_loader(column, _for(cache, f"input/{name}")))
-            for name, column in config.data.inputs.items()
+            name: _input_column(column, _for(cache, f"input/{name}")) for name, column in config.data.inputs.items()
         },
         targets={
             name: TargetColumn(
@@ -83,6 +82,10 @@ def build_data_schema(config: ExperimentConfig, cache: LoaderCache | None = None
             for name, task in config.tasks.items()
             if task.target is not None
         },
+        auxiliary_inputs={
+            name: _input_column(column, _for(cache, f"auxiliary_input/{name}"))
+            for name, column in config.data.auxiliary_inputs.items()
+        },
     )
 
 
@@ -91,10 +94,19 @@ def _for(cache: LoaderCache | None, name: str) -> LoaderCache | None:
     return cache.scoped(name) if cache is not None else None
 
 
-def _build_loader(column: InputColumnConfig, cache: LoaderCache | None) -> InputLoader:
-    """The declared loader, reading through the cache when there is one."""
+def _input_column(column: InputColumnConfig, cache: LoaderCache | None) -> InputColumn:
+    """One built column: the declared loader, wrapped for the cache, and what it reads.
+
+    ``spatial`` is taken from the loader *before* the wrapping — ``cached`` returns a
+    bare closure, so asking the wrapped loader would silently answer ``False`` and a
+    cached mask input would quietly get picture treatment in the pipeline.
+    """
     loader: InputLoader = instantiate(column.loader, input_loader_registry)
-    return cached(loader, cache) if cache is not None else loader
+    return InputColumn(
+        column=column.column,
+        loader=cached(loader, cache) if cache is not None else loader,
+        spatial=getattr(loader, "spatial", False),
+    )
 
 
 def _build_target_encoder(name: str, task: TaskConfig, derived: Mapping[str, Any]) -> TargetEncoder:
@@ -147,13 +159,15 @@ def _honouring_declared_classes(name: str, task: TaskConfig, built: TargetEncode
 
 
 def build_transforms(config: ExperimentConfig, schema: DataSchema) -> dict[Stage, SampleTransform]:
-    """Build per-stage transforms, telling each which targets follow the image.
+    """Build per-stage transforms, telling each which arrays follow the image.
 
-    ``spatial_targets`` is never written by hand: it is derived from the
-    encoders (``TargetEncoder.spatial``) and passed as a derived value, so a
-    mask cannot silently fall out of step with its image. A schema without
-    spatial targets passes nothing, so transforms for classification runs need
-    to know nothing about this.
+    None of ``spatial_targets``, ``mask_inputs`` or ``auxiliary_inputs`` is written by
+    hand: the first comes from the encoders (``TargetEncoder.spatial``), the second from
+    each input's loader (``InputColumn.spatial``), the third from
+    ``data.auxiliary_inputs`` — and all three travel the same derived-value channel, so
+    a mask cannot silently fall out of step with its image. A schema with none of them
+    passes nothing, and transforms for a plain classification run need to know nothing
+    about any of this.
     """
     if config.transforms is None:
         return {}
@@ -165,7 +179,14 @@ def _build_stage_transforms(
 ) -> dict[Stage, SampleTransform]:
     """Per-stage transforms from their declarations, wherever the declarations came from."""
     spatial = [name for name, column in schema.targets.items() if column.encoder.spatial]
-    derived = {"spatial_targets": spatial} if spatial else {}
+    masks = [name for name, column in schema.inputs.items() if column.spatial]
+    derived: dict[str, Any] = {}
+    if spatial:
+        derived["spatial_targets"] = spatial
+    if masks:
+        derived["mask_inputs"] = masks
+    if schema.auxiliary_inputs:
+        derived["auxiliary_inputs"] = list(schema.auxiliary_inputs)
     return {stage: instantiate(component, **derived) for stage, component in declared.items()}
 
 

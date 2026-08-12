@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -17,6 +17,15 @@ class InputColumn:
 
     column: str
     loader: InputLoader
+    spatial: bool = False
+    """Whether the loaded value is per-pixel labels rather than light.
+
+    Taken from the loader's own class-level marker at build time — never written by
+    hand — and read by assembly to give the column mask treatment in the augmentation
+    pipeline: nearest-neighbour geometry, and ``Normalize`` leaving it alone. Captured
+    *before* any cache wrapping, because a cache wrapper is a bare closure and would
+    hide the marker behind itself.
+    """
 
     def __post_init__(self) -> None:
         if not self.column.strip():
@@ -25,10 +34,20 @@ class InputColumn:
 
 @dataclass(frozen=True, slots=True)
 class TargetColumn:
-    """One task target: which column holds it and how to encode the raw value."""
+    """One task target: which column holds it and how it becomes training data."""
 
     column: str
     encoder: TargetEncoder
+
+    @property
+    def loader(self) -> InputLoader:
+        """The encoder's pre-transform half, in the shape every column's loader has.
+
+        A bound ``load`` *is* an ``InputLoader`` — one table cell in, its raw form out —
+        so the dataset and the cache warm every kind of column with one call, whatever
+        the column is.
+        """
+        return self.encoder.load
 
     def __post_init__(self) -> None:
         if not self.column.strip():
@@ -46,6 +65,13 @@ class DataSchema:
 
     inputs: Mapping[str, InputColumn]
     targets: Mapping[str, TargetColumn]
+    auxiliary_inputs: Mapping[str, InputColumn] = field(default_factory=dict)
+    """Columns the augmentations read and nothing downstream sees.
+
+    Loaded exactly as ``inputs`` are, and modelled by the same ``InputColumn`` — the
+    difference is where they go afterwards, which is nowhere: no ``Batch`` slot exists
+    for them.
+    """
 
     def __post_init__(self) -> None:
         if not self.inputs:
@@ -58,4 +84,5 @@ class DataSchema:
         """Every table column the schema references — used for fail-fast validation."""
         input_columns = {input_column.column for input_column in self.inputs.values()}
         target_columns = {target_column.column for target_column in self.targets.values()}
-        return input_columns | target_columns
+        auxiliary_columns = {input_column.column for input_column in self.auxiliary_inputs.values()}
+        return input_columns | target_columns | auxiliary_columns

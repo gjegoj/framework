@@ -26,12 +26,15 @@ log = logging.getLogger(__name__)
 
 
 class TargetEncoder(ABC):
-    """Encodes one task's raw target values.
+    """Turns one task's target column into training data, in two halves.
 
-    An encoder stays on the *raw* side of the pipeline — a label becomes a class index,
-    a mask becomes an array — because a transform may still have to touch the result: a
-    mask follows the image's geometry. Tensors are made exactly once afterwards, by the
-    transform ending in ``ToTensorV2`` or by collation.
+    ``load`` runs *before* the sample transforms: one table cell in, the form the
+    transforms should see out. For most targets that is the value as it stands, so the
+    default is identity; the mask encoder reads its file here, because geometry needs
+    pixels to move. ``encode`` runs *after* the transforms, on whatever value survived
+    them — which is what lets an augmentation write a raw class name or a plain number
+    and have this encoder make training sense of it. Tensors are made exactly once
+    afterwards, by the transform ending in ``ToTensorV2`` or by collation.
 
     ``fit`` learns vocabulary or statistics from the training split and is a no-op by
     default. Afterwards the encoder exposes what it inferred (``num_classes``,
@@ -46,9 +49,13 @@ class TargetEncoder(ABC):
     def fit(self, values: Iterable[Any]) -> None:
         """Learn from training-split values. Default: nothing to learn."""
 
+    def load(self, value: Any) -> Any:
+        """One table cell into the form the transforms see. Default: as it stands."""
+        return value
+
     @abstractmethod
     def encode(self, value: Any) -> Any:
-        """Encode one raw value into the target's pre-tensor form."""
+        """The post-transform value into the target's training form."""
 
     @property
     def num_classes(self) -> int | None:
@@ -525,9 +532,15 @@ class MaskTargetEncoder(TargetEncoder):
         read: InputLoader = ImageLoader(root=root, grayscale=True)
         self._read = cached(read, cache) if cache is not None else read
 
-    def encode(self, value: Any) -> np.ndarray:
+    @override
+    def load(self, value: Any) -> np.ndarray:
+        """The mask file as an ``[H, W]`` index map — pixels, so geometry can move them."""
         mask: np.ndarray = self._read(value).astype(np.int64)
         return mask
+
+    def encode(self, value: Any) -> np.ndarray:
+        """Already its training form: ``load`` did the reading, the transform the geometry."""
+        return np.asarray(value)
 
     @override
     def distribution(self, values: Iterable[Any]) -> Distribution | None:
@@ -541,11 +554,14 @@ class MaskTargetEncoder(TargetEncoder):
         A pixel holding an index the declared vocabulary does not reach is refused
         here rather than at the loss, where it surfaces as a shape error a thousand
         steps in.
+
+        Reads through ``load`` rather than ``encode``: it is handed table cells, and
+        reading a cell is what ``load`` is. ``encode`` sees post-transform pixels.
         """
         names = self.class_names or [f"class{index}" for index in range(self._num_classes)]
         totals = np.zeros(self._num_classes, dtype=np.int64)
         for value in values:
-            counts = np.bincount(self.encode(value).reshape(-1), minlength=self._num_classes)
+            counts = np.bincount(self.load(value).reshape(-1), minlength=self._num_classes)
             if counts.size > self._num_classes:
                 raise ValueError(
                     f"Mask '{value}' holds class index {counts.size - 1}, but this task declares "

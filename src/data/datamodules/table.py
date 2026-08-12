@@ -15,7 +15,7 @@ from src.core.ports import DataModule, SampleTransform, require_stage
 from src.core.taxonomy import Stage
 from src.data.cache import LoaderCache
 from src.data.dataset import TableDataset
-from src.data.schema import DataSchema
+from src.data.schema import DataSchema, InputColumn, TargetColumn
 from src.data.sources import Table, TableSource
 from src.data.split import Splitter
 
@@ -105,17 +105,21 @@ class TableDataModule(DataModule):
 
         Train and val are read every epoch; test is read once, so memory spent
         on it buys nothing. This runs before ``DataLoader`` forks, which is what
-        lets every worker share one set of decoded pixels — and after encoders
-        are fitted, because a target column is warmed by encoding it.
+        lets every worker share one set of decoded pixels. Any column is warmed by
+        its loader — for a target that is the encoder's pre-transform half, the
+        same call the dataset itself makes.
         """
         for stage in (Stage.TRAIN, Stage.VAL):
             for rows in stages.get(stage, []):
                 # No scoping here: each loader carries its own scoped view of the cache,
                 # applied where it was built. Warming just drives the loaders.
-                for column in self._schema.inputs.values():
+                columns: tuple[InputColumn | TargetColumn, ...] = (
+                    *self._schema.inputs.values(),
+                    *self._schema.auxiliary_inputs.values(),
+                    *self._schema.targets.values(),
+                )
+                for column in columns:
                     cache.warm(rows.table[column.column], column.loader)
-                for target in self._schema.targets.values():
-                    cache.warm(rows.table[target.column], target.encoder.encode)
 
     @override
     def dataset(self, stage: Stage) -> StageDataset:

@@ -37,9 +37,10 @@ class RandomBorderCrop(A.CustomTransformsApplyMixin, A.RandomCropFromBorders):
         min_crop (float): Fraction at least one side must reach; ``0`` asks for
             no guarantee. It cannot exceed every per-side maximum, or no side
             could ever satisfy it.
-        applied_label (int): What the bound label becomes when the crop applies.
-            Not fixed at 1: a label encoder sorts its vocabulary, so the class
-            standing for "cropped" depends on what the classes are called.
+        applied_label (int | str): The raw value the bound column takes when the
+            crop applies — encoding runs *after* the transforms, so write the class
+            as the table writes it (``cropped`` beside
+            ``classes: {0: intact, 1: cropped}``).
         p (float): Probability of cropping at all.
     """
 
@@ -50,7 +51,7 @@ class RandomBorderCrop(A.CustomTransformsApplyMixin, A.RandomCropFromBorders):
         crop_top: float = 0.1,
         crop_bottom: float = 0.1,
         min_crop: float = 0.0,
-        applied_label: int = 1,
+        applied_label: int | str = 1,
         p: float = 1.0,
     ) -> None:
         super().__init__(
@@ -69,7 +70,7 @@ class RandomBorderCrop(A.CustomTransformsApplyMixin, A.RandomCropFromBorders):
         self.min_crop = min_crop
         self.applied_label = applied_label
 
-    def apply_to_label(self, label: Any, **params: Any) -> int:
+    def apply_to_label(self, label: Any, **params: Any) -> int | str:
         return self.applied_label
 
     def get_params_dependent_on_data(

@@ -76,3 +76,25 @@ def test_view_augmentation_never_reaches_the_samples_targets() -> None:
 
     assert transformed.targets["mask"].shape == (8, 8)
     assert np.array_equal(transformed.targets["mask"], mask)
+
+
+def test_each_view_reads_the_original_auxiliary_input() -> None:
+    """The per-view copy must carry them, or a base augmentation that reads a mask dies
+    on the first view — and the whole point of the copy is that each view starts fresh."""
+    seen: list[np.ndarray] = []
+
+    class Peek:
+        def __call__(self, sample: Sample) -> Sample:
+            seen.append(sample.auxiliary_inputs["lesion"])
+            return sample
+
+    transform = MultiViewTransform(views=2, base=Peek(), input_name="image")
+    transform(
+        Sample(
+            inputs={"image": torch.zeros(3, 4, 4)},
+            targets={},
+            auxiliary_inputs={"lesion": np.ones((4, 4), np.uint8)},
+        )
+    )
+
+    assert len(seen) == 2

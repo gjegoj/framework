@@ -5,8 +5,14 @@ from __future__ import annotations
 from typing import Any
 
 from src.assembly.data import build_data_schema
-from src.config.data import DEFAULT_INPUT_LOADER, InputColumnConfig
+from src.config.data import (
+    DEFAULT_AUXILIARY_LOADER,
+    DEFAULT_INPUT_LOADER,
+    AuxiliaryInputColumnConfig,
+    InputColumnConfig,
+)
 from src.data import ImageLoader
+from src.data.loaders import MaskLoader
 from src.data.registry import input_loader_registry
 from tests.support.configs import DATA, paper_config
 
@@ -25,6 +31,18 @@ def test_an_input_needs_nothing_but_its_column() -> None:
 def test_the_default_still_resolves_to_a_real_registered_loader() -> None:
     """The config layer names loaders, it does not import them; this keeps the name honest."""
     assert isinstance(input_loader_registry.create(DEFAULT_INPUT_LOADER), ImageLoader)
+
+
+def test_the_auxiliary_default_resolves_to_the_mask_loader() -> None:
+    """The same honesty for the other default, which differs because the common case does:
+    what rides beside the image for an augmentation to read is a mask, not a picture."""
+    assert isinstance(input_loader_registry.create(DEFAULT_AUXILIARY_LOADER), MaskLoader)
+
+
+def test_an_auxiliary_input_needs_nothing_but_its_column() -> None:
+    declared = AuxiliaryInputColumnConfig.model_validate({"column": "mask_path"})
+
+    assert declared.loader.name == DEFAULT_AUXILIARY_LOADER
 
 
 def test_a_declared_loader_keeps_its_arguments() -> None:

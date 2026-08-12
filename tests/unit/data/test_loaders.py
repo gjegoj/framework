@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 
 from src.data import ImageLoader
+from src.data.loaders import MaskLoader
 from src.data.registry import input_loader_registry
 
 BLUE_IN_BGR = (255, 0, 0)
@@ -70,6 +71,16 @@ def test_an_undecodable_file_is_reported_as_such(tmp_path: Path) -> None:
         ImageLoader()(broken)
 
 
-def test_registered_under_the_image_key() -> None:
-    assert set(input_loader_registry) == {"image"}
+def test_the_registry_holds_the_two_kinds_of_array_a_column_may_hold() -> None:
+    """A picture and a mask — the distinction the pipeline needs, and the only one it
+    can be told: config declares a loader, never a kind."""
+    assert set(input_loader_registry) == {"image", "mask"}
     assert isinstance(input_loader_registry.create("image"), ImageLoader)
+    assert isinstance(input_loader_registry.create("mask"), MaskLoader)
+
+
+def test_only_the_mask_loader_calls_itself_spatial() -> None:
+    """Grayscale cannot imply it: an X-ray is a grayscale *photograph*, and interpolating
+    or normalising it is correct — doing either to a mask is not."""
+    assert MaskLoader.spatial is True
+    assert getattr(ImageLoader(grayscale=True), "spatial", False) is False

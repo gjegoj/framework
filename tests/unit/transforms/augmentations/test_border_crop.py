@@ -38,6 +38,12 @@ def test_the_mark_is_not_hard_coded() -> None:
     assert cropped(1, applied_label=0).targets["was_cropped"] == 0
 
 
+def test_the_mark_may_be_a_class_name() -> None:
+    """Encoding runs after the transforms, so the mark is a raw value — a readable
+    name beats knowing which index a sorted vocabulary will assign."""
+    assert cropped(1, applied_label="cropped").targets["was_cropped"] == "cropped"
+
+
 def test_a_minimum_crop_is_guaranteed_on_some_side() -> None:
     """Without it a uniform draw may trim two pixels and call the sample cropped."""
     for seed in range(12):

@@ -18,9 +18,14 @@ transforms:
   test: *pipeline
 ```
 
-End with `ToTensorV2`: loaders and encoders produce raw values on purpose — a
-mask has to be croppable alongside its image — and the pipeline is where they
-become model-ready tensors.
+End with `ToTensorV2`: loaders produce raw values on purpose — a mask has to be
+croppable alongside its image — and the pipeline is where they become
+model-ready tensors.
+
+Every column is **loaded** before the pipeline and every target **encoded**
+after it. That order is what lets an augmentation write a target: it hands the
+encoder a raw value — a class name, a number — rather than overwriting one the
+encoder already made.
 
 A stage left out of the section keeps its samples exactly as the loaders
 produced them, which for images means HWC `uint8` and a conv layer that
@@ -148,7 +153,8 @@ annotated:
 tasks:
   angle:
     preset: classification
-    target: angle          # a column of zeros in the annotation table
+    target: angle          # a stub column of zeros in the annotation table
+    classes: {0: "0", 1: "1", 2: "2", 3: "3"}
 
 transforms:
   train:
@@ -161,6 +167,12 @@ transforms:
       - {_target_: albumentations.pytorch.ToTensorV2}
 ```
 
+> **An online target declares its vocabulary.** The stub column holds one value,
+> so a fitted vocabulary would hold one class — and the augmentation writes three
+> more. What cannot be learned from the table must be declared: `classes:` for a
+> categorical target, `low`/`high` for a binned one. Without it the run dies on
+> its first batch with `IndexError: Target 2 is out of bounds`.
+
 `label_targets` is what binds a column to the rule; the augmentation itself
 knows nothing about column names, which is why the same one serves any task.
 Every key declared there is rewritten by every augmentation that has a label
@@ -171,6 +183,12 @@ class comes from the crop applying and the negative from it not applying, so the
 column starts as the negative class throughout:
 
 ```yaml
+tasks:
+  crop_flag:
+    preset: classification
+    target: was_cropped     # a stub column of "intact" throughout
+    classes: {0: intact, 1: cropped}
+
 transforms:
   train:
     _target_: src.transforms.AlbumentationsTransform
@@ -179,16 +197,55 @@ transforms:
       - _target_: src.transforms.augmentations.RandomBorderCrop
         crop_left: 0.3
         crop_right: 0.3
-        min_crop: 0.15      # a two-pixel trim is not worth labelling as cropped
-        p: 0.5              # half the samples stay uncropped — that is the other class
+        min_crop: 0.15         # a two-pixel trim is not worth labelling as cropped
+        applied_label: cropped # the raw class name; encoding happens after
+        p: 0.5                 # half the samples stay uncropped — that is the other class
       - {_target_: albumentations.Resize, height: 224, width: 224}
       - {_target_: albumentations.Normalize}
       - {_target_: albumentations.pytorch.ToTensorV2}
 ```
 
-`applied_label` (default 1) is what the label becomes when the crop applies. It
-is a parameter because a label encoder sorts its vocabulary: with classes named
-`cropped` and `original`, "cropped" is 0.
+`applied_label` is what the column holds when the crop applies. Write it as the
+table writes it — encoding runs after the transforms, so the declared vocabulary
+turns `cropped` into its index. There is no need to work out which index a
+sorted vocabulary will assign.
+
+**A number the augmentation draws** — the same idea for a continuous signal. The
+temperature `MaskedPlanckianJitter` applies becomes the target, and a binned
+encoder turns it into a distribution the head can learn — *after* the transforms,
+on the drawn value. The range cannot be learned from a stub column, so it is
+declared:
+
+Its mask rides as an auxiliary input ([data — columns the model never
+sees](data.md#columns-the-model-never-sees)): the augmentation reads it, the
+pipeline keeps it aligned with the image, and it never reaches the batch.
+
+```yaml
+data:
+  inputs: {image: {column: image_path}}
+  auxiliary_inputs: {lesion: {column: mask_path}}
+
+tasks:
+  warmth:
+    preset: regression
+    target: warmth          # a stub column; the augmentation writes the real value
+    target_encoder: {name: gaussian_bins, bins: 20, low: 3000, high: 4600}
+
+transforms:
+  train:
+    _target_: src.transforms.AlbumentationsTransform
+    label_targets: [warmth]
+    transforms:
+      - _target_: src.transforms.augmentations.MaskedPlanckianJitter
+        mask_key: lesion          # names which auxiliary input bounds the warmth
+        temperature_range: [3400, 4200]
+        spread: 1400
+        roughness: 0.5
+        p: 1.0
+      - {_target_: albumentations.Resize, height: 224, width: 224}
+      - {_target_: albumentations.Normalize}
+      - {_target_: albumentations.pytorch.ToTensorV2}
+```
 
 ## Mixing whole samples
 

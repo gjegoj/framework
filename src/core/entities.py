@@ -37,6 +37,17 @@ class Sample:
 
     inputs: dict[str, Any]
     targets: dict[str, Any]
+    auxiliary_inputs: dict[str, Any] = field(default_factory=dict)
+    """Arrays only the augmentations read — a mask that bounds a colour shift.
+
+    Not model inputs and not targets: nothing is learned from them, and nothing
+    downstream consumes them. ``collate_samples`` builds a ``Batch`` from ``inputs``,
+    ``targets`` and ``meta`` alone, so whatever rides here dies with the sample — no
+    memory is spent moving it to a device, and forgetting to drop it is not a mistake
+    anyone can make. A mask the model should *consume* is a regular input declared
+    with the ``mask`` loader; one it should *learn from* is a task's target.
+    """
+
     meta: dict[str, Any] = field(default_factory=dict)
 
 

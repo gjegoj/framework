@@ -103,9 +103,11 @@ class MaskedPlanckianJitter(A.CustomTransformsApplyMixin, A.ImageOnlyTransform):
     real one for a mask that came from ground truth, where the step lines up with the
     object exactly.
 
-    Bind both columns with
-    ``AlbumentationsTransform(spatial_targets=["lesion"], label_targets=["warmth"])``,
-    then name the mask here with ``mask_key="lesion"``.
+    Bind the label with ``AlbumentationsTransform(label_targets=["warmth"])``, and carry
+    the mask as an auxiliary input — ``data.auxiliary_inputs: {lesion: {column: mask_path}}``
+    reaches the pipeline on its own, and never reaches the batch. A mask that is *also* a
+    segmentation target arrives the same way through ``spatial_targets``; ``mask_key``
+    reads either, and names which one this augmentation is about.
 
     Parameters:
         mask_key (str): Which of the sample's spatial targets bounds the warmth. Named
@@ -248,7 +250,8 @@ def _region(data: Mapping[str, Any], key: str, shape: tuple[int, ...]) -> np.nda
         offered = ", ".join(f"'{name}'" for name in sorted(data)) or "nothing"
         raise KeyError(
             f"MaskedPlanckianJitter bounds its warmth by '{key}', which this pipeline was not given. "
-            f"Declare it with AlbumentationsTransform(spatial_targets=['{key}']). It was handed {offered}."
+            f"Declare it under data.auxiliary_inputs (or, for a mask that is also a task's target, "
+            f"AlbumentationsTransform(spatial_targets=['{key}'])). It was handed {offered}."
         )
     region = np.asarray(data[key]) > 0
     if region.ndim > 2:
