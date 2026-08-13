@@ -239,8 +239,9 @@ transforms:
       - _target_: src.transforms.augmentations.MaskedPlanckianJitter
         mask_key: lesion          # names which auxiliary input bounds the warmth
         temperature_range: [3400, 4200]
-        spread: 1400
-        roughness: 0.5
+        spread: [200, 1400]       # a pair draws a fresh swing per sample; a number is fixed
+        roughness: [0.05, 0.6]    # likewise: one sample fades across, the next is mottled
+        tint: 0.1                 # an off-locus cast, fading to nothing at 6500 K
         p: 1.0
       - {_target_: albumentations.Resize, height: 224, width: 224}
       - {_target_: albumentations.Normalize}

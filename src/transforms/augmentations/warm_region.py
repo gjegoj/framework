@@ -28,12 +28,24 @@ A region meant to look patchy has to be centred near the warm end.
 """
 
 COOLEST = 6500
-"""The high end of the default range: the shift is there, but not as a colour.
+"""The high end of the default range, and the anchor every coefficient is normalised to.
 
-Not exactly neutral, and the table cannot be — red passes 1.0 near 7150 K while blue
-passes it near 6150, so no single temperature leaves both channels untouched. 6500
-is where the two multipliers meet, which is the closest thing to "no yellowing"
-this transform has.
+The vendor's table is not neutral anywhere — at 6500 K it still multiplies red by
+1.046 and blue by 1.039, a ~4% brightness pedestal on a region whose label says
+"not warmed", and a shortcut a model can read. So the multipliers here are divided
+by their own value at this anchor: at 6500 K they are exactly one, the region is
+byte-for-byte the original, and a sample this transform leaves cool is
+indistinguishable from one ``p`` skipped. 6500 is D65 — neutral daylight by
+definition — which is what makes it the right zero, not merely the table's edge.
+"""
+
+MOST_TINT = 0.5
+"""The far end of what ``tint`` may ask for — a gain swing of half a channel's light.
+
+Around 0.1 the cast is plainly visible on white; at 0.5 a channel can arrive at half
+or one-and-a-half strength, which is the outer edge of "a different shade of warm".
+Past it the result reads as a broken sensor rather than a colour, so the constructor
+refuses rather than lets a config typo produce one silently.
 """
 
 _SPREADABLE = 2
@@ -116,12 +128,31 @@ class MaskedPlanckianJitter(A.CustomTransformsApplyMixin, A.ImageOnlyTransform):
         temperature_range (tuple[int, int]): Kelvin the region's **mean** is drawn from,
             inclusive at both ends. Individual pixels run past it by up to half the
             spread; the coefficient table is what bounds them.
-        spread (int): The full width, in kelvin, of the swing across the region — so a
-            pixel sits at most ``spread / 2`` from the drawn centre. ``0`` warms the
-            region evenly, which is ``planckian_jitter`` exactly.
-        roughness (float): How fine the patches are, in ``[0, 1]``. Measured by the
-            correlation between neighbouring pixels: ``0.1`` gives one broad gradient
-            (0.99), ``0.5`` a few large patches (0.90), ``0.9`` a fine mottle (0.37).
+        spread (int | tuple[int, int]): The full width, in kelvin, of the swing across
+            the region — so a pixel sits at most half of it from the drawn centre. A
+            single number is that width every time; a range draws a fresh width per
+            application, so one sample is even and the next is mottled. ``0`` warms
+            the region evenly, which is ``planckian_jitter`` exactly.
+        tint (float): How far, as a fraction, each channel's gain may wander off the
+            planckian locus — every application draws one gain per channel from
+            ``[1 - tint, 1 + tint]`` and multiplies it into the warming. ``0.1`` is a
+            visible cast; the locus itself only ever trades red against blue, so this
+            is where any green-versus-magenta variety comes from. **The cast follows
+            the warmth, per pixel**: at 3000 K a gain applies whole, halfway it
+            applies by half, and at 6500 K it is gone — a cast is a property of the
+            illumination, so where nothing warms, nothing tinges, and a cool sample
+            stays the original. Multiplicative rather than an additive ``RGBShift``
+            on purpose: gains compose with the planckian coefficients as one
+            illumination and leave black pixels black, where an additive shift would
+            tint pigment that reflects no light. The label does not report it — the
+            tint is nuisance variation, there so the regression cannot pin its answer
+            to one exact hue.
+        roughness (float | tuple[float, float]): How fine the patches are, in
+            ``[0, 1]``. Measured by the correlation between neighbouring pixels:
+            ``0.1`` gives one broad gradient (0.99), ``0.5`` a few large patches
+            (0.90), ``0.9`` a fine mottle (0.37). A single number is that texture
+            every time; a range draws a fresh one per application, so one sample
+            fades across and the next is mottled.
         mode (Mode): ``blackbody`` follows an ideal radiator, ``cied`` the CIE daylight
             series — which starts at 4000 K and so cannot reach the warmest end.
         p (float): Probability of warming at all. Below 1, the label keeps whatever the
@@ -133,8 +164,9 @@ class MaskedPlanckianJitter(A.CustomTransformsApplyMixin, A.ImageOnlyTransform):
         self,
         mask_key: str,
         temperature_range: tuple[int, int] = (WARMEST, COOLEST),
-        spread: int = 0,
-        roughness: float = 0.5,
+        spread: int | tuple[int, int] = 0,
+        roughness: float | tuple[float, float] = 0.5,
+        tint: float = 0.0,
         mode: Mode = "blackbody",
         p: float = 1.0,
     ) -> None:
@@ -148,14 +180,28 @@ class MaskedPlanckianJitter(A.CustomTransformsApplyMixin, A.ImageOnlyTransform):
                 f"'{mode}' is tabulated over {covered[0]}..{covered[1]} K, "
                 f"and temperature_range asks for {low}..{high}."
             )
-        if spread < 0:
+        # One number is a width used every time; a pair is the range a width is drawn
+        # from per application. Held as a range either way, so one code path draws.
+        listed = [spread, spread] if isinstance(spread, int) else [int(one) for one in spread]
+        if len(listed) != 2 or listed[0] > listed[1]:
+            raise ValueError(f"spread is a width or a (low, high) range of widths, got {spread}.")
+        if listed[0] < 0:
             raise ValueError(f"spread is a width in kelvin and cannot be negative, got {spread}.")
-        if not 0.0 <= roughness <= 1.0:
+        texture = [roughness, roughness] if isinstance(roughness, int | float) else [float(one) for one in roughness]
+        if len(texture) != 2 or texture[0] > texture[1]:
+            raise ValueError(f"roughness is a value or a (low, high) range of them, got {roughness}.")
+        if not 0.0 <= texture[0] <= texture[1] <= 1.0:
             raise ValueError(f"roughness runs from 0 (one broad gradient) to 1 (a fine mottle), got {roughness}.")
+        if not 0.0 <= tint <= MOST_TINT:
+            raise ValueError(
+                f"tint is a fractional gain swing per channel and runs 0..{MOST_TINT} — beyond that a "
+                f"channel can lose most of its light, which is a colour failure, not a cast. Got {tint}."
+            )
         self.mask_key = mask_key
         self.temperature_range = temperature_range
-        self.spread = spread
-        self.roughness = roughness
+        self.spread = (listed[0], listed[1])
+        self.roughness = (texture[0], texture[1])
+        self.tint = tint
         self.mode = mode
 
     def get_params_dependent_on_data(self, params: dict[str, Any], data: Mapping[str, Any]) -> dict[str, Any]:
@@ -163,32 +209,53 @@ class MaskedPlanckianJitter(A.CustomTransformsApplyMixin, A.ImageOnlyTransform):
         height, width = params["shape"][:2]
         if not region.any():
             # Nothing to warm, so nothing is drawn; see the class docstring.
-            return {"temperature": float(self.temperature_range[1]), "field": np.empty(0), "region": region}
+            return {
+                "temperature": float(self.temperature_range[1]),
+                "field": np.empty(0),
+                "region": region,
+                "gains": (1.0, 1.0, 1.0),
+            }
         centre = self.py_random.randint(*self.temperature_range)
-        field = self._field(centre, region, (int(height), int(width)))
+        field = self._field(
+            centre,
+            self.py_random.randint(*self.spread),
+            self.py_random.uniform(*self.roughness),
+            region,
+            (int(height), int(width)),
+        )
+        gains = tuple(self.py_random.uniform(1.0 - self.tint, 1.0 + self.tint) for _ in range(3))
         # Read back rather than reported as drawn: where the swing ran off the table it
         # was clipped, and the label has to be what the region actually is.
-        return {"temperature": float(field.mean()), "field": field, "region": region}
+        return {"temperature": float(field.mean()), "field": field, "region": region, "gains": gains}
 
-    def apply(self, img: np.ndarray, field: np.ndarray, region: np.ndarray, **params: Any) -> np.ndarray:
+    def apply(
+        self,
+        img: np.ndarray,
+        field: np.ndarray,
+        region: np.ndarray,
+        gains: tuple[float, float, float],
+        **params: Any,
+    ) -> np.ndarray:
         warmed = img.copy()
-        warmed[region] = _warmed(img[region], field, self.mode)
+        warmed[region] = _warmed(img[region], field, self.mode, gains)
         return warmed
 
     def apply_to_label(self, label: Any, temperature: float, **params: Any) -> float:
         return int(temperature)
 
-    def _field(self, centre: int, region: np.ndarray, shape: tuple[int, int]) -> np.ndarray:
+    def _field(
+        self, centre: int, spread: int, roughness: float, region: np.ndarray, shape: tuple[int, int]
+    ) -> np.ndarray:
         """One temperature per warmed pixel, in the order ``img[region]`` reads them."""
-        if not self.spread or max(shape) < _SPREADABLE:
+        if not spread or max(shape) < _SPREADABLE:
             return np.full(int(region.sum()), float(centre))
         plasma = generate_plasma_pattern(
             target_shape=shape,
-            roughness=self.roughness,
+            roughness=roughness,
             random_generator=self.random_generator,
         )[region]
         spanned = _by_area(plasma)
-        return np.clip(centre + self.spread * (spanned - spanned.mean()), *_bounds(self.mode))
+        return np.clip(centre + spread * (spanned - spanned.mean()), *_bounds(self.mode))
 
 
 def _by_area(values: np.ndarray) -> np.ndarray:
@@ -212,7 +279,9 @@ def _bounds(mode: Mode) -> tuple[int, int]:
     return min(covered), max(covered)
 
 
-def _warmed(pixels: np.ndarray, field: np.ndarray, mode: Mode) -> np.ndarray:
+def _warmed(
+    pixels: np.ndarray, field: np.ndarray, mode: Mode, gains: tuple[float, float, float] = (1.0, 1.0, 1.0)
+) -> np.ndarray:
     """The warmed pixels, each at its own temperature; ``pixels`` is ``[N, 3]``.
 
     The coefficients come from the table ``planckian_jitter`` itself reads, and are
@@ -221,10 +290,19 @@ def _warmed(pixels: np.ndarray, field: np.ndarray, mode: Mode) -> np.ndarray:
     intuitive reading and the wrong one: measured, it drifts up to 0.005 in the blue
     multiplier, and blue is where nearly all the yellowing lives.
 
-    Over a constant field this reproduces ``planckian_jitter`` byte for byte. The cast
-    truncates, as the vendor's uint8 lookup table does — measured, rounding instead
-    disagrees on 29% of channels by one grey level — while on a float image the same
-    expression is no cast at all.
+    Two deliberate departures from ``planckian_jitter``, both anchored at ``COOLEST``:
+
+    - **The multipliers are normalised to their value at 6500 K**, so a pixel whose
+      field says neutral is the original byte for byte — see ``COOLEST`` for why the
+      vendor's own table would brighten it by 4% instead, and what that teaches a model.
+    - **The tint fades with the warmth, per pixel**: each gain is pulled towards one by
+      how close that pixel's temperature is to neutral. A cast is a property of the
+      illumination, and a lamp too weak to yellow is too weak to tinge — without this,
+      a ±15% gain would dwarf the 8% shift that is all a 6000 K pixel gets.
+
+    The cast truncates, as the vendor's uint8 lookup table does — measured, rounding
+    instead disagrees on 29% of channels by one grey level — while on a float image
+    the same expression is no cast at all.
 
     Only the warmed pixels are passed in, so the cost follows the region rather than the
     frame: a lesion covering a twentieth of a 512×512 image does a twentieth of the work.
@@ -233,9 +311,14 @@ def _warmed(pixels: np.ndarray, field: np.ndarray, mode: Mode) -> np.ndarray:
     temperatures = np.array(sorted(table), dtype=np.float64)
     triples = np.array([table[int(one)] for one in temperatures], dtype=np.float64)
     red, green, blue = (np.interp(field, temperatures, triples[:, channel]) for channel in range(3))
+    neutral_red, neutral_green, neutral_blue = (
+        np.interp(COOLEST, temperatures, triples[:, channel]) for channel in range(3)
+    )
+    warmth = np.clip((COOLEST - field) / (COOLEST - WARMEST), 0.0, 1.0)
     warmed = pixels.astype(np.float64)
-    warmed[:, 0] *= red / green
-    warmed[:, 2] *= blue / green
+    warmed[:, 0] *= (1.0 + (gains[0] - 1.0) * warmth) * (red / green) / (neutral_red / neutral_green)
+    warmed[:, 1] *= 1.0 + (gains[1] - 1.0) * warmth
+    warmed[:, 2] *= (1.0 + (gains[2] - 1.0) * warmth) * (blue / green) / (neutral_blue / neutral_green)
     return np.asarray(np.clip(warmed, 0, MAX_VALUES_BY_DTYPE[pixels.dtype]), dtype=pixels.dtype)
 
 

@@ -142,3 +142,61 @@ def test_declined_counts_only_what_the_budget_turned_away() -> None:
     cache = warmed(RamCache(max_gib=1.5 / 1024), values)
 
     assert cache.usage().declined == 1
+
+
+def test_reading_stops_at_the_first_file_the_budget_refuses() -> None:
+    """Decoding files only to discard them is the exact cost a cache exists to remove."""
+    values = {f"{index}.png": array(1.0) for index in range(20)}
+    cache = RamCache(max_gib=2.5 / 1024, workers=1)
+    calls = 0
+
+    def load(key: str) -> object:
+        nonlocal calls
+        calls += 1
+        cache.put(key, values[key])
+        return values[key]
+
+    cache.warm(list(values), load)
+
+    assert calls == 3  # two fit; the third was refused and raised the stop
+    assert cache.usage().declined == 20 - cache.usage().files
+
+
+def test_a_full_cache_warms_nothing_more() -> None:
+    """Later columns and stages skip whole — and are not guessed into the count:
+    unread cells could as well be scalars, which were never going to be cached."""
+    cache = warmed(RamCache(max_gib=1.5 / 1024, workers=1), {"a.png": array(1.0), "b.png": array(1.0)})
+    calls = 0
+
+    def load(key: str) -> object:
+        nonlocal calls
+        calls += 1
+        return array(0.1)
+
+    cache.warm(["c.png", "d.png"], load)
+
+    assert cache.usage().full
+    assert calls == 0
+    assert cache.usage().declined == 1
+
+
+def test_kind_refusals_do_not_end_the_warm_up() -> None:
+    """A scalar column is declined for its kind; a cache with room keeps reading."""
+    cache = RamCache(max_gib=1.0)
+    warmed(cache, {"temperature": 5300.0, "note": "a string"})
+
+    assert not cache.usage().full
+
+    warmed(cache, {"a.png": array(1.0)})
+    assert cache.get("a.png") is not None
+
+
+def test_the_declined_count_is_deterministic_under_threads() -> None:
+    """Which file gets refused in a ``put`` and which is skipped in a read depends
+    on thread timing; their sum — pending minus stored — must not."""
+    values: dict[str, object] = {f"{index}.png": array(1.0) for index in range(30)}
+
+    cache = warmed(RamCache(max_gib=5.5 / 1024, workers=8), values)
+
+    assert cache.usage().files == 5
+    assert cache.usage().declined == 25

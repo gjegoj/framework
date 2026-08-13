@@ -267,8 +267,9 @@ def _log_cache_summary(usage: CacheUsage, taken: Mapping[str, int]) -> None:
         usage.capacity_bytes / BYTES_PER_GIB,
         f" ({breakdown})" if breakdown else "",
     )
-    if usage.declined:
+    if usage.full:
         log.info(
-            "Cache budget full: %d file(s) did not fit and will be read from disk each epoch.",
+            "Cache budget full: %d file(s) were turned away while warming, and everything "
+            "after them was skipped without reading; all of it comes from disk each epoch.",
             usage.declined,
         )

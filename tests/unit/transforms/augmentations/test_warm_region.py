@@ -58,7 +58,9 @@ def warmed(
     return transform(Sample(inputs={"image": given}, targets={"lesion": mask(filled, whole), "warmth": 0.0}))
 
 
-def drawn(spread: int, seed: int = 7, region: np.ndarray | None = None, **kwargs: Any) -> dict[str, Any]:
+def drawn(
+    spread: int | tuple[int, int], seed: int = 7, region: np.ndarray | None = None, **kwargs: Any
+) -> dict[str, Any]:
     """The parameters the transform drew, so an invariant can be read rather than inferred."""
     transform = MaskedPlanckianJitter(mask_key="lesion", spread=spread, p=1.0, **kwargs)
     transform.set_random_seed(seed)
@@ -137,18 +139,29 @@ def test_an_empty_mask_warms_nothing_and_says_so() -> None:
 # --- the swing ---------------------------------------------------------------------
 
 
-def test_an_even_warm_reproduces_the_vendor_function_byte_for_byte() -> None:
-    """``spread=0`` must be ``planckian_jitter`` and nothing else.
-
-    Per-pixel coefficients are read from the vendor's own table rather than by calling
-    its function, so this is what pins the two together — over a textured image and
-    every channel value, not one grey.
-    """
+def test_the_neutral_end_is_the_original_byte_for_byte() -> None:
+    """6500 K has to *mean* not warmed — see ``COOLEST`` for what the vendor's table
+    does instead. Even the widest tint must vanish there, or a model separates
+    "labelled cool" from "skipped by p" on a 4% brightness pedestal."""
     given = textured()
-    sample = warmed(whole=True, pixels=given.copy(), spread=0)
 
-    expected = planckian_jitter(given.copy(), int(sample.targets["warmth"]), mode="blackbody")
-    assert np.array_equal(sample.inputs["image"], expected)
+    sample = warmed(whole=True, pixels=given.copy(), spread=0, tint=0.5, temperature_range=(COOLEST, COOLEST))
+
+    assert np.array_equal(sample.inputs["image"], given)
+
+
+def test_an_even_warm_follows_the_vendor_curve_from_the_neutral_anchor() -> None:
+    """The departure from ``planckian_jitter`` is the anchor, not the curve: warming
+    at T is the vendor's shift at T relative to its own at 6500. Measured per channel
+    on a float image, where the arithmetic carries no rounding to hide behind."""
+    given = np.full((SIDE, SIDE, 3), 0.5, dtype=np.float32)
+
+    sample = warmed(whole=True, pixels=given.copy(), spread=0, temperature_range=(4200, 4200))
+
+    ours = np.asarray(sample.inputs["image"])[0, 0] / 0.5
+    vendor = planckian_jitter(given.copy(), 4200, mode="blackbody")[0, 0] / 0.5
+    anchor = planckian_jitter(given.copy(), COOLEST, mode="blackbody")[0, 0] / 0.5
+    assert np.allclose(ours, vendor / anchor, atol=1e-3)
 
 
 def test_without_a_spread_the_whole_region_is_one_temperature() -> None:
@@ -208,16 +221,79 @@ def test_pixels_run_past_the_declared_range_but_never_past_the_table() -> None:
     assert field.min() >= WARMEST  # never past what is tabulated
 
 
+def neighbour_correlation(roughness: float | tuple[float, float], seed: int = 7) -> float:
+    """How alike neighbouring pixels are — which is what 'feature size' means here."""
+    field = drawn(spread=1000, seed=seed, region=mask(whole=True), roughness=roughness, temperature_range=PATCHY)[
+        "field"
+    ]
+    laid_out = field.reshape(SIDE, SIDE)  # a whole mask reads back in row-major order
+    return float(np.corrcoef(laid_out[:, :-1].ravel(), laid_out[:, 1:].ravel())[0, 1])
+
+
 def test_roughness_sets_how_fine_the_patches_are() -> None:
-    """Low roughness is one broad gradient, high roughness a mottle; measured as the
-    correlation between neighbouring pixels, which is what 'feature size' means here."""
-
-    def neighbour_correlation(roughness: float) -> float:
-        field = drawn(spread=1000, region=mask(whole=True), roughness=roughness, temperature_range=PATCHY)["field"]
-        laid_out = field.reshape(SIDE, SIDE)  # a whole mask reads back in row-major order
-        return float(np.corrcoef(laid_out[:, :-1].ravel(), laid_out[:, 1:].ravel())[0, 1])
-
+    """Low roughness is one broad gradient, high roughness a mottle."""
     assert neighbour_correlation(0.1) > neighbour_correlation(0.9)
+
+
+def test_a_roughness_range_draws_a_fresh_texture_per_application() -> None:
+    """One sample fades across, the next is mottled — a fixed 0.5 gives neither:
+    measured over these same seeds it stays inside 0.86..0.92."""
+    correlations = [neighbour_correlation((0.05, 0.95), seed=seed) for seed in range(1, 9)]
+
+    assert min(correlations) < 0.6  # some draw came out fine-grained
+    assert max(correlations) > 0.95  # and some a broad gradient
+
+
+def test_a_spread_range_draws_a_fresh_width_per_application() -> None:
+    """The point of declaring a range: one sample nearly even, the next swung wide."""
+    swings = [
+        float(f["field"].max() - f["field"].min())
+        for seed in range(1, 9)
+        if (f := drawn(spread=(0, 1200), seed=seed, temperature_range=PATCHY, region=mask(whole=True)))
+    ]
+
+    assert min(swings) < 400
+    assert max(swings) > 900
+
+
+def test_a_single_number_spread_is_that_width_every_time() -> None:
+    """The pre-range contract, kept: a plain int never became a lottery."""
+    swings = [
+        float(f["field"].max() - f["field"].min())
+        for seed in range(1, 6)
+        if (f := drawn(spread=1000, seed=seed, temperature_range=PATCHY, region=mask(whole=True)))
+    ]
+
+    assert all(900 <= swing <= 1000 for swing in swings)
+
+
+def test_the_tint_varies_the_hue_at_one_temperature() -> None:
+    """Two draws at the same kelvin come out different shades — the whole point of it."""
+    first = warmed(seed=3, tint=0.3, temperature_range=(3500, 3500), spread=0).inputs["image"][INSIDE]
+    second = warmed(seed=4, tint=0.3, temperature_range=(3500, 3500), spread=0).inputs["image"][INSIDE]
+
+    assert not np.array_equal(first, second)
+
+
+def test_the_tint_fades_as_the_region_cools() -> None:
+    """A cast is the illumination's: the same gains that recolour a 3400 K region must
+    barely graze a 6400 K one, or 'almost neutral' arrives visibly repainted."""
+
+    def cast(temperature: int) -> int:
+        plain = warmed(seed=5, tint=0.0, temperature_range=(temperature, temperature), spread=0)
+        tinted = warmed(seed=5, tint=0.4, temperature_range=(temperature, temperature), spread=0)
+        return int(np.abs(plain.inputs["image"].astype(int) - tinted.inputs["image"].astype(int)).max())
+
+    assert cast(6400) <= 2
+    assert cast(3400) > 20
+
+
+def test_the_label_does_not_report_the_tint() -> None:
+    """The tint is nuisance variation by design; kelvin stays about warmth alone."""
+    plain = warmed(seed=6, tint=0.0, temperature_range=PATCHY, spread=600).targets["warmth"]
+    tinted = warmed(seed=6, tint=0.5, temperature_range=PATCHY, spread=600).targets["warmth"]
+
+    assert plain == tinted
 
 
 def test_the_field_carries_one_temperature_per_warmed_pixel() -> None:
@@ -279,7 +355,13 @@ def test_a_mask_at_another_resolution_is_refused_by_shape() -> None:
         ({"temperature_range": (2000, 6500)}, "tabulated"),
         ({"temperature_range": (3000, 6500), "mode": "cied"}, "tabulated"),
         ({"spread": -1}, "cannot be negative"),
+        ({"spread": (-5, 10)}, "cannot be negative"),
+        ({"spread": (800, 200)}, "range of widths"),
         ({"roughness": 1.5}, "0 .* to 1"),
+        ({"roughness": (0.9, 0.1)}, "range of them"),
+        ({"roughness": (0.2, 1.4)}, "0 .* to 1"),
+        ({"tint": -0.1}, "fractional gain swing"),
+        ({"tint": 0.6}, "fractional gain swing"),
     ],
 )
 def test_a_setting_the_table_cannot_serve_is_refused_at_construction(kwargs: dict[str, Any], expected: str) -> None:

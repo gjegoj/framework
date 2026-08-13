@@ -30,15 +30,21 @@ NAMESPACE_SEPARATOR = "\0"
 class CacheUsage:
     """How full a cache is, in the terms its budget was declared in.
 
-    ``declined`` counts only what the *budget* turned away. A value refused for
+    ``declined`` counts only what the *budget* turned away — decoded and refused,
+    or skipped once the budget had already filled mid-column. A value refused for
     its kind — a scalar target, a string — is not in it: those are never cached
     by design, and counting them would report a full cache that is not.
+
+    ``full`` is the budget's own verdict: a file did not fit, and warming stopped
+    reading. Distinct from ``declined > 0`` in meaning, not just in type — it is
+    the fact the summary line keys on, where ``declined`` is only its size.
     """
 
     files: int
     used_bytes: int
     capacity_bytes: int
     declined: int
+    full: bool
 
 
 class LoaderCache(ABC):
@@ -148,9 +154,12 @@ class RamCache(LoaderCache):
     second implementation of this port rather than a change to this one.
 
     Parameters:
-        max_gib (float): Memory budget. The cache stops taking values at it and
-            the remaining files are read from disk each epoch, as they would be
-            without a cache at all.
+        max_gib (float): Memory budget. The first file that does not fit ends the
+            warm-up's *reading*, not just its storing — decoding files only to
+            discard them is the cost a cache exists to remove. What did not make
+            it in is read from disk each epoch, as it would be without a cache at
+            all. Deliberately forgone: a smaller file behind the one that filled
+            the budget might still have fit.
         workers (int): Threads used to warm it. Image decoding releases the GIL,
             so these genuinely overlap.
     """
@@ -165,6 +174,7 @@ class RamCache(LoaderCache):
         self._store: dict[str, np.ndarray] = {}
         self._bytes = 0
         self._declined = 0
+        self._full = False
         self._filling = False
         self._lock = Lock()
 
@@ -182,13 +192,22 @@ class RamCache(LoaderCache):
             if self._bytes + int(value.nbytes) > self._max_bytes:
                 # Counted apart from the kind-based refusals above: only these mean
                 # "the budget ran out", which is the one fact worth a closing log line.
+                # The flag is the stop order: a smaller file behind this one might
+                # still have fit, but hunting for it means decoding everything and
+                # discarding most of it — the exact cost warming exists to remove.
                 self._declined += 1
+                self._full = True
                 return
             self._store[key] = value
             self._bytes += int(value.nbytes)
 
     @override
     def warm(self, keys: Iterable[str], load: Callable[[Any], Any], description: str = "Caching files") -> None:
+        # A full cache reads nothing more: whole later columns are skipped here, and
+        # deliberately *not* added to ``declined`` — without decoding, whether those
+        # cells are files or scalars is unknowable, and the count must not guess.
+        if self._full:
+            return
         # Skips what this store already holds *under the keys it is given*. That is the
         # whole of what it can do, and it is worth saying which case it does not reach:
         # a loader wrapped with :func:`cached` over a `scoped` view writes namespaced
@@ -200,6 +219,14 @@ class RamCache(LoaderCache):
             return
 
         def read(key: str) -> None:
+            # Filling ended mid-column, so this key *is* a file that will not fit —
+            # counted, unlike the wholesale skip above. Which keys land here rather
+            # than in a decoded-then-refused ``put`` depends on thread timing, but
+            # the column's total — pending minus stored — does not.
+            if self._full:
+                with self._lock:
+                    self._declined += 1
+                return
             try:
                 load(key)
             except Exception as error:  # noqa: BLE001 — one unreadable file must not abort a run
@@ -220,6 +247,7 @@ class RamCache(LoaderCache):
             used_bytes=self._bytes,
             capacity_bytes=self._max_bytes,
             declined=self._declined,
+            full=self._full,
         )
 
     def _quota_line(self) -> str:

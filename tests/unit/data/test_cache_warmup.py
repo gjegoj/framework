@@ -153,24 +153,30 @@ def test_the_warmup_closes_with_one_summary_naming_who_took_how_much(
     assert "of 1.00 GiB" in summaries[0]
 
 
-def test_a_full_budget_is_said_out_loud_with_the_count_that_did_not_fit(
+def test_a_full_budget_is_said_out_loud_with_the_count_that_was_turned_away(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     """Silence here looks like a warmed cache that is not; the log says what the
-    epochs to come will actually do — read the remainder from disk."""
+    epochs to come will actually do — read the remainder from disk.
+
+    The count covers the train images only — two fit, two were turned away —
+    because filling up ends the warm-up's reading: the val stage after it is
+    skipped whole, covered by the sentence rather than the number.
+    """
     tiny = RamCache(max_gib=400 / 1024**3)
 
     with caplog.at_level(logging.INFO, logger="src.data.datamodules.table"):
         module(tmp_path, tiny).setup(DataProfile())
 
-    assert tiny.usage().declined == 4
-    said = [record.message for record in caplog.records if "did not fit" in record.message]
+    assert tiny.usage().declined == 2
+    said = [record.message for record in caplog.records if "budget full" in record.message]
     assert len(said) == 1
-    assert "4 file(s)" in said[0]
+    assert "2 file(s)" in said[0]
+    assert "skipped without reading" in said[0]
 
 
 def test_a_budget_nothing_overflowed_stays_quiet(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     with caplog.at_level(logging.INFO, logger="src.data.datamodules.table"):
         module(tmp_path, RamCache(max_gib=1.0)).setup(DataProfile())
 
-    assert not [record for record in caplog.records if "did not fit" in record.message]
+    assert not [record for record in caplog.records if "budget full" in record.message]
