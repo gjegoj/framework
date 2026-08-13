@@ -64,7 +64,7 @@ a checkpoint without training, name it in `run.checkpoint_path` and turn trainin
 off:
 
 ```bash
-uv run main.py +experiment=examples/classification export=onnx run.train=false +run.checkpoint_path=runs/best.ckpt
+uv run main.py experiment=examples/classification export=onnx run.train=false +run.checkpoint_path=runs/best.ckpt
 ```
 
 The `+` is Hydra's, not a typo: `config.yaml` does not declare

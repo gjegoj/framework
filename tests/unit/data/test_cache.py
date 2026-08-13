@@ -117,3 +117,28 @@ def test_the_cache_is_reachable_from_config_by_name() -> None:
 
 def test_one_gib_is_what_it_says() -> None:
     assert BYTES_PER_GIB == 1024**3
+
+
+def test_usage_reports_what_is_held_against_the_budget() -> None:
+    cache = warmed(RamCache(max_gib=1.0), {"a.png": array(2.0), "b.png": array(3.0)})
+
+    usage = cache.usage()
+
+    assert usage.files == 2
+    assert usage.used_bytes == 5 * 1024 * 1024
+    assert usage.capacity_bytes == BYTES_PER_GIB
+    assert usage.declined == 0
+
+
+def test_declined_counts_only_what_the_budget_turned_away() -> None:
+    """A scalar target is never cached by design — counting it would report a
+    full cache over an empty one. Only the file the budget refused is in the count."""
+    values: dict[str, object] = {
+        "kept.png": array(1.0),
+        "temperature": 5300.0,
+        "too-big.png": array(10.0),
+    }
+
+    cache = warmed(RamCache(max_gib=1.5 / 1024), values)
+
+    assert cache.usage().declined == 1

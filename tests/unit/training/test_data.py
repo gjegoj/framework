@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any, override
 
+import cv2
 import pandas as pd
 import pytest
 import torch
@@ -23,6 +24,7 @@ from src.data import (
     random_split,
 )
 from src.training import TrainingData
+from src.training.data import single_threaded_cv2
 
 
 def load_point(value: Any) -> Tensor:
@@ -133,3 +135,40 @@ def test_only_training_drops_the_last_batch() -> None:
     assert data.train_dataloader().drop_last is True
     assert data.val_dataloader().drop_last is False
     assert data.test_dataloader().drop_last is False
+
+
+def test_workers_decode_with_one_cv2_thread() -> None:
+    """Eight workers on eight cores must not run sixty-four decoding threads.
+
+    The function is what every worker runs on start; called here, it must leave
+    cv2 answering one thread — the workers are the parallelism.
+    """
+    before = cv2.getNumThreads()
+    try:
+        single_threaded_cv2(0)
+        assert cv2.getNumThreads() == 1
+    finally:
+        cv2.setNumThreads(before)
+
+
+def test_every_stage_loader_carries_the_cv2_worker_init() -> None:
+    """Wired per loader rather than set once in the parent process.
+
+    A parent-process setting survives only while ``fork`` lets children inherit
+    it, and dies under ``spawn`` — the loader carries the init to every worker.
+    """
+    data = TrainingData(make_data_module(), batch_size=2)
+
+    assert data.train_dataloader().worker_init_fn is single_threaded_cv2
+    assert data.val_dataloader().worker_init_fn is single_threaded_cv2
+    assert data.test_dataloader().worker_init_fn is single_threaded_cv2
+
+
+def test_a_callers_own_worker_init_is_honoured() -> None:
+    """The framework fills a default; it does not overrule a caller's declaration."""
+
+    def their_own(worker_id: int) -> None: ...
+
+    data = TrainingData(make_data_module(), batch_size=2, worker_init_fn=their_own)
+
+    assert data.train_dataloader().worker_init_fn is their_own

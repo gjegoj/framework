@@ -1,5 +1,5 @@
 # @package _global_
-# Cat or dog, from a pretrained ResNet: `uv run main.py +experiment=examples/classification`.
+# Cat or dog, from a pretrained ResNet: `uv run main.py experiment=examples/classification`.
 #
 # The smallest thing this framework does, and the shape every other task follows: name a
 # preset, name the column it reads, and let the sizes come from the data. Point the same

@@ -50,5 +50,5 @@ dataset, which [`scripts/prepare_pet.py`](../scripts/prepare_pet.py) writes and
 
 ```bash
 make test-run                                # the dataset, then the multitask run
-uv run main.py +experiment=examples/classification # or any of the others
+uv run main.py experiment=examples/classification # or any of the others
 ```

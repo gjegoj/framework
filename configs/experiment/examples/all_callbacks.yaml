@@ -1,5 +1,5 @@
 # @package _global_
-# Every callback the registry knows, in one run: `uv run main.py +experiment=examples/all_callbacks`.
+# Every callback the registry knows, in one run: `uv run main.py experiment=examples/all_callbacks`.
 #
 # A smoke test for their interaction, not a recipe. Some of these contradict each other
 # as settings — freezing the backbone while annealing a loss knob and mixing batches is

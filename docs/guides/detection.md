@@ -4,7 +4,7 @@ Detection is the first **vendor family**: ultralytics owns the head, the loss an
 the decoding, and this framework drives the loop around them. One config runs it:
 
 ```bash
-uv run main.py +experiment=examples/detection
+uv run main.py experiment=examples/detection
 ```
 
 ```yaml

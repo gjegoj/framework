@@ -40,7 +40,7 @@ def test_a_shipped_experiment_composes_into_a_valid_config(experiment: str) -> N
     with initialize_config_dir(version_base=None, config_dir=str(CONFIGS)):
         composed = compose(
             config_name="config",
-            overrides=[f"+experiment=examples/{experiment}", "run.directory=."],
+            overrides=[f"experiment=examples/{experiment}", "run.directory=."],
         )
 
     config = load_config(cast("dict[str, Any]", OmegaConf.to_container(composed, resolve=True)))
@@ -54,6 +54,6 @@ def test_a_shipped_experiment_composes_into_a_valid_config(experiment: str) -> N
 def test_the_shared_base_declares_no_task_of_its_own() -> None:
     """It is inherited, never run — and a base carrying a task would give every example one."""
     with initialize_config_dir(version_base=None, config_dir=str(CONFIGS)):
-        composed = compose(config_name="config", overrides=[f"+experiment=examples/{BASE}"])
+        composed = compose(config_name="config", overrides=[f"experiment=examples/{BASE}"])
 
     assert not composed.tasks

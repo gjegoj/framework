@@ -27,10 +27,10 @@ line, and [`configs/experiment/examples/`](configs/experiment/examples/) is wher
 they live:
 
 ```bash
-uv run main.py +experiment=examples/classification
-uv run main.py +experiment=examples/segmentation
-uv run main.py +experiment=examples/detection      # COCO128, which downloads itself
-uv run main.py +experiment=examples/classification lr=3e-4 trainer.max_epochs=50 loader=performance scheduler=onecycle
+uv run main.py experiment=examples/classification
+uv run main.py experiment=examples/segmentation
+uv run main.py experiment=examples/detection      # COCO128, which downloads itself
+uv run main.py experiment=examples/classification lr=3e-4 trainer.max_epochs=50 loader=performance scheduler=onecycle
 ```
 
 Configs live in [`configs/`](configs/). `config.yaml` holds the shared knobs

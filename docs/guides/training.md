@@ -14,7 +14,7 @@ Both are Hydra groups, so the usual way to change either is to swap the whole
 file:
 
 ```bash
-uv run main.py +experiment=examples/classification optimizer=sgd scheduler=onecycle
+uv run main.py experiment=examples/classification optimizer=sgd scheduler=onecycle
 ```
 
 ## The optimizer

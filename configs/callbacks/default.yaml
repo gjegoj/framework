@@ -10,6 +10,10 @@
 # identity spelled twice plus a hash, three levels below everything else it produced.
 callbacks:
   - {name: lr_monitor, logging_interval: epoch}
+  - {name: model_summary, max_depth: 3}
+  - {name: dataset_summary}
+  - {name: metric_summary}
+  - {name: progress}
   - name: checkpoint
     monitor: val/loss
     mode: min

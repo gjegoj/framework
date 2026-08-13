@@ -6,6 +6,7 @@ import logging
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from threading import Lock
 from typing import TYPE_CHECKING, Any, override
 
@@ -23,6 +24,21 @@ BYTES_PER_GIB = 1024**3
 
 NAMESPACE_SEPARATOR = "\0"
 """Divides a namespace from the cell value — the one byte a filename cannot hold."""
+
+
+@dataclass(frozen=True, slots=True)
+class CacheUsage:
+    """How full a cache is, in the terms its budget was declared in.
+
+    ``declined`` counts only what the *budget* turned away. A value refused for
+    its kind — a scalar target, a string — is not in it: those are never cached
+    by design, and counting them would report a full cache that is not.
+    """
+
+    files: int
+    used_bytes: int
+    capacity_bytes: int
+    declined: int
 
 
 class LoaderCache(ABC):
@@ -46,7 +62,7 @@ class LoaderCache(ABC):
         """
 
     @abstractmethod
-    def warm(self, keys: Iterable[str], load: Callable[[Any], Any]) -> None:
+    def warm(self, keys: Iterable[str], load: Callable[[Any], Any], description: str = "Caching files") -> None:
         """Fill the cache by calling ``load`` once per distinct key.
 
         ``warm`` stores nothing itself — it drives a loader wrapped with
@@ -54,7 +70,14 @@ class LoaderCache(ABC):
         the store; it also serves a value it already holds without loading, so
         warming twice is cheap rather than wrong. Run this in the parent
         process, before any worker forks.
+
+        ``description`` labels the progress bar — the caller knows *what* is being
+        warmed (which stage, which column), the cache only knows how.
         """
+
+    @abstractmethod
+    def usage(self) -> CacheUsage:
+        """What the cache holds right now, against the budget it was given."""
 
     def scoped(self, namespace: str) -> LoaderCache:
         """A view of this cache whose keys are private to ``namespace``.
@@ -88,11 +111,17 @@ class _ScopedCache(LoaderCache):
         self._inner.put(self._scoped(key), value)
 
     @override
-    def warm(self, keys: Iterable[str], load: Callable[[Any], Any]) -> None:
+    def warm(self, keys: Iterable[str], load: Callable[[Any], Any], description: str = "Caching files") -> None:
         # Keys pass through untranslated: ``load`` is a loader wrapped with
         # :func:`cached`, and that wrapper already serves a held value without
         # loading — warming never needs to know what a store key looks like.
-        self._inner.warm(keys, load)
+        self._inner.warm(keys, load, description)
+
+    @override
+    def usage(self) -> CacheUsage:
+        # The whole store's usage, not the namespace's slice: the budget is shared,
+        # and a view that reported only its own keys would understate how full it is.
+        return self._inner.usage()
 
     def _scoped(self, key: str) -> str:
         return f"{self._namespace}{NAMESPACE_SEPARATOR}{key}"
@@ -135,6 +164,7 @@ class RamCache(LoaderCache):
         self._workers = workers
         self._store: dict[str, np.ndarray] = {}
         self._bytes = 0
+        self._declined = 0
         self._filling = False
         self._lock = Lock()
 
@@ -147,13 +177,18 @@ class RamCache(LoaderCache):
         if not self._filling or not isinstance(value, np.ndarray):
             return
         with self._lock:
-            if key in self._store or self._bytes + int(value.nbytes) > self._max_bytes:
+            if key in self._store:
+                return
+            if self._bytes + int(value.nbytes) > self._max_bytes:
+                # Counted apart from the kind-based refusals above: only these mean
+                # "the budget ran out", which is the one fact worth a closing log line.
+                self._declined += 1
                 return
             self._store[key] = value
             self._bytes += int(value.nbytes)
 
     @override
-    def warm(self, keys: Iterable[str], load: Callable[[Any], Any]) -> None:
+    def warm(self, keys: Iterable[str], load: Callable[[Any], Any], description: str = "Caching files") -> None:
         # Skips what this store already holds *under the keys it is given*. That is the
         # whole of what it can do, and it is worth saying which case it does not reach:
         # a loader wrapped with :func:`cached` over a `scoped` view writes namespaced
@@ -173,16 +208,23 @@ class RamCache(LoaderCache):
         self._filling = True
         try:
             with ThreadPoolExecutor(max_workers=self._workers) as pool:
-                for _ in track(pool.map(read, pending), "Caching files", len(pending)):
+                for _ in track(pool.map(read, pending), description, len(pending), status=self._quota_line):
                     pass
         finally:
             self._filling = False
-        log.info(
-            "Cache holds %d file(s), %.2f of %.2f GiB.",
-            len(self._store),
-            self._bytes / BYTES_PER_GIB,
-            self._max_bytes / BYTES_PER_GIB,
+
+    @override
+    def usage(self) -> CacheUsage:
+        return CacheUsage(
+            files=len(self._store),
+            used_bytes=self._bytes,
+            capacity_bytes=self._max_bytes,
+            declined=self._declined,
         )
+
+    def _quota_line(self) -> str:
+        """The bar's running answer to "how much of my quota is spent"."""
+        return f"{self._bytes / BYTES_PER_GIB:.1f}/{self._max_bytes / BYTES_PER_GIB:.1f} GiB"
 
 
 def cached(load: InputLoader, cache: LoaderCache) -> InputLoader:

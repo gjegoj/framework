@@ -1,5 +1,5 @@
 # @package _global_
-# A YOLO detector on COCO128: `uv run main.py +experiment=examples/detection`.
+# A YOLO detector on COCO128: `uv run main.py experiment=examples/detection`.
 #
 # The one example that does not read the pet table, because a detection dataset does not
 # arrive as one. It arrives as a `data.yaml` descriptor naming its own class list and one

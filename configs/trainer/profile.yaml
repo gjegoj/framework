@@ -1,4 +1,4 @@
-# Where a run's wall clock goes: `uv run main.py +experiment=... trainer=profile`.
+# Where a run's wall clock goes: `uv run main.py experiment=... trainer=profile`.
 #
 # Inherits the default trainer rather than restating it, so a profiling run
 # measures the settings a real run trains with — precision above all. A preset
@@ -10,7 +10,7 @@
 # (`training_step`), `backward`, `optimizer_step`. Swap to `advanced` for a
 # cProfile breakdown per hook, or `pytorch` for per-operator detail:
 #
-#   uv run main.py +experiment=... trainer=profile trainer.profiler.name=pytorch
+#   uv run main.py experiment=... trainer=profile trainer.profiler.name=pytorch
 #
 # The report is written into the run's directory as `fit-profile.txt` — see
 # docs/guides/logging.md for what the numbers do and do not include.

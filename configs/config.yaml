@@ -12,6 +12,10 @@ defaults:
   - logger: none           # swap to `clearml` for experiment tracking
   - export: none           # swap to `torchscript` to write a deployment artifact
   - _self_
+  # After `_self_` on purpose: an experiment overrides this file's own values (lr,
+  # epochs, data), and the command line still overrides the experiment. Declared
+  # here so runs say `experiment=examples/classification` — no `+`, like any group.
+  - experiment: null
 
 seed: 42
 lr: 1.0e-3

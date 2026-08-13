@@ -1,5 +1,5 @@
 # @package _global_
-# A continuous target: `uv run main.py +experiment=examples/regression`.
+# A continuous target: `uv run main.py experiment=examples/regression`.
 #
 # **`random_age` is noise, and named so nobody reads it as learnable.** Nothing in the
 # picture carries it, so no model can beat predicting its mean. A `val/age/mae` that

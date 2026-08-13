@@ -1,5 +1,5 @@
 # @package _global_
-# Pet, background, boundary — per pixel: `uv run main.py +experiment=examples/segmentation`.
+# Pet, background, boundary — per pixel: `uv run main.py experiment=examples/segmentation`.
 #
 # A dense task reads the decoder stream and takes smp's own segmentation head, so the
 # output is full image size and nothing here writes a width.

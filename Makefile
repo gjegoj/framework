@@ -41,4 +41,4 @@ $(PET_TABLE):
 	uv run python scripts/prepare_pet.py
 
 test-run: $(PET_TABLE) ## Fetch the pet dataset (once) and train the multitask example on a slice
-	uv run main.py +experiment=examples/multitask epochs=2 +data.max_samples=256
+	uv run main.py experiment=examples/multitask epochs=2 +data.max_samples=256

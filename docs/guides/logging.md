@@ -204,7 +204,7 @@ never changes a port signature.
 ## Where the time went
 
 ```
-uv run main.py +experiment=examples/classification trainer=profile
+uv run main.py experiment=examples/classification trainer=profile
 ```
 
 The preset inherits the default trainer and adds one thing, so a profiling run

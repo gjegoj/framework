@@ -6,7 +6,7 @@
 # because a linear head cannot take a feature *map*.
 #
 # That is what makes one backbone serve segmentation and classification at once — see
-# `+experiment=examples/multitask`.
+# `experiment=examples/multitask`.
 name: smp
 arch: unet
 encoder_name: resnet18

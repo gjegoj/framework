@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Sized
 from pathlib import Path
 from typing import cast
@@ -9,6 +10,7 @@ from typing import cast
 import cv2
 import numpy as np
 import pandas as pd
+import pytest
 
 from src.core import DataProfile, Sample, Stage
 from src.core.ports import SampleTransform
@@ -135,3 +137,40 @@ def test_a_cached_read_is_not_corrupted_by_the_transform_that_follows(tmp_path: 
         current = cache.get(key)
         assert current is not None, key
         assert np.array_equal(current, untouched), key
+
+
+def test_the_warmup_closes_with_one_summary_naming_who_took_how_much(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """One line for the whole warm-up — not one per column per stage — and the
+    breakdown names columns the way the cache scopes them."""
+    with caplog.at_level(logging.INFO, logger="src.data.datamodules.table"):
+        module(tmp_path, RamCache(max_gib=1.0)).setup(DataProfile())
+
+    summaries = [record.message for record in caplog.records if "Cache holds" in record.message]
+    assert len(summaries) == 1
+    assert "input/image" in summaries[0]
+    assert "of 1.00 GiB" in summaries[0]
+
+
+def test_a_full_budget_is_said_out_loud_with_the_count_that_did_not_fit(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Silence here looks like a warmed cache that is not; the log says what the
+    epochs to come will actually do — read the remainder from disk."""
+    tiny = RamCache(max_gib=400 / 1024**3)
+
+    with caplog.at_level(logging.INFO, logger="src.data.datamodules.table"):
+        module(tmp_path, tiny).setup(DataProfile())
+
+    assert tiny.usage().declined == 4
+    said = [record.message for record in caplog.records if "did not fit" in record.message]
+    assert len(said) == 1
+    assert "4 file(s)" in said[0]
+
+
+def test_a_budget_nothing_overflowed_stays_quiet(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level(logging.INFO, logger="src.data.datamodules.table"):
+        module(tmp_path, RamCache(max_gib=1.0)).setup(DataProfile())
+
+    assert not [record for record in caplog.records if "did not fit" in record.message]

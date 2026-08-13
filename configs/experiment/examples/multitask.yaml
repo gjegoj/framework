@@ -1,5 +1,5 @@
 # @package _global_
-# Three tasks, one backbone: `uv run main.py +experiment=examples/multitask`.
+# Three tasks, one backbone: `uv run main.py experiment=examples/multitask`.
 #
 # This is what the framework is for. One encoder runs once per batch and three heads
 # read it: a dense task off the decoder, and two global ones off the encoder. The losses
