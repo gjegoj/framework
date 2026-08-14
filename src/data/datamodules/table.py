@@ -13,9 +13,9 @@ from torch.utils.data import ConcatDataset
 from src.core.entities import DataProfile, DatasetStatistics, Distribution, Sample
 from src.core.ports import DataModule, SampleTransform, require_stage
 from src.core.taxonomy import Stage
-from src.data.cache import BYTES_PER_GIB, CacheUsage, LoaderCache
+from src.data.cache import LoaderCache
 from src.data.dataset import TableDataset
-from src.data.schema import DataSchema, InputColumn, TargetColumn
+from src.data.schema import DataSchema
 from src.data.sources import Table, TableSource
 from src.data.split import Splitter
 
@@ -109,28 +109,17 @@ class TableDataModule(DataModule):
         its loader — for a target that is the encoder's pre-transform half, the
         same call the dataset itself makes.
 
-        Labels follow the cache's own namespaces (``input/image``), so what the
-        bar says and what the store holds cannot drift apart. Per-column sizes
-        are byte deltas around each ``warm`` — measured, not parsed out of keys.
+        This method contributes exactly what only it knows: the schema's labels,
+        the stage in front of them, and the moment the pass is over. The counting
+        and the closing lines are the cache's own — see ``summarize``.
         """
-        taken: dict[str, int] = {}
         for stage in (Stage.TRAIN, Stage.VAL):
             for rows in stages.get(stage, []):
                 # No scoping here: each loader carries its own scoped view of the cache,
                 # applied where it was built. Warming just drives the loaders.
-                for label, column in self._labelled_columns():
-                    before = cache.usage().used_bytes
-                    cache.warm(rows.table[column.column], column.loader, f"Caching {stage}: {label}")
-                    taken[label] = taken.get(label, 0) + cache.usage().used_bytes - before
-        _log_cache_summary(cache.usage(), taken)
-
-    def _labelled_columns(self) -> list[tuple[str, InputColumn | TargetColumn]]:
-        """Every column the dataset reads, labelled the way the cache scopes it."""
-        return [
-            *((f"input/{name}", column) for name, column in self._schema.inputs.items()),
-            *((f"auxiliary_input/{name}", column) for name, column in self._schema.auxiliary_inputs.items()),
-            *((f"target/{name}", column) for name, column in self._schema.targets.items()),
-        ]
+                for label, column in self._schema.labelled_columns():
+                    cache.warm(rows.table[column.column], column.loader, f"{stage}: {label}")
+        cache.summarize()
 
     @override
     def dataset(self, stage: Stage) -> StageDataset:
@@ -249,27 +238,3 @@ def _listed(
     """Whatever was declared in one position, as the sources it stands for."""
     sources = declared if isinstance(declared, Sequence) else [declared]
     return [source if isinstance(source, SourceWithTransforms) else SourceWithTransforms(source) for source in sources]
-
-
-def _log_cache_summary(usage: CacheUsage, taken: Mapping[str, int]) -> None:
-    """One closing line for the whole warm-up, instead of one per column per stage.
-
-    Only this caller knows when every stage and column is done, which is why the
-    summary lives here and not in ``warm``. The breakdown answers "who took how
-    much"; the second line appears only when the budget actually turned files
-    away, and says what that means for the epochs to come.
-    """
-    breakdown = ", ".join(f"{label} {spent / BYTES_PER_GIB:.2f} GiB" for label, spent in taken.items() if spent > 0)
-    log.info(
-        "Cache holds %d file(s) — %.2f of %.2f GiB%s.",
-        usage.files,
-        usage.used_bytes / BYTES_PER_GIB,
-        usage.capacity_bytes / BYTES_PER_GIB,
-        f" ({breakdown})" if breakdown else "",
-    )
-    if usage.full:
-        log.info(
-            "Cache budget full: %d file(s) were turned away while warming, and everything "
-            "after them was skipped without reading; all of it comes from disk each epoch.",
-            usage.declined,
-        )

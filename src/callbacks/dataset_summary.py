@@ -1,14 +1,19 @@
-"""What the run is about to train on, said once before the first epoch."""
+"""What the run is about to train on, said once before the first epoch.
+
+To add a kind of distribution, every step is a named place:
+
+1. the entity joins the ``Distribution`` union in ``core/entities.py``;
+2. a ``DistributionReporter`` subclass here, registered under the entity's type;
+3. the data module's encoder produces it;
+4. ``test_dataset_summary.py``'s exhaustiveness pin goes green again.
+"""
 
 from __future__ import annotations
 
 import logging
-
-# Runtime imports, not TYPE_CHECKING: ``singledispatch.register`` reads a function's
-# annotations when it registers it, so every name in them has to exist by then.
+from abc import ABC, abstractmethod
 from collections.abc import Iterable, Mapping, Sequence
-from functools import singledispatch
-from typing import override
+from typing import Any, override
 
 import lightning as L
 from rich.table import Table
@@ -16,6 +21,7 @@ from rich.table import Table
 from src.console import HEADER_STYLE, TITLE_STYLE, console
 from src.core.entities import ClassDistribution, DatasetStatistics, Distribution, ValueDistribution
 from src.core.ports import DataModule
+from src.core.registry import Registry
 from src.core.reporting import Bars, BarsLogger, BoxPlot, BoxPlotLogger
 from src.core.taxonomy import Stage
 
@@ -48,9 +54,9 @@ class DatasetSummary(L.Callback):
     routes — a table in the terminal, where someone is watching the run start, and a
     chart in the tracker, where someone compares two runs a week later.
 
-    Lifecycle only. What a distribution looks like is decided by the two
-    ``singledispatch`` points below, which dispatch on the distribution's own class, so
-    a new kind of distribution is two registrations and no edits anywhere else.
+    Lifecycle only. What a distribution looks like is decided by the
+    ``DistributionReporter`` registered under the distribution's own type, so a new
+    kind of distribution is one reporter class and no edits anywhere else.
 
     Asked of the ``DataModule`` port, which every pipeline answers — one that cannot
     describe its data returns an empty record, and a task whose encoder describes
@@ -85,7 +91,7 @@ class DatasetSummary(L.Callback):
                 log.info("Task '%s' has no distribution to show: its encoder does not describe its column.", task)
                 continue
             printed.print(table_for(task, per_stage, statistics.rows))
-            draw(_shape_of(per_stage), f"{self._title}/{task}", per_stage, trainer.loggers)
+            draw(f"{self._title}/{task}", per_stage, trainer.loggers)
 
 
 def _statistics_of(trainer: L.Trainer) -> DatasetStatistics:
@@ -118,43 +124,84 @@ def _shape_of(per_stage: Mapping[Stage, Distribution]) -> Distribution:
     return per_stage[ordered(per_stage)[0]]
 
 
-def table_for(task: str, per_stage: Mapping[Stage, Distribution], rows: Mapping[Stage, int]) -> Table:
-    """One task's distribution as one table, in whichever shape it has.
+class DistributionReporter[D: Distribution](ABC):
+    """Everything one kind of distribution knows about being reported.
 
-    The wrapper exists so no caller has to pass the same distributions twice — once
-    to choose the implementation and once as the data.
+    ``table`` and ``chart`` live on one class so a kind cannot register one and
+    forget the other — the guarantee two dispatch tables used to keep by hand.
     """
-    return _table(_shape_of(per_stage), task, per_stage, rows)
+
+    @abstractmethod
+    def table(self, task: str, per_stage: Mapping[Stage, Distribution], rows: Mapping[Stage, int]) -> Table:
+        """``rows`` is how many samples each stage holds, carried in rather than derived.
+
+        Only a single-label column has as many counts as it has rows. A multilabel one
+        counts every label a row carries and a mask counts pixels, so a reader adding up
+        a column to learn the stage's size would be wrong by a factor nothing reveals.
+        """
+
+    @abstractmethod
+    def chart(self, title: str, per_stage: Mapping[Stage, Distribution], loggers: Iterable[object]) -> None:
+        """Send this distribution to whichever of the ``loggers`` can draw its shape.
+
+        Each implementation narrows to its own port, so the caller never learns which
+        picture a shape becomes — and a tracker that draws neither simply receives
+        nothing.
+        """
 
 
-@singledispatch
-def _table(shown: Distribution, task: str, per_stage: Mapping[Stage, Distribution], rows: Mapping[Stage, int]) -> Table:
-    """``rows`` is how many samples each stage holds, carried in rather than derived.
+distribution_reporter_registry: Registry[DistributionReporter[Any]] = Registry("distribution reporter")
+"""Keyed by the distribution's own type, like the renderer registries; the
+``{name: ...}`` sugar is never poured over this one.
 
-    Only a single-label column has as many counts as it has rows. A multilabel one
-    counts every label a row carries and a mask counts pixels, so a reader adding up
-    a column to learn the stage's size would be wrong by a factor nothing reveals.
-    """
-    raise TypeError(f"No table for {type(shown).__name__}; known: ClassDistribution, ValueDistribution.")
+Declared here rather than in ``callbacks/registry.py``: that file imports this
+module to catalogue its callback for config, so a registry over there could not
+exist by the time these reporters register. Nothing is lost by the local home —
+this registry's producer and consumer are both this module. A third distribution
+kind, or a second consumer, promotes it to ``callbacks/reporters.py`` (backlog).
+"""
 
 
-@_table.register
-def _(shown: ClassDistribution, task: str, per_stage: Mapping[Stage, Distribution], rows: Mapping[Stage, int]) -> Table:
-    stages = ordered(per_stage)
-    counted = [shown for shown in (per_stage[stage] for stage in stages) if isinstance(shown, ClassDistribution)]
-    table = _report_table(task, "class balance")
-    table.add_column("Class")
-    for stage in stages:
-        table.add_column(str(stage).capitalize(), justify="right")
-    for name in shown.counts:
-        cells = [f"{one.counts.get(name, 0)} ({one.shares.get(name, 0.0):.{_SHARE_DECIMALS}%})" for one in counted]
-        # A class no split produced is the row worth seeing, so it is marked rather
-        # than left as one zero among numbers.
-        unseen = all(one.counts.get(name, 0) == 0 for one in counted)
-        table.add_row(f"[yellow]{name}[/]" if unseen else name, *cells)
-    table.add_section()
-    table.add_row("[bold]Total[/]", *(f"[bold]{rows.get(stage, 0)}[/]" for stage in stages))
-    return table
+def _of_kind[D: Distribution](
+    per_stage: Mapping[Stage, Distribution], stages: Sequence[Stage], kind: type[D]
+) -> list[tuple[Stage, D]]:
+    """The stages whose distribution is this kind, paired with it — narrowing once, by filter."""
+    return [(stage, one) for stage in stages if isinstance(one := per_stage[stage], kind)]
+
+
+@distribution_reporter_registry.register(ClassDistribution)
+class ClassDistributionReporter(DistributionReporter[ClassDistribution]):
+    @override
+    def table(self, task: str, per_stage: Mapping[Stage, Distribution], rows: Mapping[Stage, int]) -> Table:
+        stages = ordered(per_stage)
+        counted = [one for _, one in _of_kind(per_stage, stages, ClassDistribution)]
+        table = _report_table(task, "class balance")
+        table.add_column("Class")
+        for stage in stages:
+            table.add_column(str(stage).capitalize(), justify="right")
+        for name in counted[0].counts:
+            cells = [f"{one.counts.get(name, 0)} ({one.shares.get(name, 0.0):.{_SHARE_DECIMALS}%})" for one in counted]
+            # A class no split produced is the row worth seeing, so it is marked rather
+            # than left as one zero among numbers.
+            unseen = all(one.counts.get(name, 0) == 0 for one in counted)
+            table.add_row(f"[yellow]{name}[/]" if unseen else name, *cells)
+        table.add_section()
+        table.add_row("[bold]Total[/]", *(f"[bold]{rows.get(stage, 0)}[/]" for stage in stages))
+        return table
+
+    @override
+    def chart(self, title: str, per_stage: Mapping[Stage, Distribution], loggers: Iterable[object]) -> None:
+        counted = _of_kind(per_stage, ordered(per_stage), ClassDistribution)
+        labels = tuple(counted[0][1].counts)
+        bars = Bars(
+            series=tuple(str(stage) for stage, _ in counted),
+            values=tuple(tuple(float(one.counts.get(name, 0)) for name in labels) for _, one in counted),
+            labels=labels,
+            xaxis="class",
+            yaxis="count",
+        )
+        for drawer in (one for one in loggers if isinstance(one, BarsLogger)):
+            drawer.log_bars(title=title, bars=bars, iteration=0)
 
 
 _MEASURES: tuple[tuple[str, str], ...] = (
@@ -169,18 +216,32 @@ _MEASURES: tuple[tuple[str, str], ...] = (
 """What the table shows, and the field each column reads — named once, in display order."""
 
 
-@_table.register
-def _(shown: ValueDistribution, task: str, per_stage: Mapping[Stage, Distribution], rows: Mapping[Stage, int]) -> Table:
-    stages = ordered(per_stage)
-    table = _report_table(task, "value spread")
-    table.add_column("Stage")
-    table.add_column("Total", justify="right")
-    for header, _ in _MEASURES:
-        table.add_column(header, justify="right")
-    for stage, measured in _measured(per_stage, stages):
-        held = _held(rows.get(stage, 0), measured.count)
-        table.add_row(str(stage), held, *(_number(getattr(measured, field)) for _, field in _MEASURES))
-    return table
+@distribution_reporter_registry.register(ValueDistribution)
+class ValueDistributionReporter(DistributionReporter[ValueDistribution]):
+    @override
+    def table(self, task: str, per_stage: Mapping[Stage, Distribution], rows: Mapping[Stage, int]) -> Table:
+        measured = _of_kind(per_stage, ordered(per_stage), ValueDistribution)
+        table = _report_table(task, "value spread")
+        table.add_column("Stage")
+        table.add_column("Total", justify="right")
+        for header, _ in _MEASURES:
+            table.add_column(header, justify="right")
+        for stage, one in measured:
+            held = _held(rows.get(stage, 0), one.count)
+            table.add_row(str(stage), held, *(_number(getattr(one, field)) for _, field in _MEASURES))
+        return table
+
+    @override
+    def chart(self, title: str, per_stage: Mapping[Stage, Distribution], loggers: Iterable[object]) -> None:
+        measured = _of_kind(per_stage, ordered(per_stage), ValueDistribution)
+        drawn = BoxPlot(
+            series=tuple(str(stage) for stage, _ in measured),
+            boxes=tuple(one for _, one in measured),
+            xaxis="stage",
+            yaxis="value",
+        )
+        for drawer in (one for one in loggers if isinstance(one, BoxPlotLogger)):
+            drawer.log_box_plot(title=title, box_plot=drawn, iteration=0)
 
 
 def _held(rows: int, counted: int) -> str:
@@ -195,51 +256,25 @@ def _held(rows: int, counted: int) -> str:
     return f"{rows} ({missing} missing)" if missing > 0 else str(rows)
 
 
-@singledispatch
-def draw(shown: Distribution, title: str, per_stage: Mapping[Stage, Distribution], loggers: Iterable[object]) -> None:
-    """Send this task's distribution to whichever trackers can draw its shape.
+def _reporter_of(per_stage: Mapping[Stage, Distribution]) -> DistributionReporter[Any]:
+    # `key: type` because mypy will not match a union of `type[...]`s against the
+    # Hashable protocol on its own; the widening is the whole fix.
+    key: type = type(_shape_of(per_stage))
+    return distribution_reporter_registry.create(key)
 
-    Each registration builds its own drawable and narrows to its own port, so the
-    caller never learns which picture a shape becomes — and a tracker that draws
-    neither simply receives nothing.
+
+def table_for(task: str, per_stage: Mapping[Stage, Distribution], rows: Mapping[Stage, int]) -> Table:
+    """One task's distribution as one table, in whichever shape it has.
+
+    An unknown shape fails inside the registry, which names what *is* registered —
+    no hand-written ``known:`` list to fall out of date.
     """
-    raise TypeError(f"No chart for {type(shown).__name__}; known: ClassDistribution, ValueDistribution.")
+    return _reporter_of(per_stage).table(task, per_stage, rows)
 
 
-@draw.register
-def _(shown: ClassDistribution, title: str, per_stage: Mapping[Stage, Distribution], loggers: Iterable[object]) -> None:
-    stages = ordered(per_stage)
-    counted = [one for one in (per_stage[stage] for stage in stages) if isinstance(one, ClassDistribution)]
-    labels: Sequence[str] = list(shown.counts)
-    bars = Bars(
-        series=tuple(str(stage) for stage in stages),
-        values=tuple(tuple(float(one.counts.get(name, 0)) for name in labels) for one in counted),
-        labels=tuple(labels),
-        xaxis="class",
-        yaxis="count",
-    )
-    for drawer in (one for one in loggers if isinstance(one, BarsLogger)):
-        drawer.log_bars(title=title, bars=bars, iteration=0)
-
-
-@draw.register
-def _(shown: ValueDistribution, title: str, per_stage: Mapping[Stage, Distribution], loggers: Iterable[object]) -> None:
-    stages = ordered(per_stage)
-    drawn = BoxPlot(
-        series=tuple(str(stage) for stage, _ in _measured(per_stage, stages)),
-        boxes=tuple(measured for _, measured in _measured(per_stage, stages)),
-        xaxis="stage",
-        yaxis="value",
-    )
-    for drawer in (one for one in loggers if isinstance(one, BoxPlotLogger)):
-        drawer.log_box_plot(title=title, box_plot=drawn, iteration=0)
-
-
-def _measured(
-    per_stage: Mapping[Stage, Distribution], stages: Sequence[Stage]
-) -> list[tuple[Stage, ValueDistribution]]:
-    """The stages whose distribution is a spread, paired with it — narrowing once, by filter."""
-    return [(stage, one) for stage in stages if isinstance(one := per_stage[stage], ValueDistribution)]
+def draw(title: str, per_stage: Mapping[Stage, Distribution], loggers: Iterable[object]) -> None:
+    """Send this task's distribution to whichever trackers can draw its shape."""
+    _reporter_of(per_stage).chart(title, per_stage, loggers)
 
 
 def _number(value: float) -> str:

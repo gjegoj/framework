@@ -1,50 +1,14 @@
 """A minimal, type-safe registry: pluggable components looked up by key.
 
-## What belongs in a registry, and what does not
+The registration rule lives on ``Registry`` itself. Two things it does **not** say,
+because both look like counterexamples:
 
-``Registry[T]`` says what the entries *are*. It cannot say which of them are there, and
-for several ports that is a smaller set than "every implementation" — so the rule is
-written once, here.
-
-**A registry holds what a declaration *names*.** Everything such a class needs comes from
-that declaration: its own values, the derived facts ``named_by`` offers, and any nested
-component the declaration fills with ``_target_``. All three are registered —
-``TimmBackbone(model_name, pretrained)`` on values alone,
-``ExpectationCriterion(class_values, distance)`` on a derived fact plus a nested slot the
-user writes as ``distance: {_target_: ...}``.
-
-**What a declaration only *implies* is not registered**, because there is no name to
-register it under — it is built from the declaration's shape, or from another section
-existing at all. Two forms recur:
-
-- a **composer**, built from a shape. ``WeightedSumCriterion(parts)`` is what ``loss:``
-  *being a list* becomes; ``CompositeModel(backbone, components)`` is what ``model:``
-  naming a **backbone** becomes.
-- a **decorator**, built from another section. ``DistilledModel(student, teachers,
-  criterion)`` exists because ``distillation:`` is present, not because anyone named it.
-
-The line is not "does the constructor take a built object" — ``ExpectationCriterion``
-takes a whole ``Criterion`` and is registered, because *config* built it. The line is who
-does the building: a name in the declaration, or the assembler reading its shape.
-
-Neither a composer nor a decorator is an alternative a user chooses between, so neither
-has a name to be chosen by. Registering one would give a name to a default
-(``model: {name: composite}``) or a second way to say what a section already says
-(``model: {name: distilled}`` beside ``distillation:``).
-
-Two things the rule does **not** say, because both look like counterexamples:
-
-- Being constructed by assembly does not un-register anything. A *default* builds namable
-  components directly — ``ContinuousObjective.build_criterion`` returns a
-  ``WeightedSumCriterion`` over a ``CrossEntropyCriterion`` and an ``ExpectationCriterion``,
-  and the latter two are registered because a user may also name them. Only the composer
-  around them is nameless.
-- Abstract bases are outside it entirely: ``WrappedCriterion`` is not registered because it
-  is not a component, only the shape its subclasses share.
-
-A registry is a convenience rather than a gate either way: anything unregistered is still
-reachable by ``_target_``, which is exactly how a composer *would* be reached if someone
-had one of their own.
+- Being constructed by assembly does not un-register anything. A default may build
+  registered components directly — ``ContinuousObjective.build_criterion`` returns a
+  ``WeightedSumCriterion`` over two registered criteria; only the nameless composer
+  around them stays out.
+- Abstract bases are outside the rule entirely: ``WrappedCriterion`` is not a
+  component, only the shape its subclasses share.
 """
 
 from __future__ import annotations
@@ -59,10 +23,20 @@ class Registry[T]:
 
     The framework's single extension mechanism: each capability package declares its
     registries in ``<package>/registry.py``, implementations register at import time,
-    and assembly resolves config names through them.
+    and assembly resolves config names through them. A key is anything hashable — a
+    short string for config-facing components, an enum member for axis behaviours, a
+    tuple for composite dispatch.
 
-    A key is anything hashable — a short string for config-facing components, an enum
-    member for axis behaviours, a tuple for composite dispatch.
+    **A registry holds what a declaration *names*** — its own values, the derived
+    facts ``named_by`` offers, a nested slot filled with ``_target_``. What a
+    declaration only *implies* has no name to register under: a *composer* built
+    from a section's shape (``WeightedSumCriterion`` is what ``loss:`` being a list
+    becomes) and a *decorator* built from another section existing at all
+    (``DistilledModel`` exists because ``distillation:`` is present). The line is
+    who does the building — a name in the declaration, or the assembler reading its
+    shape; registering the latter would name a default or say twice what a section
+    already says. A registry is a convenience, not a gate: anything unregistered
+    stays reachable by ``_target_``.
 
     Parameters:
         kind (str): What is being registered, as it should read in an error

@@ -17,14 +17,14 @@ from src.visualization import (
     Text,
     Verdict,
 )
-from src.visualization.fields import (
+from src.visualization.html import HtmlRenderer
+from src.visualization.palette import hex_to_rgb
+from src.visualization.renderers import (
     _MIN_RIM_ALPHA,
     FieldContext,
     render_label,
     render_media,
 )
-from src.visualization.html import HtmlRenderer
-from src.visualization.palette import hex_to_rgb
 from tests.support.visualization_demo import demo_views
 
 
@@ -302,13 +302,17 @@ def test_the_page_fetches_nothing_from_anywhere() -> None:
 
 
 def test_an_unknown_label_names_the_kinds_that_are_known() -> None:
-    """A new Label member must fail at its first render, not draw an empty cell."""
+    """A new Label member must fail at its first render, not draw an empty cell.
+
+    The message is the registry's own — the ``Registered:`` list is derived from
+    what actually registered, where the retired hand-written one could go stale.
+    """
 
     @dataclass(frozen=True)
     class Detections:
         boxes: tuple[int, ...] = ()
 
-    with pytest.raises(TypeError, match="Detections.*Classification"):
+    with pytest.raises(LookupError, match="Detections.*Registered:.*Classification"):
         render_label(Detections(), FieldContext(task="t", kind="gt", colors={}))  # type: ignore[arg-type]
 
 
@@ -319,7 +323,7 @@ def test_an_unknown_medium_names_the_kinds_that_are_known() -> None:
     class Audio:
         samples: tuple[int, ...] = ()
 
-    with pytest.raises(TypeError, match="Audio.*Image, Text"):
+    with pytest.raises(LookupError, match="Audio.*Registered:.*Image"):
         render_media(Audio(), "sound")  # type: ignore[arg-type]
 
 

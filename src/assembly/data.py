@@ -9,6 +9,7 @@ from src.assembly.instantiate import instantiate, resolve_target
 from src.assembly.vendor import is_vendor_family
 from src.core.registry import named_by
 from src.data import (
+    ColumnRole,
     DataSchema,
     InputColumn,
     LimitedSource,
@@ -69,24 +70,39 @@ def build_data_schema(config: ExperimentConfig, cache: LoaderCache | None = None
     """
     # Scoped per column — one cache so every column shares one budget, scoped keys so
     # an image and a mask stored under one filename cannot serve each other's arrays.
-    # Qualified by kind, because an input and a task may legally share a name.
+    # Qualified by role, because an input and a task may legally share a name; the
+    # spelling comes from ``ColumnRole.label``, the same call the schema's own
+    # ``labelled_columns`` makes, and a test pins the role-per-section pairing.
     return DataSchema(
-        inputs={
-            name: _input_column(column, _for(cache, f"input/{name}")) for name, column in config.data.inputs.items()
-        },
-        targets={
-            name: TargetColumn(
-                column=str(task.target),
-                encoder=_build_target_encoder(name, task, {"cache": _for(cache, f"target/{name}")} if cache else {}),
-            )
-            for name, task in config.tasks.items()
-            if task.target is not None
-        },
-        auxiliary_inputs={
-            name: _input_column(column, _for(cache, f"auxiliary_input/{name}"))
-            for name, column in config.data.auxiliary_inputs.items()
-        },
+        inputs=_input_columns(config.data.inputs, cache, ColumnRole.INPUT),
+        targets=_target_columns(config.tasks, cache),
+        auxiliary_inputs=_input_columns(config.data.auxiliary_inputs, cache, ColumnRole.AUXILIARY_INPUT),
     )
+
+
+def _input_columns(
+    declared: Mapping[str, InputColumnConfig], cache: LoaderCache | None, role: ColumnRole
+) -> dict[str, InputColumn]:
+    """One declared section of input columns, built and cache-scoped under its role.
+
+    Serves ``inputs`` and ``auxiliary_inputs`` alike: the two differ only in where
+    their values go after loading, which is the schema's business, not this builder's.
+    """
+    return {name: _input_column(column, _for(cache, role.label(name))) for name, column in declared.items()}
+
+
+def _target_columns(tasks: Mapping[str, TaskConfig], cache: LoaderCache | None) -> dict[str, TargetColumn]:
+    """A target column per task that declares one; a task without a target has no row here."""
+    return {
+        name: TargetColumn(
+            column=str(task.target),
+            encoder=_build_target_encoder(
+                name, task, {"cache": _for(cache, ColumnRole.TARGET.label(name))} if cache else {}
+            ),
+        )
+        for name, task in tasks.items()
+        if task.target is not None
+    }
 
 
 def _for(cache: LoaderCache | None, name: str) -> LoaderCache | None:

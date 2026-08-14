@@ -79,3 +79,35 @@ def _hsl_hex(hue_degrees: float) -> str:
 
 def _hex(red: float, green: float, blue: float) -> str:
     return f"#{round(red * 255):02x}{round(green * 255):02x}{round(blue * 255):02x}"
+
+
+DARK_INK: Final = "#10131a"
+"""The dark side of ``ink_on`` — near-black with the page's own blue-grey cast."""
+
+
+def ink_on(color: str) -> str:
+    """White or near-black, whichever reads better on ``color`` — measured, not thresholded.
+
+    WCAG relative-luminance contrast decides. Measured over the generated palette:
+    white ink reads at 1.9–2.3:1 on the light classes (yellow ``#d0a439``, cyan
+    ``#39d0d0``) where near-black reads at 8–10:1, and the ranking flips on the dark
+    reds and blues (``#394cd0``: white 6.7, dark 2.8). Comparing the two measured
+    contrasts has no tuning constant to drift: the palette's green sits at YIQ 148,
+    one point under the luma threshold a draft used, and kept unreadable white ink.
+    """
+    return "#ffffff" if _contrast(color, "#ffffff") >= _contrast(color, DARK_INK) else DARK_INK
+
+
+def _contrast(one: str, other: str) -> float:
+    """WCAG contrast ratio between two hex colours."""
+    lighter, darker = sorted((_relative_luminance(one), _relative_luminance(other)), reverse=True)
+    return (lighter + 0.05) / (darker + 0.05)
+
+
+def _relative_luminance(color: str) -> float:
+    def linear(channel: int) -> float:
+        scaled = channel / 255
+        return scaled / 12.92 if scaled <= 0.04045 else ((scaled + 0.055) / 1.055) ** 2.4
+
+    red, green, blue = (linear(channel) for channel in hex_to_rgb(color))
+    return 0.2126 * red + 0.7152 * green + 0.0722 * blue

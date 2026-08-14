@@ -492,3 +492,34 @@ the most-used key in every config for a confusion nobody is stuck in.
 **Where to look:** `src/config/experiment.py` (`model`), `src/assembly/vendor.py`
 (`is_vendor_family`), `src/assembly/models.py` (`_refuse_a_name_from_neither_registry`),
 `configs/model/`.
+
+## Visualization modules that will want splitting, and when
+
+**Surfaced:** 2026-08-14, during the renderer rework
+(docs/superpowers/specs/2026-08-14-visualization-rework-design.md).
+
+Two splits were designed and deliberately not made, because a module boundary
+costs reader attention today and the growth that would repay it has not
+happened:
+
+- `annotators.py` splits along its own two axes — objectives (how an
+  `Objective` reads tensors) and topologies (how a `Topology` draws readings) —
+  **when detection annotations land** and push the file past comfortable
+  reading. The seam is already clean: the two ABCs, two registries, and their
+  implementations interleave nothing.
+- Page chrome (sidebar tree, filters, sliders) leaves `html.py` for a
+  `controls.py` **if the chrome itself grows**; new label kinds do not touch
+  it, so no current roadmap item triggers this.
+
+## The distribution-reporter registry's home
+
+**Surfaced:** 2026-08-14, while retiring `singledispatch` from
+`callbacks/dataset_summary.py`
+(docs/superpowers/specs/2026-08-14-dataset-summary-reporters-design.md).
+
+`distribution_reporter_registry` is declared in `dataset_summary.py` itself:
+`callbacks/registry.py` imports that module to catalogue the callback for config,
+so the shared home would be an import cycle — and the registry's producer and
+consumer are both that one module. **A third distribution kind, or a second
+module consuming reporters, moves the ABC, the registry, and the reporter
+classes to `src/callbacks/reporters.py` unchanged.**

@@ -42,6 +42,8 @@ One per capability, in `<package>/registry.py`, named `<singular>_registry`:
 | `optimizer_registry`, `scheduler_registry`, `profiler_registry` | `training` | torch's and Lightning's, by name |
 | `exporter_registry` | `export` | Deployment formats |
 | `annotation_objective_registry`, `annotation_topology_registry` | `visualization` | How a task's outputs are drawn |
+| `label_renderer_registry`, `media_renderer_registry` | `visualization` | How one kind of label or medium becomes HTML — keyed by the entity's *type*, so data chooses, config never does |
+| `distribution_reporter_registry` | `callbacks` — declared in `dataset_summary.py` itself, because the package's `registry.py` imports that module and the shared home would be a cycle | How one kind of distribution is reported, keyed by the entity's *type* |
 
 Our own components register by decorator at their definition; third-party classes
 are registered explicitly in that `registry.py`, because they are not ours to
@@ -69,13 +71,12 @@ worth knowing they answer different questions rather than the same one four ways
 
 | Mechanism | Where | The question it answers |
 |---|---|---|
-| `Registry` | 21 of them, `<package>/registry.py` | Which component does this **name** mean? |
-| `functools.singledispatch` | `visualization/fields.py`, `callbacks/dataset_summary.py` | Which of **our own** types is this value, of a closed set we wrote? |
-| `dict[type, str]` + `getattr` | `visualization/annotators.py` | Which *method* of this topology draws that kind of reading — and does it have one at all (`draws`)? |
+| `Registry` | 25 of them, `<package>/registry.py` | Which component does this **key** mean? Usually a config name; `visualization`'s renderer registries and `dataset_summary`'s reporter registry key by entity *type* — data chooses, config never does |
+| `match` over reading kinds | `visualization/annotators.py` | Which labeller of this topology draws that kind of reading? |
 | `isinstance` chain | `core/reporting.py` | What is this value's **geometry** — which is type *and* shape (a 2-D tensor is not a scalar one), and so not expressible as type dispatch |
 
 Extending the framework almost always means adding to a registry. The other three are
-internal, and each is where it is because the question it answers is not "which name".
+internal, and each is where it is because the question it answers is not "which key".
 
 There is deliberately no fourth mechanism for *what a metric's value means*: a metric
 says it by returning an artifact from `compute`. A table keyed on the third-party metric

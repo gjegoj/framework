@@ -4,11 +4,30 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from src.data.encoders import TargetEncoder
     from src.data.loaders import InputLoader
+
+
+class ColumnRole(StrEnum):
+    """The three roles a table column can play in a schema, and how each is named in full.
+
+    A column's full identity — ``input/image``, ``target/warmth`` — is a concept, not a
+    string convention: assembly scopes cache namespaces with it, the warm-up titles its
+    progress bars with it, and the summary reports by it. ``label`` is the one place
+    the spelling exists, so no caller can misspell what it never writes.
+    """
+
+    INPUT = "input"
+    AUXILIARY_INPUT = "auxiliary_input"
+    TARGET = "target"
+
+    def label(self, name: str) -> str:
+        """One column's full identity: its role, a slash, its name."""
+        return f"{self}/{name}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,3 +105,18 @@ class DataSchema:
         target_columns = {target_column.column for target_column in self.targets.values()}
         auxiliary_columns = {input_column.column for input_column in self.auxiliary_inputs.values()}
         return input_columns | target_columns | auxiliary_columns
+
+    def labelled_columns(self) -> list[tuple[str, InputColumn | TargetColumn]]:
+        """Every column beside its full name — ``input/image``, ``target/warmth``.
+
+        Next to ``columns()`` because it is the same walk with the names kept. The
+        labels come from ``ColumnRole.label``, the same call assembly scopes cache
+        namespaces with — assembly cannot use *this method* (the scoped cache is
+        handed to loaders while columns are constructed, before a schema exists),
+        and a test pins its role-per-section pairing to this walk.
+        """
+        return [
+            *((ColumnRole.INPUT.label(name), column) for name, column in self.inputs.items()),
+            *((ColumnRole.AUXILIARY_INPUT.label(name), column) for name, column in self.auxiliary_inputs.items()),
+            *((ColumnRole.TARGET.label(name), column) for name, column in self.targets.items()),
+        ]

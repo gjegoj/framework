@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from typing import get_args
+
 import pytest
 from rich.console import Console
 
-from src.callbacks.dataset_summary import draw, table_for
+from src.callbacks.dataset_summary import distribution_reporter_registry, draw, table_for
 from src.callbacks.registry import callback_registry
 from src.console import HEADER_STYLE, TITLE_STYLE
 from src.core import Stage
@@ -121,7 +123,7 @@ def test_a_class_balance_reaches_the_bars_port_and_not_the_other_one() -> None:
     """
     drawing, boxes = OnlyBars(), OnlySpread()
 
-    draw(balance()[Stage.TRAIN], "dataset/label", balance(), [drawing, boxes])
+    draw("dataset/label", balance(), [drawing, boxes])
 
     (bars,) = drawing.bars
     assert not boxes.box_plots
@@ -138,7 +140,7 @@ def test_a_value_spread_reaches_the_box_plot_port_carrying_the_summary_itself() 
     """
     bars, boxes = OnlyBars(), OnlySpread()
 
-    draw(spread()[Stage.TRAIN], "dataset/age", spread(), [bars, boxes])
+    draw("dataset/age", spread(), [bars, boxes])
 
     (drawing,) = boxes.box_plots
     assert not bars.bars
@@ -148,24 +150,30 @@ def test_a_value_spread_reaches_the_box_plot_port_carrying_the_summary_itself() 
 
 def test_a_tracker_that_draws_neither_is_simply_not_asked() -> None:
     """A CSV run keeps its scalars; a dataset report is not worth failing a run over."""
-    draw(balance()[Stage.TRAIN], "dataset/label", balance(), [Deaf()])
-    draw(spread()[Stage.TRAIN], "dataset/age", spread(), [Deaf()])
+    draw("dataset/label", balance(), [Deaf()])
+    draw("dataset/age", spread(), [Deaf()])
+
+
+def test_every_distribution_kind_has_a_registered_reporter() -> None:
+    """The exhaustiveness pin: a new distribution cannot reach a run unreported."""
+    for kind in get_args(Distribution.__value__):
+        assert kind in distribution_reporter_registry, kind.__name__
 
 
 def test_a_shape_with_no_table_is_refused_by_name() -> None:
-    """A new distribution cannot be half-supported: the table side says so at once."""
-    with pytest.raises(TypeError, match="No table for str"):
+    """A new distribution cannot be half-supported: an unknown shape is refused with
+    the registered ones named — by the registry, so no hand-written list falls stale."""
+    with pytest.raises(LookupError, match="Registered:"):
         table_for("t", {Stage.TRAIN: "not a distribution"}, {})  # type: ignore[dict-item]
 
 
 def test_a_shape_with_no_chart_is_refused_by_name() -> None:
     """And so does the chart side, which is the half that would otherwise fail silently.
 
-    A shape that gained a table but no chart would print and then send nothing at
-    all — the failure mode dispatch was chosen to prevent.
-    """
-    with pytest.raises(TypeError, match="No chart for str"):
-        draw("not a distribution", "t", {}, [])  # type: ignore[arg-type]
+    Both halves now resolve through one registry, so this guards the entry rather
+    than a second dispatch table."""
+    with pytest.raises(LookupError, match="Registered:"):
+        draw("t", {Stage.TRAIN: "not a distribution"}, [])  # type: ignore[dict-item]
 
 
 def test_both_tables_are_dressed_like_every_other_table_this_framework_prints() -> None:

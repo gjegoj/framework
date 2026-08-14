@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from src.assembly.data import build_cache, build_data_schema
-from src.data import RamCache
+from src.data import LoaderCache, RamCache
 from tests.support.configs import DATA, paper_config
 
 RAM = {"cache": {"name": "ram", "max_gib": 0.5}}
@@ -57,3 +57,32 @@ def test_a_run_without_a_cache_builds_exactly_as_before() -> None:
 
     assert schema.inputs["image"].column == "image"
     assert schema.targets["label"].encoder.num_classes is None
+
+
+def test_assembly_namespaces_and_schema_labels_are_one_spelling() -> None:
+    """The pin between two hand-written copies of one name.
+
+    Assembly scopes each column's cache namespace while the columns are being
+    constructed — before a schema exists — so it cannot call
+    ``DataSchema.labelled_columns`` and spells the labels itself. This is what
+    keeps a typo in either spelling from silently filing a bar's label and a
+    store's keys under different names.
+    """
+
+    class RecordingCache(RamCache):
+        def __init__(self) -> None:
+            super().__init__(max_gib=0.5)
+            self.namespaces: list[str] = []
+
+        def scoped(self, namespace: str) -> LoaderCache:
+            self.namespaces.append(namespace)
+            return super().scoped(namespace)
+
+    spy = RecordingCache()
+    config = paper_config(
+        data=DATA | {"auxiliary_inputs": {"lesion": {"column": "mask"}}, "cache": {"name": "ram", "max_gib": 0.5}}
+    )
+
+    schema = build_data_schema(config, spy)
+
+    assert sorted(spy.namespaces) == sorted(label for label, _ in schema.labelled_columns())

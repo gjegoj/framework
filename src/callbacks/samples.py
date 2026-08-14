@@ -27,10 +27,11 @@ from src.visualization import (
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    import numpy as np
     from torch import Tensor
 
     from src.core.entities import Batch, Task
-    from src.visualization import Media
+    from src.visualization import Annotator, Media
 
 log = logging.getLogger(__name__)
 
@@ -291,30 +292,56 @@ class SampleGrid(L.Callback):
         # conversion does exactly the work the page uses.
         count = self._count(batch, drawable)
         pictures = {alias: self._to_uint8(tensor, count) for alias, tensor in drawable.items()}
+        drawn = self._drawn(preview)
         views: list[SampleView] = []
         for index in range(count):
             row = cells[index] if index < len(cells) else {}
             view = SampleView(media=_media(batch, index, pictures, row))
-            for task in self._tasks:
-                annotator = self._annotators.get(task.name)
-                outputs = preview.outputs.get(task.name)
-                targets = preview.targets.get(task.name)
-                if annotator is None or outputs is None or targets is None:
-                    continue
-                if isinstance(outputs, Instances) or isinstance(targets, Instances):
-                    # A page draws what it can and says what it cannot: a task predicting a
-                    # set of objects has no annotator yet, and a run should not lose the
-                    # tasks that do have one over the task that does not.
-                    self._say_once(
-                        f"undrawable/{task.name}",
-                        "Task '%s' predicts a set of objects, which no annotator draws yet; "
-                        "it is left off the page and the other tasks are drawn.",
-                        task.name,
-                    )
-                    continue
+            for task, annotator, outputs, targets in drawn:
                 annotator.annotate(view, task, outputs, targets, index)
             views.append(view)
         return views
+
+    def _drawn(self, preview: StepPreview) -> list[tuple[Task, Annotator, Tensor, Tensor]]:
+        """The tasks this page will annotate, resolved once — these are facts about a
+        task, not about a sample, so they are read before the per-sample loop."""
+        drawn: list[tuple[Task, Annotator, Tensor, Tensor]] = []
+        for task in self._tasks:
+            annotator = self._annotators.get(task.name)
+            if annotator is None:
+                # Already named at assembly: build_annotators logs the task and the reason.
+                continue
+            outputs = preview.outputs.get(task.name)
+            targets = preview.targets.get(task.name)
+            if outputs is None or targets is None:
+                missing = " and ".join(
+                    name for name, value in (("outputs", outputs), ("targets", targets)) if value is None
+                )
+                self._say_once(
+                    f"missing/{task.name}",
+                    # The one silent loss the assembly checks could not catch: only a step
+                    # shows which tasks its preview carries. Named at the first drawn batch,
+                    # while the tasks the preview does carry still make the page.
+                    "Task '%s' has an annotator, but the step's preview carries no %s for it, "
+                    "so it is left off the page. TrainingModule previews every task; "
+                    "a module of your own must too.",
+                    task.name,
+                    missing,
+                )
+                continue
+            if isinstance(outputs, Instances) or isinstance(targets, Instances):
+                # A page draws what it can and says what it cannot: a task predicting a
+                # set of objects has no annotator yet, and a run should not lose the
+                # tasks that do have one over the task that does not.
+                self._say_once(
+                    f"undrawable/{task.name}",
+                    "Task '%s' predicts a set of objects, which no annotator draws yet; "
+                    "it is left off the page and the other tasks are drawn.",
+                    task.name,
+                )
+                continue
+            drawn.append((task, annotator, outputs, targets))
+        return drawn
 
     def _say_once(self, topic: str, message: str, *args: Any) -> None:
         """Warn about a condition the first time it holds, and then stay quiet.
@@ -352,19 +379,19 @@ class SampleGrid(L.Callback):
             return False
         return True
 
-    def _warn_once_about_shared_normalisation(self, pictures: dict[str, Any]) -> None:
+    def _warn_once_about_shared_normalisation(self, drawable: dict[str, Tensor]) -> None:
         """One mean and one std cannot undo two different normalisations.
 
         A run with per-input transforms would have its second picture drawn in the
         wrong colours, and wrong colours look like a model problem. Said out loud
         rather than guessed at; a per-input presentation contract is in the backlog.
         """
-        if len(pictures) > 1:
+        if len(drawable) > 1:
             self._say_once(
                 "colours",
                 "The samples grid draws %s with one mean/std pair. If these inputs were "
                 "normalised differently, every picture but the first will be mis-coloured.",
-                ", ".join(sorted(pictures)),
+                ", ".join(sorted(drawable)),
             )
 
     def _count(self, batch: Batch, drawable: dict[str, Tensor]) -> int:
@@ -381,7 +408,7 @@ class SampleGrid(L.Callback):
             return 0
         return min([self._num_images, *sizes]) if sizes else min(self._num_images, len(rows))
 
-    def _to_uint8(self, tensor: Tensor, count: int) -> Any:
+    def _to_uint8(self, tensor: Tensor, count: int) -> np.ndarray:
         """Undo the run's own normalisation and lay the channels out the way a browser reads them."""
         images = tensor[:count].detach().cpu().float()
         channels = images.shape[1]
@@ -393,7 +420,8 @@ class SampleGrid(L.Callback):
         images = (images * std + mean).clamp(0.0, 1.0).mul(255).round().byte()
         if channels == 1:
             images = images.repeat(1, 3, 1, 1)
-        return images.permute(0, 2, 3, 1).numpy()
+        pixels: np.ndarray = images.permute(0, 2, 3, 1).numpy()
+        return pixels
 
 
 def _is_picture(tensor: Any) -> bool:
@@ -401,7 +429,7 @@ def _is_picture(tensor: Any) -> bool:
     return isinstance(tensor, torch.Tensor) and tensor.ndim == 4 and tensor.is_floating_point()
 
 
-def _media(batch: Batch, index: int, pictures: dict[str, Any], row: dict[str, str]) -> dict[str, Media]:
+def _media(batch: Batch, index: int, pictures: dict[str, np.ndarray], row: dict[str, str]) -> dict[str, Media]:
     """Every input this sample can show, in the order the batch declares them.
 
     A picture draws itself; anything else draws its readable cell, because a text

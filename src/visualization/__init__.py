@@ -19,8 +19,8 @@ from src.visualization.entities import (
     Text,
     Verdict,
 )
-from src.visualization.fields import MAX_CHIP_CHARS
 from src.visualization.html import MAX_DISPLAY_SIDE, HtmlRenderer
+from src.visualization.renderers import MAX_CHIP_CHARS
 
 __all__ = [
     "KINDS",

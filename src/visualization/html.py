@@ -8,7 +8,8 @@ from importlib.resources import files
 from typing import TYPE_CHECKING
 
 from src.visualization.entities import KINDS
-from src.visualization.fields import (
+from src.visualization.palette import task_palette
+from src.visualization.renderers import (
     MAX_CHIP_CHARS,
     ZONES,
     FieldContext,
@@ -20,9 +21,9 @@ from src.visualization.fields import (
     number,
     render_label,
     render_media,
+    score_key,
     text,
 )
-from src.visualization.palette import task_palette
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -56,11 +57,11 @@ _EMPTY = """<div class="empty hidden" id="empty">
 
 
 class HtmlRenderer:
-    """A layout shell over ``fields.render_label`` and ``fields.render_media``.
+    """A layout shell over ``renderers.render_label`` and ``renderers.render_media``.
 
     No plotting library and no template engine. This assembles the page and never asks
     what kind of thing it is drawing — what one label or one input looks like is
-    ``fields.py``'s business, decided by type.
+    ``renderers.py``'s business, decided by type.
 
     The page answers one question before anything is clicked: *where does this model get
     it wrong?* A cell that missed is outlined and carries a badge saying so in words as
@@ -254,11 +255,6 @@ def _verdicts(view: SampleView) -> dict[str, str]:
         for task, verdict in view.verdicts.items()
         if verdict.correct is not None
     }
-
-
-def score_key(task: str, name: str) -> str:
-    """A slider's identity: which task measured, and which way. Glued here, never re-split."""
-    return f"{task}::{name}"
 
 
 _SCORE_DECIMALS = 3

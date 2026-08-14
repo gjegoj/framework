@@ -108,6 +108,31 @@ def test_a_step_that_returns_no_preview_is_named_not_skipped(
     assert "Tensor" in said[0]
 
 
+def test_a_task_the_preview_does_not_carry_is_named_not_silently_lost(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A module that previews only some of the declared tasks loses the rest from the
+    page; the loss is said once, naming the task and what the preview lacked, and the
+    tasks the preview does carry are still drawn."""
+    extra = Task(
+        name="extra",
+        topology=Topology.GLOBAL,
+        objective=Objective.MULTICLASS,
+        metrics={},
+        class_names=["a", "b"],
+    )
+    callback = grid(tasks=[task_of(), extra])
+
+    with caplog.at_level(logging.WARNING):
+        logger = drawn(callback, module(), PageLogger(), batch())
+        drawn(callback, module(), logger, batch())
+
+    assert len(logger.pages) == 2  # the page itself survives the missing task
+    said = [record.message for record in caplog.records if "'extra'" in record.message]
+    assert len(said) == 1  # once, however many batches pass
+    assert "outputs and targets" in said[0]
+
+
 def test_a_tracker_without_log_html_warns_once_and_the_run_proceeds(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

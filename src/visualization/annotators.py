@@ -6,7 +6,7 @@ import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from itertools import chain
-from typing import TYPE_CHECKING, Any, ClassVar, Final, override
+from typing import TYPE_CHECKING, Any, ClassVar, override
 
 import numpy as np
 
@@ -131,29 +131,34 @@ class AnnotationTopology(ABC):
         raise _no_label(self, ValueReading)
 
     def draws(self, reading: type[ClassReading | ValueReading]) -> bool:
-        """Whether this topology has a label for that kind of reading."""
-        labeller = LABELLERS[reading]
-        return getattr(type(self), labeller) is not getattr(AnnotationTopology, labeller)
+        """Whether this topology has a label for that kind of reading.
+
+        Derived from which method the subclass overrode, so it cannot claim a
+        pairing no branch exists for — the same guarantee the retired string
+        table gave, without the table.
+        """
+        mine, base = type(self), AnnotationTopology
+        if reading is ClassReading:
+            return mine.label_classes is not base.label_classes
+        return mine.label_values is not base.label_values
 
     def annotate(self, view: SampleView, task: Task, truth: Reading, predicted: Reading) -> None:
-        """Route one sample's pair of readings to the labeller for their kind."""
-        if type(truth) is not type(predicted):
-            raise TypeError(
-                f"Task '{task.name}': ground truth read as {type(truth).__name__} and the prediction "
-                f"as {type(predicted).__name__}; one objective must produce both."
-            )
-        getattr(self, LABELLERS[type(truth)])(view, task, truth, predicted)
+        """Route one sample's pair of readings to the labeller for their kind.
 
-
-LABELLERS: Final[dict[type[ClassReading | ValueReading], str]] = {
-    ClassReading: "label_classes",
-    ValueReading: "label_values",
-}
-"""The one place a kind of reading is tied to the method that draws it.
-
-Every member of ``Reading`` must appear; a test asserts it, so a new kind cannot
-reach a run without a labeller to route it to.
-"""
+        The fallthrough covers both wrong pairs: two readings of different
+        kinds, and a matched pair of a kind this router has no arm for — a new
+        ``Reading`` member is refused here by name until it brings its labeller.
+        """
+        match truth, predicted:
+            case ClassReading(), ClassReading():
+                self.label_classes(view, task, truth, predicted)
+            case ValueReading(), ValueReading():
+                self.label_values(view, task, truth, predicted)
+            case _:
+                raise TypeError(
+                    f"Task '{task.name}': ground truth read as {type(truth).__name__} and the prediction "
+                    f"as {type(predicted).__name__}; one objective must produce both."
+                )
 
 
 def _no_label(topology: AnnotationTopology, reading: type[ClassReading | ValueReading]) -> TypeError:

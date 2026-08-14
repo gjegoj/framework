@@ -17,7 +17,7 @@ from src.data.encoders import (
     TargetEncoder,
 )
 from src.data.loaders import ImageLoader, InputLoader
-from src.data.schema import DataSchema, InputColumn, TargetColumn
+from src.data.schema import ColumnRole, DataSchema, InputColumn, TargetColumn
 from src.data.sources import (
     CsvSource,
     FileSource,
@@ -31,6 +31,7 @@ from src.data.split import Splitter, group_split, random_split, stratified_split
 
 __all__ = [
     "BinnedTargetEncoder",
+    "ColumnRole",
     "CsvSource",
     "DataSchema",
     "FileSource",

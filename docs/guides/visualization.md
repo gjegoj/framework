@@ -223,9 +223,25 @@ pairing a topology has not written a labeller for is refused when the callback i
 built, with the task and the reason named.
 
 A **new kind of reading** — boxes for detection, say — is one dataclass, one
-member of the `Reading` union, one entry in `LABELLERS`, and one defaulted method
-on `AnnotationTopology`. No existing topology changes, and a topology that does
-not draw boxes needs no line about them.
+member of the `Reading` union, one arm in `annotate`'s `match`, and one defaulted
+method on `AnnotationTopology`. No existing topology changes, and a topology that
+does not draw boxes needs no line about them.
+
+## Adding a kind of label
+
+A reading becomes a *label* the page can draw, and a new kind of label (a
+heatmap, detection boxes) touches four named places:
+
+1. the entity joins the `Label` union in `entities.py`;
+2. a `LabelRenderer` subclass in `renderers.py`, registered under the entity's
+   type — `leaves` names what the palette colours, `render` draws it;
+3. an annotation objective/topology in `annotators.py` produces it;
+4. the exhaustiveness pin in `test_renderers.py` goes green again.
+
+The renderer registries are keyed by the entity type itself rather than by a
+config name: which renderer runs is decided by what the annotator produced,
+never by a declaration. Same `Registry` mechanism, minus the `{name: ...}`
+sugar.
 
 The tasks a page draws reach the callback from the composition root, as a derived
 value — `build_callbacks` already offers them to every entry. The module is asked

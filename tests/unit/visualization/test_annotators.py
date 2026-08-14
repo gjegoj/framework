@@ -326,18 +326,37 @@ def test_the_page_names_a_measure_the_way_the_framework_names_it() -> None:
     assert MAE in metric_registry
 
 
-def test_every_kind_of_reading_has_a_labeller_to_route_it_to() -> None:
-    """A new Reading member must not reach a run before the topologies can draw it.
+def test_a_mixed_pair_of_readings_is_refused_naming_both_sides() -> None:
+    """One objective produces both readings, so a mixed pair is a wiring bug — named,
+    not silently drawn. Uncovered until a mutation check showed nothing guarded it."""
+    from src.visualization.annotators import ClassReading, GlobalAnnotation, ValueReading
 
-    The table is the one place a kind is tied to the method that draws it; the union
-    is the one place a kind exists. They have to agree, and this is what makes a
-    missing entry a failed test instead of a KeyError mid-epoch.
+    truth = ClassReading(presences=(), singular=True)
+    predicted = ValueReading(values=np.zeros(1))
+
+    with pytest.raises(TypeError, match="ClassReading.*ValueReading.*one objective"):
+        GlobalAnnotation().annotate(SampleView(), task_of(Topology.GLOBAL, Objective.MULTICLASS), truth, predicted)
+
+
+def test_a_reading_kind_the_router_does_not_know_is_refused_by_name() -> None:
+    """A new Reading member must not reach a run before ``annotate`` can route it.
+
+    The union is the one place a kind exists; the ``match`` in ``annotate`` is the
+    one place it is routed. This pins their agreement from the routing side, as
+    the retired LABELLERS table test pinned it from the table side.
     """
-    from typing import get_args
+    from dataclasses import dataclass
 
-    from src.visualization.annotators import LABELLERS, Reading
+    from src.visualization.annotators import GlobalAnnotation
 
-    assert set(LABELLERS) == set(get_args(Reading.__value__))
+    @dataclass
+    class HeatReading:  # a stand-in for a future Reading member
+        values: np.ndarray
+
+    pair = HeatReading(values=np.zeros(1))
+    with pytest.raises(TypeError, match="HeatReading"):
+        task = task_of(Topology.GLOBAL, Objective.CONTINUOUS)
+        GlobalAnnotation().annotate(SampleView(), task, pair, pair)  # type: ignore[arg-type]
 
 
 def test_a_topology_draws_what_it_overrides_and_nothing_else() -> None:

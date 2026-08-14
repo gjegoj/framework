@@ -143,13 +143,13 @@ def test_the_warmup_closes_with_one_summary_naming_who_took_how_much(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     """One line for the whole warm-up — not one per column per stage — and the
-    breakdown names columns the way the cache scopes them."""
-    with caplog.at_level(logging.INFO, logger="src.data.datamodules.table"):
+    breakdown carries the same stage-qualified labels the progress bars showed."""
+    with caplog.at_level(logging.INFO, logger="src.data.cache"):
         module(tmp_path, RamCache(max_gib=1.0)).setup(DataProfile())
 
     summaries = [record.message for record in caplog.records if "Cache holds" in record.message]
     assert len(summaries) == 1
-    assert "input/image" in summaries[0]
+    assert "train: input/image" in summaries[0]
     assert "of 1.00 GiB" in summaries[0]
 
 
@@ -165,7 +165,7 @@ def test_a_full_budget_is_said_out_loud_with_the_count_that_was_turned_away(
     """
     tiny = RamCache(max_gib=400 / 1024**3)
 
-    with caplog.at_level(logging.INFO, logger="src.data.datamodules.table"):
+    with caplog.at_level(logging.INFO, logger="src.data.cache"):
         module(tmp_path, tiny).setup(DataProfile())
 
     assert tiny.usage().declined == 2
@@ -176,7 +176,7 @@ def test_a_full_budget_is_said_out_loud_with_the_count_that_was_turned_away(
 
 
 def test_a_budget_nothing_overflowed_stays_quiet(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
-    with caplog.at_level(logging.INFO, logger="src.data.datamodules.table"):
+    with caplog.at_level(logging.INFO, logger="src.data.cache"):
         module(tmp_path, RamCache(max_gib=1.0)).setup(DataProfile())
 
     assert not [record for record in caplog.records if "budget full" in record.message]
