@@ -12,6 +12,7 @@ from torch import Tensor, nn
 from src.assembly.checkpoints import load_weights, shipped_weights
 from src.core import Batch, Loss, Model, Prediction, StepResult
 from src.models import DistilledModel
+from src.models.adapters import LoraAdapters
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -104,6 +105,67 @@ def test_a_file_that_is_not_our_checkpoint_names_the_field_that_takes_it(tmp_pat
 
     with pytest.raises(ValueError, match="model.checkpoint_path"):
         load_weights(Tiny(0.0), str(foreign))
+
+
+def test_a_plain_checkpoint_loads_beneath_freshly_added_adapters(tmp_path: Path) -> None:
+    """Warm-starting LoRA from a plain run's weights is the ordinary way to reach for it.
+
+    The base loads under the adapters and the deltas keep their zero start, so the
+    adapted model computes exactly what the checkpoint's weights say until training
+    moves the delta."""
+    source = written(tmp_path / "plain.ckpt", Tiny(1.0))
+    adapted = Tiny(0.0)
+    LoraAdapters(target_modules=["net"], rank=2)(adapted)
+
+    load_weights(adapted, source)
+
+    weights = shipped_weights(source)
+    grafted = adapted.state_dict()["net.base_layer.weight"]
+    assert torch.allclose(grafted, torch.full_like(grafted, 1.0))
+    x = torch.randn(5, 4)
+    assert torch.allclose(adapted.net(x), torch.nn.functional.linear(x, weights["net.weight"], weights["net.bias"]))
+
+
+def test_an_adapted_runs_checkpoint_still_loads_strictly_into_an_adapted_model(tmp_path: Path) -> None:
+    """The evaluate-a-lora-checkpoint workflow: adapted keys fit an adapted model as-is."""
+    trained = Tiny(1.0)
+    LoraAdapters(target_modules=["net"], rank=2)(trained)
+    source = written(tmp_path / "lora.ckpt", trained)
+    fresh = Tiny(0.0)
+    LoraAdapters(target_modules=["net"], rank=2)(fresh)
+
+    load_weights(fresh, source)
+
+    grafted = fresh.state_dict()["net.base_layer.weight"]
+    assert torch.allclose(grafted, torch.full_like(grafted, 1.0))
+
+
+def test_a_checkpoint_of_a_different_architecture_is_refused_even_beneath_adapters(tmp_path: Path) -> None:
+    """The graft fixes exactly one mismatch — the adapters' rename — and nothing else."""
+    source = written(tmp_path / "foreign.ckpt", nn.Linear(8, 8))
+    adapted = Tiny(0.0)
+    LoraAdapters(target_modules=["net"], rank=2)(adapted)
+
+    with pytest.raises(ValueError, match="beneath the adapters"):
+        load_weights(adapted, source)
+
+
+def test_a_size_mismatch_is_refused_by_name_even_beneath_adapters(tmp_path: Path) -> None:
+    """A checkpoint whose layer grew a different width dies with the framework's own
+    refusal, not a raw size-mismatch traceback: the graft renames keys, and a shape
+    that disagrees after the rename is the architecture disagreeing."""
+
+    class Wide(nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.net = nn.Linear(4, 20)
+
+    source = written(tmp_path / "wide.ckpt", Wide())
+    adapted = Tiny(0.0)
+    LoraAdapters(target_modules=["net"], rank=2)(adapted)
+
+    with pytest.raises(ValueError, match="beneath the adapters"):
+        load_weights(adapted, source)
 
 
 def test_a_checkpoint_that_does_not_fit_names_the_model_it_did_not_fit(tmp_path: Path) -> None:

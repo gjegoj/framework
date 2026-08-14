@@ -19,7 +19,7 @@ The detail lives in `references/` — read the one that fits the task:
 | Docstrings | [docstrings.md](references/docstrings.md) | Google-style conventions; when each section earns its place |
 | Error handling | [error-handling.md](references/error-handling.md) | specific excepts, chaining, custom hierarchy, EAFP, exception groups |
 | Idioms | [idioms.md](references/idioms.md) | naming conventions, context managers, decorators, sentinels, generators, anti-patterns |
-| Stdlib toolbox | [functools-itertools.md](references/functools-itertools.md) | caching (`@cache`/`@cached_property`), type dispatch (`@singledispatch`), `partial`; lazy iteration, grouping, combinatorics |
+| Stdlib toolbox | [functools-itertools.md](references/functools-itertools.md) | caching (`@cache`/`@cached_property`), `partial`; lazy iteration, grouping, combinatorics |
 | Logging | [logging.md](references/logging.md) | one logger per module, lazy `%`-formatting, levels, exceptions, library vs app config |
 | Concurrency | [concurrency.md](references/concurrency.md) | threads vs multiprocessing vs asyncio, the GIL, `concurrent.futures`, pitfalls |
 
@@ -58,7 +58,6 @@ cheaper imports. Still needed on 3.12 (native lazy annotations land in 3.14).
 | Stream large data lazily | generator (`yield`) / generator expr | idioms |
 | Guaranteed setup/teardown | context manager | idioms |
 | Memoize a pure function | `@cache` / `@cached_property` | functools-itertools |
-| Dispatch by argument type | `@singledispatch` (not `isinstance` chains) | functools-itertools |
 | Group / window / combine iterables | `itertools` (groupby / pairwise / product) | functools-itertools |
 | Python naming / underscore meaning | `snake_case`, `_private`, `__mangled` | idioms |
 | Record an event (not `print`) | per-module logger + lazy `%`-args | logging |

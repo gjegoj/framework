@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 import torch
 
 from src.models import DistilledModel
+from src.models.adapters import graft_base_weights
 from src.training import TrainingModule
 
 if TYPE_CHECKING:
@@ -60,15 +61,20 @@ def load_weights(model: nn.Module, path: str) -> None:
     Takes the model rather than the training module: what a checkpoint is *about*
     is the model, and the optimizer and the epoch counter deliberately start
     fresh — a resumed run goes through ``run.resume_path`` and Lightning instead.
+
+    A plain checkpoint meeting a model that wears adapters is the warm-start-then-
+    LoRA workflow, not a mistake: the weights are grafted beneath the adapters
+    (see ``graft_base_weights``), said out loud in the log.
     """
+    weights = shipped_weights(path)
     try:
-        model.load_state_dict(shipped_weights(path))
+        model.load_state_dict(weights)
     except RuntimeError as error:
-        raise ValueError(
-            f"{path} does not fit {type(model).__name__} — the missing and unexpected keys are above. "
-            "Two causes are usual: a run with 'adapters' renames every targeted layer "
-            "('...proj.weight' becomes '...proj.base_layer.weight') and adds the deltas beside it, so one "
-            "side of that boundary does not load into the other; and a teacher whose 'model' section is "
-            "not the architecture its checkpoint was written from."
-        ) from error
+        if not graft_base_weights(model, weights):
+            raise ValueError(
+                f"{path} does not fit {type(model).__name__} — the missing and unexpected keys are above. "
+                "Two causes are usual: an adapted run's checkpoint carries '...base_layer...' and 'lora_' "
+                "keys that only load back into a model declaring the same 'adapters'; and a teacher whose "
+                "'model' section is not the architecture its checkpoint was written from."
+            ) from error
     log.info("Loaded the weights from %s; the optimizer and the epoch counter start fresh.", path)

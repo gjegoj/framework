@@ -1,7 +1,7 @@
 # functools & itertools
 
 Two standard-library toolboxes that replace a lot of hand-written code:
-`functools` for caching, type dispatch, and adapting callables; `itertools` for
+`functools` for caching and adapting callables; `itertools` for
 lazy iteration, grouping, and combinatorics. Reaching for these is usually
 clearer and faster than rolling your own loops — but each has a sharp edge worth
 knowing.
@@ -10,7 +10,6 @@ knowing.
 - [functools](#functools)
   - [@cache / @lru_cache](#cache--lru_cache)
   - [@cached_property](#cached_property)
-  - [@singledispatch](#singledispatch)
   - [partial](#partial)
   - [reduce](#reduce)
   - [total_ordering](#total_ordering)
@@ -73,37 +72,6 @@ class Dataset:
 Two caveats: it stores the value in the instance `__dict__`, so it is
 **incompatible with `__slots__`** (a slotted class has no `__dict__`); and it is
 **not thread-safe** — two threads racing the first access can both compute.
-
-### @singledispatch
-
-Function overloading by the type of the first argument — a clean alternative to a
-chain of `isinstance` checks. Register an implementation per type; new types plug
-in without editing the original function:
-
-```python
-from __future__ import annotations
-
-from functools import singledispatch
-
-
-@singledispatch
-def serialize(value: object) -> str:
-    raise TypeError(f"cannot serialize {type(value).__name__}")
-
-
-@serialize.register
-def _(value: int) -> str:
-    return str(value)
-
-
-@serialize.register
-def _(value: list) -> str:
-    return "[" + ", ".join(serialize(item) for item in value) + "]"
-```
-
-Use `singledispatchmethod` for methods. Dispatch is on the first argument only —
-for multi-argument dispatch, a different design (Strategy, a dict of handlers) is
-usually clearer.
 
 ### partial
 
@@ -234,7 +202,6 @@ itertools.permutations(items, 2)           # ordered pairs
 |---|---|
 | Cache results of a pure function | `@cache` / `@lru_cache` |
 | Compute an attribute once per instance | `@cached_property` |
-| Behaviour varies by argument type | `@singledispatch` (over `isinstance` chains) |
 | Fix some arguments of a callable | `partial` (over `lambda`) |
 | Concatenate / flatten / slice iterators | `chain` / `islice` |
 | Group adjacent items by a key | `groupby` (sort first!) |

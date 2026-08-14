@@ -9,9 +9,9 @@ from typing import TYPE_CHECKING, Any
 from src.models.registry import adapter_registry
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Mapping, Sequence
 
-    from torch import nn
+    from torch import Tensor, nn
 
 log = logging.getLogger(__name__)
 
@@ -96,6 +96,55 @@ class LoraAdapters:
         trainable = sum(parameter.numel() for parameter in model.parameters() if parameter.requires_grad)
         total = sum(parameter.numel() for parameter in model.parameters())
         log.info("LoRA adapted %d layers; %d of %d parameters train.", len(adapted), trainable, total)
+
+
+def graft_base_weights(model: nn.Module, weights: Mapping[str, Tensor]) -> bool:
+    """Load a plain checkpoint's weights beneath the model's adapters, exactly.
+
+    Warm-starting adapters from an earlier run's weights: peft renamed every
+    targeted layer (``net.weight`` became ``net.base_layer.weight``), so the plain
+    keys are rewritten to the adapted names — a mechanical rename over
+    ``_adapted_layers``, no guessing — and the deltas keep their fresh start.
+    ``lora_B`` initialises at zero, so the grafted model computes exactly what the
+    checkpoint's weights say until training moves the delta (asserted in
+    ``test_checkpoints.py`` against a hand-computed forward).
+
+    Returns ``False`` when there is nothing to graft: the model has no adapters, or
+    the weights already carry adapter keys — an adapted run's own checkpoint loads
+    strictly and needs no rename. Raises when the renamed weights still do not fit:
+    the graft fixes exactly one mismatch, the adapters' rename, and nothing else.
+    """
+    adapted = {name for name, _ in _adapted_layers(model)}
+    if not adapted or any(".base_layer." in key or "lora_" in key for key in weights):
+        return False
+    renamed = {_beneath(key, adapted): value for key, value in weights.items()}
+    try:
+        report = model.load_state_dict(renamed, strict=False)
+    except RuntimeError as error:
+        # ``strict=False`` forgives absent keys, not mismatched shapes — a head sized
+        # for different classes still raises, and it deserves the named refusal too.
+        raise ValueError(
+            f"The checkpoint does not fit {type(model).__name__} even beneath the adapters — "
+            "the mismatched shapes are above. The graft renames the adapted layers and nothing "
+            "else; a layer of a different width is the architecture disagreeing, not the naming."
+        ) from error
+    strays = [key for key in report.missing_keys if "lora_" not in key] + list(report.unexpected_keys)
+    if strays:
+        raise ValueError(
+            f"The checkpoint does not fit {type(model).__name__} even beneath the adapters: "
+            f"{', '.join(strays)}. The graft renames the adapted layers and nothing else — "
+            "this checkpoint disagrees with the model's architecture itself."
+        )
+    log.info(
+        "Grafted the checkpoint's weights beneath %d adapted layers; the deltas keep their fresh start.", len(adapted)
+    )
+    return True
+
+
+def _beneath(key: str, adapted: set[str]) -> str:
+    """The adapted spelling of one plain parameter key; untouched where no adapter sits."""
+    owner, _, parameter = key.rpartition(".")
+    return f"{owner}.base_layer.{parameter}" if owner in adapted else key
 
 
 def merge_adapters(model: nn.Module) -> int:
