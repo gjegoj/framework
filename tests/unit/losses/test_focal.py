@@ -6,7 +6,7 @@ import pytest
 import torch
 from torch.nn.functional import one_hot
 
-from src.core import Batch, DataProfile, Objective, TargetFacts, Task, Topology
+from src.core import Batch, DataProfile, Objective, OutputTopology, TargetFacts, Task
 from src.losses import CrossEntropyCriterion, FocalCriterion
 from src.losses.classification import FocalLoss
 from src.losses.registry import criterion_registry
@@ -66,7 +66,7 @@ def test_a_mixed_batch_reaches_the_loss_and_trains() -> None:
     torch.manual_seed(0)
     profile = DataProfile()
     profile.record("label", TargetFacts(num_classes=3))
-    task = Task(name="label", topology=Topology.GLOBAL, objective=Objective.MULTICLASS, metrics={})
+    task = Task(name="label", output_topology=OutputTopology.GLOBAL, objective=Objective.MULTICLASS, metrics={})
     batch = Batch(inputs={"image": torch.randn(4, 3, 4, 4)}, targets={"label": torch.tensor([0, 1, 2, 0])})
     mixed = MixUp([task], profile)(batch)
     logits = torch.randn(4, 3, requires_grad=True)

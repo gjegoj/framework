@@ -83,7 +83,7 @@ def after_a_run() -> MetricsProgressBar:
     import pandas as pd
     import torch
 
-    from src.core import DataProfile, Objective, Stage, Task, Topology
+    from src.core import DataProfile, Objective, OutputTopology, Stage, Task
     from src.data import (
         DataSchema,
         InMemorySource,
@@ -99,7 +99,7 @@ def after_a_run() -> MetricsProgressBar:
     from src.training import TrainingData, TrainingModule
     from tests.support.fakes import FlattenBackbone
 
-    task = Task(name="label", topology=Topology.GLOBAL, objective=Objective.MULTICLASS, metrics={})
+    task = Task(name="label", output_topology=OutputTopology.GLOBAL, objective=Objective.MULTICLASS, metrics={})
     module = TrainingModule(
         model=CompositeModel(
             backbone=FlattenBackbone(dim=2),

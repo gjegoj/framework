@@ -24,9 +24,9 @@ from src.core import (
     DataProfile,
     Features,
     Objective,
+    OutputTopology,
     Stage,
     Task,
-    Topology,
 )
 from src.data import (
     DataSchema,
@@ -83,7 +83,7 @@ def test_one_epoch_of_training_runs_through_every_layer() -> None:
 
     task = Task(
         name="label",
-        topology=Topology.GLOBAL,
+        output_topology=OutputTopology.GLOBAL,
         objective=Objective.MULTICLASS,
         metrics=build_metric_sets(
             Objective.MULTICLASS,

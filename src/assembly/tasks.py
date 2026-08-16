@@ -35,7 +35,8 @@ def build_task_entities(config: ExperimentConfig, profile: DataProfile) -> list[
     return [
         Task(
             name=name,
-            topology=declared.topology,
+            output_topology=declared.output_topology,
+            input_topology=declared.input_topology,
             objective=declared.objective,
             metrics=build_metric_sets(declared.objective, facts=profile.facts(name), metrics=declared.metrics),
             weight=declared.weight,

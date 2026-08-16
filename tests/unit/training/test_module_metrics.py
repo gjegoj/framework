@@ -11,7 +11,7 @@ import torch
 from torch import Tensor
 from torchmetrics import F1Score
 
-from src.core import DataProfile, Objective, Stage, Task, Topology
+from src.core import DataProfile, Objective, OutputTopology, Stage, Task
 from src.data import (
     DataSchema,
     InMemorySource,
@@ -39,7 +39,7 @@ def test_a_per_class_metric_lands_as_mean_plus_named_leaves(tmp_path: Any) -> No
     per_class = WrappedMetricSet({"f1": F1Score(task="multiclass", num_classes=2, average="none")})
     task = Task(
         name="label",
-        topology=Topology.GLOBAL,
+        output_topology=OutputTopology.GLOBAL,
         objective=Objective.MULTICLASS,
         metrics={Stage.TRAIN: per_class},
         class_names=["cat", "dog"],
@@ -91,7 +91,7 @@ def test_the_module_reports_its_metrics_directions_under_logged_keys() -> None:
 
     task = Task(
         name="label",
-        topology=Topology.GLOBAL,
+        output_topology=OutputTopology.GLOBAL,
         objective=Objective.MULTICLASS,
         metrics={
             Stage.TRAIN: WrappedMetricSet({"f1": F1Score(task="multiclass", num_classes=2)}),

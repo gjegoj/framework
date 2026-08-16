@@ -5,14 +5,14 @@ from __future__ import annotations
 import pytest
 import torch
 
-from src.core import Batch, DataProfile, Objective, Task, Topology
+from src.core import Batch, DataProfile, Objective, OutputTopology, Task
 from src.transforms.batch import CutMix, MixUp
 from tests.support.entities import profiling
 from tests.support.narrowing import tensor
 
 
 def task(name: str = "label", objective: Objective = Objective.MULTICLASS) -> Task:
-    return Task(name=name, topology=Topology.GLOBAL, objective=objective, metrics={})
+    return Task(name=name, output_topology=OutputTopology.GLOBAL, objective=objective, metrics={})
 
 
 def batch(size: int = 4, classes: int = 3) -> Batch:
@@ -96,7 +96,7 @@ def test_a_continuous_target_is_mixed_as_a_number() -> None:
 
 def test_a_dense_task_is_refused() -> None:
     """A blended image has no coherent per-pixel target, so the stack is wrong, not the data."""
-    dense = Task(name="mask", topology=Topology.DENSE, objective=Objective.MULTICLASS, metrics={})
+    dense = Task(name="mask", output_topology=OutputTopology.DENSE, objective=Objective.MULTICLASS, metrics={})
 
     with pytest.raises(ValueError, match="mask"):
         MixUp([dense], profiling(mask=3))
@@ -104,7 +104,7 @@ def test_a_dense_task_is_refused() -> None:
 
 def test_a_metric_learning_task_is_refused() -> None:
     """Proxy and margin losses break on soft labels."""
-    metric = Task(name="pairs", topology=Topology.GLOBAL, objective=Objective.METRIC, metrics={})
+    metric = Task(name="pairs", output_topology=OutputTopology.GLOBAL, objective=Objective.METRIC, metrics={})
 
     with pytest.raises(ValueError, match="pairs"):
         MixUp([metric], DataProfile())

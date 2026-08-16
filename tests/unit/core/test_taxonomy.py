@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from src.core import Modality, Objective, Stage, Stream, Topology
+from src.core import InputTopology, Modality, Objective, OutputTopology, Stage, Stream
 
 
 def test_stage_members_cover_the_training_lifecycle() -> None:
@@ -13,13 +13,19 @@ def test_stage_compares_equal_to_its_string_value() -> None:
     assert Stage.TRAIN == "train"
 
 
-def test_topology_members_cover_output_structures() -> None:
-    assert {topology.value for topology in Topology} == {
+def test_output_topology_members_cover_output_structures() -> None:
+    assert {topology.value for topology in OutputTopology} == {
         "global",
         "dense",
+        "instances",
+    }
+
+
+def test_input_topology_members_cover_input_arrangements() -> None:
+    assert {topology.value for topology in InputTopology} == {
+        "single",
         "multiview",
         "multistream",
-        "instances",
     }
 
 

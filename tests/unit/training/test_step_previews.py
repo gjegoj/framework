@@ -9,7 +9,7 @@ import lightning as L
 import torch
 from torch.utils.data import DataLoader
 
-from src.core import Batch, Objective, Task, Topology
+from src.core import Batch, Objective, OutputTopology, Task
 from src.core.entities import StepPreview, preview_of
 from src.losses import CrossEntropyCriterion
 from src.models import CompositeModel, LinearHead, TaskComponents
@@ -23,7 +23,7 @@ from tests.support.narrowing import tensor
 def module() -> TrainingModule:
     task = Task(
         name="label",
-        topology=Topology.GLOBAL,
+        output_topology=OutputTopology.GLOBAL,
         objective=Objective.MULTICLASS,
         metrics={},
         class_names=["cat", "dog"],

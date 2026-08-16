@@ -72,7 +72,7 @@ from src.core.ports import (
 )
 from src.core.registry import Registry
 from src.core.reporting import Curve, Matrix, PerClass
-from src.core.taxonomy import Modality, Objective, Stage, Stream, Topology
+from src.core.taxonomy import InputTopology, Modality, Objective, OutputTopology, Stage, Stream
 
 __all__ = [
     "Activation",
@@ -85,6 +85,7 @@ __all__ = [
     "DataProfile",
     "Features",
     "Head",
+    "InputTopology",
     "Instances",
     "Loss",
     "Matrix",
@@ -93,6 +94,7 @@ __all__ = [
     "Model",
     "MultiReadingMetric",
     "Objective",
+    "OutputTopology",
     "PerClass",
     "Prediction",
     "Registry",
@@ -105,7 +107,6 @@ __all__ = [
     "TargetFacts",
     "Task",
     "TaskOutput",
-    "Topology",
     "log_keys",
     "one_of",
     "require_tensor",

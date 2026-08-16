@@ -142,9 +142,9 @@ def _build_target_encoder(name: str, task: TaskConfig, derived: Mapping[str, Any
             )
         declared: TargetEncoder = instantiate(task.target_encoder, target_encoder_registry, **offered)
         return _honouring_declared_classes(name, task, declared)
-    if topology_registry.create(task.topology).spatial_targets:
+    if topology_registry.create(task.output_topology).spatial_targets:
         raise ValueError(
-            f"Task '{name}' needs an explicit 'target_encoder': a {task.topology} target is an "
+            f"Task '{name}' needs an explicit 'target_encoder': a {task.output_topology} target is an "
             f"image of its own, and reading it needs the class count — for example "
             f"target_encoder: {{name: mask, num_classes: 3}}."
         )

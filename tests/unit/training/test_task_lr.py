@@ -10,7 +10,7 @@ import torch
 
 from src.assembly.tasks import build_tasks
 from src.config import load_config
-from src.core import DataProfile, Objective, TargetFacts, Task, Topology
+from src.core import DataProfile, Objective, OutputTopology, TargetFacts, Task
 from src.losses import CrossEntropyCriterion, ProxyAngularCriterion
 from src.models import CompositeModel, IdentityHead, LinearHead, TaskComponents
 from src.tasks.activations import identity, softmax_probabilities
@@ -25,7 +25,7 @@ FEATURES = 12
 
 
 def task(name: str, lr: float | None = None) -> Task:
-    return Task(name=name, topology=Topology.GLOBAL, objective=Objective.MULTICLASS, metrics={}, lr=lr)
+    return Task(name=name, output_topology=OutputTopology.GLOBAL, objective=Objective.MULTICLASS, metrics={}, lr=lr)
 
 
 def module(tasks: list[Task], factory: OptimizerFactory | None = None) -> TrainingModule:
@@ -69,7 +69,9 @@ def test_the_shared_group_follows_the_optimizer_default() -> None:
 
 def test_criterion_parameters_learn_at_their_tasks_rate() -> None:
     """A proxy's prototypes are the task's own state, like its head — not backbone."""
-    metric_task = Task(name="person", topology=Topology.GLOBAL, objective=Objective.METRIC, metrics={}, lr=FAST_LR)
+    metric_task = Task(
+        name="person", output_topology=OutputTopology.GLOBAL, objective=Objective.METRIC, metrics={}, lr=FAST_LR
+    )
     proxy = ProxyAngularCriterion(num_classes=3, embedding_dim=FEATURES)
     built = TrainingModule(
         model=CompositeModel(

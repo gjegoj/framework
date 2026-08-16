@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, override
 import numpy as np
 
 from src.core.registry import named_by
-from src.core.taxonomy import Objective, Topology
+from src.core.taxonomy import Objective, OutputTopology
 from src.visualization.entities import (
     Classification,
     Classifications,
@@ -109,7 +109,7 @@ class AnnotationObjective(ABC):
 
 
 class AnnotationTopology(ABC):
-    """How one ``Topology`` turns a pair of readings into labels and a verdict.
+    """How one ``OutputTopology`` turns a pair of readings into labels and a verdict.
 
     One method per kind of reading, each defaulting to "this topology has no label
     for that". A topology overrides the ones it draws and says nothing about the
@@ -316,7 +316,7 @@ def _one(values: np.ndarray) -> float:
     return float(values.reshape(-1)[0])
 
 
-@annotation_topology_registry.register(Topology.GLOBAL)
+@annotation_topology_registry.register(OutputTopology.GLOBAL)
 class GlobalAnnotation(AnnotationTopology):
     """One prediction per sample: chips, judged by comparing what holds on each side."""
 
@@ -347,7 +347,7 @@ class GlobalAnnotation(AnnotationTopology):
         return found[0] if reading.singular and found else Classifications(classifications=found)
 
 
-@annotation_topology_registry.register(Topology.DENSE)
+@annotation_topology_registry.register(OutputTopology.DENSE)
 class DenseAnnotation(AnnotationTopology):
     """One prediction per location: masks, judged by mean IoU over the classes either side shows.
 
@@ -499,20 +499,20 @@ def _drawing_objective(task: Task, offered: Mapping[str, Any]) -> AnnotationObje
 def _drawing_topology(
     task: Task, objective: AnnotationObjective, offered: Mapping[str, Any]
 ) -> AnnotationTopology | None:
-    if task.topology not in annotation_topology_registry:
+    if task.output_topology not in annotation_topology_registry:
         log.info(
             "Task '%s' has topology '%s', whose predictions are not per-sample; it will not appear in the sample grid.",
             task.name,
-            task.topology,
+            task.output_topology,
         )
         return None
-    topology = _with_knobs(annotation_topology_registry.get(task.topology), offered)
+    topology = _with_knobs(annotation_topology_registry.get(task.output_topology), offered)
     if not topology.draws(objective.reading):
         log.info(
             "Task '%s': a '%s' task supervised by '%s' has no label kind in the visualization IR yet; "
             "it will not appear in the sample grid.",
             task.name,
-            task.topology,
+            task.output_topology,
             task.objective,
         )
         return None

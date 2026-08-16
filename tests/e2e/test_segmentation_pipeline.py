@@ -16,7 +16,7 @@ import torch
 from albumentations.pytorch import ToTensorV2
 from torch import Tensor, nn
 
-from src.core import Backbone, DataProfile, Features, Objective, Stage, Stream, Task, Topology
+from src.core import Backbone, DataProfile, Features, Objective, OutputTopology, Stage, Stream, Task
 from src.data import (
     CsvSource,
     DataSchema,
@@ -83,7 +83,7 @@ def test_masks_travel_from_files_through_augmentation_into_a_dense_loss(tmp_path
     assert tensor(batch.targets["mask"]).shape == (4, 8, 8)
     assert profile.require_num_classes("mask") == CLASSES
 
-    task = Task(name="mask", topology=Topology.DENSE, objective=Objective.MULTICLASS, metrics={})
+    task = Task(name="mask", output_topology=OutputTopology.DENSE, objective=Objective.MULTICLASS, metrics={})
     backbone = TinyDecoderBackbone()
     model = CompositeModel(
         backbone=backbone,

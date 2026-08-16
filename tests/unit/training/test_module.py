@@ -12,7 +12,7 @@ from torch import Tensor
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import StepLR
 
-from src.core import Batch, DataProfile, Loss, Objective, Prediction, Stage, StepResult, Task, Topology
+from src.core import Batch, DataProfile, Loss, Objective, OutputTopology, Prediction, Stage, StepResult, Task
 from src.core.ports import Model
 from src.data import (
     DataSchema,
@@ -35,7 +35,7 @@ def make_module(scheduler_factory: SchedulerFactory | None = None) -> tuple[Trai
     metrics = CountingMetricSet()
     task = Task(
         name="label",
-        topology=Topology.GLOBAL,
+        output_topology=OutputTopology.GLOBAL,
         objective=Objective.MULTICLASS,
         metrics={Stage.TRAIN: metrics},
     )

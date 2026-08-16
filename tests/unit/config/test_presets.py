@@ -5,30 +5,32 @@ from __future__ import annotations
 import pytest
 
 from src.config import MetricConfig, resolve_preset, task_preset_registry
-from src.core import Objective, Topology
+from src.core import InputTopology, Objective, OutputTopology
 from src.tasks.registry import objective_registry, topology_registry
 
 
 @pytest.mark.parametrize(
     ("preset", "axes"),
     [
-        ("classification", (Topology.GLOBAL, Objective.MULTICLASS)),
-        ("binary_classification", (Topology.GLOBAL, Objective.BINARY)),
-        ("multilabel_classification", (Topology.GLOBAL, Objective.MULTILABEL)),
-        ("regression", (Topology.GLOBAL, Objective.CONTINUOUS)),
-        ("metric_learning", (Topology.GLOBAL, Objective.METRIC)),
-        ("segmentation", (Topology.DENSE, Objective.MULTICLASS)),
-        ("binary_segmentation", (Topology.DENSE, Objective.BINARY)),
-        ("multilabel_segmentation", (Topology.DENSE, Objective.MULTILABEL)),
-        ("contrastive", (Topology.MULTISTREAM, Objective.METRIC)),
-        ("ranking", (Topology.MULTIVIEW, Objective.METRIC)),
-        ("detection", (Topology.INSTANCES, Objective.MULTICLASS)),
+        ("classification", (OutputTopology.GLOBAL, Objective.MULTICLASS)),
+        ("binary_classification", (OutputTopology.GLOBAL, Objective.BINARY)),
+        ("multilabel_classification", (OutputTopology.GLOBAL, Objective.MULTILABEL)),
+        ("regression", (OutputTopology.GLOBAL, Objective.CONTINUOUS)),
+        ("metric_learning", (OutputTopology.GLOBAL, Objective.METRIC)),
+        ("segmentation", (OutputTopology.DENSE, Objective.MULTICLASS)),
+        ("binary_segmentation", (OutputTopology.DENSE, Objective.BINARY)),
+        ("multilabel_segmentation", (OutputTopology.DENSE, Objective.MULTILABEL)),
+        ("contrastive", (OutputTopology.GLOBAL, Objective.METRIC)),
+        ("ranking", (OutputTopology.GLOBAL, Objective.METRIC)),
+        ("detection", (OutputTopology.INSTANCES, Objective.MULTICLASS)),
     ],
 )
-def test_a_preset_is_the_familiar_name_of_one_point_on_the_axes(preset: str, axes: tuple[Topology, Objective]) -> None:
+def test_a_preset_is_the_familiar_name_of_one_point_on_the_axes(
+    preset: str, axes: tuple[OutputTopology, Objective]
+) -> None:
     """The table is the contract: two presets may share a point, and none may drift off one."""
     resolved = resolve_preset(preset)
-    assert (resolved.topology, resolved.objective) == axes
+    assert (resolved.output_topology, resolved.objective) == axes
 
 
 SEGMENTATION_JUDGMENT = {"iou", "f1", "precision", "recall", "confusion_matrix"}
@@ -95,7 +97,7 @@ def test_presets_reference_only_implemented_axes() -> None:
     """A preset must be buildable: both of its axes carry registered behaviour."""
     for name in task_preset_registry:
         resolved = resolve_preset(str(name))
-        assert resolved.topology in topology_registry
+        assert resolved.output_topology in topology_registry
         assert resolved.objective in objective_registry
 
 
@@ -103,11 +105,22 @@ def test_every_preset_pairs_axes_its_topology_supports() -> None:
     """A preset naming an unsupported pairing would fail every task declared with it."""
     for name in task_preset_registry:
         resolved = resolve_preset(str(name))
-        assert topology_registry.create(resolved.topology).supports(resolved.objective), name
+        supported = topology_registry.create(resolved.output_topology).supports(
+            resolved.objective, resolved.input_topology
+        )
+        assert supported, name
+
+
+def test_only_the_paired_kinds_declare_a_non_single_input() -> None:
+    """The input axis defaults to SINGLE; contrastive and ranking are the two exceptions."""
+    paired = {"contrastive": InputTopology.MULTISTREAM, "ranking": InputTopology.MULTIVIEW}
+    for name in task_preset_registry:
+        preset = resolve_preset(str(name))
+        assert preset.input_topology is paired.get(str(name), InputTopology.SINGLE), name
 
 
 def test_detection_is_a_set_of_objects_judged_as_one_of_n_classes() -> None:
-    """Topology carries the geometry of a prediction, objective the semantics of its labels.
+    """The output topology carries the geometry of a prediction, objective the semantics of its labels.
 
     Semantic segmentation is DENSE x MULTICLASS and depth is DENSE x CONTINUOUS, so a
     detected object's box belongs to the topology while its class is one of N like any
@@ -116,7 +129,7 @@ def test_detection_is_a_set_of_objects_judged_as_one_of_n_classes() -> None:
     """
     resolved = resolve_preset("detection")
 
-    assert resolved.topology is Topology.INSTANCES
+    assert resolved.output_topology is OutputTopology.INSTANCES
     assert resolved.objective is Objective.MULTICLASS
     assert resolved.metrics is not None
     assert resolved.metrics["map"] == MetricConfig(name="map")

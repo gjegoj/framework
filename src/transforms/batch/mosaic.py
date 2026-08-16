@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 import torch
 
 from src.core.entities import Batch, require_tensor
-from src.core.taxonomy import Modality, Objective, Topology
+from src.core.taxonomy import Modality, Objective, OutputTopology
 from src.transforms.batch.labels import as_soft, class_counts
 
 if TYPE_CHECKING:
@@ -56,7 +56,10 @@ class Mosaic:
         refused = [
             task.name
             for task in tasks
-            if task.topology not in {Topology.GLOBAL, Topology.DENSE} or task.objective is Objective.METRIC
+            # No input-axis clause: the legality map guarantees a non-SINGLE GLOBAL
+            # task is METRIC, so the METRIC test already excludes stacked inputs.
+            if task.output_topology not in {OutputTopology.GLOBAL, OutputTopology.DENSE}
+            or task.objective is Objective.METRIC
         ]
         if refused:
             raise ValueError(
@@ -65,8 +68,8 @@ class Mosaic:
                 f"labels break metric learning. Drop the transform, or the task it cannot serve."
             )
         # A mask is swapped like the picture; a label is weighted by the four areas.
-        self._masks = [task.name for task in tasks if task.topology is Topology.DENSE]
-        self._classes = class_counts([task for task in tasks if task.topology is Topology.GLOBAL], profile)
+        self._masks = [task.name for task in tasks if task.output_topology is OutputTopology.DENSE]
+        self._classes = class_counts([task for task in tasks if task.output_topology is OutputTopology.GLOBAL], profile)
         self._input_name = input_name
         self._split_range = split_range
 

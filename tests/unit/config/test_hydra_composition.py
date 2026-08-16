@@ -13,7 +13,7 @@ from src.assembly.callbacks import build_callbacks
 from src.callbacks.samples import SampleGrid
 from src.config import ExperimentConfig
 from src.core.entities import Task
-from src.core.taxonomy import Objective, Topology
+from src.core.taxonomy import Objective, OutputTopology
 
 CONFIGS = Path(__file__).parents[3] / "configs"
 
@@ -63,7 +63,7 @@ def test_the_samples_group_builds_a_grid_that_undoes_the_runs_own_normalisation(
             ],
         )
     raw = cast("dict[str, Any]", OmegaConf.to_container(composed, resolve=True))
-    task = Task(name="label", topology=Topology.GLOBAL, objective=Objective.MULTICLASS, metrics={})
+    task = Task(name="label", output_topology=OutputTopology.GLOBAL, objective=Objective.MULTICLASS, metrics={})
 
     built = build_callbacks(ExperimentConfig(**raw), tasks=[task])
 

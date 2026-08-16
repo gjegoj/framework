@@ -265,12 +265,12 @@ A preset is a registered value, not a code branch:
 ```python
 from src.config.presets import TaskPreset, task_preset_registry
 from src.config.components import MetricConfig
-from src.core.taxonomy import Objective, Topology
+from src.core.taxonomy import Objective, OutputTopology
 
 task_preset_registry.register_instance(
     "depth",
     TaskPreset(
-        topology=Topology.DENSE,
+        output_topology=OutputTopology.DENSE,
         objective=Objective.CONTINUOUS,
         metrics={"mae": MetricConfig(name="mae")},
     ),
@@ -287,7 +287,8 @@ judged by — never a loss, since a loss default follows from one axis alone.
 
 New *behaviour* on an axis is a class plus one `register_instance` in
 `objective_registry` or `topology_registry`; a `TaskTopology` also declares
-`supports(objective)`, so an impossible pairing fails at assembly with both names.
+`supports(objective, input_topology)`, so an impossible pairing fails at assembly
+naming every axis.
 
 ## A data source, loader or encoder
 

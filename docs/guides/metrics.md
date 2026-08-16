@@ -30,12 +30,12 @@ included:
 
 ```python
 from src.config.presets import MetricConfig, TaskPreset, task_preset_registry
-from src.core import Objective, Topology
+from src.core import Objective, OutputTopology
 
 task_preset_registry.register_instance(
     "depth",
     TaskPreset(
-        topology=Topology.DENSE,
+        output_topology=OutputTopology.DENSE,
         objective=Objective.CONTINUOUS,
         metrics={"mae": MetricConfig(name="mae")},
     ),

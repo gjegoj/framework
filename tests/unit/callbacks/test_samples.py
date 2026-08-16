@@ -14,7 +14,7 @@ from torch.utils.data import DataLoader
 
 from src.callbacks.samples import SampleGrid
 from src.config import ExperimentConfig
-from src.core import Batch, Objective, Task, Topology
+from src.core import Batch, Objective, OutputTopology, Task
 from src.core.entities import preview_of
 from src.core.taxonomy import Stage
 from src.losses import CrossEntropyCriterion
@@ -32,7 +32,7 @@ STD = (1.0, 1.0, 1.0)
 def task_of() -> Task:
     return Task(
         name="label",
-        topology=Topology.GLOBAL,
+        output_topology=OutputTopology.GLOBAL,
         objective=Objective.MULTICLASS,
         metrics={},
         class_names=["cat", "dog"],
@@ -116,7 +116,7 @@ def test_a_task_the_preview_does_not_carry_is_named_not_silently_lost(
     tasks the preview does carry are still drawn."""
     extra = Task(
         name="extra",
-        topology=Topology.GLOBAL,
+        output_topology=OutputTopology.GLOBAL,
         objective=Objective.MULTICLASS,
         metrics={},
         class_names=["a", "b"],

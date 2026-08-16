@@ -8,7 +8,7 @@ import pytest
 from pydantic import ValidationError
 
 from src.config import load_config
-from src.core import Objective, Stage, Topology
+from src.core import Objective, OutputTopology, Stage
 
 
 def make_raw(**overrides: Any) -> dict[str, Any]:
@@ -34,7 +34,7 @@ def test_a_full_experiment_parses_into_typed_sections() -> None:
     config = load_config(make_raw())
 
     assert config.seed == 7
-    assert config.tasks["label"].topology is Topology.GLOBAL
+    assert config.tasks["label"].output_topology is OutputTopology.GLOBAL
     assert config.tasks["age"].objective is Objective.CONTINUOUS
     assert config.model.params == {"model_name": "resnet18"}
     assert config.optimizer.params == {"lr": 1.0e-3}

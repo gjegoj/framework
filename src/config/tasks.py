@@ -6,7 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from src.config.components import ComponentConfig, MetricConfig
 from src.config.presets import resolve_preset
-from src.core.taxonomy import Objective, Topology
+from src.core.taxonomy import InputTopology, Objective, OutputTopology
 from src.core.vocabulary import ordered_names
 
 HeadConfig = ComponentConfig
@@ -36,7 +36,7 @@ class TaskConfig(BaseModel):
     """One learned objective as declared in config.
 
     Declare either a ``preset`` (a familiar name) or both explicit axes;
-    a preset is resolved before validation, so ``topology`` and ``objective``
+    a preset is resolved before validation, so ``output_topology`` and ``objective``
     are always concrete afterwards. The target column and its encoder are
     declared here, once — the data schema derives from tasks (single source
     of truth). ``None`` for ``target_encoder``, ``loss``, and ``stream`` means
@@ -47,9 +47,13 @@ class TaskConfig(BaseModel):
 
     preset: str | None = Field(
         None,
-        description="Familiar name ('classification', 'segmentation') standing for a topology/objective pair.",
+        description="Familiar name ('classification', 'segmentation') standing for a point on the task axes.",
     )
-    topology: Topology = Field(description="Shape of the prediction: per-sample, per-pixel, per-token.")
+    output_topology: OutputTopology = Field(description="Shape of the prediction: per-sample, per-pixel, per-object.")
+    input_topology: InputTopology = Field(
+        default=InputTopology.SINGLE,
+        description="How the inputs are arranged: one per sample, N views, or separate streams.",
+    )
     objective: Objective = Field(description="What is being learned: single-label, multi-label, regression.")
     target: str | None = Field(None, description="Table column holding this task's ground truth.")
     classes: dict[int, str] | None = Field(
@@ -142,14 +146,21 @@ class TaskConfig(BaseModel):
         """Expand a familiar name into axes and customary metrics, before anything reads them."""
         if not isinstance(data, dict) or data.get("preset") is None:
             return data
-        if "topology" in data or "objective" in data:
-            raise ValueError("Set either 'preset' or explicit 'topology'/'objective', not both.")
+        if "output_topology" in data or "input_topology" in data or "objective" in data:
+            raise ValueError(
+                "Set either 'preset' or explicit 'output_topology'/'input_topology'/'objective', not both."
+            )
         try:
             preset = resolve_preset(data["preset"])
         except LookupError as error:
             # Pydantic wraps only ValueError into ValidationError; keep the message.
             raise ValueError(str(error)) from error
-        resolved = {**data, "topology": preset.topology, "objective": preset.objective}
+        resolved = {
+            **data,
+            "output_topology": preset.output_topology,
+            "input_topology": preset.input_topology,
+            "objective": preset.objective,
+        }
         if preset.metrics is not None and "metrics" not in data:
             # The kind's customary judgment, injected where the user said nothing —
             # visible in the loaded config and validated by the same grammar.

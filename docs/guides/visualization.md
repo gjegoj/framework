@@ -212,7 +212,7 @@ A topology overrides the labeller for each kind of reading it can draw, and says
 nothing about the rest:
 
 ```python
-@annotation_topology_registry.register(Topology.MY_TOPOLOGY)
+@annotation_topology_registry.register(OutputTopology.MY_TOPOLOGY)
 class MyAnnotation(AnnotationTopology):
     def label_classes(self, view, task, truth, predicted) -> None: ...
     # no label_values: this topology has no label for a field of numbers

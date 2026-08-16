@@ -1,4 +1,4 @@
-"""Domain vocabulary: the task axes ``Topology`` x ``Objective`` x ``Modality``, and the data path's names."""
+"""Domain vocabulary: the task axes ``OutputTopology`` x ``InputTopology`` x ``Objective`` x ``Modality``, and the data path's names."""
 
 from __future__ import annotations
 
@@ -13,28 +13,43 @@ class Stage(StrEnum):
     TEST = "test"
 
 
-class Topology(StrEnum):
+class OutputTopology(StrEnum):
     """Output structure of a task — what one prediction looks like.
 
     A closed set, like every axis here: outer layers interpret each member by key, so
     a new member is a change to what the framework can express, not a new string.
 
     Attributes:
-        GLOBAL: One prediction vector per sample (classification, regression).
+        GLOBAL: One prediction vector per sample (classification, regression,
+            and metric learning's embedding).
         DENSE: One prediction per spatial location (segmentation, depth).
-        MULTIVIEW: N views of each sample encoded by one shared backbone
-            (Siamese setups; supervision compares the views).
-        MULTISTREAM: Separate encoder per input stream (CLIP-style dual
-            encoders; supervision aligns the streams).
-        INSTANCES: A variable-length set of objects per sample, each carrying a
-            box and a class (detection, and later instance segmentation and pose).
+        INSTANCES: A variable-length set of objects per sample, each carrying
+            task-specific instance-level attributes — a box and a class for
+            detection; masks and keypoints when those tasks land.
     """
 
     GLOBAL = "global"
     DENSE = "dense"
+    INSTANCES = "instances"
+
+
+class InputTopology(StrEnum):
+    """Input structure of a task — how many inputs feed one prediction, and how.
+
+    ``SINGLE`` is the default everywhere an axis is not named: presets and
+    config both assume it, so only the paired kinds ever write this axis down.
+
+    Attributes:
+        SINGLE: One input per sample; the ordinary case.
+        MULTIVIEW: N views of each sample through one shared encoder
+            (Siamese setups; supervision compares the views).
+        MULTISTREAM: A separate encoder per input stream (CLIP-style dual
+            encoders; supervision aligns the streams).
+    """
+
+    SINGLE = "single"
     MULTIVIEW = "multiview"
     MULTISTREAM = "multistream"
-    INSTANCES = "instances"
 
 
 class Objective(StrEnum):

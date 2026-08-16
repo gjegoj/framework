@@ -5,11 +5,12 @@ them.
 
 ## A task is a composition, not a type
 
-There is no `TaskType` enum. A task is a point on three orthogonal axes:
+There is no `TaskType` enum. A task is a point on four orthogonal axes:
 
 | Axis | Question it answers | Members |
 |---|---|---|
-| `Topology` | What does one prediction look like? | `global`, `dense`, `multiview`, `multistream`, `instances` |
+| `OutputTopology` | What does one prediction look like? | `global`, `dense`, `instances` |
+| `InputTopology` | How are the inputs arranged? | `single` (the default), `multiview`, `multistream` |
 | `Objective` | How do labels supervise it? | `multiclass`, `binary`, `multilabel`, `continuous`, `metric` |
 | `Modality` | What kind of input feeds it? | `image`, `embedding`, `text`, … (open) |
 

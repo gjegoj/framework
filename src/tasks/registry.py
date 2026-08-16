@@ -14,4 +14,4 @@ objective_registry: Registry[TaskObjective] = Registry("objective")
 """Behaviour per ``Objective`` member; METRIC joins with metric learning."""
 
 topology_registry: Registry[TaskTopology] = Registry("topology")
-"""Behaviour per ``Topology`` member; DENSE and the multi-view members join with their features."""
+"""Behaviour per ``OutputTopology`` member — three entries, one per output structure."""

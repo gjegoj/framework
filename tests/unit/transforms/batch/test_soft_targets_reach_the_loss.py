@@ -14,7 +14,7 @@ import torch
 
 from src.assembly.metrics import build_metric_sets
 from src.config import MetricConfig
-from src.core import AdaptedTarget, Batch, DataProfile, Objective, Stage, TargetFacts, Task, Topology
+from src.core import AdaptedTarget, Batch, DataProfile, Objective, OutputTopology, Stage, TargetFacts, Task
 from src.losses import CrossEntropyCriterion
 from src.models import CompositeModel, LinearHead, TaskComponents
 from src.tasks.registry import objective_registry
@@ -28,7 +28,7 @@ FEATURES = 3 * SIDE * SIDE
 
 
 def task(objective: Objective = Objective.MULTICLASS) -> Task:
-    return Task(name="label", topology=Topology.GLOBAL, objective=objective, metrics={})
+    return Task(name="label", output_topology=OutputTopology.GLOBAL, objective=objective, metrics={})
 
 
 def profile() -> DataProfile:

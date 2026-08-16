@@ -75,7 +75,7 @@ What follows is the *design stance* every change is measured against.
   constructor arguments), so extension is one new class plus one config line, with
   no edit to existing code. Vendor models come through adapters to narrow ports;
   the ports never bend toward a vendor's signatures.
-- **A task is a composition, not a type** — `topology × objective × modality`, with
+- **A task is a composition, not a type** — `output topology × input topology × objective × modality`, with
   presets as thin names over familiar combinations. New capability usually means a
   new point in that space, not a new subsystem.
 - **Fail at construction, by name.** A bad declaration dies while the experiment is

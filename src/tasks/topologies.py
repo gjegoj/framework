@@ -1,11 +1,11 @@
-"""How each output structure is served: head kind and stream per ``Topology`` member."""
+"""How each output structure is served: head kind and stream per ``OutputTopology`` member."""
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, ClassVar, override
 
-from src.core.taxonomy import Objective, Stream, Topology
+from src.core.taxonomy import InputTopology, Objective, OutputTopology, Stream
 from src.models import ConvHead, IdentityHead, LinearHead
 from src.tasks.registry import topology_registry
 
@@ -14,13 +14,14 @@ if TYPE_CHECKING:
 
 
 class TaskTopology(ABC):
-    """The behaviour behind one ``Topology`` member: head construction and stream choice.
+    """The behaviour behind one ``OutputTopology`` member: head construction, stream
+    choice, and which ``(objective, input)`` pairs it serves.
 
-    The enum answers *what shape* a task's output has; a ``TaskTopology``
-    answers *how* it is produced — which head kind and which feature stream.
+    The enum answers *what shape* a task's output has; a ``TaskTopology`` answers
+    *how* it is produced. The stream is a method of the input axis because it is a
+    joint fact: one prediction vector is read off ``FEATURES`` when one encoder
+    made it and off ``EMBEDDINGS`` when several views did.
     """
-
-    stream: ClassVar[str] = Stream.FEATURES
 
     spatial_targets: ClassVar[bool] = False
     """Whether targets live in image space, which no objective can encode on its own.
@@ -40,38 +41,58 @@ class TaskTopology(ABC):
     meant to reach, which is a promise the base class makes and one subclass breaks.
     """
 
+    def stream(self, input_topology: InputTopology) -> str:
+        """Which backbone stream carries this output's substrate."""
+        return Stream.FEATURES
+
     @abstractmethod
     def build_head(self, in_features: int, out_features: int | None) -> Head:
         """A fresh head sized for one task; ``out_features`` is ``None`` when there is
         nothing to project and the stream itself is the output."""
 
-    def supports(self, objective: Objective) -> bool:
-        """Whether this output structure can be supervised by ``objective``."""
-        return True
+    def supports(self, objective: Objective, input_topology: InputTopology) -> bool:
+        """Whether this output structure serves ``objective`` fed by ``input_topology``."""
+        return input_topology is InputTopology.SINGLE
 
 
 class GlobalTopology(TaskTopology):
-    """One prediction vector per sample, projected from the default stream.
+    """One prediction vector per sample — the one output every input arrangement feeds.
 
-    Every objective is served, metric learning included: an ArcFace-style proxy
-    judges one embedding per sample against class labels, which is exactly this
-    output structure with nothing to project.
+    A single encoder offers it as ``FEATURES``; several views or streams stack
+    theirs into ``EMBEDDINGS``, where the head is identity and only metric
+    learning supervises. A single input serves every objective, metric learning
+    included: an ArcFace-style proxy judges one embedding per sample against
+    class labels, which is exactly this output structure with nothing to project.
     """
+
+    @override
+    def stream(self, input_topology: InputTopology) -> str:
+        return Stream.FEATURES if input_topology is InputTopology.SINGLE else Stream.EMBEDDINGS
 
     def build_head(self, in_features: int, out_features: int | None) -> Head:
         # No width to project onto is the metric-learning contract: the embedding IS the output.
         return IdentityHead() if out_features is None else LinearHead(in_features, out_features)
+
+    @override
+    def supports(self, objective: Objective, input_topology: InputTopology) -> bool:
+        # Stacked views have no per-sample labels to project onto — comparison is
+        # the only supervision their carrier admits.
+        return input_topology is InputTopology.SINGLE or objective is Objective.METRIC
 
 
 class DenseTopology(TaskTopology):
     """One prediction per spatial location, projected from the decoder stream.
 
     Metric learning never pairs with DENSE — there are no per-pixel pair or
-    triplet targets.
+    triplet targets — and neither does a stacked input: a decoder decodes one
+    image's map.
     """
 
-    stream: ClassVar[str] = Stream.DECODER
     spatial_targets: ClassVar[bool] = True
+
+    @override
+    def stream(self, input_topology: InputTopology) -> str:
+        return Stream.DECODER
 
     def build_head(self, in_features: int, out_features: int | None) -> Head:
         if out_features is None:
@@ -79,8 +100,8 @@ class DenseTopology(TaskTopology):
         return ConvHead(in_features, out_features)
 
     @override
-    def supports(self, objective: Objective) -> bool:
-        return objective is not Objective.METRIC
+    def supports(self, objective: Objective, input_topology: InputTopology) -> bool:
+        return input_topology is InputTopology.SINGLE and objective is not Objective.METRIC
 
 
 class InstancesTopology(TaskTopology):
@@ -106,47 +127,10 @@ class InstancesTopology(TaskTopology):
         raise NotImplementedError("The builder refuses a non-composing topology before reaching this.")
 
     @override
-    def supports(self, objective: Objective) -> bool:
-        return objective is Objective.MULTICLASS
+    def supports(self, objective: Objective, input_topology: InputTopology) -> bool:
+        return input_topology is InputTopology.SINGLE and objective is Objective.MULTICLASS
 
 
-class MultiStreamTopology(TaskTopology):
-    """Separate encoder per input, aligned through one stacked carrier ``[B, N, D]``.
-
-    The multi-encoder backbone projects and stacks the views itself, so the
-    head is identity; only metric learning supervises stacked views.
-    """
-
-    stream: ClassVar[str] = Stream.EMBEDDINGS
-
-    def build_head(self, in_features: int, out_features: int | None) -> Head:
-        return IdentityHead()
-
-    @override
-    def supports(self, objective: Objective) -> bool:
-        return objective is Objective.METRIC
-
-
-class MultiViewTopology(TaskTopology):
-    """N views of each sample through one shared encoder, stacked ``[B, N, D]``.
-
-    Behaviourally a twin of ``MultiStreamTopology`` today — views of one
-    sample instead of modality streams. Kept separate because the axes are
-    different concepts and may diverge (e.g. supervised in-batch mining).
-    """
-
-    stream: ClassVar[str] = Stream.EMBEDDINGS
-
-    def build_head(self, in_features: int, out_features: int | None) -> Head:
-        return IdentityHead()
-
-    @override
-    def supports(self, objective: Objective) -> bool:
-        return objective is Objective.METRIC
-
-
-topology_registry.register_instance(Topology.GLOBAL, GlobalTopology())
-topology_registry.register_instance(Topology.DENSE, DenseTopology())
-topology_registry.register_instance(Topology.MULTISTREAM, MultiStreamTopology())
-topology_registry.register_instance(Topology.MULTIVIEW, MultiViewTopology())
-topology_registry.register_instance(Topology.INSTANCES, InstancesTopology())
+topology_registry.register_instance(OutputTopology.GLOBAL, GlobalTopology())
+topology_registry.register_instance(OutputTopology.DENSE, DenseTopology())
+topology_registry.register_instance(OutputTopology.INSTANCES, InstancesTopology())

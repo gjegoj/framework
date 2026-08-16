@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from src.core import AdaptedTarget, DataProfile, Objective, TargetFacts, Task, Topology
+from src.core import AdaptedTarget, DataProfile, Objective, OutputTopology, TargetFacts, Task
 
 if TYPE_CHECKING:
     from torch import Tensor
@@ -40,7 +40,7 @@ def a_task(**overrides: Any) -> Task:
     return Task(
         **{
             "name": "label",
-            "topology": Topology.GLOBAL,
+            "output_topology": OutputTopology.GLOBAL,
             "objective": Objective.MULTICLASS,
             "metrics": {},
         }

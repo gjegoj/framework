@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any, override
 from torchvision.transforms import v2
 
 from src.core.entities import Batch, require_tensor
-from src.core.taxonomy import Modality, Objective, Topology
+from src.core.taxonomy import Modality, Objective, OutputTopology
 from src.transforms.batch.labels import as_soft, class_counts
 
 if TYPE_CHECKING:
@@ -61,7 +61,11 @@ class LabelMix(ABC):
         if alpha <= 0:
             raise ValueError(f"{type(self).__name__} needs a positive alpha, got {alpha}.")
         refused = [
-            task.name for task in tasks if task.topology is not Topology.GLOBAL or task.objective is Objective.METRIC
+            task.name
+            for task in tasks
+            # No input-axis clause: the legality map guarantees a non-SINGLE GLOBAL
+            # task is METRIC, so the METRIC test already excludes stacked inputs.
+            if task.output_topology is not OutputTopology.GLOBAL or task.objective is Objective.METRIC
         ]
         if refused:
             raise ValueError(

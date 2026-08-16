@@ -10,10 +10,10 @@ from src.core import (
     DataProfile,
     Features,
     Objective,
+    OutputTopology,
     Stream,
     TargetFacts,
     Task,
-    Topology,
 )
 from src.models import CompositeModel, TimmBackbone
 from src.models.registry import backbone_registry
@@ -78,7 +78,7 @@ def test_native_head_is_none_for_other_streams(backbone: TimmBackbone) -> None:
 def test_heads_are_sized_from_the_real_model(backbone: TimmBackbone) -> None:
     profile = DataProfile()
     profile.record("label", TargetFacts(num_classes=3))
-    task = Task(name="label", topology=Topology.GLOBAL, objective=Objective.MULTICLASS, metrics={})
+    task = Task(name="label", output_topology=OutputTopology.GLOBAL, objective=Objective.MULTICLASS, metrics={})
 
     components = build_task_components(task, profile, backbone)
     model = CompositeModel(backbone=backbone, components={"label": components})

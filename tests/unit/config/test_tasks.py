@@ -6,21 +6,21 @@ import pytest
 from pydantic import ValidationError
 
 from src.config import TaskConfig
-from src.core import Objective, Topology
+from src.core import Objective, OutputTopology
 
 
 def test_preset_resolves_to_explicit_axes() -> None:
     task = TaskConfig.model_validate({"preset": "classification", "target": "label"})
 
-    assert task.topology is Topology.GLOBAL
+    assert task.output_topology is OutputTopology.GLOBAL
     assert task.objective is Objective.MULTICLASS
     assert task.target == "label"
 
 
 def test_explicit_axes_work_without_a_preset() -> None:
-    task = TaskConfig.model_validate({"topology": "global", "objective": "continuous", "target": "age"})
+    task = TaskConfig.model_validate({"output_topology": "global", "objective": "continuous", "target": "age"})
 
-    assert task.topology is Topology.GLOBAL
+    assert task.output_topology is OutputTopology.GLOBAL
     assert task.objective is Objective.CONTINUOUS
 
 
@@ -30,7 +30,7 @@ def test_preset_and_explicit_axes_are_mutually_exclusive() -> None:
 
 
 def test_axes_are_required_when_no_preset_is_given() -> None:
-    with pytest.raises(ValidationError, match="topology"):
+    with pytest.raises(ValidationError, match="output_topology"):
         TaskConfig.model_validate({"target": "label"})
 
 

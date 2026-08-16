@@ -14,7 +14,7 @@ annotation_objective_registry: Registry[AnnotationObjective] = Registry("annotat
 """How each ``Objective`` reads predictions; METRIC is absent — it has none to show per sample."""
 
 annotation_topology_registry: Registry[AnnotationTopology] = Registry("annotation topology")
-"""How each ``Topology`` draws a reading; the stacked-view members are absent — nothing per sample."""
+"""How each ``OutputTopology`` draws a reading; ``INSTANCES`` is absent until a detection annotator lands."""
 
 label_renderer_registry: Registry[LabelRenderer[Any]] = Registry("label renderer")
 """One renderer per kind of label, keyed by the entity type itself.

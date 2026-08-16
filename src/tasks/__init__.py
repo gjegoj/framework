@@ -15,8 +15,6 @@ from src.tasks.topologies import (
     DenseTopology,
     GlobalTopology,
     InstancesTopology,
-    MultiStreamTopology,
-    MultiViewTopology,
     TaskTopology,
 )
 
@@ -27,8 +25,6 @@ __all__ = [
     "GlobalTopology",
     "InstancesTopology",
     "MetricObjective",
-    "MultiStreamTopology",
-    "MultiViewTopology",
     "MulticlassObjective",
     "MultilabelObjective",
     "TaskObjective",

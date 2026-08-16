@@ -4,25 +4,17 @@ from __future__ import annotations
 
 import torch
 
-from src.core import Objective, Stream, Topology
+from src.core import InputTopology, Objective, OutputTopology, Stream
 from src.models import ConvHead, IdentityHead, LinearHead
-from src.tasks import (
-    DenseTopology,
-    GlobalTopology,
-    InstancesTopology,
-    MultiStreamTopology,
-    MultiViewTopology,
-)
+from src.tasks import DenseTopology, GlobalTopology, InstancesTopology
 from src.tasks.registry import topology_registry
 
 
 def test_registry_covers_the_implemented_topologies() -> None:
     assert set(topology_registry) == {
-        Topology.GLOBAL,
-        Topology.DENSE,
-        Topology.MULTISTREAM,
-        Topology.MULTIVIEW,
-        Topology.INSTANCES,
+        OutputTopology.GLOBAL,
+        OutputTopology.DENSE,
+        OutputTopology.INSTANCES,
     }
 
 
@@ -33,15 +25,30 @@ def test_global_builds_a_linear_head_of_the_requested_size() -> None:
     assert head(torch.zeros(2, 8)).shape == (2, 3)
 
 
-def test_global_reads_the_features_stream() -> None:
-    assert GlobalTopology().stream == Stream.FEATURES
+def test_the_stream_is_a_joint_decision_of_output_and_input() -> None:
+    """One vector off FEATURES when one encoder made it, off EMBEDDINGS when views did."""
+    topology = GlobalTopology()
+
+    assert topology.stream(InputTopology.SINGLE) == Stream.FEATURES
+    assert topology.stream(InputTopology.MULTIVIEW) == Stream.EMBEDDINGS
+    assert topology.stream(InputTopology.MULTISTREAM) == Stream.EMBEDDINGS
 
 
-def test_global_supports_every_objective() -> None:
+def test_global_with_a_single_input_supports_every_objective() -> None:
     """Metric learning included: an ArcFace proxy judges one embedding per sample."""
     topology = GlobalTopology()
 
-    assert all(topology.supports(objective) for objective in Objective)
+    assert all(topology.supports(objective, InputTopology.SINGLE) for objective in Objective)
+
+
+def test_stacked_inputs_are_supervised_by_comparison_only() -> None:
+    """Stacked views have no per-sample labels to project onto."""
+    topology = GlobalTopology()
+
+    assert topology.supports(Objective.METRIC, InputTopology.MULTISTREAM)
+    assert topology.supports(Objective.METRIC, InputTopology.MULTIVIEW)
+    assert not topology.supports(Objective.MULTICLASS, InputTopology.MULTIVIEW)
+    assert not topology.supports(Objective.CONTINUOUS, InputTopology.MULTISTREAM)
 
 
 def test_global_serves_metric_learning_with_an_identity_head() -> None:
@@ -55,31 +62,10 @@ def test_global_serves_metric_learning_with_an_identity_head() -> None:
     assert isinstance(head, IdentityHead)
 
 
-def test_multistream_reads_the_embeddings_stream_through_identity() -> None:
-    topology = MultiStreamTopology()
+def test_dense_reads_the_decoder_stream_whatever_the_input() -> None:
+    dense = DenseTopology()
 
-    assert topology.stream == Stream.EMBEDDINGS
-    assert isinstance(topology.build_head(in_features=8, out_features=0), IdentityHead)
-
-
-def test_multistream_pairs_only_with_metric_learning() -> None:
-    topology = MultiStreamTopology()
-
-    assert topology.supports(Objective.METRIC)
-    assert not topology.supports(Objective.MULTICLASS)
-
-
-def test_multiview_mirrors_multistream_behaviour() -> None:
-    topology = MultiViewTopology()
-
-    assert topology.stream == Stream.EMBEDDINGS
-    assert isinstance(topology.build_head(in_features=8, out_features=0), IdentityHead)
-    assert topology.supports(Objective.METRIC)
-    assert not topology.supports(Objective.CONTINUOUS)
-
-
-def test_dense_reads_the_decoder_stream() -> None:
-    assert DenseTopology().stream == Stream.DECODER
+    assert dense.stream(InputTopology.SINGLE) == Stream.DECODER
 
 
 def test_dense_builds_a_conv_head_preserving_spatial_dims() -> None:
@@ -90,11 +76,19 @@ def test_dense_builds_a_conv_head_preserving_spatial_dims() -> None:
 
 
 def test_dense_rejects_metric_learning() -> None:
-    topology = DenseTopology()
+    dense = DenseTopology()
 
-    assert not topology.supports(Objective.METRIC)
-    assert topology.supports(Objective.MULTICLASS)
-    assert topology.supports(Objective.BINARY)
+    assert not dense.supports(Objective.METRIC, InputTopology.SINGLE)
+    assert dense.supports(Objective.MULTICLASS, InputTopology.SINGLE)
+    assert dense.supports(Objective.BINARY, InputTopology.SINGLE)
+
+
+def test_a_dense_output_refuses_stacked_inputs_whatever_the_objective() -> None:
+    """A decoder decodes one image's map — there is nothing dense about a stack of views."""
+    dense = DenseTopology()
+
+    for objective in Objective:
+        assert not dense.supports(objective, InputTopology.MULTIVIEW), objective
 
 
 def test_a_per_instance_task_declares_that_nothing_composes_its_head() -> None:
@@ -113,14 +107,16 @@ def test_a_per_instance_task_declares_that_nothing_composes_its_head() -> None:
     assert GlobalTopology().composes_head
 
 
-def test_a_per_instance_task_is_supervised_as_one_of_n_classes() -> None:
+def test_an_instances_output_is_single_input_multiclass_only() -> None:
     """The box is geometry the topology carries; the class is one of N like any other.
 
-    Pairing it with a regression or metric objective would declare a task nothing can
-    serve, and the refusal is cheaper here than at the first batch.
+    Pairing it with a regression or metric objective — or a stacked input — would
+    declare a task nothing can serve, and the refusal is cheaper here than at the
+    first batch.
     """
-    topology = InstancesTopology()
+    instances = InstancesTopology()
 
-    assert topology.supports(Objective.MULTICLASS)
-    assert not topology.supports(Objective.CONTINUOUS)
-    assert not topology.supports(Objective.METRIC)
+    assert instances.supports(Objective.MULTICLASS, InputTopology.SINGLE)
+    assert not instances.supports(Objective.CONTINUOUS, InputTopology.SINGLE)
+    assert not instances.supports(Objective.METRIC, InputTopology.SINGLE)
+    assert not instances.supports(Objective.MULTICLASS, InputTopology.MULTISTREAM)

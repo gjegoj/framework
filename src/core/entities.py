@@ -11,11 +11,15 @@ import torch
 
 from src.core.log_keys import join
 
+# Runtime, not TYPE_CHECKING: ``InputTopology.SINGLE`` is a dataclass field default,
+# evaluated when this module loads; ``OutputTopology`` rides along for one import line.
+from src.core.taxonomy import InputTopology, OutputTopology
+
 if TYPE_CHECKING:
     from torch import Tensor
 
     from src.core.ports import MetricSet
-    from src.core.taxonomy import Objective, Stage, Topology
+    from src.core.taxonomy import Objective, Stage
 
 
 @dataclass(slots=True)
@@ -379,8 +383,8 @@ class AdaptedTarget:
 class Task:
     """One learned objective, described in family-agnostic terms.
 
-    A task is what an experiment learns and how it is judged: its two axes
-    (``topology`` x ``objective``), its share of the total loss, and its
+    A task is what an experiment learns and how it is judged: its axes
+    (``output_topology`` x ``input_topology`` x ``objective``), its share of the total loss, and its
     metrics per stage. How predictions are produced is the model family's
     business — a composite model binds the task name to its per-task
     components; a vendor model binds it internally. ``batch.targets[task.name]``
@@ -388,9 +392,10 @@ class Task:
     """
 
     name: str
-    topology: Topology
+    output_topology: OutputTopology
     objective: Objective
     metrics: Mapping[Stage, MetricSet]
+    input_topology: InputTopology = InputTopology.SINGLE
     weight: float = 1.0
     lr: float | None = None
     """Own learning rate for this task's bricks — its head and its criterion.

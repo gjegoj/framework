@@ -190,7 +190,7 @@ already what gets drawn.
 
 **Surfaced:** 2026-08-07, splitting annotation on the task axes.
 
-`(Topology.DENSE, Objective.CONTINUOUS)` is a pairing the framework supports —
+`(OutputTopology.DENSE, Objective.CONTINUOUS)` is a pairing the framework supports —
 `DenseTopology.supports` admits every objective but `METRIC`, and depth
 estimation, heatmap regression and density maps all land there. The
 visualization IR has no `Label` for it: `Segmentation` holds boolean masks per
@@ -503,7 +503,7 @@ costs reader attention today and the growth that would repay it has not
 happened:
 
 - `annotators.py` splits along its own two axes — objectives (how an
-  `Objective` reads tensors) and topologies (how a `Topology` draws readings) —
+  `Objective` reads tensors) and topologies (how an `OutputTopology` draws readings) —
   **when detection annotations land** and push the file past comfortable
   reading. The seam is already clean: the two ABCs, two registries, and their
   implementations interleave nothing.
@@ -523,3 +523,13 @@ so the shared home would be an import cycle — and the registry's producer and
 consumer are both that one module. **A third distribution kind, or a second
 module consuming reporters, moves the ABC, the registry, and the reporter
 classes to `src/callbacks/reporters.py` unchanged.**
+
+## The first future cell of the task grid
+
+**Surfaced:** 2026-08-16, while splitting the task axes
+(docs/superpowers/specs/2026-08-16-input-output-topology-design.md).
+
+Supervised multiview (GLOBAL × MULTIVIEW × MULTICLASS — N photos of one item,
+one label) is the first currently-refused cell worth serving. It lands as one
+`GlobalTopology.supports` change plus a criterion that reads the stacked
+carrier; no axis reform.

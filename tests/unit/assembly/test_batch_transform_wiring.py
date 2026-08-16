@@ -10,7 +10,7 @@ import torch
 
 from src.assembly.callbacks import build_callbacks
 from src.callbacks import ApplyBatchTransform
-from src.core import Batch, DataProfile, Objective, TargetFacts, Task, Topology
+from src.core import Batch, DataProfile, Objective, OutputTopology, TargetFacts, Task
 from tests.support.configs import paper_config
 from tests.support.lightning import quiet_trainer
 from tests.support.narrowing import tensor
@@ -23,7 +23,9 @@ def trainer() -> L.Trainer:
 def classification() -> tuple[list[Task], DataProfile]:
     profile = DataProfile()
     profile.record("label", TargetFacts(num_classes=3))
-    return [Task(name="label", topology=Topology.GLOBAL, objective=Objective.MULTICLASS, metrics={})], profile
+    return [
+        Task(name="label", output_topology=OutputTopology.GLOBAL, objective=Objective.MULTICLASS, metrics={})
+    ], profile
 
 
 def declared(**params: Any) -> dict[str, Any]:
@@ -55,7 +57,7 @@ def test_a_stack_the_tasks_cannot_support_fails_at_assembly() -> None:
     """An hour into training is the wrong time to learn that MixUp cannot serve a mask."""
     profile = DataProfile()
     profile.record("mask", TargetFacts(num_classes=3))
-    dense = [Task(name="mask", topology=Topology.DENSE, objective=Objective.MULTICLASS, metrics={})]
+    dense = [Task(name="mask", output_topology=OutputTopology.DENSE, objective=Objective.MULTICLASS, metrics={})]
 
     with pytest.raises(ValueError, match="mask"):
         build_callbacks(paper_config(callbacks=[declared()]), dense, profile)

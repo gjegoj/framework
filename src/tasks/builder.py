@@ -48,15 +48,18 @@ def build_task_components(
             none for the stream.
     """
     objective = objective_registry.create(task.objective)
-    topology = topology_registry.create(task.topology)
+    topology = topology_registry.create(task.output_topology)
     # Both halves of "can this framework serve this task?", asked together and before
     # anything is built. The second used to be a refusal thrown from inside `build_head`,
     # i.e. from a method the builder was never meant to reach for such a task.
-    if not topology.supports(task.objective):
-        raise ValueError(f"Topology '{task.topology}' cannot be supervised by objective '{task.objective}'.")
+    if not topology.supports(task.objective, task.input_topology):
+        raise ValueError(
+            f"Output topology '{task.output_topology}' with input topology '{task.input_topology}' "
+            f"cannot be supervised by objective '{task.objective}'."
+        )
     if not topology.composes_head:
         raise ValueError(
-            f"Task '{task.name}' is '{task.topology}', whose head belongs to the model family that "
+            f"Task '{task.name}' is '{task.output_topology}', whose head belongs to the model family that "
             f"owns it — its assigner and its loss are part of the same design, and this framework "
             f"composes none of them. Declare a vendor family instead, e.g. "
             f"model: {{name: yolo, model_name: yolov8n.yaml}}."
@@ -64,7 +67,7 @@ def build_task_components(
     if objective.needs_num_classes:
         profile.require_num_classes(task.name)
     facts = profile.facts(task.name)
-    chosen_stream = stream if stream is not None else topology.stream
+    chosen_stream = stream if stream is not None else topology.stream(task.input_topology)
     in_features = backbone.feature_dim(chosen_stream)
     out_features = objective.out_features(facts)
     head: Head

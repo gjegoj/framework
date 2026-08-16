@@ -13,8 +13,9 @@ from src.core import (
     Batch,
     DataProfile,
     Features,
+    InputTopology,
     Objective,
-    Topology,
+    OutputTopology,
 )
 from src.models import CompositeModel, ExpandedHead, LinearHead, TaskComponents
 from src.tasks import build_task_components
@@ -50,14 +51,14 @@ def test_a_per_instance_task_is_refused_where_the_decision_is_taken() -> None:
     return a head. It now sits beside the ``supports`` check, which asks the other half of
     the same question, and the sentence points at the section a user has to change.
     """
-    detection = a_task(topology=Topology.INSTANCES)
+    detection = a_task(output_topology=OutputTopology.INSTANCES)
 
     with pytest.raises(ValueError, match=r"model: \{name: yolo"):
         build_task_components(detection, profiling(label=3), FlattenBackbone(dim=12))
 
 
 def test_incompatible_axes_are_rejected_with_both_names() -> None:
-    dense_metric = a_task(topology=Topology.DENSE, objective=Objective.METRIC)
+    dense_metric = a_task(output_topology=OutputTopology.DENSE, objective=Objective.METRIC)
     with pytest.raises(ValueError, match="cannot be supervised"):
         build_task_components(dense_metric, profiling(label=3), FlattenBackbone(dim=12))
 
@@ -133,7 +134,12 @@ def test_a_contrastive_task_builds_and_steps_without_targets() -> None:
         encoders={"image": FakeEncoder("image", 4), "text": FakeEncoder("text", 6)},
         embedding_dim=8,
     )
-    task = a_task(name="pair", topology=Topology.MULTISTREAM, objective=Objective.METRIC)
+    task = a_task(
+        name="pair",
+        output_topology=OutputTopology.GLOBAL,
+        input_topology=InputTopology.MULTISTREAM,
+        objective=Objective.METRIC,
+    )
 
     components = build_task_components(task, DataProfile(), backbone)
     model = CompositeModel(backbone=backbone, components={"pair": components})
@@ -154,7 +160,7 @@ def test_a_segmentation_task_builds_and_steps_end_to_end() -> None:
     """DENSE closes: preset -> conv head sized from the decoder -> ce loss on masks."""
     torch.manual_seed(0)
     profile = profiling(label=3)
-    task = a_task(topology=Topology.DENSE)
+    task = a_task(output_topology=OutputTopology.DENSE)
     backbone = DecoderBackbone()
 
     components = build_task_components(task, profile, backbone)
