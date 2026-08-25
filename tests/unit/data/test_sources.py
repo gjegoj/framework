@@ -7,7 +7,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from src.data import CsvSource, InMemorySource, JsonSource
+from src.data import CsvSource, InMemorySource, JsonLinesSource, JsonSource
 from src.data.registry import table_source_registry
 
 
@@ -51,6 +51,21 @@ def test_json_source_reads_records(tmp_path: Path) -> None:
     assert table.iloc[0]["label"] == "cat"
 
 
+def test_json_lines_reads_one_row_per_line_keeping_nested_objects(tmp_path: Path) -> None:
+    """The detection canon's carrier: nested lists arrive as lists, negatives as empty ones."""
+    path = tmp_path / "train.jsonl"
+    path.write_text(
+        '{"image": "a.jpg", "objects": [{"box": [1.0, 2.0, 3.0, 4.0], "class": "dog"}]}\n'
+        '{"image": "b.jpg", "objects": []}\n'
+    )
+
+    table = JsonLinesSource(path).read()
+
+    assert list(table.columns) == ["image", "objects"]
+    assert table["objects"].iloc[0] == [{"box": [1.0, 2.0, 3.0, 4.0], "class": "dog"}]
+    assert table["objects"].iloc[1] == []
+
+
 def test_in_memory_source_returns_the_table_as_is() -> None:
     frame = pd.DataFrame({"x": [1, 2]})
 
@@ -58,7 +73,7 @@ def test_in_memory_source_returns_the_table_as_is() -> None:
 
 
 def test_file_sources_are_registered_for_config() -> None:
-    assert set(table_source_registry) == {"csv", "json"}
+    assert set(table_source_registry) == {"csv", "json", "jsonl"}
 
 
 def test_an_empty_path_list_is_rejected() -> None:

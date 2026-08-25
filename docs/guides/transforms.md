@@ -54,26 +54,21 @@ transforms:
 
 ## One sampling for the whole sample
 
-Every image input and every spatial target travels through a **single**
-pipeline call, so the crop taken from the image is the crop taken from its mask
-and from every other declared image:
+Every input and every geometric target travels through a **single** pipeline
+call, so the crop taken from the image is the crop taken from its mask, its
+boxes, and every other declared image:
 
 ```yaml
 data:
   inputs:
     image: {column: left_path}
-    right_image: {column: right_path}
-
-transforms:
-  train:
-    _target_: src.transforms.AlbumentationsTransform
-    image_inputs: [image, right_image]     # both ride the same geometry
-    transforms: [...]
+    right_image: {column: right_path}      # both ride the same geometry
 ```
 
-`spatial_targets` is never written by hand: it is derived from the encoders —
-an encoder that marks itself `spatial` (a mask) is registered automatically, so
-a mask cannot silently fall out of step with its image.
+Nothing in the `transforms` section says so. Each value declares its own
+**geometry** where it is read — `image` for light, `mask` for per-pixel labels,
+`boxes` for rectangles — and assembly derives the mapping from the loaders and
+encoders, so a target cannot silently fall out of step with its image.
 
 Inputs that are not declared — embeddings, captions, class labels — pass
 through untouched.
@@ -95,34 +90,48 @@ transforms:
 ```
 
 Two arguments are refused, because declaring them would contradict what is
-already declared: `additional_targets` comes from `image_inputs` and
-`spatial_targets`. `telemetry` is off by default and can
-be turned back on.
+already declared: `additional_targets` comes from the derived geometries, and
+`bbox_params` from the boxes target (its knobs are `min_box_visibility` and
+`min_box_area`). `telemetry` is off by default and can be turned back on.
 
 An argument albumentations does not know fails where it belongs — in
 albumentations, naming itself — rather than being swallowed here.
 
-## Boxes and keypoints
+## Boxes
 
-`bbox_params` and `keypoint_params` take the plain mapping YAML already writes;
-no import path is needed:
+A detection task's target declares `boxes` geometry, so the pipeline carries it
+without a word in this section. Letterboxing is one ordinary operation — it
+scales, pads with YOLO's grey, and moves the boxes with the picture:
 
 ```yaml
 transforms:
   train:
     _target_: src.transforms.AlbumentationsTransform
     transforms:
+      - {_target_: albumentations.LetterBox, size: "${image_size}"}
       - {_target_: albumentations.HorizontalFlip, p: 0.5}
       - {_target_: albumentations.Normalize}
       - {_target_: albumentations.pytorch.ToTensorV2}
-    bbox_params: {coord_format: yolo, label_fields: [classes]}
+    min_box_visibility: 0.3      # a crop that leaves less than this drops the box
 ```
 
-Note `coord_format`, not `format` — albumentationsX renamed it.
+`min_box_visibility` and `min_box_area` are the two real choices here — when a
+cropped box stops being a training signal — and each drops a box *with its class
+name*, which is why the names ride their own field inside the call. Everything
+else about `bbox_params` follows from the format (xyxy pixels), so declaring it
+is refused rather than allowed to contradict the derived value.
 
-Detection runs that use the native YOLO pipeline do **not** need this: the
-ultralytics dataset carries its own box-aware augmentation (mosaic, HSV,
-perspective), and `transforms` is not consulted for it.
+One boxes target per pipeline: albumentationsX does not plumb label fields
+through additional targets, so two detection tasks over one image are refused at
+construction, naming both.
+
+`keypoint_params` still takes the plain mapping YAML writes (note
+`coord_format`, not `format` — albumentationsX renamed it), and a pose *target*
+geometry will arrive with the encoder that reads one.
+
+Detection runs on the native YOLO pipeline do **not** use this section at all:
+the ultralytics dataset carries its own box-aware augmentation, and `transforms`
+is not consulted for it.
 
 ## Several views of one input
 

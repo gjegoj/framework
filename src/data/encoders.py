@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import math
 from abc import ABC, abstractmethod
@@ -10,8 +11,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, override
 
 import numpy as np
+import torch
 
-from src.core.entities import ClassDistribution, Distribution, TargetFacts
+from src.core.entities import ClassDistribution, Distribution, Instances, TargetFacts
+from src.core.taxonomy import Geometry
 from src.core.vocabulary import ordered_names
 from src.data.cache import cached
 from src.data.loaders import ImageLoader
@@ -40,11 +43,13 @@ class TargetEncoder(ABC):
     default. Afterwards the encoder exposes what it inferred (``num_classes``,
     ``class_names``), which the ``DataModule`` records into the ``DataProfile``.
 
-    ``spatial`` marks encoders whose values live in image space: a transform must carry
-    those through the same geometry as the image, and only the encoder knows it.
+    ``geometry`` marks how a value relates to image space: a transform must carry a
+    ``MASK`` value through the same geometry as the image and a ``BOXES`` value through
+    ``bbox_params``, and only the encoder knows which. ``NONE`` values never enter the
+    pipeline uninvited.
     """
 
-    spatial: ClassVar[bool] = False
+    geometry: ClassVar[Geometry] = Geometry.NONE
 
     def fit(self, values: Iterable[Any]) -> None:
         """Learn from training-split values. Default: nothing to learn."""
@@ -100,6 +105,107 @@ class TargetEncoder(ABC):
             class_names=self.class_names,
             class_values=self.class_values,
         )
+
+
+@target_encoder_registry.register("boxes")
+class BoxesTargetEncoder(TargetEncoder):
+    """Detection objects: a cell of ``{"box": [x1, y1, x2, y2], "class": name}`` mappings.
+
+    ``load`` accepts the parsed list a JSON table holds or the JSON string a CSV cell
+    holds — the same bargain the multilabel encoder strikes — and returns the in-flight
+    pair ``Geometry.BOXES`` documents: ``(float32 [N, 4] xyxy pixels, list of names)``.
+    Coordinates stay in the pixels of the image as loaded, so the pipeline's geometry is
+    the only thing that ever moves them.
+
+    ``encode`` runs after the transforms, on whatever boxes survived them, and is this
+    target's *tensor boundary*: a ragged value cannot wait for ``ToTensorV2`` or for
+    stacking, so the result is a per-sample ``Instances`` whose ``sample_index`` is
+    zeros — position in a batch is collation's fact, and it renumbers.
+
+    A malformed cell is refused showing what it held rather than which image held it:
+    this encoder is handed a value, never a row. The converters validate against paths,
+    which is why a canon file never reaches this refusal.
+
+    Parameters:
+        classes (Mapping[int, str] | None): Declared vocabulary, index to name. Learned
+            from the training cells when absent — the annotations carry the names, so
+            unlike a mask's class count nothing has to be stated for this to work.
+    """
+
+    geometry: ClassVar[Geometry] = Geometry.BOXES
+
+    BOX: ClassVar[str] = "box"
+    CLASS: ClassVar[str] = "class"
+    """The canonical object fields, spelled once: the converters write what this reads."""
+
+    def __init__(self, classes: Mapping[int, str] | None = None) -> None:
+        names = ordered_names(classes) if classes is not None else None
+        self._declared = names is not None
+        self._index: dict[str, int] | None = (
+            {name: position for position, name in enumerate(names)} if names is not None else None
+        )
+
+    def fit(self, values: Iterable[Any]) -> None:
+        seen = {name for value in values for name in self._parsed(value)[1]}
+        if self._declared:
+            assert self._index is not None
+            unknown = sorted(seen - self._index.keys())
+            if unknown:
+                known = ", ".join(self._index)
+                raise LookupError(f"Unknown classes {', '.join(unknown)} in a boxes column. Declared: {known}.")
+            return
+        self._index = {name: position for position, name in enumerate(sorted(seen))}
+
+    @override
+    def load(self, value: Any) -> tuple[np.ndarray, list[str]]:
+        """One cell into the pair the transforms ride — parsing here, indexing at encode."""
+        return self._parsed(value)
+
+    def encode(self, value: Any) -> Instances:
+        if self._index is None:
+            raise RuntimeError("BoxesTargetEncoder is not fitted; call fit(train_values) first.")
+        boxes, names = value
+        unknown = sorted({name for name in names if name not in self._index})
+        if unknown:
+            known = ", ".join(self._index)
+            raise LookupError(f"Unknown classes {', '.join(unknown)} in a boxes target. Known classes: {known}.")
+        return Instances(
+            boxes=torch.as_tensor(np.asarray(boxes, dtype=np.float32).reshape(len(names), 4)),
+            labels=torch.as_tensor([self._index[name] for name in names], dtype=torch.int64),
+            sample_index=torch.zeros(len(names), dtype=torch.int64),
+        )
+
+    @property
+    def num_classes(self) -> int | None:
+        return len(self._index) if self._index is not None else None
+
+    @property
+    def class_names(self) -> list[str] | None:
+        return list(self._index) if self._index is not None else None
+
+    @override
+    def distribution(self, values: Iterable[Any]) -> Distribution | None:
+        """Boxes per class across the split — seeded, so a class no image shows still reports."""
+        return counted(self.class_names, (name for value in values for name in self._parsed(value)[1]))
+
+    def _parsed(self, value: Any) -> tuple[np.ndarray, list[str]]:
+        """The canonical cell in either carrier, refused by content when it is not one."""
+        listed = json.loads(value) if isinstance(value, str) else value
+        if not isinstance(listed, list):
+            # TypeError for the wrong *kind* of value, ValueError below for the wrong
+            # contents — the split ``require_tensor`` already makes for task outputs.
+            raise TypeError(f"A boxes cell holds a list of objects, got {type(listed).__name__}: {listed!r:.120}.")
+        boxes: list[list[float]] = []
+        names: list[str] = []
+        for entry in listed:
+            if not isinstance(entry, Mapping) or self.BOX not in entry or self.CLASS not in entry:
+                raise ValueError(f"A boxes object needs '{self.BOX}' and '{self.CLASS}', got {entry!r:.120}.")
+            corners = [float(corner) for corner in entry[self.BOX]]
+            if len(corners) != 4:
+                raise ValueError(f"A '{self.BOX}' holds [x1, y1, x2, y2], got {entry[self.BOX]!r:.120}.")
+            boxes.append(corners)
+            names.append(str(entry[self.CLASS]))
+        return np.asarray(boxes, dtype=np.float32).reshape(len(names), 4), names
 
 
 @target_encoder_registry.register("label")
@@ -508,7 +614,7 @@ class MaskTargetEncoder(TargetEncoder):
             assembly offers one as a derived value.
     """
 
-    spatial: ClassVar[bool] = True
+    geometry: ClassVar[Geometry] = Geometry.MASK
 
     def __init__(
         self,
@@ -519,7 +625,10 @@ class MaskTargetEncoder(TargetEncoder):
     ) -> None:
         names = ordered_names(classes) if classes is not None else None
         if names is None and num_classes is None:
-            raise ValueError("A mask needs its class count: declare 'num_classes' or 'classes'.")
+            raise ValueError(
+                "A mask needs its class count: declare 'classes' on the task, or 'num_classes' on "
+                "the encoder (a dense target that is not a mask needs an explicit 'target_encoder')."
+            )
         if names is not None and num_classes is not None and num_classes != len(names):
             raise ValueError(f"num_classes={num_classes} disagrees with {len(names)} declared classes; declare one.")
         resolved = num_classes if num_classes is not None else len(names or ())

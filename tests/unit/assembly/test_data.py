@@ -3,15 +3,25 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any, ClassVar
 
 import numpy as np
 import pytest
 
 from src.assembly.data import build_data_module, build_data_schema, build_transforms
-from src.core import DataProfile, Sample, Stage
+from src.core import DataProfile, Geometry, Sample, Stage
 from src.data import ImageLoader, LabelTargetEncoder, MaskTargetEncoder, TableDataModule
 from tests.support.configs import disk_config, disk_data
 from tests.support.datasets import write_dataset
+
+
+class VectorLoader:
+    """A non-pixel input for these tests: geometry NONE, resolvable by ``_target_``."""
+
+    geometry: ClassVar[Geometry] = Geometry.NONE
+
+    def __call__(self, value: Any) -> np.ndarray:
+        return np.full(4, 1.0, dtype=np.float32)
 
 
 def test_the_schema_takes_targets_from_tasks_and_inputs_from_data(dataset_root: Path) -> None:
@@ -61,8 +71,8 @@ def test_the_assembled_module_profiles_its_data(dataset_root: Path) -> None:
     assert profile.facts("label").num_classes == 2
 
 
-def test_spatial_targets_are_derived_from_the_encoders_never_configured(tmp_path: Path) -> None:
-    """The transform learns which targets are masks from the schema, not from YAML."""
+def test_target_geometries_are_derived_from_the_encoders_never_configured(tmp_path: Path) -> None:
+    """The transform learns how each target rides geometry from the schema, not from YAML."""
     write_dataset(tmp_path, masks=True)
     config = disk_config(
         tmp_path,
@@ -112,3 +122,25 @@ def test_a_section_with_no_columns_is_a_valid_declaration(dataset_root: Path) ->
     config = disk_config(dataset_root, data={"source": "coco8.yaml", "inputs": {}})
 
     assert config.data.inputs == {}
+
+
+def test_a_non_pixel_input_never_enters_the_pipeline_and_reaches_the_batch_untouched(
+    dataset_root: Path,
+) -> None:
+    """The filter the targets side already has, applied to inputs: a NONE-geometry
+    column is left out rather than handed to albumentations as a fake picture."""
+    data = disk_data(dataset_root)
+    data["inputs"] = dict(data["inputs"]) | {
+        "embedding": {"column": "label", "loader": {"_target_": "tests.unit.assembly.test_data.VectorLoader"}}
+    }
+    config = disk_config(dataset_root, data=data)
+    schema = build_data_schema(config)
+    transforms = build_transforms(config, schema)
+
+    sample = Sample(
+        inputs={"image": np.zeros((32, 32, 3), np.uint8), "embedding": np.full(4, 1.0, np.float32)},
+        targets={"label": 0},
+    )
+    transformed = transforms[Stage.TRAIN](sample)
+
+    assert transformed.inputs["embedding"].shape == (4,)  # untouched: never resized, never normalised

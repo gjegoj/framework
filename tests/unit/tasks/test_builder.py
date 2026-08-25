@@ -18,7 +18,7 @@ from src.core import (
     OutputTopology,
 )
 from src.models import CompositeModel, ExpandedHead, LinearHead, TaskComponents
-from src.tasks import build_task_components
+from src.tasks import build_task_components, default_target_encoder
 from tests.support.entities import a_task, profiling
 from tests.support.fakes import FakeEncoder, FlattenBackbone
 from tests.support.narrowing import tensor
@@ -213,3 +213,16 @@ def test_a_native_head_that_already_is_a_head_stays_unwrapped() -> None:
     components = build_task_components(a_task(), profiling(label=3), HeadOfferingBackbone(), prefer_native_head=True)
 
     assert isinstance(components.head, ExpandedHead)
+
+
+def test_the_default_encoder_composes_shape_over_semantics() -> None:
+    """A dense cell is a mask file whatever the labels mean; a global cell asks its objective."""
+    assert default_target_encoder(OutputTopology.DENSE, Objective.MULTICLASS) == "mask"
+    assert default_target_encoder(OutputTopology.DENSE, Objective.BINARY) == "mask"
+    assert default_target_encoder(OutputTopology.GLOBAL, Objective.MULTICLASS) == "label"
+    assert default_target_encoder(OutputTopology.GLOBAL, Objective.CONTINUOUS) == "scalar"
+
+
+def test_a_structure_supervised_task_has_no_default_encoder() -> None:
+    """Metric learning reads the batch, not a column: neither axis names an encoder."""
+    assert default_target_encoder(OutputTopology.GLOBAL, Objective.METRIC) is None

@@ -32,18 +32,15 @@ included:
 from src.config.presets import MetricConfig, TaskPreset, task_preset_registry
 from src.core import Objective, OutputTopology
 
-task_preset_registry.register_instance(
-    "depth",
-    TaskPreset(
-        output_topology=OutputTopology.DENSE,
-        objective=Objective.CONTINUOUS,
-        metrics={"mae": MetricConfig(name="mae")},
-    ),
-)
+@task_preset_registry.register_instance("depth")
+class Depth(TaskPreset):
+    output_topology: OutputTopology = OutputTopology.DENSE
+    objective: Objective = Objective.CONTINUOUS
+    metrics: dict[str, MetricConfig] | None = {"mae": MetricConfig(name="mae")}
 ```
 
-The entry is validated into the metric grammar the moment it is constructed,
-so a malformed default fails at registration, not an hour into training.
+The class is built and validated into the metric grammar the moment it is
+decorated, so a malformed default fails at import, not an hour into training.
 
 ## One rule
 

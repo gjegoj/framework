@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from src.core import InputTopology, Modality, Objective, OutputTopology, Stage, Stream
+from src.core import Geometry, InputTopology, Modality, Objective, OutputTopology, Stage, Stream
 
 
 def test_stage_members_cover_the_training_lifecycle() -> None:
@@ -51,6 +51,11 @@ def test_stream_names_the_standard_backbone_outputs() -> None:
 
 def test_modality_names_the_standard_inputs() -> None:
     assert {modality.value for modality in Modality} == {"image", "embedding", "text"}
+
+
+def test_geometry_names_the_ways_a_value_rides_the_image() -> None:
+    """The closed set the data layer declares and the transform seam consumes."""
+    assert [member.value for member in Geometry] == ["none", "image", "mask", "boxes"]
 
 
 def test_standard_names_stay_plain_strings() -> None:

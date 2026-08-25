@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from src.core import Geometry
 from src.data import LabelTargetEncoder, MaskTargetEncoder, MultiLabelTargetEncoder, ScalarTargetEncoder
 from src.data.registry import target_encoder_registry
 
@@ -65,15 +66,23 @@ def test_scalar_encoder_needs_no_fit_and_reports_no_classes() -> None:
 
 
 def test_built_in_encoders_are_registered_for_config() -> None:
-    assert set(target_encoder_registry) == {"label", "multilabel", "scalar", "mask", "gaussian_bins", "linear_bins"}
+    assert set(target_encoder_registry) == {
+        "label",
+        "multilabel",
+        "scalar",
+        "mask",
+        "boxes",
+        "gaussian_bins",
+        "linear_bins",
+    }
     assert isinstance(target_encoder_registry.create("mask", num_classes=2), MaskTargetEncoder)
 
 
-def test_only_mask_targets_are_spatial() -> None:
-    """Spatiality is what tells a transform which targets ride the image's geometry."""
-    assert MaskTargetEncoder(num_classes=2).spatial is True
-    assert LabelTargetEncoder().spatial is False
-    assert ScalarTargetEncoder().spatial is False
+def test_encoders_declare_how_their_values_ride_augmentation() -> None:
+    """Geometry is what tells a transform which targets follow the image, and how."""
+    assert MaskTargetEncoder(num_classes=2).geometry is Geometry.MASK
+    assert LabelTargetEncoder().geometry is Geometry.NONE
+    assert ScalarTargetEncoder().geometry is Geometry.NONE
 
 
 def test_mask_encoder_reads_class_indices_as_an_integer_array(tmp_path: Path) -> None:

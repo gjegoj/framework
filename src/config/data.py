@@ -260,8 +260,9 @@ class DataConfig(BaseModel):
         default_factory=dict,
         description=(
             "Columns loaded for the augmentations alone — a mask that bounds a colour shift. "
-            "Loaded like inputs and carried through the sample transforms as mask-kind values "
-            "(nearest-neighbour geometry, untouched by Normalize), but never collated: the "
+            "Loaded like inputs and carried through the sample transforms with the geometry "
+            "their loader declares (the default is the mask loader: one grayscale plane, "
+            "nearest-neighbour geometry, untouched by Normalize), but never collated: the "
             "model does not see them and no batch memory is spent on them. A mask the model "
             "should consume is a regular input with loader {name: mask}."
         ),

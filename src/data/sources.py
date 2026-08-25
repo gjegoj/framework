@@ -78,6 +78,20 @@ class JsonSource(FileSource):
         return pd.read_json(path, **self._reader_kwargs)
 
 
+@table_source_registry.register("jsonl")
+class JsonLinesSource(FileSource):
+    """JSON Lines tables — one row per line, nested values kept as they are written.
+
+    Its own source rather than ``json`` with ``lines: true`` so that ``.jsonl`` is
+    inferable from the suffix and a row's nested annotations need no declaration at all:
+    the detection canon (one image per line, its objects beside it) is read by naming
+    the file and nothing else.
+    """
+
+    def _read_file(self, path: Path) -> Table:
+        return pd.read_json(path, lines=True, **self._reader_kwargs)
+
+
 class LimitedSource(TableSource):
     """Another source with its rows capped — the small run you iterate on.
 

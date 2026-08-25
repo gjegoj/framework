@@ -72,7 +72,7 @@ from src.core.ports import (
 )
 from src.core.registry import Registry
 from src.core.reporting import Curve, Matrix, PerClass
-from src.core.taxonomy import InputTopology, Modality, Objective, OutputTopology, Stage, Stream
+from src.core.taxonomy import Geometry, InputTopology, Modality, Objective, OutputTopology, Stage, Stream
 
 __all__ = [
     "Activation",
@@ -84,6 +84,7 @@ __all__ = [
     "DataModule",
     "DataProfile",
     "Features",
+    "Geometry",
     "Head",
     "InputTopology",
     "Instances",

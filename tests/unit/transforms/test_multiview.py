@@ -8,7 +8,7 @@ import pytest
 import torch
 from albumentations.pytorch import ToTensorV2
 
-from src.core import Sample
+from src.core import Geometry, Sample
 from src.transforms import AlbumentationsTransform, MultiViewTransform
 
 
@@ -71,7 +71,7 @@ def test_view_augmentation_never_reaches_the_samples_targets() -> None:
 
     transformed = MultiViewTransform(
         views=2,
-        base=AlbumentationsTransform([A.RandomCrop(height=4, width=4)], spatial_targets=["mask"]),
+        base=AlbumentationsTransform([A.RandomCrop(height=4, width=4)], targets={"mask": Geometry.MASK}),
     )(sample)
 
     assert transformed.targets["mask"].shape == (8, 8)

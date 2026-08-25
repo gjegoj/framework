@@ -267,14 +267,11 @@ from src.config.presets import TaskPreset, task_preset_registry
 from src.config.components import MetricConfig
 from src.core.taxonomy import Objective, OutputTopology
 
-task_preset_registry.register_instance(
-    "depth",
-    TaskPreset(
-        output_topology=OutputTopology.DENSE,
-        objective=Objective.CONTINUOUS,
-        metrics={"mae": MetricConfig(name="mae")},
-    ),
-)
+@task_preset_registry.register_instance("depth")
+class Depth(TaskPreset):
+    output_topology: OutputTopology = OutputTopology.DENSE
+    objective: Objective = Objective.CONTINUOUS
+    metrics: dict[str, MetricConfig] | None = {"mae": MetricConfig(name="mae")}
 ```
 
 ```yaml

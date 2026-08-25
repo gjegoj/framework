@@ -95,16 +95,18 @@ class YoloDataModule(DataModule):
         def build(path: str, mode: str) -> Any:
             return build_yolo_dataset(settings, img_path=path, batch=self._batch_size, data=descriptor, mode=mode)
 
+        # The descriptor's stage keys are the framework's own names; ``mode`` is
+        # ultralytics' vocabulary and stays spelled as it reads it.
         datasets: dict[Stage, Dataset[Sample]] = {
-            Stage.TRAIN: build(descriptor["train"], "train"),
-            Stage.VAL: build(descriptor["val"], "val"),
+            Stage.TRAIN: build(descriptor[Stage.TRAIN], mode="train"),
+            Stage.VAL: build(descriptor[Stage.VAL], mode="val"),
         }
         # No `test:` key is ordinary YOLO practice. Serving val in its place is a
         # decision about what a test metric means, so `TrainingData` makes it out loud
         # for every pipeline alike rather than this one making it quietly.
-        declared_test = descriptor.get("test")
+        declared_test = descriptor.get(Stage.TEST)
         if declared_test:
-            datasets[Stage.TEST] = build(declared_test, "val")
+            datasets[Stage.TEST] = build(declared_test, mode="val")
         self._datasets = datasets
 
     @override

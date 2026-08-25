@@ -8,6 +8,7 @@ from src.data.datamodules import SourceWithTransforms, TableDataModule, YoloData
 from src.data.dataset import TableDataset
 from src.data.encoders import (
     BinnedTargetEncoder,
+    BoxesTargetEncoder,
     GaussianBinsTargetEncoder,
     LabelTargetEncoder,
     LinearBinsTargetEncoder,
@@ -22,6 +23,7 @@ from src.data.sources import (
     CsvSource,
     FileSource,
     InMemorySource,
+    JsonLinesSource,
     JsonSource,
     LimitedSource,
     Table,
@@ -31,6 +33,7 @@ from src.data.split import Splitter, group_split, random_split, stratified_split
 
 __all__ = [
     "BinnedTargetEncoder",
+    "BoxesTargetEncoder",
     "ColumnRole",
     "CsvSource",
     "DataSchema",
@@ -40,6 +43,7 @@ __all__ = [
     "InMemorySource",
     "InputColumn",
     "InputLoader",
+    "JsonLinesSource",
     "JsonSource",
     "LabelTargetEncoder",
     "LimitedSource",

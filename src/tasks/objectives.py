@@ -73,22 +73,29 @@ class TaskObjective(ABC):
         """Base kwargs every metric of this objective receives (task mode, class counts)."""
         return {}
 
-    def default_target_encoder(self) -> str | None:
-        """Registry name of the encoder shaping raw column values for this objective.
+    default_target_encoder: ClassVar[str | None] = None
+    """Registry name of the encoder shaping a scalar-ish cell of this semantics.
 
-        A name rather than an instance: an objective knows which *form* its loss
-        needs — a class index, a float, an indicator vector — while the
-        ``target_encoder_registry`` stays the one place that knows how to build
-        it, so this package never reaches into the data layer. ``None`` for
-        objectives supervised by batch structure rather than by a column.
-        """
-        return None
+    A name rather than an instance: an objective knows which *form* its loss needs — a
+    class index, a float, an indicator vector — while the ``target_encoder_registry``
+    stays the one place that knows how to build it, so this package never reaches into
+    the data layer. ``None`` for objectives supervised by batch structure rather than by
+    a column.
+
+    A constant, not a method: the choice is made before any data is read, because the
+    facts an encoder could depend on are exactly what that encoder produces at ``fit``.
+    Its neighbour ``needs_num_classes`` already shows the honest form. The *shape* of a
+    cell outranks its semantics, so ``TaskTopology`` carries the same declaration and
+    ``default_target_encoder`` in the builder composes the two.
+    """
 
 
+@objective_registry.register_instance(Objective.MULTICLASS)
 class MulticlassObjective(TaskObjective):
     """Exactly one class per prediction: cross-entropy over softmax probabilities."""
 
     needs_num_classes: ClassVar[bool] = True
+    default_target_encoder: ClassVar[str | None] = "label"
 
     def out_features(self, facts: TargetFacts) -> int:
         if facts.num_classes is None:
@@ -108,13 +115,12 @@ class MulticlassObjective(TaskObjective):
     def metric_kwargs(self, facts: TargetFacts) -> dict[str, Any]:
         return {"task": "multiclass", "num_classes": facts.num_classes}
 
-    @override
-    def default_target_encoder(self) -> str:
-        return "label"
 
-
+@objective_registry.register_instance(Objective.BINARY)
 class BinaryObjective(TaskObjective):
     """A single yes-or-no probability: BCE on one logit, sigmoid for metrics."""
+
+    default_target_encoder: ClassVar[str | None] = "scalar"
 
     def out_features(self, facts: TargetFacts) -> int:
         return 1
@@ -132,15 +138,13 @@ class BinaryObjective(TaskObjective):
     def metric_kwargs(self, facts: TargetFacts) -> dict[str, Any]:
         return {"task": "binary"}
 
-    @override
-    def default_target_encoder(self) -> str:
-        return "scalar"
 
-
+@objective_registry.register_instance(Objective.MULTILABEL)
 class MultilabelObjective(TaskObjective):
     """Independent per-class probabilities: BCE per class, sigmoid for metrics."""
 
     needs_num_classes: ClassVar[bool] = True
+    default_target_encoder: ClassVar[str | None] = "multilabel"
 
     def out_features(self, facts: TargetFacts) -> int:
         if facts.num_classes is None:
@@ -160,11 +164,8 @@ class MultilabelObjective(TaskObjective):
     def metric_kwargs(self, facts: TargetFacts) -> dict[str, Any]:
         return {"task": "multilabel", "num_labels": facts.num_classes}
 
-    @override
-    def default_target_encoder(self) -> str:
-        return "multilabel"
 
-
+@objective_registry.register_instance(Objective.CONTINUOUS)
 class ContinuousObjective(TaskObjective):
     """Real-valued targets, learned directly or through bins.
 
@@ -175,6 +176,8 @@ class ContinuousObjective(TaskObjective):
     expectation — and read back as the number it stands for. Either way the task
     is a regression and its metrics compare numbers.
     """
+
+    default_target_encoder: ClassVar[str | None] = "scalar"
 
     def out_features(self, facts: TargetFacts) -> int:
         if facts.class_values is None:
@@ -200,11 +203,8 @@ class ContinuousObjective(TaskObjective):
             return float_for_loss
         return expectation_of(facts.class_values)
 
-    @override
-    def default_target_encoder(self) -> str:
-        return "scalar"
 
-
+@objective_registry.register_instance(Objective.METRIC)
 class MetricObjective(TaskObjective):
     """Embeddings shaped by comparison — against the batch, or against labels.
 
@@ -229,10 +229,3 @@ class MetricObjective(TaskObjective):
 
     def build_target_adapter(self, facts: TargetFacts) -> TargetAdapter | None:
         return as_class_indices if facts.num_classes is not None else None
-
-
-objective_registry.register_instance(Objective.MULTICLASS, MulticlassObjective())
-objective_registry.register_instance(Objective.BINARY, BinaryObjective())
-objective_registry.register_instance(Objective.MULTILABEL, MultilabelObjective())
-objective_registry.register_instance(Objective.CONTINUOUS, ContinuousObjective())
-objective_registry.register_instance(Objective.METRIC, MetricObjective())

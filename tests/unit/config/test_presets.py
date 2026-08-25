@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
-from src.config import MetricConfig, resolve_preset, task_preset_registry
+from src.config import MetricConfig, TaskPreset, resolve_preset, task_preset_registry
 from src.core import InputTopology, Objective, OutputTopology
+from src.core.registry import Registry
+from src.tasks import default_target_encoder
 from src.tasks.registry import objective_registry, topology_registry
 
 
@@ -119,6 +122,29 @@ def test_only_the_paired_kinds_declare_a_non_single_input() -> None:
         assert preset.input_topology is paired.get(str(name), InputTopology.SINGLE), name
 
 
+def test_every_presets_encoder_reads_off_the_axes() -> None:
+    """The derived kit: shape first, semantics second — one table a DS can read whole."""
+    derived = {
+        str(name): default_target_encoder(resolved.output_topology, resolved.objective)
+        for name in task_preset_registry
+        if (resolved := resolve_preset(str(name)))
+    }
+
+    assert derived == {
+        "classification": "label",
+        "binary_classification": "scalar",
+        "multilabel_classification": "multilabel",
+        "regression": "scalar",
+        "metric_learning": None,
+        "segmentation": "mask",
+        "binary_segmentation": "mask",
+        "multilabel_segmentation": "mask",
+        "contrastive": None,
+        "ranking": None,
+        "detection": "boxes",
+    }
+
+
 def test_detection_is_a_set_of_objects_judged_as_one_of_n_classes() -> None:
     """The output topology carries the geometry of a prediction, objective the semantics of its labels.
 
@@ -133,3 +159,62 @@ def test_detection_is_a_set_of_objects_judged_as_one_of_n_classes() -> None:
     assert resolved.objective is Objective.MULTICLASS
     assert resolved.metrics is not None
     assert resolved.metrics["map"] == MetricConfig(name="map")
+
+
+def test_a_familiar_name_resolves_to_one_shared_frozen_value() -> None:
+    """The decorator builds the preset once at import; resolving is a lookup, not a construction."""
+    assert resolve_preset("segmentation") is resolve_preset("segmentation")
+
+
+def test_a_preset_refuses_an_argument_it_does_not_carry() -> None:
+    """A preset is declared far from any config validator, so a typo must fail by name."""
+    with pytest.raises(ValidationError, match="target_encoder"):
+        TaskPreset(
+            output_topology=OutputTopology.DENSE,
+            objective=Objective.MULTICLASS,
+            target_encoder={"name": "boxes"},  # type: ignore[call-arg]  # the refusal under test
+        )
+
+
+def test_a_registered_kind_declares_no_field_the_base_does_not_carry() -> None:
+    """A subclass may re-default the base's fields, never invent its own: an invented
+    field is legal pydantic that the resolver would silently ignore — dead config."""
+    for name in task_preset_registry:
+        preset = resolve_preset(str(name))
+        assert type(preset).model_fields.keys() == TaskPreset.model_fields.keys(), name
+
+
+def test_the_preset_carries_exactly_the_fields_the_resolver_copies() -> None:
+    """``_resolve_the_preset`` spells each field by hand; this pin goes red the moment
+    a field is added to ``TaskPreset`` — which is the moment to teach the resolver."""
+    assert set(TaskPreset.model_fields) == {"output_topology", "input_topology", "objective", "metrics"}
+
+
+def test_a_malformed_metric_default_is_refused_when_the_preset_registers() -> None:
+    """Pydantic validates calls, not class-field defaults — measured, without
+    ``validate_default`` this exact preset registered fine and served its metric as a
+    raw dict. The decorator arity constructs eagerly, so the refusal fires at import."""
+    probe: Registry[TaskPreset] = Registry("probe preset")
+    malformed = {"mae": {"bogus_key": 1}}
+
+    with pytest.raises(ValidationError, match="metrics"):
+
+        @probe.register_instance("bad")
+        class BadMetric(TaskPreset):
+            output_topology: OutputTopology = OutputTopology.DENSE
+            objective: Objective = Objective.CONTINUOUS
+            metrics: dict[str, MetricConfig] | None = malformed  # type: ignore[assignment]
+
+    assert "bad" not in probe
+
+
+def test_a_preset_subclass_inventing_a_field_is_refused_naming_it() -> None:
+    """The subclass-form analogue of ``extra="forbid"``: a typo'd field name would
+    otherwise become a fifth model field instead of an error — measured, 'metrcs' was
+    silently accepted before the guard."""
+    with pytest.raises(TypeError, match="metrcs"):
+
+        class Typo(TaskPreset):
+            output_topology: OutputTopology = OutputTopology.DENSE
+            objective: Objective = Objective.CONTINUOUS
+            metrcs: dict[str, MetricConfig] | None = None

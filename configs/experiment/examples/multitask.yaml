@@ -24,7 +24,6 @@ tasks:
     target: mask_path
     classes: {0: pet, 1: background, 2: boundary}
     native_head: true
-    target_encoder: {name: mask, num_classes: 3}
     weight: 1.0
 
   # Global, beside it on the same backbone: reads the *encoder* stage and asks for smp's

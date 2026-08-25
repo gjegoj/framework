@@ -70,3 +70,30 @@ def test_hashable_composite_keys_work() -> None:
     registry.register_instance(("global", "metric"), "arcface")
 
     assert registry.create(("global", "metric")) == "arcface"
+
+
+def test_register_instance_as_a_decorator_serves_one_shared_object() -> None:
+    """The decorator arity exists because Python decorates a class, never an expression."""
+    registry: Registry[Greeter] = Registry("greeter")
+
+    @registry.register_instance("shared")
+    class Named(Greeter):
+        pass
+
+    assert registry.create("shared") is registry.create("shared")
+    assert isinstance(registry.create("shared"), Named)
+
+
+def test_a_declaration_that_cannot_build_dies_at_registration_not_first_use() -> None:
+    """The decorator constructs eagerly, so a bad declaration fails at import —
+    the same moment a passed instance would have — and registers nothing."""
+    registry: Registry[Greeter] = Registry("greeter")
+
+    with pytest.raises(ZeroDivisionError):
+
+        @registry.register_instance("broken")
+        class Broken(Greeter):
+            def __init__(self) -> None:
+                raise ZeroDivisionError
+
+    assert "broken" not in registry

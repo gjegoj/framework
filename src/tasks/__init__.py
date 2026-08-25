@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from src.tasks.builder import build_task_components
+from src.tasks.builder import build_task_components, default_target_encoder
 from src.tasks.objectives import (
     BinaryObjective,
     ContinuousObjective,
@@ -30,4 +30,5 @@ __all__ = [
     "TaskObjective",
     "TaskTopology",
     "build_task_components",
+    "default_target_encoder",
 ]

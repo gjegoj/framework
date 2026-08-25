@@ -12,6 +12,7 @@ from src.assembly.checkpoints import load_weights
 from src.assembly.data import build_data_module
 from src.assembly.export import build_exporters, export_model
 from src.assembly.models import build_model
+from src.assembly.tasks import refuse_what_the_composite_family_cannot_serve
 from src.assembly.training import (
     build_optimizer_factory,
     build_scheduler_factory,
@@ -50,8 +51,8 @@ def assemble(config: ExperimentConfig) -> Experiment:
     """Build an experiment from config, in the one order the contract allows.
 
     What a vendor family cannot serve is refused first, before a dataset is read or a
-    network is built: an hour of training is a long way to carry a section that was never
-    going to apply.
+    network is built — and so is a task no composed backbone can serve: an hour of
+    training is a long way to carry a section that was never going to apply.
 
     ``DataModule.setup`` runs before the model is built: that ordering is what
     lets output sizes come from data instead of from config. It is universal
@@ -60,6 +61,7 @@ def assemble(config: ExperimentConfig) -> Experiment:
     each family. No concrete family is named in this function.
     """
     refuse_what_a_vendor_cannot_serve(config)
+    refuse_what_the_composite_family_cannot_serve(config)
     seed_everything(config.seed, workers=True)
     data_module = build_data_module(config)
     profile = DataProfile()

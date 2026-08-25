@@ -2,17 +2,19 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import pytest
 
+from src.assembly.experiment import assemble
 from src.assembly.models import build_model
 from src.assembly.vendor import is_vendor_family, refuse_what_a_vendor_cannot_serve
 from src.config import ExperimentConfig
 from src.core import DataProfile
 from src.data.registry import vendor_data_module_registry
 from src.models.registry import vendor_model_registry
-from tests.support.configs import MODEL, TASKS, paper_config
+from tests.support.configs import DATA, MODEL, TASKS, paper_config
 
 VENDOR = {"name": "yolo", "model_name": "yolov8n.yaml"}
 DETECTION = {"boxes": {"preset": "detection"}}
@@ -139,3 +141,19 @@ def test_a_composed_run_is_left_alone() -> None:
     composed = paper_config(model=MODEL, tasks=TASKS, export=[{"name": "torchscript"}])
 
     refuse_what_a_vendor_cannot_serve(composed)
+
+
+def test_an_instances_task_on_a_composed_backbone_is_refused_before_the_table_is_read(
+    tmp_path: Path,
+) -> None:
+    """The mirror of the vendor refusal: decidable from config alone, so it must not
+    cost a data pass. The source below does not exist — if the refusal ran after
+    ``build_data_module``, this test would die on the missing file instead."""
+    config = paper_config(
+        data=DATA | {"source": str(tmp_path / "never_written.csv")},
+        tasks={"boxes": {"preset": "detection"}},
+        model=MODEL,
+    )
+
+    with pytest.raises(ValueError, match="vendor family"):
+        assemble(config)

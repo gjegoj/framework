@@ -13,6 +13,7 @@ if TYPE_CHECKING:
 
     from src.core.entities import DataProfile, Task
     from src.core.ports import Backbone
+    from src.core.taxonomy import Objective, OutputTopology
 
 
 def build_task_components(
@@ -91,6 +92,23 @@ def build_task_components(
         stream=chosen_stream,
         weight=task.weight,
     )
+
+
+def default_target_encoder(output_topology: OutputTopology, objective: Objective) -> str | None:
+    """The encoder a task's target starts from when config declares none.
+
+    The shape's voice outranks the semantics': a dense cell is a mask file and an
+    instances cell is a list of objects whatever the labels mean, while a global cell is
+    scalar-ish and only there does the objective pick the variant. ``None`` when neither
+    axis has one — the caller owns the refusal and its message, because what a user
+    should write instead is config grammar, which this layer does not speak.
+
+    Here rather than in assembly because this is the same composition of the same two
+    axes that ``build_task_components`` performs; a second home for it is how the two
+    would drift.
+    """
+    shape = topology_registry.create(output_topology).default_target_encoder
+    return shape or objective_registry.create(objective).default_target_encoder
 
 
 def _projected(task: Task, out_features: int | None) -> int:

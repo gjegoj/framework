@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 from src.assembly.instantiate import instantiate, resolve_target
 from src.assembly.vendor import is_vendor_family
 from src.core.registry import named_by
+from src.core.taxonomy import Geometry
 from src.data import (
     ColumnRole,
     DataSchema,
@@ -30,7 +31,7 @@ from src.data.registry import (
     vendor_data_module_registry,
 )
 from src.models.registry import vendor_model_registry
-from src.tasks.registry import objective_registry, topology_registry
+from src.tasks import default_target_encoder
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -45,7 +46,7 @@ if TYPE_CHECKING:
 
 from src.data.datamodules import SourceForm
 
-SUFFIX_FORMATS = {".csv": "csv", ".json": "json"}
+SUFFIX_FORMATS = {".csv": "csv", ".json": "json", ".jsonl": "jsonl"}
 """Table formats inferable from a file extension, mapped to ``table_source_registry`` keys."""
 
 
@@ -113,24 +114,26 @@ def _for(cache: LoaderCache | None, name: str) -> LoaderCache | None:
 def _input_column(column: InputColumnConfig, cache: LoaderCache | None) -> InputColumn:
     """One built column: the declared loader, wrapped for the cache, and what it reads.
 
-    ``spatial`` is taken from the loader *before* the wrapping — ``cached`` returns a
-    bare closure, so asking the wrapped loader would silently answer ``False`` and a
-    cached mask input would quietly get picture treatment in the pipeline.
+    ``geometry`` is taken from the loader *before* the wrapping — ``cached`` returns a
+    bare closure, so asking the wrapped loader would silently answer with the default
+    and a cached mask input would quietly get picture treatment in the pipeline.
     """
     loader: InputLoader = instantiate(column.loader, input_loader_registry)
     return InputColumn(
         column=column.column,
         loader=cached(loader, cache) if cache is not None else loader,
-        spatial=getattr(loader, "spatial", False),
+        geometry=getattr(loader, "geometry", Geometry.IMAGE),
     )
 
 
 def _build_target_encoder(name: str, task: TaskConfig, derived: Mapping[str, Any]) -> TargetEncoder:
-    """The declared encoder, or the one this task's objective implies.
+    """The declared encoder, or the one this task's axes imply.
 
-    A preset names a familiar kind of task, and the encoding its loss needs
-    follows from that — so declaring an encoder is an override, not a duty.
-    The two cases config still has to answer for both fail loudly here.
+    A preset names a familiar kind of task, and the encoding its loss needs follows from
+    the axes it stands for — the topology's shape first, the objective's semantics
+    second — so declaring an encoder is an override, not a duty. The one case config
+    still has to answer for fails loudly here; the facts an encoder needs beyond its
+    name (a mask's class count) are refused by that encoder, which is what needs them.
     """
     offered = {**derived, **({"classes": task.classes} if task.classes is not None else {})}
     if task.target_encoder is not None:
@@ -142,13 +145,7 @@ def _build_target_encoder(name: str, task: TaskConfig, derived: Mapping[str, Any
             )
         declared: TargetEncoder = instantiate(task.target_encoder, target_encoder_registry, **offered)
         return _honouring_declared_classes(name, task, declared)
-    if topology_registry.create(task.output_topology).spatial_targets:
-        raise ValueError(
-            f"Task '{name}' needs an explicit 'target_encoder': a {task.output_topology} target is an "
-            f"image of its own, and reading it needs the class count — for example "
-            f"target_encoder: {{name: mask, num_classes: 3}}."
-        )
-    default = objective_registry.create(task.objective).default_target_encoder()
+    default = default_target_encoder(task.output_topology, task.objective)
     if default is None:
         raise ValueError(
             f"Task '{name}' declares target '{task.target}', but objective '{task.objective}' takes "
@@ -177,13 +174,11 @@ def _honouring_declared_classes(name: str, task: TaskConfig, built: TargetEncode
 def build_transforms(config: ExperimentConfig, schema: DataSchema) -> dict[Stage, SampleTransform]:
     """Build per-stage transforms, telling each which arrays follow the image.
 
-    None of ``spatial_targets``, ``mask_inputs`` or ``auxiliary_inputs`` is written by
-    hand: the first comes from the encoders (``TargetEncoder.spatial``), the second from
-    each input's loader (``InputColumn.spatial``), the third from
-    ``data.auxiliary_inputs`` — and all three travel the same derived-value channel, so
-    a mask cannot silently fall out of step with its image. A schema with none of them
-    passes nothing, and transforms for a plain classification run need to know nothing
-    about any of this.
+    None of ``inputs``, ``targets`` or ``auxiliary_inputs`` is written by hand: each
+    comes from the ``geometry`` its own loader or encoder declares, and all three travel
+    the same derived-value channel — so a mask, or a boxes column, cannot silently fall
+    out of step with its image. Transforms for a plain classification run receive an
+    empty targets mapping and need to know nothing about any of this.
     """
     if config.transforms is None:
         return {}
@@ -193,16 +188,29 @@ def build_transforms(config: ExperimentConfig, schema: DataSchema) -> dict[Stage
 def _build_stage_transforms(
     declared: Mapping[Stage, ComponentConfig], schema: DataSchema
 ) -> dict[Stage, SampleTransform]:
-    """Per-stage transforms from their declarations, wherever the declarations came from."""
-    spatial = [name for name, column in schema.targets.items() if column.encoder.spatial]
-    masks = [name for name, column in schema.inputs.items() if column.spatial]
-    derived: dict[str, Any] = {}
-    if spatial:
-        derived["spatial_targets"] = spatial
-    if masks:
-        derived["mask_inputs"] = masks
-    if schema.auxiliary_inputs:
-        derived["auxiliary_inputs"] = list(schema.auxiliary_inputs)
+    """Per-stage transforms from their declarations, wherever the declarations came from.
+
+    A ``NONE``-geometry value is left out rather than offered — on every side. A label
+    column must not enter the pipeline uninvited (the one role that puts labels in an
+    augmentation's reach, ``label_targets``, stays the experiment's own declaration),
+    and an embedding input must not be normalised as if it were light. The seam still
+    refuses a hand-declared non-pixel input by name; assembly simply never writes one.
+    """
+    derived: dict[str, Any] = {
+        "inputs": {
+            name: column.geometry for name, column in schema.inputs.items() if column.geometry is not Geometry.NONE
+        },
+        "targets": {
+            name: column.encoder.geometry
+            for name, column in schema.targets.items()
+            if column.encoder.geometry is not Geometry.NONE
+        },
+        "auxiliary_inputs": {
+            name: column.geometry
+            for name, column in schema.auxiliary_inputs.items()
+            if column.geometry is not Geometry.NONE
+        },
+    }
     return {stage: instantiate(component, **derived) for stage, component in declared.items()}
 
 

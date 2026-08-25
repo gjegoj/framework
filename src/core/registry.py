@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Hashable, Iterator, Mapping
 from inspect import signature
-from typing import Any
+from typing import Any, overload
 
 
 class Registry[T]:
@@ -62,12 +62,32 @@ class Registry[T]:
 
         return decorator
 
-    def register_instance(self, key: Hashable, instance: T) -> None:
+    @overload
+    def register_instance(self, key: Hashable, instance: T) -> None: ...
+
+    @overload
+    def register_instance(self, key: Hashable) -> Callable[[type[T]], type[T]]: ...
+
+    def register_instance(self, key: Hashable, instance: T | None = None) -> Callable[[type[T]], type[T]] | None:
         """Register a prebuilt object; ``create(key)`` returns it as-is.
 
-        For components configured once and shared — axis behaviours, presets.
+        For components configured once and shared — axis behaviours, presets. Two
+        arities for one rule because Python decorates only a ``class`` or ``def``,
+        never an expression: pass the instance when the value is built on the spot,
+        or omit it to decorate a class whose no-argument construction *is* the
+        instance. The decorator constructs eagerly, so a declaration that cannot
+        build dies at import — the same moment a passed instance would have.
         """
-        self._add(key, lambda: instance)
+        if instance is not None:
+            self._add(key, lambda: instance)
+            return None
+
+        def decorator(cls: type[T]) -> type[T]:
+            built = cls()
+            self._add(key, lambda: built)
+            return cls
+
+        return decorator
 
     def create(self, key: Hashable, **kwargs: Any) -> T:
         """Build the component registered under ``key`` with ``kwargs``."""

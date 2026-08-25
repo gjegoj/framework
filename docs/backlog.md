@@ -231,8 +231,9 @@ images = (images * std + mean).clamp(0.0, 1.0)     # mean/std declared on the ca
 — and both answers already exist elsewhere.
 
 **"Which inputs are pictures" is declared twice.** `AlbumentationsTransform`
-takes `image_inputs` (default `(Modality.IMAGE,)`) and registers exactly those as
-albumentations image targets. The grid ignores that list and sniffs the tensor
+takes `inputs` — each name beside its `Geometry`, derived from the loaders — and
+registers exactly those as albumentations targets of that kind. The grid ignores
+that mapping and sniffs the tensor
 instead, so the two can disagree in both directions: a precomputed 4-D float
 feature map is drawn as a photograph, and an image input that stops being
 `[B, C, H, W]` float after the pipeline is not drawn at all.
@@ -246,7 +247,7 @@ mis-colours and nothing says so.
 **A claim from the first version of this entry was wrong and is withdrawn.** It
 said a CLIP-style run with per-input normalisation already draws its second
 picture in the wrong colours. It does not: `AlbumentationsTransform` runs *one*
-pipeline over every `image_inputs` entry with shared sampled parameters, so one
+pipeline over every `inputs` entry with shared sampled parameters, so one
 `Normalize` covers them all and one mean/std pair is correct. Reaching the
 divergence needs a custom `SampleTransform` supplied through `_target_`. The
 callback's warning about several picture inputs stays useful, but the defect is
@@ -276,8 +277,8 @@ contain. Option 2 asks 25% of every batch for a page read every N epochs; option
 asks for a decision about what a mixed pipeline answers. Neither is worth
 committing to against a hypothesis.
 
-**The cheap half, if it is ever wanted on its own:** have the grid read
-`image_inputs` where a transform declared it, instead of sniffing shapes. That
+**The cheap half, if it is ever wanted on its own:** have the grid read the
+`Geometry.IMAGE` entries a transform was handed, instead of sniffing shapes. That
 removes one of the two double declarations, costs nothing and touches no data-layer
 code.
 
@@ -287,7 +288,7 @@ against instead of a guess.
 
 **Where to look:** `src/callbacks/samples.py` (`_is_picture`,
 `_to_uint8`, `_warn_once_about_shared_normalisation`),
-`src/transforms/albumentations.py` (`image_inputs`),
+`src/transforms/albumentations.py` (`inputs`, `Geometry`),
 `src/data/schema.py`, `src/data/loaders.py`.
 
 ## `HtmlLogger` will want to be an artifact port when there is a second format
@@ -533,3 +534,28 @@ Supervised multiview (GLOBAL × MULTIVIEW × MULTICLASS — N photos of one item
 one label) is the first currently-refused cell worth serving. It lands as one
 `GlobalTopology.supports` change plus a criterion that reads the stacked
 carrier; no axis reform.
+
+## A depth encoder makes the dense default objective-aware
+
+**Surfaced:** 2026-08-17, while giving detection annotations a place in the
+table grammar (docs/superpowers/specs/2026-08-17-detection-data-design.md).
+
+`DenseTopology.default_target_encoder` is a flat `"mask"`, which is right for
+every dense cell that exists today — a mask file, whatever its objective. The
+dense × continuous cell (depth) has no built-in encoder, so a task that omits
+the declaration there reaches the mask encoder's refusal rather than one written
+for it. **When a depth encoder exists**, the dense default becomes a joint
+decision of both axes; the seam is `default_target_encoder(output_topology,
+objective)` in `src/tasks/builder.py`, which already composes the two voices.
+
+## A second boxes target in one pipeline
+
+**Surfaced:** 2026-08-17, measuring albumentationsx 2.3.7 for the same spec.
+
+Two `Geometry.BOXES` targets are refused at construction, naming both: measured,
+the library does not plumb `label_fields` through `additional_targets`, so a
+second boxes field's class names would not be filtered with its boxes — a crop
+would desynchronise them silently. **If two detection tasks over one image ever
+become real**, the seam grows per-target label plumbing (a label field per boxes
+target, and the pairs repacked by name) in `AlbumentationsTransform`; the
+refusal marks the spot.

@@ -8,12 +8,14 @@ from typing import TYPE_CHECKING, Any
 
 from src.assembly.instantiate import instantiate
 from src.assembly.metrics import build_metric_sets
+from src.assembly.vendor import is_vendor_family
 from src.config.tasks import LossConfig
 from src.core.entities import Task
 from src.losses import WeightedSumCriterion
 from src.losses.registry import criterion_registry
 from src.models.registry import head_registry
 from src.tasks import build_task_components
+from src.tasks.registry import topology_registry
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -23,6 +25,26 @@ if TYPE_CHECKING:
     from src.core.entities import DataProfile, TargetFacts
     from src.core.ports import Backbone, Criterion, Head
     from src.models import TaskComponents
+
+
+def refuse_what_the_composite_family_cannot_serve(config: ExperimentConfig) -> None:
+    """Fail on config alone, before a dataset is read or a cache is warmed.
+
+    The mirror of ``refuse_what_a_vendor_cannot_serve``, for the other family: a task
+    whose topology does not compose a head (instances) cannot be served by a composed
+    backbone, and that is knowable without touching data. The builder keeps its own
+    refusal for a hand-built ``Task``. Deleted whole when stage 2 composes instances
+    heads.
+    """
+    if is_vendor_family(config):
+        return
+    for name, declared in config.tasks.items():
+        if not topology_registry.create(declared.output_topology).composes_head:
+            raise ValueError(
+                f"Task '{name}' is '{declared.output_topology}', and no composed backbone serves that: "
+                f"its head, assigner and loss belong to the model family that owns them. Declare a "
+                f"vendor family instead, e.g. model: {{name: yolo, model_name: yolov8n.yaml}}."
+            )
 
 
 def build_task_entities(config: ExperimentConfig, profile: DataProfile) -> list[Task]:

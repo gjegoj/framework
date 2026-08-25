@@ -7,6 +7,10 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
+# Runtime, not TYPE_CHECKING: ``Geometry.IMAGE`` is a dataclass field default, evaluated
+# when this module loads.
+from src.core.taxonomy import Geometry
+
 if TYPE_CHECKING:
     from src.data.encoders import TargetEncoder
     from src.data.loaders import InputLoader
@@ -36,14 +40,13 @@ class InputColumn:
 
     column: str
     loader: InputLoader
-    spatial: bool = False
-    """Whether the loaded value is per-pixel labels rather than light.
+    geometry: Geometry = Geometry.IMAGE
+    """How the loaded value rides augmentation geometry — light, or per-pixel labels.
 
     Taken from the loader's own class-level marker at build time — never written by
-    hand — and read by assembly to give the column mask treatment in the augmentation
-    pipeline: nearest-neighbour geometry, and ``Normalize`` leaving it alone. Captured
-    *before* any cache wrapping, because a cache wrapper is a bare closure and would
-    hide the marker behind itself.
+    hand — and read by assembly to give the column its treatment in the augmentation
+    pipeline. Captured *before* any cache wrapping, because a cache wrapper is a bare
+    closure and would hide the marker behind itself.
     """
 
     def __post_init__(self) -> None:

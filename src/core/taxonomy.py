@@ -102,6 +102,37 @@ class Stream(StrEnum):
     EMBEDDINGS = "embeddings"
 
 
+class Geometry(StrEnum):
+    """How a value rides the image's geometry through augmentation.
+
+    Declared as a class-level fact by input loaders and target encoders, derived into
+    the transform seam by assembly — one vocabulary where five spellings of ``spatial``
+    used to be. ``MASK`` rather than an abstract grid: every rider — a segmentation
+    target, a mask input, an auxiliary region — is a mask to its own author, and the
+    generality nothing exercises would cost that recognition.
+
+    ``BOXES`` also fixes the value's in-flight shape between ``load`` and ``encode``:
+    the pair ``(float32 [N, 4] xyxy-pixel array, list of class names)`` — the two
+    halves albumentations itself splits into ``bboxes`` and a label field.
+
+    Future members arrive with their capabilities, not before: measured on
+    albumentationsx 2.3.7, oriented boxes ride ``BboxParams(bbox_type="obb")`` and
+    keypoints ``KeypointParams``, so pose and OBB are each a member here plus a carrier
+    in the seam, and nothing else moves.
+
+    Attributes:
+        NONE: Not in image space — labels, scalars; they ride around geometry.
+        IMAGE: Light: interpolated smoothly, normalized.
+        MASK: Per-pixel labels: nearest-neighbour geometry, never normalized.
+        BOXES: Axis-aligned rectangles with their class names, in xyxy pixels.
+    """
+
+    NONE = "none"
+    IMAGE = "image"
+    MASK = "mask"
+    BOXES = "boxes"
+
+
 class Modality(StrEnum):
     """Standard names of model inputs — the input-side task axis.
 

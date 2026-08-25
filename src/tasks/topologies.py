@@ -23,12 +23,13 @@ class TaskTopology(ABC):
     made it and off ``EMBEDDINGS`` when several views did.
     """
 
-    spatial_targets: ClassVar[bool] = False
-    """Whether targets live in image space, which no objective can encode on its own.
+    default_target_encoder: ClassVar[str | None] = None
+    """The encoder this target *shape* starts from; ``None`` defers to the semantics.
 
-    A per-pixel target is a file of its own, and reading it needs facts config
-    has to state (the class count, a root path). Such a task therefore declares
-    its encoder instead of inheriting the objective's default.
+    A cell's shape outranks its meaning: a dense cell is a mask file and an instances
+    cell is a list of objects whatever the labels say about them, while a global cell is
+    scalar-ish and only there does the objective pick the variant. The two voices meet in
+    ``default_target_encoder`` in the builder, which is what assembly asks.
     """
 
     composes_head: ClassVar[bool] = True
@@ -55,6 +56,7 @@ class TaskTopology(ABC):
         return input_topology is InputTopology.SINGLE
 
 
+@topology_registry.register_instance(OutputTopology.GLOBAL)
 class GlobalTopology(TaskTopology):
     """One prediction vector per sample — the one output every input arrangement feeds.
 
@@ -80,6 +82,7 @@ class GlobalTopology(TaskTopology):
         return input_topology is InputTopology.SINGLE or objective is Objective.METRIC
 
 
+@topology_registry.register_instance(OutputTopology.DENSE)
 class DenseTopology(TaskTopology):
     """One prediction per spatial location, projected from the decoder stream.
 
@@ -88,7 +91,9 @@ class DenseTopology(TaskTopology):
     image's map.
     """
 
-    spatial_targets: ClassVar[bool] = True
+    # A dense cell is a mask file whatever the labels mean. When a depth encoder exists,
+    # this becomes a joint decision of both axes — see docs/backlog.md.
+    default_target_encoder: ClassVar[str | None] = "mask"
 
     @override
     def stream(self, input_topology: InputTopology) -> str:
@@ -104,6 +109,7 @@ class DenseTopology(TaskTopology):
         return input_topology is InputTopology.SINGLE and objective is not Objective.METRIC
 
 
+@topology_registry.register_instance(OutputTopology.INSTANCES)
 class InstancesTopology(TaskTopology):
     """A variable-length set of objects per sample — produced by the family that owns them.
 
@@ -116,6 +122,9 @@ class InstancesTopology(TaskTopology):
     """
 
     composes_head: ClassVar[bool] = False
+    # An instances cell is a list of objects; the boxes encoder is its one honest reading,
+    # and no config line is asked for where no real choice exists.
+    default_target_encoder: ClassVar[str | None] = "boxes"
 
     @override
     def build_head(self, in_features: int, out_features: int | None) -> Head:
@@ -129,8 +138,3 @@ class InstancesTopology(TaskTopology):
     @override
     def supports(self, objective: Objective, input_topology: InputTopology) -> bool:
         return input_topology is InputTopology.SINGLE and objective is Objective.MULTICLASS
-
-
-topology_registry.register_instance(OutputTopology.GLOBAL, GlobalTopology())
-topology_registry.register_instance(OutputTopology.DENSE, DenseTopology())
-topology_registry.register_instance(OutputTopology.INSTANCES, InstancesTopology())

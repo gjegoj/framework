@@ -6,7 +6,7 @@ import albumentations as A
 import numpy as np
 import pytest
 
-from src.core import Sample
+from src.core import Geometry, Sample
 from src.transforms import AlbumentationsTransform
 
 
@@ -24,7 +24,7 @@ def half_mask() -> np.ndarray:
 
 def test_an_auxiliary_input_follows_the_images_geometry() -> None:
     """A crop taken from the image is the same crop taken from the mask that bounds it."""
-    transform = AlbumentationsTransform([A.HorizontalFlip(p=1.0)], auxiliary_inputs=["lesion"])
+    transform = AlbumentationsTransform([A.HorizontalFlip(p=1.0)], auxiliary_inputs={"lesion": Geometry.MASK})
 
     result = transform(Sample(inputs={"image": image()}, targets={}, auxiliary_inputs={"lesion": half_mask()}))
 
@@ -37,7 +37,7 @@ def test_normalize_leaves_an_auxiliary_input_untouched() -> None:
     image target instead: a 0/1 mask becomes floats -2.118..-1.787, and a ``> 0`` region
     test then finds nothing at all."""
     transform = AlbumentationsTransform(
-        [A.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5))], auxiliary_inputs=["lesion"]
+        [A.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5))], auxiliary_inputs={"lesion": Geometry.MASK}
     )
 
     result = transform(Sample(inputs={"image": image()}, targets={}, auxiliary_inputs={"lesion": half_mask()}))
@@ -47,7 +47,7 @@ def test_normalize_leaves_an_auxiliary_input_untouched() -> None:
 
 def test_an_auxiliary_input_is_written_back_for_the_next_transform_in_a_chain() -> None:
     """Whatever the pipeline did to it is what a later transform must see."""
-    transform = AlbumentationsTransform([A.Resize(4, 4)], auxiliary_inputs=["lesion"])
+    transform = AlbumentationsTransform([A.Resize(4, 4)], auxiliary_inputs={"lesion": Geometry.MASK})
 
     result = transform(Sample(inputs={"image": image()}, targets={}, auxiliary_inputs={"lesion": half_mask()}))
 
@@ -58,7 +58,11 @@ def test_a_name_shared_across_pipeline_roles_is_refused() -> None:
     """Every declared name becomes a kwarg of one pipeline call; a duplicate is a silent
     overwrite, so it is refused at construction with the roles named."""
     with pytest.raises(ValueError, match="lesion"):
-        AlbumentationsTransform([A.HorizontalFlip(p=1.0)], spatial_targets=["lesion"], auxiliary_inputs=["lesion"])
+        AlbumentationsTransform(
+            [A.HorizontalFlip(p=1.0)],
+            targets={"lesion": Geometry.MASK},
+            auxiliary_inputs={"lesion": Geometry.MASK},
+        )
 
 
 def test_an_undeclared_auxiliary_input_rides_through_untouched() -> None:
@@ -77,8 +81,7 @@ def test_a_mask_input_gets_mask_treatment_and_stays_a_model_input() -> None:
     smears a binary edge into 11 grey levels and Normalize rewrites every value."""
     transform = AlbumentationsTransform(
         [A.HorizontalFlip(p=1.0), A.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5))],
-        image_inputs=["image"],
-        mask_inputs=["lesion_mask"],
+        inputs={"image": Geometry.IMAGE, "lesion_mask": Geometry.MASK},
     )
 
     result = transform(Sample(inputs={"image": image(), "lesion_mask": half_mask()}, targets={}))
@@ -90,4 +93,8 @@ def test_a_mask_input_gets_mask_treatment_and_stays_a_model_input() -> None:
 
 def test_a_mask_input_shares_the_name_check_with_every_other_role() -> None:
     with pytest.raises(ValueError, match="lesion"):
-        AlbumentationsTransform([A.HorizontalFlip(p=1.0)], mask_inputs=["lesion"], auxiliary_inputs=["lesion"])
+        AlbumentationsTransform(
+            [A.HorizontalFlip(p=1.0)],
+            inputs={"image": Geometry.IMAGE, "lesion": Geometry.MASK},
+            auxiliary_inputs={"lesion": Geometry.MASK},
+        )

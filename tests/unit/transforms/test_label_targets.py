@@ -7,7 +7,7 @@ from typing import Any
 import albumentations as A
 import numpy as np
 
-from src.core import Sample
+from src.core import Geometry, Sample
 from src.transforms import AlbumentationsTransform
 
 
@@ -67,7 +67,7 @@ def test_images_and_masks_still_share_one_geometry() -> None:
     picture[:, :4] = 255
     mask = np.zeros((8, 8), dtype=np.uint8)
     mask[:, :4] = 1
-    transform = AlbumentationsTransform([A.HorizontalFlip(p=1.0)], spatial_targets=["mask"])
+    transform = AlbumentationsTransform([A.HorizontalFlip(p=1.0)], targets={"mask": Geometry.MASK})
 
     result = transform(Sample(inputs={"image": picture}, targets={"mask": mask}))
 

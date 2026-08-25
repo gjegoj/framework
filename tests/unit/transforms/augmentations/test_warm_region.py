@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 from albumentations.augmentations.pixel.functional import planckian_jitter
 
-from src.core import Sample
+from src.core import Geometry, Sample
 from src.transforms import AlbumentationsTransform
 from src.transforms.augmentations import COOLEST, WARMEST, MaskedPlanckianJitter
 
@@ -50,7 +50,7 @@ def warmed(
 ) -> Sample:
     transform = AlbumentationsTransform(
         [MaskedPlanckianJitter(mask_key="lesion", p=1.0, **kwargs)],
-        spatial_targets=["lesion"],
+        targets={"lesion": Geometry.MASK},
         label_targets=["warmth"],
         seed=seed,
     )
@@ -309,7 +309,7 @@ def test_an_image_too_small_to_vary_across_is_warmed_evenly() -> None:
     raises ``OverflowError`` when asked for a ``(1, 1)`` field."""
     transform = AlbumentationsTransform(
         [MaskedPlanckianJitter(mask_key="lesion", spread=800, p=1.0)],
-        spatial_targets=["lesion"],
+        targets={"lesion": Geometry.MASK},
         label_targets=["warmth"],
     )
     sample = Sample(
@@ -326,7 +326,7 @@ def test_an_image_too_small_to_vary_across_is_warmed_evenly() -> None:
 def test_a_mask_this_pipeline_was_not_given_is_named() -> None:
     transform = AlbumentationsTransform(
         [MaskedPlanckianJitter(mask_key="absent", p=1.0)],
-        spatial_targets=["lesion"],
+        targets={"lesion": Geometry.MASK},
         label_targets=["warmth"],
     )
 
@@ -338,7 +338,7 @@ def test_a_mask_at_another_resolution_is_refused_by_shape() -> None:
     """Left to numpy this broadcasts or dies unhelpfully, deep inside a data loader."""
     transform = AlbumentationsTransform(
         [MaskedPlanckianJitter(mask_key="lesion", p=1.0)],
-        spatial_targets=["lesion"],
+        targets={"lesion": Geometry.MASK},
         label_targets=["warmth"],
         is_check_shapes=False,
     )

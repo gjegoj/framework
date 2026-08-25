@@ -8,6 +8,7 @@ import cv2
 import numpy as np
 import pytest
 
+from src.core import Geometry
 from src.data import ImageLoader
 from src.data.loaders import MaskLoader
 from src.data.registry import input_loader_registry
@@ -79,8 +80,8 @@ def test_the_registry_holds_the_two_kinds_of_array_a_column_may_hold() -> None:
     assert isinstance(input_loader_registry.create("mask"), MaskLoader)
 
 
-def test_only_the_mask_loader_calls_itself_spatial() -> None:
+def test_only_the_mask_loader_declares_mask_geometry() -> None:
     """Grayscale cannot imply it: an X-ray is a grayscale *photograph*, and interpolating
     or normalising it is correct — doing either to a mask is not."""
-    assert MaskLoader.spatial is True
-    assert getattr(ImageLoader(grayscale=True), "spatial", False) is False
+    assert MaskLoader.geometry is Geometry.MASK
+    assert ImageLoader(grayscale=True).geometry is Geometry.IMAGE

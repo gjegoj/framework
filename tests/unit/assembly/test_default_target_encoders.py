@@ -8,6 +8,7 @@ import pytest
 
 from src.assembly.data import build_data_schema
 from src.data import (
+    BoxesTargetEncoder,
     LabelTargetEncoder,
     MaskTargetEncoder,
     MultiLabelTargetEncoder,
@@ -50,9 +51,21 @@ def test_a_declared_encoder_still_wins() -> None:
     assert encoder.class_names == ["cat", "dog"]
 
 
-def test_a_mask_target_cannot_be_guessed_and_says_so() -> None:
-    """A dense target is an image of its own, and its encoder needs the class count."""
-    with pytest.raises(ValueError, match="num_classes"):
+def test_a_segmentation_task_composes_the_mask_encoder_from_its_classes_alone() -> None:
+    """The dense shape implies the encoder; the declared vocabulary carries the count."""
+    schema = schema_for(
+        {"preset": "segmentation", "target": "mask", "classes": {0: "pet", 1: "background", 2: "boundary"}}
+    )
+    encoder = schema.targets["target"].encoder
+
+    assert isinstance(encoder, MaskTargetEncoder)
+    assert encoder.num_classes == 3
+    assert encoder.class_names == ["pet", "background", "boundary"]
+
+
+def test_a_dense_task_without_class_facts_is_refused_by_the_encoder_that_needs_them() -> None:
+    """The loud stop moved from an assembly gate to the encoder whose reading needs the count."""
+    with pytest.raises(ValueError, match="classes"):
         schema_for({"preset": "segmentation", "target": "mask"})
 
 
@@ -62,6 +75,13 @@ def test_a_declared_mask_encoder_works_as_before() -> None:
     )
 
     assert isinstance(schema.targets["target"].encoder, MaskTargetEncoder)
+
+
+def test_a_detection_task_needs_no_target_encoder_line() -> None:
+    """INSTANCES admits no real encoder choice, and a knob with one correct value is code."""
+    schema = schema_for({"preset": "detection", "target": "objects"})
+
+    assert isinstance(schema.targets["target"].encoder, BoxesTargetEncoder)
 
 
 def test_a_structure_supervised_task_with_a_target_column_is_questioned() -> None:

@@ -16,11 +16,14 @@ the learning-rate graph — so choose it the way you would choose a column name.
 
 ## The axes behind the preset
 
-There is no `TaskType` enum. A task is a point on two axes, plus the input side:
+There is no `TaskType` enum. A task is a point on the four axes
+[concepts.md](../concepts.md#a-task-is-a-composition-not-a-type) lays out; the
+three a preset can name are:
 
 | Axis | Question | Members |
 |---|---|---|
-| `topology` | What does one prediction look like? | `global`, `dense`, `multiview`, `multistream`, `instances` |
+| `output_topology` | What does one prediction look like? | `global`, `dense`, `instances` |
+| `input_topology` | How are the inputs arranged? | `single` (the default), `multiview`, `multistream` |
 | `objective` | How do labels supervise it? | `multiclass`, `binary`, `multilabel`, `continuous`, `metric` |
 
 A preset is a familiar name for one point, and it is resolved while the config
@@ -36,9 +39,23 @@ loads — no preset survives into the built experiment:
 | `segmentation` | `dense × multiclass` | iou, plus the classification set |
 | `binary_segmentation` | `dense × binary` | the same |
 | `multilabel_segmentation` | `dense × multilabel` | the same |
-| `contrastive` | `multistream × metric` | — |
-| `ranking` | `multiview × metric` | — |
+| `contrastive` | `global × metric`, over `multistream` inputs | — |
+| `ranking` | `global × metric`, over `multiview` inputs | — |
 | `detection` | `instances × multiclass` | map |
+
+The target encoder is derived from the same pair, and reads the other way round —
+the *shape* of a cell outranks its semantics, so every dense kind reads a mask
+whatever its objective, and only a global cell asks the objective which variant
+it is:
+
+| Axes | Default encoder | The cell holds |
+|---|---|---|
+| `global × multiclass` | `label` | a class name or index |
+| `global × binary`, `global × continuous` | `scalar` | a number |
+| `global × multilabel` | `multilabel` | `"cat,dog"` or a list |
+| `global × metric` | — | nothing: supervision is the batch's structure |
+| `dense × anything` | `mask` | a mask file path |
+| `instances × multiclass` | `boxes` | a list of `{"box": …, "class": …}` objects |
 
 `segmentation` names the *semantic* kind; an instance variant would land under
 `instance_segmentation` rather than competing for the name.
@@ -48,9 +65,10 @@ A pair with no preset is written out:
 ```yaml
 tasks:
   defect:
-    topology: dense
+    output_topology: dense
     objective: multilabel      # overlapping classes per pixel
     target: mask_path
+    classes: {0: sound, 1: scratch, 2: dent}
 ```
 
 Declaring both a `preset` and an axis is a config error, not a preference.
@@ -65,7 +83,7 @@ per-sample label, so there is nothing for a per-sample metric to compare.
 |---|---|---|
 | `target` | — | The table column holding this task's ground truth. The data schema derives from the tasks, so a column is named once |
 | `classes` | learned | `{0: cat, 1: dog}` — the declared vocabulary, as the source of truth |
-| `target_encoder` | from the objective | How a target cell becomes a tensor |
+| `target_encoder` | from the axes | How a target cell becomes a tensor — the topology's shape first, the objective's semantics second |
 | `loss` | from the objective | One criterion, or a list added with weights |
 | `head` | from the topology | Which *kind* of head; sizes stay derived |
 | `native_head` | `false` | Keep the pretrained model's own head instead |

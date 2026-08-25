@@ -16,7 +16,7 @@ import torch
 from albumentations.pytorch import ToTensorV2
 from torch import Tensor, nn
 
-from src.core import Backbone, DataProfile, Features, Objective, OutputTopology, Stage, Stream, Task
+from src.core import Backbone, DataProfile, Features, Geometry, Objective, OutputTopology, Stage, Stream, Task
 from src.data import (
     CsvSource,
     DataSchema,
@@ -69,7 +69,7 @@ def test_masks_travel_from_files_through_augmentation_into_a_dense_loss(tmp_path
             Stage,
             AlbumentationsTransform(
                 [A.Resize(height=8, width=8), A.Normalize(), ToTensorV2()],
-                spatial_targets=["mask"],
+                targets={"mask": Geometry.MASK},
             ),
         ),
     )

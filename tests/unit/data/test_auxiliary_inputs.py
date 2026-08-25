@@ -10,6 +10,7 @@ import pytest
 import torch
 
 from src.config import ExperimentConfig
+from src.core import Geometry
 from src.core.entities import Sample
 from src.data.collate import collate_samples
 from src.data.dataset import TableDataset
@@ -88,7 +89,7 @@ def test_the_mask_loader_reads_one_plane_and_says_it_is_spatial(tmp_path: Path) 
     loaded = MaskLoader(root=tmp_path)("m.png")
 
     assert loaded.shape == (4, 4)
-    assert MaskLoader.spatial is True
+    assert MaskLoader.geometry is Geometry.MASK
 
 
 def test_assembly_offers_the_auxiliary_input_names_to_the_pipeline() -> None:
@@ -229,8 +230,8 @@ def test_a_mask_loaded_model_input_is_marked_spatial_in_the_schema() -> None:
 
     schema = build_data_schema(config, build_cache(config))
 
-    assert schema.inputs["lesion_mask"].spatial is True
-    assert schema.inputs["image"].spatial is False
+    assert schema.inputs["lesion_mask"].geometry is Geometry.MASK
+    assert schema.inputs["image"].geometry is Geometry.IMAGE
 
 
 def test_a_mask_model_input_reaches_the_batch_uncorrupted(tmp_path: Path) -> None:

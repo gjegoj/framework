@@ -16,9 +16,26 @@ data:
 
 Three things are implied here and worth knowing:
 
-- the reader is inferred from the extension (`.csv` → `csv`, `.json` → `json`);
+- the reader is inferred from the extension (`.csv` → `csv`, `.json` → `json`,
+  `.jsonl` → `jsonl`, the JSON-Lines carrier a detection canon is written in);
 - the loader defaults to `image`, this being a vision framework;
 - the target encoder follows from each task's preset — see [Targets](#targets).
+
+### Where a detection canon comes from
+
+A `.jsonl` annotation file is written once, offline, by a converter — never at
+training time:
+
+```bash
+uv run python -m src.data.converters.yolo --data path/data.yaml --into data/pets/
+uv run python -m src.data.converters.coco --annotations instances.json --images images/ --into data/pets/
+```
+
+One row per image, `{"image": …, "objects": [{"box": [x1, y1, x2, y2], "class": name}]}`,
+coordinates in pixels, classes as names, an empty list for a negative. The
+converters validate while a human is still looking — out-of-bounds boxes are
+clipped and counted, empty declared stages and orphaned annotations refuse by
+name — so training reads the file with no flags at all.
 
 ## Sources
 
@@ -304,16 +321,16 @@ transforms:
   test: *pipeline
 ```
 
-Every image input, every auxiliary input and every spatial target of a sample
-passes through **one** pipeline call, so a mask is cropped and flipped with the
-image it belongs to. Neither `spatial_targets` nor `auxiliary_inputs` is written
-by hand: the first is derived from the encoders, the second from the section
-below.
+Every input, every auxiliary input and every geometric target of a sample passes
+through **one** pipeline call, so a mask is cropped and flipped with the image it
+belongs to, and so are a detection task's boxes. Nothing about that is written by
+hand: each value's *geometry* — `image`, `mask`, `boxes` — comes from the loader
+or encoder that reads it, and assembly derives the rest.
 
 Anything `albumentations.Compose` accepts is forwarded verbatim — `seed`, `p`,
-`bbox_params`, `is_check_shapes`. For augmenting train only, several views of
-one input, per-source pipelines and the rest, see
-[transforms.md](transforms.md).
+`is_check_shapes` (`bbox_params` is the exception: it is derived from the boxes
+target). For augmenting train only, several views of one input, per-source
+pipelines and the rest, see [transforms.md](transforms.md).
 
 ## Columns the model never sees
 
@@ -328,9 +345,10 @@ data:
     lesion: {column: mask_path}     # loader defaults to `mask` — one grayscale plane
 ```
 
-An auxiliary input is loaded like an input and handed to the sample transforms as
-a mask-kind value: geometry samples it nearest-neighbour, and `Normalize` leaves
-it alone. It is **not collated** — the batch has no slot for it, so it cannot
+An auxiliary input is loaded like an input and handed to the sample transforms
+with the geometry its loader declares — the default loader is `mask`, so out of
+the box geometry samples it nearest-neighbour and `Normalize` leaves it alone;
+declare an `image` loader to carry a photograph instead. It is **not collated** — the batch has no slot for it, so it cannot
 reach a device, and there is nothing to remember to drop.
 
 Two neighbouring cases are different things, and the vocabulary keeps them apart:
@@ -375,24 +393,27 @@ tasks:
     target: label
 ```
 
-The encoder follows from the preset, so declaring one is an override:
+The encoder follows from the task's axes — the output topology's *shape* first,
+the objective's *semantics* second — so declaring one is an override:
 
 | Preset | Encoder implied | Column holds |
 |---|---|---|
 | `classification` | `label` | a class name or index |
 | `binary_classification`, `regression` | `scalar` | a number |
 | `multilabel_classification` | `multilabel` | `"cat,dog"` or a list |
-| `segmentation` | **must be declared** | a mask file path |
+| `segmentation` (any objective) | `mask` | a mask file path |
+| `detection` | `boxes` | a list of `{"box": [x1, y1, x2, y2], "class": name}` |
 
-A dense target is an image of its own and reading it needs the class count, so
-it is the one case config still has to answer for:
+A mask is the one target whose *vocabulary* config still has to state: reading it
+without one would take the class count from whatever indices a split happened to
+show, and a class no image carries would silently vanish from the index map.
 
 ```yaml
 tasks:
   mask:
     preset: segmentation
     target: mask_path
-    target_encoder: {name: mask, num_classes: 3, root: data/masks}
+    classes: {0: pet, 1: background, 2: boundary}
 ```
 
 **Overrides** — a different separator, a pinned class order, bins for a
@@ -409,10 +430,16 @@ tasks:
     preset: regression
     target: score
     target_encoder: {name: gaussian_bins, bins: 20}   # or linear_bins
+
+  mask:
+    preset: segmentation
+    target: mask_path
+    classes: {0: pet, 1: background, 2: boundary}
+    target_encoder: {name: mask, root: data/masks}    # the implied encoder, with a root
 ```
 
-Registered encoders: `label`, `multilabel`, `scalar`, `mask`, `gaussian_bins`,
-`linear_bins`.
+Registered encoders: `label`, `multilabel`, `scalar`, `mask`, `boxes`,
+`gaussian_bins`, `linear_bins`.
 
 ## Everything at once
 

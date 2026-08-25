@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from src.core import Sample
+from src.core import Geometry, Sample
 from src.transforms import AlbumentationsTransform
 from src.transforms.augmentations import QUARTER_TURNS, Rotate90
 
@@ -39,7 +39,9 @@ def test_a_label_that_was_not_zero_advances_from_where_it_was() -> None:
 def test_a_mask_turns_with_its_image() -> None:
     mask = np.zeros((8, 8), dtype=np.uint8)
     mask[0, 0] = 1
-    transform = AlbumentationsTransform([Rotate90(p=1.0)], spatial_targets=["mask"], label_targets=["angle"], seed=4)
+    transform = AlbumentationsTransform(
+        [Rotate90(p=1.0)], targets={"mask": Geometry.MASK}, label_targets=["angle"], seed=4
+    )
 
     result = transform(Sample(inputs={"image": cornered()}, targets={"mask": mask, "angle": 0}))
 

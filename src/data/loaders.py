@@ -9,6 +9,7 @@ from typing import Any, ClassVar, NoReturn
 import cv2
 import numpy as np
 
+from src.core.taxonomy import Geometry
 from src.data.registry import input_loader_registry
 
 type InputLoader = Callable[[Any], Any]
@@ -34,6 +35,9 @@ class ImageLoader:
             ``[H, W, 3]`` RGB.
     """
 
+    geometry: ClassVar[Geometry] = Geometry.IMAGE
+    """Pictures interpolate smoothly and take ``Normalize`` — grayscale ones included."""
+
     def __init__(self, root: str | Path | None = None, grayscale: bool = False) -> None:
         self._root = Path(root) if root is not None else None
         self._grayscale = grayscale
@@ -58,7 +62,7 @@ class ImageLoader:
 class MaskLoader(ImageLoader):
     """Reads a mask file into a single ``[H, W]`` plane, and says that is what it is.
 
-    ``spatial`` is the marker assembly reads to give the column mask treatment in the
+    ``geometry`` is the marker assembly reads to give the column mask treatment in the
     augmentation pipeline: nearest-neighbour geometry, and ``Normalize`` leaving it
     alone. It is the whole difference from declaring ``{name: image, grayscale: true}``
     — grayscale cannot imply it, because a grayscale *photograph* (an X-ray) is still
@@ -72,7 +76,7 @@ class MaskLoader(ImageLoader):
             ``None`` uses them as given.
     """
 
-    spatial: ClassVar[bool] = True
+    geometry: ClassVar[Geometry] = Geometry.MASK
 
     def __init__(self, root: str | Path | None = None) -> None:
         super().__init__(root=root, grayscale=True)
