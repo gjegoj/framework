@@ -55,31 +55,19 @@ class _OnnxSession:
 class OnnxExporter(Exporter):
     """Writes an ONNX graph with a dynamic batch axis, and reads it back with onnxruntime.
 
-    Exactly one of ``torch.onnx.export``'s twenty-five parameters cannot be written by
-    hand: ``dynamic_shapes`` depends on how many inputs the graph has *and* on the
-    nesting ``torch.export`` imposes on a ``*inputs`` forward — measured, a flat spec
-    raises "inputs[0] is a <class 'tuple'>, but dynamic_shapes[0] is a <class 'dict'>".
-    Converting that is this wrapper's whole job; everything else forwards verbatim, so
-    ``external_data``, ``optimize``, ``report`` and the rest stay reachable.
-
-    The legacy TorchScript-based exporter is refused. It is the only way to an opset
-    below 18, but torch says it "will be removed" and it cannot read the dynamic shapes
-    built here — supporting both would mean two dynamic-axis vocabularies for a path
-    with an expiry date.
+    The one parameter of ``torch.onnx.export`` that cannot be written by hand is
+    ``dynamic_shapes`` — it depends on the input count and on the nesting ``torch.export``
+    imposes (measured: a flat spec is refused) — so this converts it and forwards everything
+    else. The legacy TorchScript exporter is refused: it cannot read these dynamic shapes
+    and torch says it will be removed.
 
     Parameters:
-        opset_version (int): Operator set the graph is written at. 18 rather than
-            something older because 18 is the modern exporter's floor — measured,
-            asking for 17 lands 18 after a failed down-conversion, so the written
-            file is checked against this number and a mismatch is refused.
-        tensor_names (str): ``declared`` keeps the run's vocabulary; ``uniform``
-            gives every model one interface. Lives here rather than on the run
-            because only a format that stores names can honour it — a traced
-            TorchScript file has none.
-        simplify (bool): Run onnx-simplifier over the written graph. Off by
-            default: the modern exporter already runs its own optimizer, and this
-            is a second opinion rather than a duty. Measured on resnet18, it drops
-            four dead initializers and 28% of the bytes.
+        opset_version (int): Operator set the graph is written at; 18 is the modern
+            exporter's floor (measured: asking for 17 lands 18), and a mismatch is refused.
+        tensor_names (str): ``declared`` keeps the run's vocabulary; ``uniform`` gives every
+            model one interface.
+        simplify (bool): Run onnx-simplifier over the written graph; measured on resnet18,
+            it drops 28% of the bytes.
         atol (float): Absolute output error tolerated against the source model.
         rtol (float): Relative output error tolerated against the source model.
         **kwargs: Forwarded verbatim to ``torch.onnx.export``.

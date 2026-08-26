@@ -8,23 +8,10 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 class RunConfig(BaseModel):
     """Which stages to run, from which checkpoint, into which directory.
 
-    Two fields name a checkpoint, and they differ by *what the file carries*:
-    ``checkpoint_path`` takes only the weights, ``resume_path`` takes the whole
-    training state. That is the entire distinction, so nothing else has to be
-    remembered — and neither of them reaches ``test``, which judges whatever the
-    module holds by then. One field feeding two phases is how a run ends up
-    reporting the numbers of the weights it started from.
-
-    ``directory`` is the single root everything a run produces lives under:
-    today the trainer's ``default_root_dir``, later checkpoints, tracker
-    artifacts and exports, so those blocks never invent their own paths.
-    Hydra's own run directory is the natural value: ``directory: ${hydra:run.dir}``.
-
-    ``project``/``name`` are the run's identity, declared once and *reached*
-    everywhere else by interpolation — the tracker group reads
-    ``${run.project}``/``${run.name}``, the hydra run directory derives from
-    them — so one naming feeds the tracker, the ``runs/`` tree, and the
-    checkpoints root alike.
+    ``checkpoint_path`` takes only the weights, ``resume_path`` the whole training state;
+    neither reaches ``test``, which evaluates whatever the module holds. ``directory`` is
+    the single root everything a run produces lives under (``${hydra:run.dir}``).
+    ``project``/``name`` are the run's identity, reached everywhere else by interpolation.
     """
 
     model_config = ConfigDict(extra="forbid")

@@ -21,28 +21,18 @@ log = logging.getLogger(__name__)
 class EmaWeights(EMAWeightAveraging):
     """An exponential moving average of the weights, validated and saved in their place.
 
-    Lightning's ``EMAWeightAveraging`` does the averaging; what it does not do is
-    wait for the average to exist. Its averaged model is a copy of the weights
-    taken at ``setup``, and the first update *replaces* rather than blends — so
-    until that update runs, the copy holds untrained weights while three of
-    Lightning's hooks use it regardless. Each of the four overrides below stands
-    down until the average is real, which leaves the live weights in charge:
-
-    - validation would otherwise report the untrained copy,
-    - a checkpoint would store it under a metric the live weights earned,
-    - and a warmup longer than the run would end by overwriting the trained
-      model with it.
+    Lightning's ``EMAWeightAveraging`` does the averaging but does not wait for the average
+    to exist: its copy holds untrained weights until the first update, and three of
+    Lightning's hooks use it regardless. Each override here stands down until the average
+    is real, so validation, checkpoints and a warmup longer than the run see the live weights.
 
     Parameters:
-        decay (float): How much of the average survives each update. Nearer 1
-            averages over a longer stretch, so 0.9999 is for long runs and 0.99
-            for short ones.
-        after (float): Share of the run to train before averaging begins, so the
-            average does not start from noise. Resolved against the run's total
-            steps, which means it survives a change of epoch count.
-        **kwargs: Forwarded to ``EMAWeightAveraging`` — ``device`` (``"cpu"``
-            keeps the second copy off the GPU), ``use_buffers``,
-            ``update_every_n_steps``.
+        decay (float): How much of the average survives each update; 0.9999 for long runs,
+            0.99 for short ones.
+        after (float): Share of the run to train before averaging begins, resolved against
+            the run's total steps.
+        **kwargs: Forwarded to ``EMAWeightAveraging`` — ``device`` (``"cpu"`` keeps the
+            second copy off the GPU), ``use_buffers``, ``update_every_n_steps``.
     """
 
     def __init__(self, decay: float = 0.999, after: float = 0.0, **kwargs: Any) -> None:
@@ -135,17 +125,10 @@ class EmaWeights(EMAWeightAveraging):
 class EmaModelCheckpoint(ModelCheckpoint):
     """A checkpoint whose weights-only files hold the averaged weights.
 
-    Lightning runs a callback's ``on_save_checkpoint`` only when dumping a full
-    checkpoint, so on the weights-only path ``EmaWeights`` never gets to
-    substitute its weights and the file would keep the live ones — under a
-    metric the averaged ones earned.
-
-    Rather than rebuild the save, this lends the model the averaged weights for
-    the length of it and lets Lightning dump as it always does. That is sound
-    because by the time a checkpoint is written the validation swap has already
-    been undone, so the model holds the live weights (verified). Without an
-    ``EmaWeights`` beside it, or when saving in full, behaviour is exactly the
-    parent's.
+    Lightning runs ``on_save_checkpoint`` only for full checkpoints, so on the weights-only
+    path ``EmaWeights`` never substitutes its weights. This lends the model the averaged
+    weights for the length of the save; the validation swap has already been undone by then
+    (verified). Without an ``EmaWeights`` beside it, behaviour is the parent's.
     """
 
     @override

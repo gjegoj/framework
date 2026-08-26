@@ -59,25 +59,15 @@ _EMPTY = """<div class="empty hidden" id="empty">
 class HtmlRenderer:
     """A layout shell over ``renderers.render_label`` and ``renderers.render_media``.
 
-    No plotting library and no template engine. This assembles the page and never asks
-    what kind of thing it is drawing — what one label or one input looks like is
-    ``renderers.py``'s business, decided by type.
-
-    The page answers one question before anything is clicked: *where does this model get
-    it wrong?* A cell that missed is outlined and carries a badge saying so in words as
-    well as in colour, the filters count what they would show, and a combination that
-    hides everything says so and offers a way back.
-
-    Assets are read once through ``importlib.resources``, so they survive being
-    installed as a wheel, and inlined — a page in a tracker makes no second request.
+    No plotting library and no template engine; what one label or input looks like is
+    ``renderers.py``'s business. The page answers *where does this model get it wrong*: a
+    cell that missed is outlined and badged, filters count what they would show. Assets
+    are read once through ``importlib.resources`` and inlined.
 
     Parameters:
-        max_chip_chars (int): Chip text budget before truncation; the lightbox
-            swaps the full text back in.
-        max_side (int | None): Bound every inlined picture and mask to this many
-            pixels on its longest side. ``None`` inlines them whole, which is an
-            opt-out a segmentation run should think twice about — see
-            ``MAX_DISPLAY_SIDE``.
+        max_chip_chars (int): Chip text budget before truncation; the lightbox shows the full text.
+        max_side (int | None): Bound every inlined picture and mask to this many pixels on
+            its longest side; ``None`` inlines them whole — see ``MAX_DISPLAY_SIDE``.
     """
 
     def __init__(self, max_chip_chars: int = MAX_CHIP_CHARS, max_side: int | None = MAX_DISPLAY_SIDE) -> None:
@@ -220,7 +210,7 @@ def _chip_rows(items: Sequence[FieldItem]) -> str:
 
 
 def _matched(view: SampleView) -> tuple[int, int]:
-    """How many of this sample's judged tasks matched, out of how many judged it."""
+    """How many of this sample's scored tasks matched, out of how many scored it."""
     judged = [verdict for verdict in view.verdicts.values() if verdict.correct is not None]
     return sum(1 for verdict in judged if verdict.correct), len(judged)
 
@@ -369,14 +359,9 @@ def _leaf_row(item: FieldItem) -> str:
 def _filters(views: Sequence[SampleView]) -> str:
     """The question the grid exists to answer, plus one dial per measured score.
 
-    Only two controls, and deliberately so. *Show me the mistakes* is what anyone
-    opens the page for, and a sample counts as correct only when every judged task
-    on it matched. A row of correct/wrong buttons per task stood here too; it
-    answered the narrower "which task went wrong", crowded the panel in a 250px
-    sidebar, and was reachable anyway — the field checkboxes above already isolate
-    one task's chips and masks. What no button can answer is which samples scored
-    badly and how badly, so that is what the sliders are for. Both narrow the same
-    set and combine with AND.
+    *Show me the mistakes* is what anyone opens the page for — a sample counts as correct
+    only when every scored task on it matched — and the sliders answer which samples
+    scored badly and how badly. Both narrow the same set and combine with AND.
     """
     spans = _spans(views)
     total, correct, mistakes = _tally(views)

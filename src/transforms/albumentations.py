@@ -14,11 +14,11 @@ if TYPE_CHECKING:
     from src.core.entities import Sample
 
 _PIPELINE_KIND = {Geometry.IMAGE: "image", Geometry.MASK: "mask", Geometry.NONE: "label"}
-"""How ``additional_targets`` names each geometry a value may ride under.
+"""How ``additional_targets`` names each geometry a value may be carried under.
 
 Spelled out rather than taken from albumentations' ``Targets`` enum, which is a plain
 ``Enum`` and not a ``StrEnum``: its members are accepted at runtime but do not satisfy
-the ``dict[str, str]`` the API declares. ``BOXES`` is absent on purpose — boxes ride the
+the ``dict[str, str]`` the API declares. ``BOXES`` is absent on purpose — boxes travel through the
 pipeline's own ``bboxes`` argument, not an additional target: measured on albumentationsx
 2.3.7, ``label_fields`` are not plumbed through ``additional_targets`` and a second boxes
 field raises ``KeyError`` on its labels.
@@ -39,60 +39,23 @@ together under the target's name afterwards.
 class AlbumentationsTransform:
     """Runs one albumentations pipeline over a sample's images and geometric targets.
 
-    Everything travels through a *single* pipeline call, so each sampled
-    parameter is shared: the crop taken from the image is the same crop taken
-    from its mask, its boxes and every other declared image.
-
-    Only declared values are handed to the pipeline. Undeclared ones — an
-    embedding, a class label no augmentation is about — never reach it, so they
-    cannot be touched even when their name happens to be one albumentations
-    reserves, such as ``mask``.
-
-    The pipeline is built here rather than accepted ready-made: registering
-    the extra keys must not mutate a pipeline the caller may reuse for
-    another schema.
-
-    Independent sampling per view is composition, not a flag: wrap this
-    transform in ``MultiViewTransform`` to augment each view afresh.
-
-    A ``Geometry.BOXES`` target travels as the pair its geometry documents —
-    ``(float32 [N, 4] xyxy-pixel array, list of class names)`` — split into the
-    pipeline's ``bboxes`` and ``BOX_LABELS`` arguments and put back together
-    afterwards, so what enters and leaves this seam is one value under one name.
+    One pipeline call, so every sampled parameter is shared between the image, its mask, its
+    boxes and every other declared input; undeclared values never reach it. A ``BOXES``
+    target travels as ``(float32 [N, 4] xyxy pixels, list of names)``, split into
+    ``bboxes`` and ``BOX_LABELS`` and put back together.
 
     Parameters:
-        transforms (Sequence): Albumentations operations, in order; end with
-            ``ToTensorV2`` to hand the model tensors. Named as ``Compose`` names
-            it, like every other argument here.
-        inputs (Mapping[str, Geometry | str]): Sample inputs to carry, each beside
-            how it rides geometry: ``IMAGE`` for light (interpolated, normalised),
-            ``MASK`` for per-pixel labels the model consumes beside the image
-            (nearest-neighbour, untouched by ``Normalize``). Derived at assembly
-            from each input's loader; never written by hand in config.
-        targets (Mapping[str, Geometry | str]): Task targets to carry, each beside
-            its geometry — a mask target, a boxes target. Derived at assembly from
-            each task's encoder, so a target cannot fall out of step with its image.
-        auxiliary_inputs (Mapping[str, Geometry | str]): The sample's auxiliary
-            inputs to carry — arrays only the augmentations read. Derived at
-            assembly from ``data.auxiliary_inputs`` and their loaders.
-        label_targets (Sequence[str]): Targets an augmentation may rewrite — the
-            rotation class a quarter-turn advances, the flag a crop sets. The one
-            hand-declared role here: a rotation label and a class label are both
-            plain labels, and only the experiment knows which one the pipeline's
-            augmentations are about. Every key declared here is rewritten by every
-            augmentation that has an ``apply_to_label``.
-        min_box_visibility (float): Fraction of a box that must survive a crop for
-            the box — and its name — to be kept. Zero keeps whatever albumentations
-            returns.
-        min_box_area (float): Same, in pixels of area. Both forward into
-            ``BboxParams`` and are refused without a BOXES target, where they would
-            read as filtering that never ran.
-        **compose_options (Any): Forwarded verbatim to ``albumentations.Compose``,
-            so every knob it has stays reachable from config without a change
-            here. ``seed`` for a reproducible pipeline, ``p`` for the chance the
-            whole thing applies, ``keypoint_params`` (a plain mapping) for
-            keypoints, ``strict``, ``is_check_shapes``, ``mask_interpolation``.
-            ``telemetry`` defaults to off and can be turned back on.
+        transforms (Sequence): Albumentations operations, in order; end with ``ToTensorV2``.
+        inputs (Mapping[str, Geometry | str]): Inputs to carry, each with its geometry —
+            derived at assembly from the loaders, never written by hand.
+        targets (Mapping[str, Geometry | str]): Targets to carry, each with its geometry —
+            derived at assembly from the encoders.
+        auxiliary_inputs (Mapping[str, Geometry | str]): Arrays only the augmentations read.
+        label_targets (Sequence[str]): Targets an augmentation may rewrite (a rotation class).
+        min_box_visibility (float): Fraction of a box that must survive a crop to be kept.
+        min_box_area (float): Same, in pixels. Both are refused without a BOXES target.
+        **compose_options (Any): Forwarded verbatim to ``albumentations.Compose`` (``seed``,
+            ``p``, ``keypoint_params``, ``strict``); ``telemetry`` defaults to off.
     """
 
     def __init__(
@@ -114,7 +77,7 @@ class AlbumentationsTransform:
         _refuse_a_name_in_two_roles(self._inputs, self._auxiliary_inputs, declared_targets, label_targets)
         _refuse_a_non_pixel_input(self._inputs, self._auxiliary_inputs)
         self._targets = {**declared_targets, **dict.fromkeys(label_targets, Geometry.NONE)}
-        self._boxes_target = _the_one_boxes_target(self._targets)
+        self._boxes_target = _boxes_target(self._targets)
         _refuse_contradicted_options(self._boxes_target, compose_options, min_box_visibility, min_box_area)
         carried = {**self._inputs, **self._auxiliary_inputs, **self._targets}
         self._pipeline = A.Compose(
@@ -185,7 +148,7 @@ def _refuse_a_non_pixel_input(*roles: Mapping[str, Geometry]) -> None:
                 )
 
 
-def _the_one_boxes_target(targets: Mapping[str, Geometry]) -> str | None:
+def _boxes_target(targets: Mapping[str, Geometry]) -> str | None:
     """The single BOXES target, or ``None``; two are refused naming both.
 
     Measured on albumentationsx 2.3.7: a second boxes field registered through
@@ -219,7 +182,7 @@ def _refuse_contradicted_options(
         )
     if boxes_target is None and (min_visibility or min_area):
         raise ValueError(
-            "min_box_visibility/min_box_area declared, but no target rides "
+            "min_box_visibility/min_box_area declared, but no target has "
             f"'{Geometry.BOXES}' geometry — the filter would silently never run."
         )
 
@@ -259,4 +222,4 @@ def _refuse_a_name_in_two_roles(*roles: Sequence[str] | Mapping[str, Geometry]) 
         )
     reserved = sorted({name for name in declared if name in {BOXES, BOX_LABELS}})
     if reserved:
-        raise ValueError(f"{', '.join(reserved)}: reserved for this seam's boxes carrier. Rename the declared value.")
+        raise ValueError(f"{', '.join(reserved)}: reserved for this seam's boxes arguments. Rename the declared value.")

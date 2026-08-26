@@ -1,12 +1,9 @@
-"""Writing the canonical detection annotation format, deterministically.
+"""Writing the ``.jsonl`` annotation format, deterministically.
 
 One JSON object per line, one line per image, rows sorted by image path, corners rounded
-to two decimals. The rounding is not cosmetic: sub-hundredth-pixel precision is
-annotation noise, and dropping it is what makes a re-run byte-identical, so a canon file
-diffs cleanly in review instead of showing a thousand float tails.
-
-The object fields are the ones ``BoxesTargetEncoder`` reads — spelled from the encoder
-itself, so a converter cannot write a field name the reader does not know.
+to two decimals — that rounding is what makes a re-run byte-identical, so the file diffs
+cleanly. The object fields are spelled from ``BoxesTargetEncoder``, so a converter cannot
+write a field name the reader does not know.
 """
 
 from __future__ import annotations
@@ -24,8 +21,7 @@ CORNER_DECIMALS = 2
 """How precisely a corner is kept. Two decimals is a hundredth of a pixel."""
 
 IMAGE_COLUMN = "image"
-"""The canon row's one non-object key, spelled beside the object fields for the same
-reason those come from the encoder: the converters write what the readers name."""
+"""The row's image key, spelled once beside the object fields."""
 
 
 @dataclass
@@ -45,7 +41,7 @@ class ConversionReport:
     """Files, not boxes — a file with nine clipped boxes is one place to look; the
     per-box count is ``clipped``."""
 
-    def spoken(self) -> str:
+    def summary(self) -> str:
         """One line for a terminal: what was written, and what had to be corrected."""
         parts = [f"{self.images} images, {self.objects} objects"]
         if self.clipped:
@@ -56,7 +52,7 @@ class ConversionReport:
         return "; ".join(parts) + "."
 
 
-def canon_object(corners: tuple[float, float, float, float], name: str) -> dict[str, Any]:
+def annotation_object(corners: tuple[float, float, float, float], name: str) -> dict[str, Any]:
     """One object in the canonical shape: its box in pixels, its class by name."""
     return {
         BoxesTargetEncoder.BOX: [round(corner, CORNER_DECIMALS) for corner in corners],
@@ -64,8 +60,8 @@ def canon_object(corners: tuple[float, float, float, float], name: str) -> dict[
     }
 
 
-def canon_record(image: str, objects: list[dict[str, Any]]) -> dict[str, Any]:
-    """One canon row: which image, and the objects kept for it."""
+def annotation_row(image: str, objects: list[dict[str, Any]]) -> dict[str, Any]:
+    """One annotation row: which image, and the objects kept for it."""
     return {IMAGE_COLUMN: image, "objects": objects}
 
 
@@ -97,7 +93,7 @@ def clipped_box(
     return bounded
 
 
-def write_canon(records: list[dict[str, Any]], into: Path) -> None:
+def write_annotations(records: list[dict[str, Any]], into: Path) -> None:
     """The rows as JSON Lines, sorted by image path so the file is reproducible."""
     into.parent.mkdir(parents=True, exist_ok=True)
     ordered = sorted(records, key=lambda record: str(record[IMAGE_COLUMN]))

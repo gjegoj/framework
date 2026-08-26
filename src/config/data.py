@@ -21,7 +21,7 @@ names, it does not reach into the data layer to resolve them.
 DEFAULT_AUXILIARY_LOADER = "mask"
 """Registry key of the loader an *auxiliary* input gets when config names none.
 
-Different from the model-input default because the common case differs: what rides
+Different from the model-input default because the common case differs: what sits
 beside the image for the augmentations to read is a mask, and reading it as a picture
 would have geometry interpolate its edges and ``Normalize`` rewrite its values.
 """
@@ -60,8 +60,8 @@ class InputColumnConfig(BaseModel):
 class AuxiliaryInputColumnConfig(InputColumnConfig):
     """One auxiliary input: a column the augmentations read and the model never sees.
 
-    The one difference from a model input is the loader's default — the ``mask``
-    loader, masks being what rides here. Declare a loader to read anything else.
+    The one difference from a model input is the loader's default, ``mask``. Declare a
+    loader to read anything else.
     """
 
     loader: InputLoaderConfig = Field(
@@ -77,9 +77,8 @@ class AuxiliaryInputColumnConfig(InputColumnConfig):
 class SourceConfig(BaseModel):
     """One annotation source, optionally with the transforms its own rows take.
 
-    Written as a bare path most of the time; the object form is for combining
-    datasets that need different handling — a clean set beside a noisy one, a
-    synthetic set that should not be augmented twice::
+    A bare path most of the time; the object form is for combining datasets that need
+    different handling — a synthetic set that should not be augmented twice::
 
         source:
           - data/clean.csv
@@ -87,9 +86,8 @@ class SourceConfig(BaseModel):
             transforms:
               train: {_target_: src.transforms.AlbumentationsTransform, transforms: [...]}
 
-    ``transforms`` keeps the shape of the global section — always per stage — so
-    there is one thing to learn rather than a second form for this position.
-    A stage left out falls back to the global transform for that stage.
+    ``transforms`` keeps the global section's per-stage shape; a stage left out falls back
+    to the global transform.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -219,15 +217,9 @@ class SplitConfig(BaseModel):
 class DataConfig(BaseModel):
     """Where the annotation rows come from and how their columns feed the model.
 
-    Task targets are deliberately absent: a target column and its encoder are declared
-    once, on the task, and the data schema is derived from the tasks at assembly.
-
-    A section with no ``inputs`` is a valid declaration, not a mistake: a vendor pipeline
-    reads its images from its own descriptor and has no columns at all. That a *table*
-    needs at least one input column is true of the table, so it is stated where the
-    table's schema is built, beside the other rules only a table has.
-
-    The form of ``source`` picks between the two ways a dataset arrives::
+    Task targets are absent on purpose: a target column and its encoder are declared once,
+    on the task. A section with no ``inputs`` is valid — a vendor pipeline reads its images
+    from its own descriptor. The form of ``source`` picks how a dataset arrives::
 
         source: data/annotations.csv               # one table, 'split' divides it
         split: {train: 0.7, val: 0.15, test: 0.15}
@@ -237,10 +229,8 @@ class DataConfig(BaseModel):
           val: data/val.csv
           test: data/test.csv
 
-    The second form matters because a partition is often not ours to make: a
-    competition ships one, a temporal or per-patient split is decided before the
-    data reaches us, and re-dividing those rows by fractions would quietly undo
-    the very separation they encode.
+    The second form exists because a partition is often not ours to make — a competition's,
+    a temporal or per-patient split — and re-dividing it would undo what it encodes.
     """
 
     model_config = ConfigDict(extra="forbid")

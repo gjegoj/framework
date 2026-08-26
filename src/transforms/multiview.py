@@ -16,16 +16,10 @@ if TYPE_CHECKING:
 class MultiViewTransform:
     """Stacks N (optionally augmented) copies of one input: ``[...]`` to ``[N, ...]``.
 
-    The base transform runs per view on a throwaway copy of the sample, so
-    random augmentations produce distinct views — independent sampling is
-    this composition, not a flag on the base transform. Without a base the
-    views are identical copies. Pairs with ``MultiViewBackbone``, which folds
-    the view axis back into the batch.
-
-    Only the named input is stacked: other inputs and all targets belong to
-    the sample as a whole and reach the batch unchanged. Per-view spatial
-    targets have no meaning here — one stacked input cannot align with a
-    single mask.
+    The base transform runs per view on a throwaway copy of the sample, so random
+    augmentations produce distinct views; without a base the views are identical. Only the
+    named input is stacked; other inputs and all targets reach the batch unchanged. Pairs
+    with ``MultiViewBackbone``, which folds the view axis back into the batch.
 
     Parameters:
         views (int): Number of views, at least two.

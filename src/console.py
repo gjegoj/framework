@@ -22,13 +22,8 @@ one it reads as another header row rather than as the heading above them."""
 def console() -> Console:
     """The console this framework prints through.
 
-    One instance, because rich reads the terminal's width and capabilities when it is
-    built, and two of them can disagree about the window they share. Three packages
-    print through it — a callback's tables, the export verification's, and the progress
-    bar's own — and three consoles with three styles read as three programs sharing a
-    window.
-
-    Cached rather than made a module-level global, so importing this costs nothing on a
-    run that never prints.
+    One instance, because rich reads the terminal's width when it is built and two
+    consoles can disagree about the window they share. Cached rather than a module-level
+    global, so importing this costs nothing on a run that never prints.
     """
     return Console()

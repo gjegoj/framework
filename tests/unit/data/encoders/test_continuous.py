@@ -1,4 +1,4 @@
-"""Binned target encoders: a continuous value as a distribution over ordered bins."""
+"""Numeric targets: a scalar as it is, or as a distribution over ordered bins."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import logging
 import numpy as np
 import pytest
 
-from src.data import GaussianBinsTargetEncoder, LinearBinsTargetEncoder
+from src.data.encoders import GaussianBinsTargetEncoder, LinearBinsTargetEncoder, ScalarTargetEncoder
 from src.data.registry import target_encoder_registry
 
 TRAIN = [0.0, 25.0, 50.0, 75.0, 100.0]
@@ -185,3 +185,14 @@ def test_contradictory_declarations_are_refused(kwargs: dict[str, float], messag
 def test_both_encoders_are_reachable_from_config() -> None:
     assert isinstance(target_encoder_registry.create("gaussian_bins"), GaussianBinsTargetEncoder)
     assert isinstance(target_encoder_registry.create("linear_bins"), LinearBinsTargetEncoder)
+
+
+def test_scalar_encoder_needs_no_fit_and_reports_no_classes() -> None:
+    encoder = ScalarTargetEncoder()
+
+    encoded = encoder.encode(3.5)
+
+    assert encoded == pytest.approx(3.5)
+    assert isinstance(encoded, float)
+    assert encoder.num_classes is None
+    assert encoder.class_names is None

@@ -15,25 +15,17 @@ if TYPE_CHECKING:
 
 
 class WrappedMetric(Metric):
-    """A torchmetrics metric behind a class of ours — the same "wrap a module" rule the
-    criteria follow, and the one ``MeanAveragePrecisionOverInstances`` already followed.
+    """A torchmetrics metric behind a class of ours — the "wrap a module" rule the criteria follow.
 
-    Here is where a metric carries what torchmetrics has no place for: what its computed
-    value *means*. A subclass says it by returning an artifact from ``compute`` — a
-    ``Curve``, a ``Matrix``, a ``PerClass`` — or ``None`` to publish nothing at all. There
-    is no second mechanism: a metric's ``compute`` returns what it means, and the log
-    grammar places it by geometry from there.
-
-    Meaning lives on a class of **ours**, and that is what makes it safe. torchmetrics
-    subclasses for *state reuse* while changing what ``compute`` returns —
-    ``JaccardIndex`` extends ``ConfusionMatrix``, ``AUROC`` extends the PR curve — so
-    anything keyed on that hierarchy hands a reduced descendant its parent's drawing, and
-    has to be talked out of it case by case. Nothing inherits a drawing here without
-    inheriting the class that draws, so the question never arises.
+    A subclass says what its computed value *means* by returning an artifact from
+    ``compute`` — a ``Curve``, a ``Matrix``, a ``PerClass`` — or ``None`` to publish
+    nothing. Meaning lives on a class of ours because torchmetrics subclasses for state
+    reuse while changing what ``compute`` returns (``JaccardIndex`` extends
+    ``ConfusionMatrix``), so nothing keyed on its hierarchy is safe.
 
     Parameters:
-        inner (Metric): The torchmetrics metric doing the arithmetic. Held as a child
-            module, so its state moves across devices with the model.
+        inner (Metric): The torchmetrics metric doing the arithmetic; a child module, so
+            its state moves across devices with the model.
     """
 
     full_state_update = False

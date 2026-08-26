@@ -37,21 +37,14 @@ def scheduled_value(epoch: int, window: int, start: float, end: float, shape: Ca
 class AnnealCriterion(L.Callback):
     """Anneal a numeric attribute of one task's criterion over the run.
 
-    The criterion stays a dumb brick that never sees Lightning; this is what knows the
-    epoch. What it writes is a pure function of ``current_epoch``, so it holds no state
-    a resumed run could lose.
-
-    The attribute is found by walking the criterion's module tree — composite
-    parts and wrapped torch losses are registered submodules, so torch's own
-    traversal reaches a ``label_smoothing`` wherever it lives, and nothing here
-    hand-rolls a descent. Ambiguity is resolved with the part's logging name:
-    ``parameter: ce.label_smoothing`` — the vocabulary the run's logs already
-    use.
+    The criterion never sees Lightning; this is what knows the epoch, and what it writes is
+    a pure function of ``current_epoch``, so a resumed run loses nothing. The attribute is
+    found by walking the criterion's module tree; ambiguity is resolved with the part's
+    logging name — ``parameter: ce.label_smoothing``.
 
     Parameters:
         task (str): The task whose criterion is annealed.
-        parameter (str): The numeric attribute, optionally prefixed by a part
-            name when several parts carry it.
+        parameter (str): The numeric attribute, optionally prefixed by a part name.
         start (float): Value at epoch 0, overriding the constructed one.
         end (float): Value from the end of the window on.
         schedule (str): Easing — ``linear`` or ``cosine``.

@@ -16,15 +16,13 @@ class Stage(StrEnum):
 class OutputTopology(StrEnum):
     """Output structure of a task — what one prediction looks like.
 
-    A closed set, like every axis here: outer layers interpret each member by key, so
-    a new member is a change to what the framework can express, not a new string.
+    A closed set: outer layers interpret each member by key, so a new member changes what the
+    framework can express.
 
     Attributes:
-        GLOBAL: One prediction vector per sample (classification, regression,
-            and metric learning's embedding).
+        GLOBAL: One prediction vector per sample (classification, regression, embeddings).
         DENSE: One prediction per spatial location (segmentation, depth).
-        INSTANCES: A variable-length set of objects per sample, each carrying
-            task-specific instance-level attributes — a box and a class for
+        INSTANCES: A variable-length set of objects per sample — a box and a class for
             detection; masks and keypoints when those tasks land.
     """
 
@@ -36,15 +34,12 @@ class OutputTopology(StrEnum):
 class InputTopology(StrEnum):
     """Input structure of a task — how many inputs feed one prediction, and how.
 
-    ``SINGLE`` is the default everywhere an axis is not named: presets and
-    config both assume it, so only the paired kinds ever write this axis down.
+    ``SINGLE`` is the default wherever the axis is not named; only the paired kinds write it.
 
     Attributes:
         SINGLE: One input per sample; the ordinary case.
-        MULTIVIEW: N views of each sample through one shared encoder
-            (Siamese setups; supervision compares the views).
-        MULTISTREAM: A separate encoder per input stream (CLIP-style dual
-            encoders; supervision aligns the streams).
+        MULTIVIEW: N views of each sample through one shared encoder (Siamese setups).
+        MULTISTREAM: A separate encoder per input stream (CLIP-style dual encoders).
     """
 
     SINGLE = "single"
@@ -74,25 +69,15 @@ class Objective(StrEnum):
 class Stream(StrEnum):
     """Standard names of backbone feature streams.
 
-    An open vocabulary, unlike the axes: these members name the conventional cases,
-    and a multi-encoder backbone may produce streams under names of its own.
-
-    Each member names a *shape class* — the name is a contract about what the tensor
-    looks like, which is what heads and topologies rely on. A product of a different
-    shape gets a different name even when it is built from another stream (DECODER is
-    made from ENCODER features; EMBEDDINGS stacks per-view FEATURES).
+    An open vocabulary: a multi-encoder backbone may produce streams under names of its own.
+    Each member names a *shape class*, so a product of a different shape gets a different name.
 
     Attributes:
-        FEATURES: ``[B, D]`` — the pooled per-sample vector; the single
-            stream of simple backbones and what GLOBAL heads read.
-        ENCODER: ``[B, D, H', W']`` — the encoder's last spatial feature map
-            (encoder-decoder backbones).
-        DECODER: ``[B, D, H, W]`` — the decoder's dense map; what DENSE
-            topologies read.
-        LOGITS: Task-shaped final outputs of a fused network, consumed
-            through an identity head.
-        EMBEDDINGS: ``[B, N, D]`` — aligned per-view embeddings (multi-encoder
-            now, multi-view later); the carrier contrastive criteria consume.
+        FEATURES: ``[B, D]`` — the pooled per-sample vector; what GLOBAL heads read.
+        ENCODER: ``[B, D, H', W']`` — the encoder's last spatial feature map.
+        DECODER: ``[B, D, H, W]`` — the decoder's dense map; what DENSE topologies read.
+        LOGITS: Task-shaped final outputs of a fused network, consumed through an identity head.
+        EMBEDDINGS: ``[B, N, D]`` — aligned per-view embeddings; what contrastive criteria read.
     """
 
     FEATURES = "features"
@@ -103,25 +88,16 @@ class Stream(StrEnum):
 
 
 class Geometry(StrEnum):
-    """How a value rides the image's geometry through augmentation.
+    """How a value is transformed with the image during augmentation.
 
-    Declared as a class-level fact by input loaders and target encoders, derived into
-    the transform seam by assembly — one vocabulary where five spellings of ``spatial``
-    used to be. ``MASK`` rather than an abstract grid: every rider — a segmentation
-    target, a mask input, an auxiliary region — is a mask to its own author, and the
-    generality nothing exercises would cost that recognition.
-
-    ``BOXES`` also fixes the value's in-flight shape between ``load`` and ``encode``:
-    the pair ``(float32 [N, 4] xyxy-pixel array, list of class names)`` — the two
-    halves albumentations itself splits into ``bboxes`` and a label field.
-
-    Future members arrive with their capabilities, not before: measured on
-    albumentationsx 2.3.7, oriented boxes ride ``BboxParams(bbox_type="obb")`` and
-    keypoints ``KeypointParams``, so pose and OBB are each a member here plus a carrier
-    in the seam, and nothing else moves.
+    Declared as a class-level fact by input loaders and target encoders, derived into the
+    transform seam by assembly. ``BOXES`` also fixes the value's shape between ``load`` and
+    ``encode``: ``(float32 [N, 4] xyxy-pixel array, list of class names)``. Measured on
+    albumentationsx 2.3.7: oriented boxes and keypoints each have their own params there, so
+    a future member is one entry here plus one in the seam.
 
     Attributes:
-        NONE: Not in image space — labels, scalars; they ride around geometry.
+        NONE: Not in image space — labels, scalars.
         IMAGE: Light: interpolated smoothly, normalized.
         MASK: Per-pixel labels: nearest-neighbour geometry, never normalized.
         BOXES: Axis-aligned rectangles with their class names, in xyxy pixels.

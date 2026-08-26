@@ -141,7 +141,7 @@ say "loss" twice, once in the key's grammar and once in ultralytics'.
 
 ## mAP
 
-The `detection` preset judges by `map`, which is one entry publishing a family:
+The `detection` preset reports `map`, which is one entry publishing a family:
 
 ```
 val/boxes/map/map       mAP@50-95, the COCO average

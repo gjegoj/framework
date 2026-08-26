@@ -100,35 +100,20 @@ class SmoothL1Criterion(_RegressionCriterion):
 class ExpectationCriterion(Criterion):
     """Regression on the expectation of a distribution over ordered classes.
 
-    Both sides are reduced to one number — ``softmax(logits) · class_values``
-    against the same weighting of the target — and compared by an ordinary
-    regression criterion. It is the companion of cross-entropy for binned
-    targets, not a replacement: cross-entropy shapes the whole distribution but
-    saturates once a prediction stops overlapping the target, while this term
-    keeps a signal proportional to how far the reported number actually is.
-    Alone it is just as insufficient — any distribution with the right mean
-    satisfies it.
-
-    ``class_values`` is never written by hand: the target encoder that laid out
-    the bins reports them, and assembly passes them through as a derived value.
-
-    Two numbers can be compared in more than one way, so ``distance`` is a
-    criterion slot — absolute error by default, Huber when outliers should not
-    dominate::
+    ``softmax(logits) · class_values`` against the same weighting of the target, compared by
+    an ordinary regression criterion. The companion of cross-entropy for binned targets:
+    cross-entropy saturates once a prediction stops overlapping the target, this keeps a
+    signal proportional to the distance; alone, any distribution with the right mean
+    satisfies it. ``class_values`` comes from the encoder that laid out the bins, via
+    assembly. The term logs as ``expectation`` whatever ``distance`` compares the numbers::
 
         loss:
           - {name: cross_entropy}
-          - name: expectation
-            weight: 0.5
-            distance: {_target_: src.losses.HuberCriterion, delta: 0.1}
-
-    Whichever distance compares the numbers, the term logs as ``expectation``:
-    that is its identity in a composite, and the metric inside is its detail.
+          - {name: expectation, weight: 0.5, distance: {_target_: src.losses.HuberCriterion, delta: 0.1}}
 
     Parameters:
         class_values (list[float]): The number each class position stands for.
-        distance (Criterion | None): How the two numbers are compared;
-            ``None`` builds the default ``mae`` from the remaining arguments.
+        distance (Criterion | None): How the two numbers are compared; ``None`` builds ``mae``.
         **kwargs: Forwarded verbatim to the default ``mae``.
     """
 

@@ -57,18 +57,15 @@ class ConvHead(Head):
 class CosineHead(Head):
     """Cosine similarities to learnable class prototypes — the angular-margin classifier.
 
-    Normalizes the feature and every prototype, so each logit is ``cos(θ)`` in
-    [-1, 1]. The margin belongs to the loss (``arcface``), never to the head:
-    inference stays honest — argmax over cosines is the predicted class — and
-    every angular-margin method reuses this one head, so CosFace later is a
-    loss swap, not a new head.
+    Normalizes the feature and every prototype, so each logit is ``cos(θ)``. The margin
+    belongs to the loss (``arcface``), never to the head: argmax over cosines is the
+    predicted class, and CosFace later is a loss swap.
 
     Parameters:
         in_features (int): Width of the stream the task reads.
         out_features (int): One prototype per class.
-        embedding_dim (int | None): Project features to this width (bias-free)
-            before comparing — the deployable metric-learning embedding.
-            ``None`` compares backbone features directly.
+        embedding_dim (int | None): Project features to this width (bias-free) before
+            comparing — the deployable embedding. ``None`` compares backbone features directly.
     """
 
     def __init__(self, in_features: int, out_features: int, embedding_dim: int | None = None) -> None:

@@ -30,11 +30,8 @@ class TableSource(ABC):
 class FileSource(TableSource):
     """Base for file-backed sources: one format per subclass.
 
-    Subclasses implement ``_read_file`` for a single path; multiple paths are
-    concatenated in order with a fresh index. Extra keyword arguments are
-    kept in ``self._reader_kwargs`` and forward verbatim to the underlying
-    pandas reader — the same convention as criterion wrappers. A new format
-    is a three-line subclass::
+    Subclasses implement ``_read_file`` for one path; several paths are concatenated in
+    order. Extra keyword arguments forward verbatim to the pandas reader::
 
         @table_source_registry.register("parquet")
         class ParquetSource(FileSource):
@@ -82,10 +79,8 @@ class JsonSource(FileSource):
 class JsonLinesSource(FileSource):
     """JSON Lines tables — one row per line, nested values kept as they are written.
 
-    Its own source rather than ``json`` with ``lines: true`` so that ``.jsonl`` is
-    inferable from the suffix and a row's nested annotations need no declaration at all:
-    the detection canon (one image per line, its objects beside it) is read by naming
-    the file and nothing else.
+    Its own source rather than ``json`` with ``lines: true``, so ``.jsonl`` is inferable
+    from the suffix and a row's nested annotations need no declaration.
     """
 
     def _read_file(self, path: Path) -> Table:
@@ -95,22 +90,15 @@ class JsonLinesSource(FileSource):
 class LimitedSource(TableSource):
     """Another source with its rows capped — the small run you iterate on.
 
-    Wrapping the source rather than trimming later is what keeps the meaning
-    right in both dataset layouts: wrapped around one source the cap applies
-    before the split (the whole run shrinks), wrapped around per-stage sources
-    it applies to each stage. Both follow from where the source sits, so there
-    is no rule to remember.
-
-    Rows are drawn at random rather than taken from the top: annotation files
-    routinely arrive grouped by class or ordered by date, and their first rows
-    are not a sample of them. The draw has its own seed, so the subset stays
-    put while everything else about the run varies.
+    Wrapping the source keeps the meaning right in both layouts: around one source the cap
+    applies before the split, around per-stage sources to each stage. Rows are drawn at
+    random with their own seed — annotation files arrive grouped by class or date, so their
+    first rows are not a sample.
 
     Parameters:
         source (TableSource): The source to read from.
-        max_samples (int | float): Rows to keep. An ``int`` counts rows, a
-            ``float`` in (0, 1] takes a share — the sklearn idiom, where ``1``
-            means one row and ``1.0`` means all of them.
+        max_samples (int | float): Rows to keep. An ``int`` counts rows, a ``float`` in
+            (0, 1] takes a share — the sklearn idiom.
         seed (int): Draw seed; the same seed always keeps the same rows.
     """
 

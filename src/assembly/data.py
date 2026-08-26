@@ -294,19 +294,10 @@ def _infer_format(path: str) -> str:
 def _vendor_data_module(config: ExperimentConfig) -> DataModule:
     """The family's own pipeline, told the run's facts and handed the vendor's own knobs.
 
-    Looked up under the name that already chose the model, so this function names no
-    concrete family — which is what ``assemble``'s docstring claims of the whole
-    composition root, and what was true of every level of it but this one. A family
-    registered as a model but not as a pipeline fails here, naming what is registered.
-
-    The descriptor is ``data.source`` read as written. The square size and the batch come
-    from the run rather than from a second declaration: ``image_size`` is what the
-    transforms would have resized to, and ``loader.batch_size`` is the one the loader is
-    built with, so neither can drift from what the run actually does.
-
-    Which knobs are the vendor's own is decided by the model's signature rather than by a
-    table of key names — what its constructor does not name is forwarded, so one
-    declaration serves the model and the pipeline alike.
+    Looked up under the name that already chose the model, so no concrete family is named
+    here; a family registered as a model but not as a pipeline fails naming what is
+    registered. ``image_size`` and ``loader.batch_size`` come from the run, so neither can
+    drift from what it does. Knobs the model's constructor does not name are forwarded.
     """
     architecture = resolve_target(config.model, vendor_model_registry)
     ours = named_by(architecture, config.model.params)

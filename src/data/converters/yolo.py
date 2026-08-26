@@ -1,13 +1,11 @@
-"""The native YOLO layout (``data.yaml`` + ``images/`` + ``labels/*.txt``) into the canon.
+"""The native YOLO layout (``data.yaml`` + ``images/`` + ``labels/*.txt``) into ``.jsonl``.
 
 Run once per dataset::
 
     uv run python -m src.data.converters.yolo --data path/data.yaml --into data/pets/
 
-One canon file per stage the descriptor declares, so the per-stage ``source`` grammar
-reads them as they are. Two facts are resolved here rather than at training time: the
-normalised ``cxcywh`` corners become pixels (which needs each image's size), and class
-indices become the names the descriptor carries.
+One file per stage the descriptor declares. Normalised ``cxcywh`` becomes pixels (which
+needs each image's size), and class indices become the descriptor's names.
 """
 
 from __future__ import annotations
@@ -20,7 +18,13 @@ import yaml
 from PIL import Image
 
 from src.core.taxonomy import Stage
-from src.data.converters.canon import ConversionReport, canon_object, canon_record, clipped_box, write_canon
+from src.data.converters.annotations import (
+    ConversionReport,
+    annotation_object,
+    annotation_row,
+    clipped_box,
+    write_annotations,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -51,8 +55,8 @@ def convert(data_yaml: Path | str, *, into: Path | str) -> ConversionReport:
     descriptor: dict[str, Any] = yaml.safe_load(descriptor_path.read_text(encoding="utf-8"))
     # A relative `path:` is relative to the descriptor, as the reference tool resolves it
     # — measured, resolving against the CWD converted 0 images from a sibling directory
-    # and wrote an empty canon without one refusal. pathlib keeps an absolute right
-    # operand as-is, so both spellings ride one expression.
+    # and wrote an empty file without one refusal. pathlib keeps an absolute right
+    # operand as-is, so both spellings work in one expression.
     root = descriptor_path.parent / str(descriptor.get("path", "."))
     names = {int(index): str(name) for index, name in dict(descriptor["names"]).items()}
     report = ConversionReport()
@@ -69,7 +73,7 @@ def convert(data_yaml: Path | str, *, into: Path | str) -> ConversionReport:
                 f"found under {root / str(declared)}. A declared stage with nothing in it is a "
                 f"resolution mistake (a wrong 'path:', a moved directory), not an empty split."
             )
-        write_canon(records, Path(into) / f"{stage}.jsonl")
+        write_annotations(records, Path(into) / f"{stage}.jsonl")
     return report
 
 
@@ -120,10 +124,8 @@ def _parsed_line(
 ) -> tuple[str, tuple[float, float, float, float]]:
     """One label line into its class name and normalised cxcywh — refused with an address.
 
-    The refusal names the file, the 1-based line and the expected form, because the
-    encoder-side refusals cannot: they are handed values, never rows. A longer line is
-    usually a segmentation polygon landing in a detection tree — worth saying, since the
-    bare unpack error it used to raise named nothing.
+    The refusal names the file, the 1-based line and the expected form; the encoder-side
+    refusals cannot, being handed values rather than rows.
     """
     fields = line.split()
     if len(fields) != 5:
@@ -146,7 +148,7 @@ def _parsed_line(
 
 
 def _record(image: Path, root: Path, names: dict[int, str], report: ConversionReport) -> dict[str, Any]:
-    """One canon row: the image's path relative to the root, and its objects in pixels."""
+    """One annotation row: the image's path relative to the root, its objects in pixels."""
     if not image.exists():
         raise FileNotFoundError(f"Image file not found: {image} (its label file says it should be there).")
     relative = str(image.relative_to(root))
@@ -167,18 +169,18 @@ def _record(image: Path, root: Path, names: dict[int, str], report: ConversionRe
             (centre_y + half_height) * height,
         )
         bounded = clipped_box(corners, width=width, height=height, image=relative, report=report)
-        objects.append(canon_object(bounded, name))
+        objects.append(annotation_object(bounded, name))
         report.objects += 1
     report.images += 1
-    return canon_record(relative, objects)
+    return annotation_row(relative, objects)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data", required=True, help="path to the YOLO data.yaml descriptor")
-    parser.add_argument("--into", required=True, help="directory for the canon files, one per stage")
+    parser.add_argument("--into", required=True, help="directory for the annotation files, one per stage")
     arguments = parser.parse_args()
-    print(convert(arguments.data, into=arguments.into).spoken())
+    print(convert(arguments.data, into=arguments.into).summary())
 
 
 if __name__ == "__main__":

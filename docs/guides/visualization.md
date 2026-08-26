@@ -13,7 +13,7 @@ Nothing is kept to make that work. A step **returns** what it produced —
 step's return value to every `on_*_batch_end` hook, per batch. The callback reads
 its own argument: no state on the module, nothing to invalidate, nothing that can
 go stale. The preview is detached, so no autograd graph, no loss and none of the
-backbone's feature streams ride along — returning the `StepResult` itself would
+backbone's feature streams come along — returning the `StepResult` itself would
 carry all three, and 352 MB of outputs alone on a `[16, 21, 512, 512]`
 segmentation batch.
 
@@ -162,7 +162,7 @@ task's fields off in the tree above.
 ## Which tasks are drawn
 
 An annotator is composed from the task's two axes, the same way
-`build_task_components` composes a task's bricks: an **objective** reads
+`build_task_components` composes a task's components: an **objective** reads
 predictions off the class axis, a **topology** turns that reading into labels and
 a verdict.
 

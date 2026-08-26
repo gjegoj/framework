@@ -280,7 +280,7 @@ tasks:
 ```
 
 A preset carries a point on the axes and the metrics that kind is customarily
-judged by — never a loss, since a loss default follows from one axis alone.
+evaluated by — never a loss, since a loss default follows from one axis alone.
 
 New *behaviour* on an axis is a class plus one `register_instance` in
 `objective_registry` or `topology_registry`; a `TaskTopology` also declares
@@ -303,6 +303,10 @@ An encoder is the one place that knows what its column holds, so it also answers
 `facts()` — what fitting revealed — and `distribution()`, which is what the
 dataset report draws. Returning `None` from the latter is a valid answer: the
 report then names the task rather than dropping it.
+
+Encoders live in `src/data/encoders/`, one module per family (`label`,
+`continuous`, `mask`, `boxes`) over `base.py`; a new family is a new module,
+imported from the package's `__init__` so its registration runs with the rest.
 
 ## An exporter
 

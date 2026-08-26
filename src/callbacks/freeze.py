@@ -21,22 +21,17 @@ log = logging.getLogger(__name__)
 class Freeze(BaseFinetuning):
     """Freeze named sub-modules, optionally letting them go partway through training.
 
-    Built on Lightning's ``BaseFinetuning`` rather than on ``requires_grad``
-    directly: unfreezing has to return the parameters to the optimizer's groups,
-    and that is the step hand-rolled freezing usually misses — the weights thaw
-    but never move.
+    Built on Lightning's ``BaseFinetuning``: unfreezing has to return the parameters to the
+    optimizer's groups, the step hand-rolled freezing misses.
 
     Parameters:
-        modules (list[str]): Dot-paths to the modules to hold still, relative to
-            the training module — ``model.backbone``.
-        until (float): How long they are held. A value of 1 or less is a share
-            of the run, so the same setting survives a change of epoch count;
-            a whole number above 1 is an epoch index. The boundary rounds up to
-            a whole epoch, so a declared freeze always holds at least one. The
+        modules (list[str]): Dot-paths to the modules to hold still, relative to the
+            training module — ``model.backbone``.
+        until (float): How long they are held. A value of 1 or less is a share of the run;
+            a whole number above 1 is an epoch index. Rounds up to a whole epoch; the
             default holds for the whole run.
-        train_bn (bool): Keep normalisation layers learning their running
-            statistics while the rest is frozen — usually right, since those
-            statistics describe *this* dataset, not the one pretraining used.
+        train_bn (bool): Keep normalisation layers learning their running statistics while
+            the rest is frozen — those statistics describe *this* dataset.
     """
 
     def __init__(self, modules: list[str], until: float = 1.0, train_bn: bool = True) -> None:

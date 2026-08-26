@@ -86,37 +86,21 @@ class _Engine:
 class TensorRtExporter(Exporter):
     """Builds a serialized TensorRT engine (``.plan``) from the run's deployable graph.
 
-    Targets the TensorRT 10 Python API, through TensorRT's own ONNX parser rather than
-    ``torch_tensorrt``: one dependency instead of two, no coupling to a
-    torch/torch-tensorrt version pair, and the input is the artifact ``OnnxExporter``
-    already proves. The intermediate graph goes to a temporary file — a run that asked
-    for an engine did not ask for an ONNX file beside it.
-
-    An engine is hardware- and TensorRT-version-specific, so it is built on the node
-    that will serve it, or one matching it. That is also why ``tensorrt`` is not a
-    declared dependency: it cannot be locked from a machine that cannot run it, and a
-    missing one is reported here with the command that fixes it.
-
-    **Unverified on macOS**, where NVIDIA ships no build: measured, ``tensorrt`` on PyPI
-    is a source stub whose build backend downloads a wheel from NVIDIA's own index, and
-    that index offers manylinux and Windows only. This backend's first real execution is
-    on a CUDA node, and it should be read as such.
+    Through TensorRT's own ONNX parser rather than ``torch_tensorrt``: one dependency, and
+    the input is the artifact ``OnnxExporter`` already proves. An engine is hardware- and
+    version-specific, so it is built on the node that serves it, and ``tensorrt`` is not a
+    declared dependency. **Unverified on macOS**, where NVIDIA ships no build. The
+    optimization profile is a batch range: the graph already pins channels and spatial size.
 
     Parameters:
-        precision (str): ``fp16`` or ``fp32``. Sets the parity tolerances too,
-            unless they are given.
+        precision (str): ``fp16`` or ``fp32``; sets the parity tolerances unless given.
         min_batch (int): Smallest batch the engine accepts.
         opt_batch (int): Batch it is tuned for.
         max_batch (int): Largest batch it accepts.
         opset_version (int): Operator set of the ONNX the engine is parsed from.
         atol (float | None): Absolute parity tolerance; ``None`` follows ``precision``.
         rtol (float | None): Relative parity tolerance; ``None`` follows ``precision``.
-        workspace_size (int | None): Builder scratch budget in bytes; ``None``
-            leaves TensorRT's own default.
-
-    The optimization profile is a batch range rather than full ``[N, C, H, W]``
-    triples: the exported graph pins channels and spatial size, so a shape triple
-    would only restate what the model already fixed, with room to disagree.
+        workspace_size (int | None): Builder scratch budget in bytes; ``None`` is TensorRT's default.
     """
 
     def __init__(

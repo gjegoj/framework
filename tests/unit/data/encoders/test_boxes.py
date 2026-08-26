@@ -1,4 +1,4 @@
-"""The boxes encoder: an objects cell into the pair the pipeline rides, then ``Instances``."""
+"""The boxes encoder: an objects cell into the pair the pipeline transforms, then ``Instances``."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ import torch
 
 from src.core import Geometry, Instances
 from src.core.entities import ClassDistribution
-from src.data import BoxesTargetEncoder
+from src.data.encoders import BoxesTargetEncoder
 
 CELL: list[dict[str, Any]] = [
     {"box": [1.0, 2.0, 5.0, 6.0], "class": "dog"},

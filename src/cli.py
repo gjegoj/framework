@@ -28,8 +28,7 @@ def main(composed: DictConfig) -> None:
     """Compose config, assemble the experiment, and run it.
 
     Hydra is confined to this module — it composes the YAML groups and applies CLI
-    overrides, and everything below receives one validated ``ExperimentConfig``, the way
-    Lightning stays inside ``training/`` and pydantic inside ``config/``::
+    overrides, and everything below receives one validated ``ExperimentConfig``::
 
         uv run main.py experiment=examples/classification
         uv run main.py experiment=examples/classification lr=3e-4 trainer.max_epochs=50

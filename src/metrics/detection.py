@@ -41,20 +41,14 @@ _INDEX = "classes"
 class MeanAveragePrecisionOverInstances(WrappedMetric):
     """Mean average precision, taking ``Instances`` on both sides and publishing a family.
 
-    A ``WrappedMetric`` rather than a second ``MetricSet``: the input shape is knowledge
-    of the metric, so the metric set stays a pass-through and every other metric is
-    unaffected. Its ``compute`` returns ``PerClass`` for the per-class readings, which is
-    the whole of how a metric says what its value means.
-
-    torchmetrics computes all fifteen of its readings in one pass, so asking for three
-    costs exactly what asking for one would. A second entry earns its place only when its
-    *arguments* differ.
+    A ``WrappedMetric`` rather than a second ``MetricSet``: the input shape is knowledge of
+    the metric. ``compute`` returns ``PerClass`` for the per-class readings. torchmetrics
+    computes all fifteen readings in one pass, so asking for three costs what one would.
 
     Parameters:
-        readings (Sequence[str]): Which of the computed readings to publish. Each becomes
-            a key of its own under the entry's label, so they share one graph.
-        **kwargs (Any): Forwarded verbatim to ``MeanAveragePrecision`` — ``iou_thresholds``,
-            ``max_detection_thresholds``, ``rec_thresholds`` and the rest stay reachable.
+        readings (Sequence[str]): Which computed readings to publish; each becomes a key
+            under the entry's label, so they share one graph.
+        **kwargs (Any): Forwarded verbatim to ``MeanAveragePrecision`` (``iou_thresholds``, ...).
     """
 
     higher_is_better = True

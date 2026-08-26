@@ -1,6 +1,6 @@
 # Metrics
 
-How a task is judged. The short answer is usually: not at all — every *kind of
+How a task is evaluated. The short answer is usually: not at all — every *kind of
 task* carries a default set, and `metrics:` is an override.
 
 ## Where defaults come from
@@ -9,14 +9,14 @@ Two levels, and the upper replaces the lower — declared metrics always win:
 
 1. Declared `metrics:` — always wins, and replaces rather than merges, so a
    set can be narrowed.
-2. The *kind of task*: the preset carries the judgment customary for it —
+2. The *kind of task*: the preset carries the metrics customary for it —
    `classification` brings `f1`/`precision`/`recall` (per class) plus a
    `confusion_matrix`, `regression` brings `mae`, `segmentation` adds `iou`
    to that set; metric-learning kinds bring none.
 
 The preset's word is injected when the config loads, so the loaded experiment
 shows the metrics it will run. A task declared with explicit
-`topology`/`objective` claims no kind and therefore no default judgment: it
+`topology`/`objective` claims no kind and therefore no default metrics: it
 declares its own metrics, or runs without.
 
 The presets themselves — which point on the axes each one names, and what else a

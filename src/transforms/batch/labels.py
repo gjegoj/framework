@@ -17,18 +17,11 @@ if TYPE_CHECKING:
 
 
 def class_counts(tasks: Sequence[Task], profile: DataProfile) -> dict[str, int | None]:
-    """How wide each task's target becomes when softened; ``None`` where it already is a number.
+    """How wide each task's target becomes when softened; ``None`` where it is already a number.
 
-    Only class *indices* have to be widened: a price, an indicator vector or a
-    distribution over bins is already something a weighted sum can be taken of. Which of
-    the two a task is follows from its objective, and the width from the profile — so a
-    transform states neither.
-
-    Shared because both transforms that combine targets built exactly this map, the same
-    way, down to a near-identical comment. What they do *not* share is which tasks they
-    can serve at all — a blend has no coherent per-pixel target while a stitch does — so
-    each filters ``tasks`` itself and refuses the rest in its own words, where the reason
-    belongs.
+    Only class indices have to be widened; an indicator vector or a distribution over bins
+    already admits a weighted sum. Which a task is follows from its objective, the width
+    from the profile. Each mixing transform filters ``tasks`` itself and refuses the rest.
     """
     return {
         task.name: profile.require_num_classes(task.name) if task.objective is Objective.MULTICLASS else None

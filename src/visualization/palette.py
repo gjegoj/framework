@@ -25,15 +25,10 @@ _LIGHTNESS: Final = 0.52
 def task_palette(task: str, classes: Sequence[str]) -> dict[str, str]:
     """Map each class to a reproducible hex colour, offset per task.
 
-    Classes are sorted, then spaced 137.508° apart around the hue circle from a
-    per-task offset: deterministic, reproducible, and maximally distinct at any class
-    count, which evenly-spaced slices stop being once a task has twenty classes. One
-    palette colours a task's chips, masks and sidebar swatches alike, so a class is one
-    colour everywhere it appears.
-
-    The task's name seeds the starting hue, so two tasks do not mirror each other's
-    palette; the sort means reordering classes in config cannot recolour a report
-    somebody has already read.
+    Classes are sorted, then spaced 137.508° apart around the hue circle from a per-task
+    offset seeded by the task's name: deterministic, distinct at any class count, and one
+    colour per class everywhere it appears. Reordering classes in config cannot recolour a
+    report somebody has already read.
     """
     offset = _hue_offset(task)
     return {name: _hsl_hex((offset + index * GOLDEN_ANGLE) % 360) for index, name in enumerate(sorted(classes))}

@@ -52,16 +52,10 @@ class _CompiledGraph:
 class TorchScriptExporter(Exporter):
     """Traces the graph with its example inputs and saves it as ``.pt``.
 
-    ``torch.jit`` is deprecated as an authoring API — measured on torch 2.13, ``trace``,
-    ``script``, ``save`` and ``load`` each emit a ``DeprecationWarning`` pointing at
-    ``torch.compile`` / ``torch.export``. The *format* is not deprecated: Triton's
-    ``pytorch_libtorch`` backend loads ``.pt``, which is why this exists and why the
-    notice is silenced around our own calls rather than handed to a user who cannot act
-    on it.
-
-    Tracing only. Measured, ``torch.jit.script`` cannot compile a graph whose forward
-    builds a ``Batch`` — it raises ``OSError: Failed to get source for ...`` — and a
-    knob whose only outcome is a politer failure is not a knob.
+    ``torch.jit`` is deprecated as an authoring API (measured on torch 2.13: every call
+    warns), but the format is not — Triton's ``pytorch_libtorch`` backend loads ``.pt`` —
+    so the notice is silenced around our own calls. Tracing only: measured,
+    ``torch.jit.script`` cannot compile a forward that builds a ``Batch``.
     """
 
     def export(self, model: DeployableModel, example: tuple[Tensor, ...], destination: Path) -> Path:
@@ -94,21 +88,11 @@ def accelerators() -> list[str]:
 def _report_where_it_travels(path: Path, example: tuple[Tensor, ...]) -> None:
     """Run the written artifact on every accelerator this machine has, and say what refused it.
 
-    ``torch.jit.trace`` bakes any tensor computed inside ``forward`` as a constant
-    pinned to the trace device, so an artifact that is perfect on CPU can fail the
-    moment it reaches the accelerator it was written for. Measured on a timm ViT
-    with rotary embeddings and ``dynamic_img_size=True``: correct on CPU, refused
-    after ``.to()``, and refused again under ``map_location`` — the workaround
-    usually recommended for it. Built statically (``dynamic_img_size: false`` with
-    an explicit ``img_size``) the same model travels.
-
-    Measured rather than recognised: sniffing a model for the attributes that
-    cause it would name one cause of a general problem and would tie this file to
-    another library's internals.
-
-    Said rather than raised: the artifact is honest on the device it was traced
-    on, and one accelerator's limits do not predict another's — the same file was
-    refused by MPS over a float64 constant, a dtype CUDA supports.
+    ``torch.jit.trace`` bakes tensors computed inside ``forward`` as constants pinned to the
+    trace device, so an artifact perfect on CPU can fail on the accelerator it was written
+    for (measured on a timm ViT with rotary embeddings and ``dynamic_img_size=True``). Said
+    rather than raised: the artifact is honest on the device it was traced on, and one
+    accelerator's limits do not predict another's.
     """
     for device in accelerators():
         try:

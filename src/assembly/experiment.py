@@ -50,15 +50,10 @@ class Experiment:
 def assemble(config: ExperimentConfig) -> Experiment:
     """Build an experiment from config, in the one order the contract allows.
 
-    What a vendor family cannot serve is refused first, before a dataset is read or a
-    network is built — and so is a task no composed backbone can serve: an hour of
-    training is a long way to carry a section that was never going to apply.
-
-    ``DataModule.setup`` runs before the model is built: that ordering is what
-    lets output sizes come from data instead of from config. It is universal
-    across model families — a vendor data module writes its own facts into the
-    same profile — which is why it stays visible here rather than hiding inside
-    each family. No concrete family is named in this function.
+    What a vendor family or a composed backbone cannot serve is refused first, before a
+    dataset is read. ``DataModule.setup`` runs before the model is built: that ordering is
+    what lets output sizes come from data instead of config, and it holds for every family,
+    which is why it stays visible here. No concrete family is named in this function.
     """
     refuse_what_a_vendor_cannot_serve(config)
     refuse_what_the_composite_family_cannot_serve(config)
@@ -83,16 +78,12 @@ def assemble(config: ExperimentConfig) -> Experiment:
 
 
 def run(experiment: Experiment, config: ExperimentConfig) -> None:
-    """Fit, judge and ship, as the run section asks.
+    """Fit, evaluate and ship, as the run section asks.
 
-    Only ``fit`` is ever handed a checkpoint, and only to continue an interrupted
-    run. Everything after it reads the module, so the weights that are judged and
-    the weights that are shipped are the ones the run actually stopped on —
-    measured, handing the same file to ``test`` reloads it over whatever training
-    produced.
-
-    ``shipped`` is what the run is about: with distillation the module also holds
-    frozen teachers, and they are neither loaded into, nor folded, nor exported.
+    Only ``fit`` is ever handed a checkpoint, and only to continue an interrupted run;
+    everything after it reads the module, so the weights evaluated and shipped are the ones
+    the run stopped on (measured: handing the same file to ``test`` reloads it). ``shipped``
+    excludes a distilled run's frozen teachers.
     """
     # Before anything can fail: what a tracker shows about a run should not depend on
     # the run finishing. Lightning never calls this itself — nothing here saves

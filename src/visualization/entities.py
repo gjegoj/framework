@@ -65,17 +65,9 @@ class Classifications:
 class Regression:
     """One regressed number — FiftyOne's shape exactly.
 
-    Scalar because that is what this framework produces: ``ContinuousObjective``
-    activates through ``squeeze_single_output`` or ``expectation_over``, and both
-    collapse a head's output to one value before any consumer sees it. A head
-    predicting several quantities wants a plural container beside this one, the
-    way ``Classifications`` sits beside ``Classification`` — see the backlog.
-
-    It carries no error field. A draft did, and the error then appeared twice on
-    a cell: once as a delta on the chip and once in the verdict. Ground truth and
-    prediction sit side by side as chips, so the direction of a miss is already
-    readable; how far it missed belongs to the verdict, which is the one thing
-    that can be filtered on.
+    Scalar because that is what this framework produces: ``ContinuousObjective`` collapses
+    a head's output to one value. It carries no error field: the direction of a miss is
+    readable from the two chips, and how far belongs to the verdict, which can be filtered on.
     """
 
     value: float
@@ -109,20 +101,9 @@ type Label = Classification | Classifications | Regression | Segmentation
 class Score:
     """A number a task measured on one sample.
 
-    Named as the framework names it — ``iou``, ``mae``, the keys
-    ``metric_registry`` holds and the presets declare — so the page and the
-    progress table do not call one quantity two things.
-
-    It carries no direction. A draft did, on the argument that
-    ``higher_is_better`` is the framework's own word for one; but the page filters
-    with a two-handle range, which was chosen precisely because a band needs no
-    preferred end, and nothing else ever read the field. A number nobody reads is
-    not a fact, it is a claim — and this one was asserted by the annotator, while
-    ``JaccardIndex.higher_is_better`` is in fact ``None``.
-
-    If a direction-aware view ever arrives — worst-first ordering, a marked end on
-    a slider — it should read ``metric_registry``, which owns the metric, rather
-    than re-deriving it here.
+    Named as the framework names it — ``iou``, ``mae`` — so the page and the progress
+    table call one quantity one thing. It carries no direction: the page filters with a
+    two-handle range, and a direction-aware view should read ``metric_registry``.
     """
 
     name: str
@@ -131,23 +112,12 @@ class Score:
 
 @dataclass(frozen=True, slots=True)
 class Verdict:
-    """How one task judged this sample, structured so no consumer parses a string.
+    """How one task scored this sample, structured so no consumer parses a string.
 
-    ``correct`` is a whole-match answer: ``True`` only when everything the task
-    predicted matches everything that is true, ``False`` when any of it does not,
-    and ``None`` where the task has no binary notion of rightness at all — a
-    regression misses by an amount, it is not wrong. Samples of the last kind stay
-    visible under every correct/wrong filter rather than being judged by a
-    threshold nobody chose.
-
-    ``scores`` are the measured numbers: an IoU, an error magnitude, anything a
-    task can put on a scale. They replaced a free-text summary, which had to be
-    written by the annotator, read by a human, and re-parsed by nothing at all —
-    the number could not be filtered on, and the same value ended up printed twice.
-
-    Plural because a task can measure itself more than one way — a segmentation
-    sample has an IoU and a Dice — and because the page keys its sliders by task
-    *and* metric either way, so one score and several cost the same code.
+    ``correct`` is a whole-match answer: ``True`` only when everything predicted matches,
+    ``False`` when any of it does not, ``None`` where the task has no binary notion of
+    rightness (a regression misses by an amount). ``scores`` are the measured numbers — an
+    IoU, an error — plural because a task can measure itself more than one way.
     """
 
     correct: bool | None = None
@@ -158,22 +128,11 @@ class Verdict:
 class SampleView:
     """One sample projected for display: what it shows and what was said about it.
 
-    The framework-agnostic middle layer between annotators (torch) and a renderer
-    (HTML) — plain dataclasses over numpy and stdlib, so either side can change without
-    the other noticing. The label names are FiftyOne's, read from its API; the library
-    itself is not a dependency, being a database-backed application whose labels are
-    documents that cannot exist outside a ``Dataset``.
-
-    ``media`` is keyed by input alias, as ``Batch.inputs`` is, because a sample may have
-    more than one — a CLIP-style run has an image beside a caption, and a grid that drew
-    only the first would halve what the run is about.
-
-    ``fields`` is keyed by a structural ``(task, kind)`` tuple, never a glued string:
-    the flat form a browser needs is built once at the HTML boundary and never read
-    back, so a task named with an underscore cannot scramble it.
-
-    Mutable on purpose: each task's annotator writes its fields and verdict in turn, and
-    the renderer reads the finished view.
+    The framework-agnostic layer between annotators (torch) and a renderer (HTML): plain
+    dataclasses over numpy and stdlib. Label names are FiftyOne's; the library itself is
+    not a dependency. ``media`` is keyed by input alias, as ``Batch.inputs`` is; ``fields``
+    by a structural ``(task, kind)`` tuple, never a glued string. Mutable on purpose: each
+    task's annotator writes its fields and verdict in turn.
     """
 
     media: dict[str, Media] = field(default_factory=dict)

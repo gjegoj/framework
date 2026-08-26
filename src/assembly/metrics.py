@@ -26,16 +26,10 @@ def build_metric_sets(
 ) -> dict[Stage, MetricSet]:
     """Build one independent ``MetricSet`` per stage for a task.
 
-    Each entry is keyed by the *label* the metric logs under, and its value
-    names the metric explicitly — ``name`` (a registry key) or ``_target_`` (an
-    import path) — which is what lets two flavours of one metric stand side by
-    side (``f1_macro`` / ``f1_micro``). ``None`` builds an empty set: defaults
-    are the preset's word, injected when the config loads — a task built
-    without a kind declares its own judgment.
-
-    The objective's ``metric_kwargs`` (task mode, class counts from ``facts``)
-    are offered as derived values: a metric receives the ones it names, so
-    ``mae`` beside ``accuracy`` is not handed a ``task`` it would refuse.
+    Each entry is keyed by the label it logs under and names the metric explicitly, so two
+    flavours of one metric stand side by side (``f1_macro`` / ``f1_micro``). ``None`` builds
+    an empty set: defaults are the preset's, injected when the config loads. The objective's
+    ``metric_kwargs`` are offered as derived values; a metric receives the ones it names.
     """
     behaviour = objective_registry.create(objective)
     components = dict(metrics) if metrics is not None else {}

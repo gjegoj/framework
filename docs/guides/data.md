@@ -17,11 +17,11 @@ data:
 Three things are implied here and worth knowing:
 
 - the reader is inferred from the extension (`.csv` → `csv`, `.json` → `json`,
-  `.jsonl` → `jsonl`, the JSON-Lines carrier a detection canon is written in);
+  `.jsonl` → `jsonl`, the JSON-Lines format a detection annotation file is written in);
 - the loader defaults to `image`, this being a vision framework;
 - the target encoder follows from each task's preset — see [Targets](#targets).
 
-### Where a detection canon comes from
+### Where a detection annotation file comes from
 
 A `.jsonl` annotation file is written once, offline, by a converter — never at
 training time:

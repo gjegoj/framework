@@ -1,4 +1,4 @@
-"""A student trained beside frozen teachers, judged additionally against their logits."""
+"""A student trained beside frozen teachers, with an extra loss against their logits."""
 
 from __future__ import annotations
 
@@ -22,31 +22,18 @@ if TYPE_CHECKING:
 class DistilledModel(Model):
     """The student, plus a soft loss against the averaged logits of frozen teachers.
 
-    A decorator over ``Model`` rather than a second training module, because
-    distillation adds one term to a step and changes nothing else: ``step`` returns the
-    student's step with the soft term added, and the prediction, the per-task
-    parameters and inference stay the student's own. Off training the teachers do not
-    run at all, which keeps a validation loss comparable with an undistilled run's.
-
-    The soft term is an ordinary loss term — scoped to its task, logged under its own
-    name beside the hard one, carrying its own weight — so nothing here multiplies
-    anything.
-
-    The teachers are held **outside** the module tree on purpose: registered, a frozen
-    model would be written into every checkpoint and copied again by the EMA callback,
-    which averages the whole module. The price is that Lightning never moves them, paid
-    per step by aligning them to the student's own device and dtype, read fresh each
-    time so nothing drifts between what a hook assumed and what the trainer did.
+    A decorator over ``Model``: ``step`` returns the student's step with the soft term added
+    (an ordinary loss term, scoped to its task, logged under its own name, carrying its own
+    weight); prediction, per-task parameters and inference stay the student's. Off training
+    the teachers do not run. The teachers are held *outside* the module tree — registered,
+    they would be written into every checkpoint and averaged by the EMA callback — so they
+    are aligned to the student's device and dtype on every step.
 
     Parameters:
         student (Model): The model being trained; everything but the loss is its own.
-        teachers (Sequence[Model]): Frozen soft-target providers. Their raw logits
-            are averaged, so one teacher is a one-element sequence rather than a
-            case of its own.
+        teachers (Sequence[Model]): Frozen soft-target providers; their raw logits are averaged.
         criterion (Criterion): How student and teacher logits are compared —
-            ``kl_divergence`` and its temperature, or anything else with the port.
-            How strongly the comparison pulls is the criterion's own weight, the
-            way every other loss term in this framework carries its own.
+            ``kl_divergence`` and its temperature; its weight is the criterion's own.
     """
 
     STUDENT: ClassVar[str] = "student"
@@ -63,7 +50,7 @@ class DistilledModel(Model):
         if not teachers:
             raise ValueError("DistilledModel needs at least one teacher; without one there is nothing to distil from.")
         self.student = student
-        # A plain list, not a ModuleList: registered, these frozen models would ride
+        # A plain list, not a ModuleList: registered, these frozen models would be written
         # into every checkpoint and into the EMA callback's copy of the module.
         self.teachers = list(teachers)
         for teacher in self.teachers:
@@ -141,15 +128,9 @@ def _logits_of(model: Model, prediction: Prediction) -> dict[str, Tensor]:
 
 
 def without_teachers(model: Model) -> Model:
-    """What a run is about once training is over: the student, without its scaffolding.
+    """The student without its scaffolding — what a run is about once training is over.
 
-    A checkpoint carries the shipped model's own keys, and those do not load into
-    the decorator — so restoring the epoch a run kept has to go through this.
-    Export goes through it too, though the teachers are already invisible there
-    (measured: a traced graph carries what is registered, and they are held in a
-    plain list); the call says so where a reader looks, and keeps saying it if
-    that ever changes.
-
-    Returns anything that is not distilled unchanged, so no caller branches.
+    A checkpoint carries the student's own keys, which do not load into the decorator, so
+    restoring and exporting go through this. Returns anything not distilled unchanged.
     """
     return model.student if isinstance(model, DistilledModel) else model

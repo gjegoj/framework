@@ -69,96 +69,23 @@ usable spread is under a kelvin, for less than half the time.
 class MaskedPlanckianJitter(A.CustomTransformsApplyMixin, A.ImageOnlyTransform):
     """Warm the image towards candlelight inside one mask, patchily, and report the mean.
 
-    ``A.PlanckianJitter`` warms the whole frame to one temperature; this warms only
-    where a mask says the object is, varies the warmth *within* that region, and writes
-    the region's mean temperature into a bound label. So a run learns to read the warmth
-    of a region rather than of a photograph — the rest of the frame stays as it was and
-    cannot be used as a shortcut.
-
-    Three things decide whether the patchiness is actually visible, and all three had
-    to be got right before it was:
-
-    - **The swing is spread by area, not by value.** A plasma field's values cluster:
-      measured, 73% of a region's pixels land in the middle third of its own range, so
-      stretching that range across the swing leaves almost the whole region at one
-      intensity — which is exactly what it looked like. Ranking the values instead gives
-      every intensity an equal share of the area, and the patches appear.
-    - **The swing is measured inside the mask.** The generator spans ``[0, 1]`` over the
-      whole *image*, so a small region catches only a sliver of it — measured, a mask
-      covering 1% of the frame realised 33% of the spread it asked for. Equalising
-      within the mask makes ``spread`` mean the same thing at any region size.
-    - **``temperature_range`` bounds the label, not the pixels.** The swing runs past it
-      and is clipped by the coefficient table instead. Bounding both with one number is
-      what used to force a wide swing into the middle of the range, where the ratio is
-      flat and nothing shows.
-
-    **The label is the region's mean temperature, measured rather than assumed.** It is
-    read off the finished field, so clipping at the table's edge cannot make it lie —
-    a centre near 3000 K loses the cold half of its swing, and the label says so.
-
-    The label carries **kelvin**, which is worth two sentences because both are easy to
-    be surprised by. It runs *backwards* to the effect: 3000 is the most yellow and 6500
-    the least. And ``ScalarTargetEncoder`` passes a continuous target through as
-    ``float(value)``, so a regression head sees raw kelvin rather than something around
-    zero — scale it in the encoder, not here, where the number would stop meaning what
-    its name says.
-
-    An **empty mask draws no warmth**: there is nothing to warm, so the image comes back
-    untouched and the label reports the cool end of the range rather than a temperature
-    nothing was warmed to. Labelling an unchanged image as warmed is the same defect
-    ``RandomBorderCrop.min_crop`` exists to prevent, met from the other side — there, a
-    crop too small to see; here, a region with no pixels in it.
-
-    The mask itself is **not** modified: this is an ``ImageOnlyTransform``, so a spatial
-    target reaches it as data and leaves as it arrived. Its edge stays hard — the warmth
-    stops where the mask does. Feathering that boundary is a separate decision, and a
-    real one for a mask that came from ground truth, where the step lines up with the
-    object exactly.
-
-    Bind the label with ``AlbumentationsTransform(label_targets=["warmth"])``, and carry
-    the mask as an auxiliary input — ``data.auxiliary_inputs: {lesion: {column: mask_path}}``
-    reaches the pipeline on its own, and never reaches the batch. A mask that is *also* a
-    segmentation target arrives the same way through the target geometries assembly
-    derives from its encoder; ``mask_key`` reads either, and names which one this
-    augmentation is about.
+    ``A.PlanckianJitter`` warms the whole frame; this warms only where a mask says the
+    object is, varies the warmth within the region, and writes the region's mean temperature
+    (kelvin; 3000 is the most yellow) into a bound label. An empty mask warms nothing and the
+    label says the cool end. Bind the label with
+    ``AlbumentationsTransform(label_targets=["warmth"])`` and carry the mask as an auxiliary input.
 
     Parameters:
-        mask_key (str): Which of the sample's mask-geometry arrays bounds the warmth. Named
-            rather than guessed: a sample may carry several masks, and only the
-            experiment knows which one this augmentation is about.
-        temperature_range (tuple[int, int]): Kelvin the region's **mean** is drawn from,
-            inclusive at both ends. Individual pixels run past it by up to half the
-            spread; the coefficient table is what bounds them.
-        spread (int | tuple[int, int]): The full width, in kelvin, of the swing across
-            the region — so a pixel sits at most half of it from the drawn centre. A
-            single number is that width every time; a range draws a fresh width per
-            application, so one sample is even and the next is mottled. ``0`` warms
-            the region evenly, which is ``planckian_jitter`` exactly.
-        tint (float): How far, as a fraction, each channel's gain may wander off the
-            planckian locus — every application draws one gain per channel from
-            ``[1 - tint, 1 + tint]`` and multiplies it into the warming. ``0.1`` is a
-            visible cast; the locus itself only ever trades red against blue, so this
-            is where any green-versus-magenta variety comes from. **The cast follows
-            the warmth, per pixel**: at 3000 K a gain applies whole, halfway it
-            applies by half, and at 6500 K it is gone — a cast is a property of the
-            illumination, so where nothing warms, nothing tinges, and a cool sample
-            stays the original. Multiplicative rather than an additive ``RGBShift``
-            on purpose: gains compose with the planckian coefficients as one
-            illumination and leave black pixels black, where an additive shift would
-            tint pigment that reflects no light. The label does not report it — the
-            tint is nuisance variation, there so the regression cannot pin its answer
-            to one exact hue.
-        roughness (float | tuple[float, float]): How fine the patches are, in
-            ``[0, 1]``. Measured by the correlation between neighbouring pixels:
-            ``0.1`` gives one broad gradient (0.99), ``0.5`` a few large patches
-            (0.90), ``0.9`` a fine mottle (0.37). A single number is that texture
-            every time; a range draws a fresh one per application, so one sample
-            fades across and the next is mottled.
-        mode (Mode): ``blackbody`` follows an ideal radiator, ``cied`` the CIE daylight
-            series — which starts at 4000 K and so cannot reach the warmest end.
-        p (float): Probability of warming at all. Below 1, the label keeps whatever the
-            dataset gave it on the samples that are skipped, so that value has to
-            already mean "not warmed".
+        mask_key (str): Which of the sample's mask arrays bounds the warmth.
+        temperature_range (tuple[int, int]): Kelvin the region's mean is drawn from, inclusive.
+        spread (int | tuple[int, int]): Full width, in kelvin, of the swing across the region;
+            a range draws a fresh width per application. ``0`` warms evenly.
+        tint (float): How far each channel's gain may wander off the planckian locus; the
+            cast follows the warmth per pixel and is not reported in the label.
+        roughness (float | tuple[float, float]): How fine the patches are, in ``[0, 1]``.
+            Measured by neighbour correlation: ``0.1`` one broad gradient, ``0.9`` fine mottle.
+        mode (Mode): ``blackbody`` or ``cied`` (starts at 4000 K, cannot reach the warmest end).
+        p (float): Probability of warming at all; skipped samples keep the dataset's label.
     """
 
     def __init__(
@@ -285,28 +212,12 @@ def _warmed(
 ) -> np.ndarray:
     """The warmed pixels, each at its own temperature; ``pixels`` is ``[N, 3]``.
 
-    The coefficients come from the table ``planckian_jitter`` itself reads, and are
-    interpolated as whole ``[r, g, b]`` triples then divided by green *afterwards* —
-    which is the order the vendor uses. Interpolating the two ratios directly is the
-    intuitive reading and the wrong one: measured, it drifts up to 0.005 in the blue
-    multiplier, and blue is where nearly all the yellowing lives.
-
-    Two deliberate departures from ``planckian_jitter``, both anchored at ``COOLEST``:
-
-    - **The multipliers are normalised to their value at 6500 K**, so a pixel whose
-      field says neutral is the original byte for byte — see ``COOLEST`` for why the
-      vendor's own table would brighten it by 4% instead, and what that teaches a model.
-    - **The tint fades with the warmth, per pixel**: each gain is pulled towards one by
-      how close that pixel's temperature is to neutral. A cast is a property of the
-      illumination, and a lamp too weak to yellow is too weak to tinge — without this,
-      a ±15% gain would dwarf the 8% shift that is all a 6000 K pixel gets.
-
-    The cast truncates, as the vendor's uint8 lookup table does — measured, rounding
-    instead disagrees on 29% of channels by one grey level — while on a float image
-    the same expression is no cast at all.
-
-    Only the warmed pixels are passed in, so the cost follows the region rather than the
-    frame: a lesion covering a twentieth of a 512×512 image does a twentieth of the work.
+    Coefficients are interpolated as ``[r, g, b]`` triples then divided by green, the
+    vendor's order — measured, interpolating the ratios directly drifts the blue multiplier
+    by 0.005. Two departures from ``planckian_jitter``, both anchored at ``COOLEST``: the
+    multipliers are normalised to 6500 K so a neutral pixel is the original byte for byte,
+    and the tint fades with the warmth per pixel. The cast truncates as the vendor's uint8
+    table does. Only the warmed pixels are passed in, so the cost follows the region.
     """
     table = PLANCKIAN_COEFFS[mode]
     temperatures = np.array(sorted(table), dtype=np.float64)

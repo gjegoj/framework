@@ -41,7 +41,7 @@ class InputColumn:
     column: str
     loader: InputLoader
     geometry: Geometry = Geometry.IMAGE
-    """How the loaded value rides augmentation geometry — light, or per-pixel labels.
+    """How the loaded value is transformed with the image — light, or per-pixel labels.
 
     Taken from the loader's own class-level marker at build time — never written by
     hand — and read by assembly to give the column its treatment in the augmentation

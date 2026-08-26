@@ -29,14 +29,10 @@ AdaptersConfig = ComponentConfig
 class ExperimentConfig(BaseModel):
     """The single validated source of truth for one experiment.
 
-    Validation happens exactly once, at ``load_config``; everything downstream
-    works with this object and never re-parses raw dicts. Structural sections
-    reject unknown keys (typo protection); forward sections (loader, trainer)
-    and components keep them as pass-through knobs.
-
-    ``model`` is a plain component: one shape for every model family, with the
-    family following from the name rather than a switch field. Heads are never
-    configured — they are derived from tasks and sized from data facts.
+    Validation happens exactly once, at ``load_config``; nothing downstream re-parses raw
+    dicts. Structural sections reject unknown keys; forward sections (loader, trainer) and
+    components keep them as pass-through knobs. ``model`` is a plain component, the family
+    following from the name; heads are derived from tasks and sized from data facts.
     """
 
     model_config = ConfigDict(extra="forbid")

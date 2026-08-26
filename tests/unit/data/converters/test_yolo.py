@@ -1,4 +1,4 @@
-"""The yolo converter: a labels tree into the canon — denormalised, validated aloud, stable."""
+"""The yolo converter: a labels tree into the annotation file — denormalised, validated aloud, stable."""
 
 from __future__ import annotations
 

@@ -49,18 +49,10 @@ def _report_table(task: str, measures: str) -> Table:
 class DatasetSummary(L.Callback):
     """Report the dataset's size and target distributions once, before anything runs.
 
-    The presentation half of the report: the data module *counts* through
-    ``statistics()``, this *shows*. Two audiences get the same numbers by different
-    routes — a table in the terminal, where someone is watching the run start, and a
-    chart in the tracker, where someone compares two runs a week later.
-
-    Lifecycle only. What a distribution looks like is decided by the
-    ``DistributionReporter`` registered under the distribution's own type, so a new
-    kind of distribution is one reporter class and no edits anywhere else.
-
-    Asked of the ``DataModule`` port, which every pipeline answers — one that cannot
-    describe its data returns an empty record, and a task whose encoder describes
-    nothing is named rather than dropped.
+    The data module *counts* through ``statistics()``, this *shows* — a table in the
+    terminal and a chart in the tracker. What a distribution looks like is decided by the
+    ``DistributionReporter`` registered under its type, so a new kind is one reporter class.
+    A pipeline that cannot describe its data returns an empty record.
 
     Parameters:
         title (str): The tracker title the charts land under.
@@ -127,8 +119,7 @@ def _shape_of(per_stage: Mapping[Stage, Distribution]) -> Distribution:
 class DistributionReporter[D: Distribution](ABC):
     """Everything one kind of distribution knows about being reported.
 
-    ``table`` and ``chart`` live on one class so a kind cannot register one and
-    forget the other — the guarantee two dispatch tables used to keep by hand.
+    ``table`` and ``chart`` live on one class so a kind cannot register one and forget the other.
     """
 
     @abstractmethod

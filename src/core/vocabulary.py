@@ -11,19 +11,9 @@ if TYPE_CHECKING:
 def ordered_names(classes: Mapping[int, str]) -> list[str]:
     """Index-keyed names as the list their order means; loud on a broken range.
 
-    A declared vocabulary *is* the index space a model's outputs live in, so it has to be
-    complete and unambiguous. A gap shifts every class above it by one; a repeated name
-    makes two of them indistinguishable in every report the run writes. Both fail in
-    silence — the run trains, and reports, against a class space nobody meant.
-
-    Here rather than at either of its callers, because a vocabulary is declared in two
-    places: on a task, where pydantic validates the section, and to an encoder built
-    directly from Python. Those two carried the same two rules and near-identical
-    messages, with a comment on one of them saying it mirrored the other. One rule, one
-    message, one test.
-
-    Parameters:
-        classes (Mapping[int, str]): The declared vocabulary, index to name.
+    A declared vocabulary is the index space the model's outputs live in: a gap shifts every
+    class above it, a repeated name makes two classes indistinguishable in every report, and
+    both fail silently. One rule and one message for both places a vocabulary is declared.
 
     Raises:
         ValueError: On a gap in the indices, or on a duplicated name.

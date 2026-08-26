@@ -68,25 +68,17 @@ class BinaryCrossEntropyCriterion(WrappedCriterion):
 class FocalLoss(nn.Module):
     """Multiclass focal loss on logits: cross-entropy that fades on easy examples.
 
-    ``-alpha_t * (1 - p_t) ** gamma * log p_t``, where ``p_t`` is the
-    probability the model assigns to the target. The class dimension is always
-    dim 1, and everything after it rides along — one module serves ``[B, C]``
-    against ``[B]`` and ``[B, C, H, W]`` against ``[B, H, W]`` alike.
-
-    A soft target — the share of each class a mixed sample carries — is taken
-    as the weighting of ``log p`` and of ``alpha``; for a one-hot target that
-    is exactly the hard formula, so the two arrivals of a multiclass target
-    need no flag to tell apart, only their dtype.
+    ``-alpha_t * (1 - p_t) ** gamma * log p_t``. The class dimension is dim 1 and the rest
+    is carried along, so one module serves ``[B, C]`` and ``[B, C, H, W]`` alike. A soft
+    target (a mixed sample's class shares) weights ``log p`` and ``alpha``; for a one-hot
+    target that is exactly the hard formula, so the two need no flag, only their dtype.
 
     Parameters:
-        alpha (list[float] | None): Per-class weights, length C. ``None`` keeps
-            classes equal.
+        alpha (list[float] | None): Per-class weights, length C. ``None`` keeps classes equal.
         gamma (float): How hard easy examples fade; 0 recovers cross-entropy.
         reduction (str): ``mean``, ``sum`` or ``none``.
-        eps (float): Floor for the focal base ``1 - p_t``. A fully learned
-            sample rounds ``p_t`` to exactly 1.0 in fp32, and ``pow``'s
-            backward at a zero base is infinite for ``gamma < 1`` — a domain a
-            gamma annealed from 0 crosses, so it has to stay differentiable.
+        eps (float): Floor for ``1 - p_t``: at ``p_t == 1.0`` in fp32, ``pow``'s backward is
+            infinite for ``gamma < 1``, a domain an annealed gamma crosses.
     """
 
     alpha: Tensor | None
@@ -138,14 +130,11 @@ class FocalLoss(nn.Module):
 class FocalCriterion(WrappedCriterion):
     """Focal loss as a criterion — see :class:`FocalLoss` for the math and every knob.
 
-    Multiclass across both topologies, hard or mixed targets; ``gamma`` is a plain
-    number, so the ``anneal`` callback can move it over the run. For the binary and
-    multilabel forms, reach ``smp.losses.FocalLoss`` by import path instead of growing
-    modes here.
+    ``gamma`` is a plain number, so the ``anneal`` callback can move it over the run. For
+    the binary and multilabel forms, reach ``smp.losses.FocalLoss`` by import path.
 
     Parameters:
-        **kwargs: Forwarded verbatim to :class:`FocalLoss` (``alpha``, ``gamma``,
-            ``reduction``, ``eps``).
+        **kwargs: Forwarded verbatim to :class:`FocalLoss` (``alpha``, ``gamma``, ``reduction``, ``eps``).
     """
 
     part_name: ClassVar[str] = "focal"

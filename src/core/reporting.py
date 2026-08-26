@@ -1,25 +1,10 @@
 """What a run reports, the backends that can show it, and the routing between them.
 
-The three used to sit in three files: a ``Matrix`` in ``entities``, the
-``MatrixLogger`` that draws one in ``ports``, and the router that matches them here.
-Four such pairs were split that way, so adding a kind of artifact meant editing three
-places and reading three to understand one.
-
-They are here together because they are one vocabulary and have exactly one another as
-dependencies. An artifact arrives **completed** — whoever built it knew the metric, and a
-backend draws what it is handed without asking what the numbers mean — so the entities
-carry no behaviour and the ports carry no types of their own.
-
-The ports are six role interfaces rather than one media-typed ``ArtifactLogger``:
-each carries the typed entity its backend draws, and a payload-agnostic port would lose
-that check. Collapsing them is the right move at the *second page-shaped* artifact, when
-they would start naming file formats rather than kinds of picture — see the backlog.
-
-**An artifact a metric returns is not frozen**, and the three that do are the only ones.
-torchmetrics walks whatever ``compute`` returns with ``apply_to_collection``, which
-refuses a frozen dataclass outright — measured, the alternative is not returning artifacts
-from metrics at all, which is the mechanism that lets a metric simply say what its value
-means. ``Bars`` and ``BoxPlot`` never pass through a metric and stay frozen.
+One vocabulary in one place: an artifact arrives completed, so entities carry no behaviour
+and ports carry no types of their own. The ports are six role interfaces rather than one
+``ArtifactLogger`` so each carries the typed entity its backend draws. Artifacts a metric
+returns are not frozen — measured: torchmetrics' ``apply_to_collection`` refuses a frozen
+dataclass; ``Bars`` and ``BoxPlot`` never pass through a metric and stay frozen.
 """
 
 from __future__ import annotations
@@ -44,18 +29,11 @@ log = logging.getLogger(__name__)
 
 @dataclass(slots=True)
 class PerClass:
-    """Values a metric produced per class, carrying which classes they are about.
+    """Values a metric produced per class, with which classes they are about.
 
-    Mutable for the reason the module docstring gives, as every artifact a metric
-    returns is.
-
-    Position is *not* the class index. COCO's ``map_per_class`` covers only the classes
-    that appeared and reads its own ``classes`` tensor to say which; named by position it
-    would put one class's number under another's name, which is the kind of wrong nobody
-    catches by reading a chart.
-
-    A dense reading is the case where ``classes`` is ``arange(len(values))``, so there is
-    one shape here rather than two kept in step by hand.
+    Position is *not* the class index: COCO's ``map_per_class`` covers only the classes that
+    appeared and says which in ``classes``; a dense reading has ``classes == arange(len(values))``.
+    Mutable, as every artifact a metric returns is (see the module docstring).
     """
 
     values: Tensor
@@ -72,17 +50,10 @@ class PerClass:
 class Curve:
     """A curve metric's plotted lines, already oriented for drawing.
 
-    PR and ROC tuples share one geometry with opposite axis orientation —
-    ``(precision, recall, _)`` against ``(fpr, tpr, _)`` — so orientation is
-    stated by the metric that knew it, never guessed from tuple order. One
-    entry per class; a binary metric carries a single line for the *positive*
-    class and says so.
-
-    ``series is None`` means the lines live in the task's class space — the
-    router fills the names; a metric whose lines mean something else sets its
-    own, and task context never touches them.
-
-    Mutable for the reason the module docstring gives.
+    PR and ROC share one geometry with opposite axes, so orientation is stated by the metric
+    that knew it. One entry per class; a binary metric carries the positive class's line.
+    ``series is None`` means the lines live in the task's class space and the router fills
+    the names. Mutable, as every artifact a metric returns is.
     """
 
     x: tuple[Tensor, ...]
@@ -103,11 +74,8 @@ class Curve:
 class Matrix:
     """A drawable 2-D artifact, axes named by the metric that knew them.
 
-    ``labels is None`` means the index space is the task's classes — the
-    router fills the names; a metric whose axes mean something else sets its
-    own, and task context never touches them.
-
-    Mutable for the reason the module docstring gives.
+    ``labels is None`` means the index space is the task's classes and the router fills the
+    names. Mutable, as every artifact a metric returns is.
     """
 
     value: Tensor
@@ -120,12 +88,8 @@ class Matrix:
 class Bars:
     """Named quantities drawn as grouped bars — a class balance across stages.
 
-    One series per group and one value per label within it, so a reader sees the
-    three splits side by side and a class missing from one of them is a gap rather
-    than a number to hunt for.
-
-    Arrives completed, as ``Matrix`` and ``Curve`` do: the backend draws what it is
-    handed and never asks what the numbers mean.
+    One series per group and one value per label within it, so a class missing from one
+    split is a gap rather than a number to hunt for.
     """
 
     series: tuple[str, ...]
@@ -139,14 +103,9 @@ class Bars:
 class BoxPlot:
     """Five-number summaries drawn as boxes — one per series, on shared axes.
 
-    Carries the ``ValueDistribution``s themselves rather than a copy of their six
-    numbers: the box *is* the summary, so a parallel record would be two things to keep
-    in step by hand and nothing else.
-
-    The whiskers are the observed **minimum and maximum**, not Tukey's 1.5 IQR fences
-    with outlier points beyond them — finding outliers needs the raw values, and those
-    are a whole column held in memory for a picture drawn once. Said here because a box
-    plot is normally read as Tukey's.
+    Carries the ``ValueDistribution``s themselves, not a copy of their numbers. Whiskers are
+    the observed minimum and maximum, not Tukey's fences: outliers would need the raw values
+    held in memory for a picture drawn once.
     """
 
     series: tuple[str, ...]
@@ -166,10 +125,7 @@ class CurveLogger(Protocol):
 class MatrixLogger(Protocol):
     """A backend that can draw a 2-D matrix artifact.
 
-    Structural on purpose: a backend qualifies by having the method, and a
-    consumer narrows the active logger with ``isinstance`` — a backend without
-    it simply keeps its scalars. The artifact crosses whole, so a new field on
-    ``Matrix`` never changes this signature.
+    Structural: a backend qualifies by having the method, and one without it keeps its scalars.
     """
 
     def log_matrix(self, title: str, matrix: Matrix, iteration: int) -> None: ...
@@ -177,11 +133,7 @@ class MatrixLogger(Protocol):
 
 @runtime_checkable
 class BarsLogger(Protocol):
-    """A backend that can draw grouped bars — a dataset's class balance across stages.
-
-    One port per kind of picture, each carrying the typed entity a backend draws,
-    rather than one media-typed artifact port whose payload would lose its type.
-    """
+    """A backend that can draw grouped bars — a dataset's class balance across stages."""
 
     def log_bars(self, title: str, bars: Bars, iteration: int) -> None: ...
 
@@ -208,9 +160,8 @@ class SingleValueLogger(Protocol):
 class HtmlLogger(Protocol):
     """A backend that can carry a self-contained HTML page as a run artifact.
 
-    The fourth artifact port beside matrices, curves and single values, and the
-    same bargain: a tracker that can show a page gets one, a tracker that cannot
-    is told so once instead of failing a run over a picture.
+    A tracker that can show a page gets one; one that cannot is told so once instead of
+    failing a run over a picture.
     """
 
     def log_html(self, title: str, html: str, iteration: int) -> None: ...
@@ -227,30 +178,17 @@ def report_metric(
 ) -> None:
     """Deliver one computed metric value to wherever its geometry belongs.
 
-    Scalars go through ``scalar_log``; a per-class reading becomes its mean plus one
-    scalar per class it is about; a *family* of readings is a namespace whose members
-    are each routed by their own geometry; drawable artifacts go to **every** backend
-    whose port can take them, and to none where none can — a CSV run keeps its scalars
-    without an epoch-wise warning about a picture it never asked for.
-
-    **An artifact is drawn only when it is identified.** A ``Curve`` or ``Matrix`` was
-    built by whoever knew the metric, so it may be drawn; a raw tuple or a raw 2-D
-    tensor arrives without that knowledge — PR and ROC tuples are mirror images of each
-    other, and a matrix must not wear class names it may not have — so it warns instead.
-    Scalars and vectors need no identification: a vector *is* scalars per class.
-
-    Class names are contributed here, and only into artifacts that left their
-    ``labels`` / ``series`` open.
+    Scalars go through ``scalar_log``; a per-class reading becomes its mean plus one scalar
+    per class; a family of readings is a namespace routed member by member; a drawable
+    artifact goes to every backend whose port can take it. An artifact is drawn only when it
+    is identified — a raw tuple or 2-D tensor arrives without that knowledge and warns
+    instead. Class names are filled in only where an artifact left ``labels`` / ``series`` open.
 
     Parameters:
         key (str): The log key this value was computed under.
         value (Any): Whatever the metric returned; its geometry decides the route.
-        scalar_log (Callable[[str, Any], None]): Where a single number goes — the
-            training module's own ``self.log``.
-        loggers (Iterable[object]): The run's trackers, tested against the artifact ports
-            each may or may not implement. Every one that can draw a shape is given it: a
-            run configures a second backend precisely so that both receive its results,
-            and ``trainer.logger`` — which this took — is only the first of them.
+        scalar_log (Callable[[str, Any], None]): Where a single number goes.
+        loggers (Iterable[object]): Every run tracker; each that can draw a shape is given it.
         step (int): Iteration the value belongs to.
         class_names (list[str] | None): The task's class space, where it declared one.
     """

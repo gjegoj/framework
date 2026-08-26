@@ -26,41 +26,20 @@ _STACKED_TENSORS = frozenset({"img", "bboxes", "cls", "batch_idx"})
 class YoloDataModule(DataModule):
     """Per-stage ultralytics datasets built from a YOLO ``data.yaml``.
 
-    Registered under the same key ``YoloModel`` takes in ``vendor_model_registry``: a run names
-    the family once, in ``config.model``, and assembly reaches both halves from it. The
-    two packages do not import one another, so the key is spelled twice —
-    ``test_vendor_families_bring_both_halves`` is what keeps the two spellings honest.
-
-    A detection dataset does not arrive as an annotation table: it arrives as a
-    descriptor beside ``images/`` and ``labels/`` directories, and ultralytics' own
-    dataset class carries the box-aware augmentation — mosaic, HSV, perspective — that
-    would be expensive and pointless to rebuild. So this delegates to it rather than
-    bending the table contour around it.
-
-    It forks nothing else. ``setup`` records the class facts into the ``DataProfile``,
-    so a head sizes itself the way it does for any other task, and the run's loader
-    knobs keep applying. The one thing it says for itself is batching: detection targets
-    are ragged, and the framework's stacking collate cannot serve them.
-
-    ``ultralytics`` is imported inside the methods that need it, so a run that never
-    touches detection does not pay for the import.
+    Registered under the same key ``YoloModel`` takes in ``vendor_model_registry``, so a run
+    names the family once. Delegates to ultralytics' own dataset for its box-aware
+    augmentation (mosaic, HSV, perspective); ``setup`` records the class facts into the
+    ``DataProfile`` so a head sizes itself as for any other task. ``ultralytics`` is imported
+    inside the methods that need it.
 
     Parameters:
-        data_yaml (str): Path to the YOLO dataset descriptor — the class list, and one
-            image directory per stage. A descriptor with no ``test`` entry simply has
-            no test stage, which is ordinary YOLO practice.
-        task_name (str): The framework task these classes belong to — the key the
-            facts are recorded under, so the head sizes itself from the same profile
-            every other head reads. Named ``task_name`` rather than ``task`` because
-            ultralytics' own configuration has a ``task`` of its own
-            (``detect``/``segment``/``pose``) arriving through ``**hyperparameters``;
-            one word for both would let ours swallow theirs, and a segment run could
-            not say it was one.
+        data_yaml (str): Path to the YOLO dataset descriptor — the class list, and one image
+            directory per stage. No ``test`` entry means no test stage.
+        task_name (str): The framework task these classes belong to. Not ``task``: ultralytics'
+            own ``task`` (``detect``/``segment``/``pose``) arrives through ``**hyperparameters``.
         image_size (int): Square training size (ultralytics ``imgsz``).
-        batch_size (int): Batch size the dataset is built for; ultralytics uses
-            it while grouping images of similar aspect ratio.
-        **hyperparameters (Any): Forwarded verbatim to ultralytics — the
-            augmentation knobs (``mosaic``, ``hsv_h``, ``degrees``, ...).
+        batch_size (int): Batch size the dataset is built for.
+        **hyperparameters (Any): Forwarded verbatim to ultralytics — ``mosaic``, ``hsv_h``, ...
     """
 
     def __init__(

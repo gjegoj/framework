@@ -41,38 +41,19 @@ def _worth_showing(tags: Sequence[str | None]) -> list[str]:
 class ClearMLLogger(Logger):
     """One ClearML task carrying scalars, matrices, and curves of a run.
 
-    Scalars arrive through Lightning's ``self.log`` path; matrices and curves
-    through the structural artifact ports — one backend task holds them all,
-    so nothing needs pairing. Keys are split by ``log_keys``, the grammar's
-    owner: the stage becomes the series, so train/val/test of one value share
-    a graph, losses and metrics alike.
-
-    Declares only the names it must own; every other ``Task.init`` knob
-    forwards verbatim, so any upstream option stays reachable from config.
-    ``clearml`` imports lazily — the framework runs without it installed.
-
-    **Every reporting method is ``rank_zero_only``, including the artifact ports.**
-    The guard belongs here rather than with the callers: this is the object that
-    knows there is a remote service behind it, and it is the one place a new
-    consumer cannot forget. Callers may guard as well, and several do — but for
-    their own reason, to skip building an artifact that would go nowhere, which is
-    a different question from whether it may be sent. Left to the callers alone,
-    `report_metric` runs on every rank at epoch end, so an unguarded curve uploaded
-    one copy of itself per device.
+    Scalars arrive through Lightning's ``self.log``; matrices and curves through the
+    artifact ports. Keys are split by ``log_keys``: the stage becomes the series. Every
+    reporting method is ``rank_zero_only``, artifact ports included — this is the object
+    that knows there is a remote service behind it (unguarded, a curve uploaded once per
+    device). ``clearml`` imports lazily.
 
     Parameters:
         project_name (str | None): ClearML project; backend default when None.
         task_name (str | None): Run name; backend default when None.
-        tags (list[str] | None): Tags on the run. One that resolves to nothing is
-            dropped: a tag is written as an interpolation (``${oc.select:adapters.name,''}``)
-            and an unset group leaves an empty string, which a tracker should not show.
-        architecture (str | None): Offered by assembly, not written in config —
-            the key naming an architecture differs per backbone family and a
-            composite backbone has none, so the model is asked and the answer
-            joins the tags.
-        reuse_last_task_id (bool): Declared for its framework default — a fresh
-            run per fit beats ClearML's own reuse heuristic — and overridable
-            like any other knob.
+        tags (list[str] | None): Tags on the run; one resolving to an empty interpolation is dropped.
+        architecture (str | None): Offered by assembly, not written in config; joins the tags.
+        reuse_last_task_id (bool): A fresh run per fit beats ClearML's own reuse heuristic.
+        **kwargs (Any): Forwarded verbatim to ``Task.init``, so any upstream option stays reachable.
     """
 
     def __init__(

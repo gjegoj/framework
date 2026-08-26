@@ -12,20 +12,12 @@ from src.core.taxonomy import InputTopology, Objective, OutputTopology
 
 
 class TaskPreset(BaseModel):
-    """One familiar kind of task: its point on the axes, and its customary judgment.
+    """One familiar kind of task: its point on the axes, and its default metrics.
 
     Nobody writes a preset, only names one — ``preset: segmentation`` expands into axes
-    and metrics while the config loads, and no preset survives past validation.
-
-    The one home of default judgment: what a kind is usually judged by reads off this
-    table alone, validated into the metric grammar the moment this module imports.
-    ``metrics=None`` means the kind is not judged by per-sample metrics (metric
-    learning). Never a loss — a loss default derives from one axis, so a preset has
-    nothing to say about it.
-
-    Registered rather than hard-coded, so a package adds a kind without touching this
-    file — a decorated subclass whose defaults *are* the point, built and validated
-    the moment the module imports::
+    and metrics while the config loads. ``metrics=None`` means the kind has no per-sample
+    metrics (metric learning). Never a loss: a loss default derives from one axis.
+    Registered rather than hard-coded, as a decorated subclass whose defaults are the point::
 
         @task_preset_registry.register_instance("depth")
         class Depth(TaskPreset):

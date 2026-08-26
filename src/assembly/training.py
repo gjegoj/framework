@@ -62,23 +62,12 @@ def fit_time_facts(
 ) -> dict[str, int]:
     """The fit-time facts a scheduler declares and the config left unset.
 
-    Only canonical names are filled — in torch, a parameter called
-    ``total_steps`` means exactly one thing — so no per-scheduler mapping has
-    to be maintained. ``total_steps`` is the most precise fact, so a scheduler
-    declaring it needs nothing else: measured, ``OneCycleLR`` accepts all three
-    and lets ``total_steps`` win, so sending one is tidiness here and safety
-    for a third-party schedule that refuses redundancy.
-
-    Returned rather than applied: the scheduler cannot be built yet — it needs
-    the optimizer — and the caller reads *which* facts were filled to catch a
-    step-clocked schedule declared on an epoch interval.
-
-    Config wins over these facts, the opposite of ``instantiate``'s derived
-    values. The difference is the kind of fact: a class count is ground truth
-    about the data, while the length of a schedule is the environment's
-    estimate, and shaping it deliberately (a rate that bottoms out early) is a
-    real recipe. The environment fills what the user left open; it does not
-    contradict what the user asked for.
+    Only canonical torch names are filled (``total_steps`` means one thing), so no
+    per-scheduler mapping exists; measured, ``OneCycleLR`` accepts all three and lets
+    ``total_steps`` win. Returned rather than applied, because the scheduler needs the
+    optimizer first and the caller reads which facts were filled. Config wins over these
+    facts, the opposite of ``instantiate``'s derived values: the length of a schedule is
+    the environment's estimate, and shaping it deliberately is a real recipe.
 
     Parameters:
         scheduler_class (Callable): The scheduler constructor about to be called.
@@ -93,20 +82,11 @@ def fit_time_facts(
 def per_group_rates(configured: Mapping[str, Any], optimizer: Optimizer) -> dict[str, list[float]]:
     """A declared rate spread over the optimizer's groups, each keeping its own pace.
 
-    ``OneCycleLR`` and ``CyclicLR`` are the schedules that set a rate outright
-    rather than scaling the one a group already has, and a scalar broadcasts to
-    every group. Measured, over groups at 3e-4 and 1e-2, ``OneCycleLR(max_lr=3e-4)``
-    starts both at 1.2e-5 and peaks both at 3e-4: the rate a task declared is gone,
-    and nothing says so. Every other torch schedule reads each group's own ``lr``
-    and needs none of this — measured too, on cosine, which held the two apart.
-
-    Each group is given the declared value scaled by how its rate compares with
-    the optimizer's own, so a band keeps its shape (Cyclic's ``base_lr`` beside
-    its ``max_lr``) and the ordinary case — a peak declared equal to the base rate
-    — hands every group exactly the rate it was built with.
-
-    A list already written in config is left alone: the user answered this
-    themselves, per group, and a guess does not outrank an answer.
+    ``OneCycleLR`` and ``CyclicLR`` set a rate outright, and a scalar broadcasts to every
+    group — measured, ``OneCycleLR(max_lr=3e-4)`` over groups at 3e-4 and 1e-2 peaks both
+    at 3e-4, and the task's declared rate is gone. Each group gets the declared value scaled
+    by how its rate compares with the optimizer's own. A list already written in config is
+    left alone.
     """
     groups = optimizer.param_groups
     if len(groups) <= 1:
@@ -123,9 +103,7 @@ def per_group_rates(configured: Mapping[str, Any], optimizer: Optimizer) -> dict
 def _spelled(spread: Mapping[str, list[float]], optimizer: Optimizer) -> str:
     """The spread rates as the kwarg they become, each value under the group's name.
 
-    Said out loud because the alternative is a silent correction: config declares
-    one number and the run trains on several, and a reader who is not told cannot
-    tell a spread rate from the broadcast that used to overwrite it.
+    Said out loud because config declares one number and the run trains on several.
     """
     names = [group.get("name", f"group {index}") for index, group in enumerate(optimizer.param_groups, start=1)]
     return ", ".join(
@@ -202,19 +180,10 @@ def build_trainer(
 ) -> L.Trainer:
     """The trainer, rooted at the run's output directory and carrying its callbacks.
 
-    The task facts travel through because a callback may need them; most do not.
-
-    Where a run's own files land — the trainer's root, a checkpoint's weights, a
-    profiler's report — is written in config as ``${run.directory}/...``, not decided
-    here. Lightning would otherwise resolve the last two from the *logger*, which is
-    right for one that writes files and wrong for a tracker that uploads; but the run
-    directory is a config value like ``lr`` or ``epochs``, so config is where it is
-    reached, and every shipped group carries the line with a test holding it there.
-
-    ``architecture`` is offered the way every derived fact is — a tracker that
-    names it receives it, one that does not never sees it. Config cannot supply
-    this one: the key holding an architecture differs per backbone family, and a
-    composite backbone has none at all, so the model is asked instead.
+    Where a run's own files land is written in config as ``${run.directory}/...``, not
+    decided here: Lightning would otherwise resolve them from the logger, which is wrong
+    for a tracker that uploads. ``architecture`` is offered as every derived fact is —
+    config cannot supply it, because the key naming an architecture differs per family.
     """
     tracker: dict[str, Any] = {}
     if config.logger is not None:

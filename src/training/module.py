@@ -105,17 +105,12 @@ class TrainingModule(L.LightningModule):
         return {"optimizer": optimizer, "lr_scheduler": self._scheduler_factory(optimizer, self._fit_profile())}
 
     def _parameter_groups(self) -> list[dict[str, Any]]:
-        """One named group per task with bricks of its own, and one for what they share.
+        """One named group per task with components of its own, and one for what they share.
 
-        Split whether or not a rate was declared, because the groups are what a
-        learning-rate monitor draws: a run shows the backbone's pace beside each
-        head's, and rates that are equal simply draw one line over another.
-        Measured: five AdamW steps through one group and through three move every
-        parameter to the same value, so the split is free.
-
-        A group carries an ``lr`` only where its task declared one. The rest carry
-        none on purpose — the base rate has one home, the optimizer section, and a
-        group with no rate of its own inherits it there.
+        Split whether or not a rate was declared, because the groups are what a learning-rate
+        monitor draws (measured: AdamW through one group or three moves every parameter the
+        same). A group carries an ``lr`` only where its task declared one; the base rate has
+        one home, the optimizer section.
         """
         groups: list[dict[str, Any]] = []
         owned: set[int] = set()
@@ -175,7 +170,7 @@ class TrainingModule(L.LightningModule):
             metric_set = task.metrics.get(stage)
             predicted = result.prediction.outputs.get(task.name)
             # Absent rather than empty is a real answer: a family whose head only assembles
-            # a decodable output in eval mode produced nothing to judge on a training step,
+            # a decodable output in eval mode produced nothing to evaluate on a training step,
             # and a metric fed a fabricated blank would report that as a score.
             if metric_set is not None and predicted is not None:
                 metric_set.update(predicted, result.targets[task.name])
@@ -217,15 +212,9 @@ class TrainingModule(L.LightningModule):
     def _preview_is_wanted(self) -> bool:
         """Did any consumer ask for this batch's preview before the step ran?
 
-        A preview shares storage with the activated outputs and Lightning keeps a
-        step's return value alive through the optimizer step, so building one that
-        nobody reads pins those outputs across ``backward()`` and into the moment
-        the optimizer allocates its state — measured at 352 MB for a
-        ``[16, 21, 512, 512]`` batch. Asked here rather than assumed, and asked per
-        step because a grid draws one batch every few epochs.
-
-        Outside a ``Trainer`` there is nobody to ask and nothing to save, so a bare
-        call is handed everything the step produced.
+        A preview shares storage with the activated outputs, which Lightning keeps alive
+        through the optimizer step — measured: 352 MB for a ``[16, 21, 512, 512]`` batch — so
+        it is built only when asked, per step. Outside a ``Trainer`` a bare call is handed everything.
         """
         # ``self.trainer`` raises when the module is not attached, so the private
         # attribute is what asks *whether* it is; the property reads it after.

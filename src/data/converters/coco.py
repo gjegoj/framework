@@ -1,16 +1,12 @@
-"""A COCO instances export into the canon — the format most labelling tools hand back.
+"""A COCO instances export into the ``.jsonl`` annotation format.
 
 Run once per export::
 
     uv run python -m src.data.converters.coco \\
         --annotations instances.json --images images/ --into data/pets/
 
-One file, ``annotations.jsonl``, because a COCO export is usually undivided: the run's
-own splitters divide it, and ``group_split`` is what keeps frames of one video together.
-Three facts are resolved here: category ids become names, ``[x, y, w, h]`` becomes
-``[x1, y1, x2, y2]``, and crowd regions are dropped — the standard detection-training
-stance, counted out loud rather than applied in silence. A future ``crowd`` field on the
-canonical object can carry them the day a consumer exists.
+Category ids become names, ``[x, y, w, h]`` becomes ``[x1, y1, x2, y2]``, crowd regions
+are dropped and counted. One file, ``annotations.jsonl``: the run's own splitters divide it.
 """
 
 from __future__ import annotations
@@ -21,7 +17,13 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-from src.data.converters.canon import ConversionReport, canon_object, canon_record, clipped_box, write_canon
+from src.data.converters.annotations import (
+    ConversionReport,
+    annotation_object,
+    annotation_row,
+    clipped_box,
+    write_annotations,
+)
 
 
 def convert(annotations: Path | str, *, images: Path | str, into: Path | str) -> ConversionReport:
@@ -49,7 +51,7 @@ def convert(annotations: Path | str, *, images: Path | str, into: Path | str) ->
         )
     report = ConversionReport()
     records = [_record(entry, by_image, categories, Path(images), report) for entry in export["images"]]
-    write_canon(records, Path(into) / "annotations.jsonl")
+    write_annotations(records, Path(into) / "annotations.jsonl")
     return report
 
 
@@ -60,7 +62,7 @@ def _record(
     images: Path,
     report: ConversionReport,
 ) -> dict[str, Any]:
-    """One canon row: the image the export names, and the objects it keeps."""
+    """One annotation row: the image the export names, and the objects it keeps."""
     file_name = str(entry["file_name"])
     if not (images / file_name).exists():
         raise FileNotFoundError(f"Image file not found: {images / file_name} (the export lists it).")
@@ -78,10 +80,10 @@ def _record(
             image=file_name,
             report=report,
         )
-        objects.append(canon_object(bounded, categories[int(annotation["category_id"])]))
+        objects.append(annotation_object(bounded, categories[int(annotation["category_id"])]))
         report.objects += 1
     report.images += 1
-    return canon_record(file_name, objects)
+    return annotation_row(file_name, objects)
 
 
 def main() -> None:
@@ -90,7 +92,7 @@ def main() -> None:
     parser.add_argument("--images", required=True, help="directory the file_name entries are relative to")
     parser.add_argument("--into", required=True, help="directory for annotations.jsonl")
     arguments = parser.parse_args()
-    print(convert(arguments.annotations, images=arguments.images, into=arguments.into).spoken())
+    print(convert(arguments.annotations, images=arguments.images, into=arguments.into).summary())
 
 
 if __name__ == "__main__":

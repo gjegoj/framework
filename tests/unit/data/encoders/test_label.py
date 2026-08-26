@@ -1,11 +1,77 @@
-"""Multi-label targets: several labels per row into one indicator vector."""
+"""Categorical targets: one class per cell (``label``), or several (``multilabel``)."""
 
 from __future__ import annotations
 
 import numpy as np
+import pandas as pd
 import pytest
 
-from src.data import MultiLabelTargetEncoder
+from src.data.encoders import LabelTargetEncoder, MultiLabelTargetEncoder
+from src.data.registry import target_encoder_registry
+
+
+def test_label_encoder_learns_sorted_vocabulary_on_fit() -> None:
+    encoder = LabelTargetEncoder()
+
+    encoder.fit(pd.Series(["dog", "cat", "dog"]))
+
+    assert encoder.num_classes == 2
+    assert encoder.class_names == ["cat", "dog"]
+
+
+def test_label_encoder_encodes_to_a_raw_class_index() -> None:
+    """Encoders stay raw: tensors are made once, by the transform or collation."""
+    encoder = LabelTargetEncoder()
+    encoder.fit(pd.Series(["dog", "cat"]))
+
+    encoded = encoder.encode("dog")
+
+    assert encoded == 1
+    assert isinstance(encoded, int)
+
+
+def test_label_encoder_names_known_classes_for_unseen_value() -> None:
+    encoder = LabelTargetEncoder()
+    encoder.fit(pd.Series(["cat", "dog"]))
+
+    with pytest.raises(LookupError, match="bird"):
+        encoder.encode("bird")
+
+
+def test_label_encoder_refuses_to_encode_before_fit() -> None:
+    with pytest.raises(RuntimeError, match="fit"):
+        LabelTargetEncoder().encode("cat")
+
+
+def test_a_declared_vocabulary_validates_the_data_instead_of_learning_it() -> None:
+    """A typo row must fail loudly, not silently grow an 11th class."""
+    encoder = LabelTargetEncoder(classes={0: "cat", 1: "dog"})
+
+    with pytest.raises(LookupError, match="catt"):
+        encoder.fit(["cat", "catt", "dog"])
+
+
+def test_a_declared_class_absent_from_train_is_legal() -> None:
+    """A rare class missing from a small slice must not reshuffle the index space."""
+    encoder = LabelTargetEncoder(classes={0: "cat", 1: "dog", 2: "cow"})
+
+    encoder.fit(["cat", "dog"])
+
+    assert encoder.num_classes == 3
+    assert encoder.encode("cow") == 2
+
+
+def test_duplicate_declared_names_are_refused_at_the_encoder_too() -> None:
+    """A copy-paste typo must not silently shrink the model: {0: a, 1: a} is one class in disguise."""
+    with pytest.raises(ValueError, match="duplicated"):
+        LabelTargetEncoder(classes={0: "a", 1: "a"})
+
+
+def test_a_multilabel_vocabulary_is_declared_the_same_way() -> None:
+    encoder = MultiLabelTargetEncoder(classes={0: "indoor", 1: "people"})
+
+    with pytest.raises(LookupError, match="outdor"):
+        encoder.fit(["indoor,people", "outdor"])
 
 
 def fitted(values: list[object], **kwargs: object) -> MultiLabelTargetEncoder:
@@ -87,6 +153,5 @@ def test_encoding_before_fitting_is_reported() -> None:
 
 
 def test_the_encoder_is_reachable_from_config_by_name() -> None:
-    from src.data.registry import target_encoder_registry
 
     assert isinstance(target_encoder_registry.create("multilabel"), MultiLabelTargetEncoder)

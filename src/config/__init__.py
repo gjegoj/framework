@@ -19,18 +19,15 @@ from src.config.training import LoaderConfig, OptimizerConfig, SchedulerConfig, 
 def load_config(raw: Mapping[str, Any]) -> ExperimentConfig:
     """Validate a raw mapping into the typed experiment contract.
 
-    The single entry point of the config boundary, and the only place validation
-    happens. Pydantic lives inside this package alone: capability layers receive plain
-    typed objects and never parse raw config. Composition — Hydra groups, CLI
-    overrides — is the composition root's business; this package owns validation.
+    The single entry point of the config boundary: pydantic lives inside this package
+    alone, and capability layers receive plain typed objects. Composition (Hydra groups,
+    CLI overrides) is the composition root's business.
 
     Parameters:
-        raw (Mapping[str, Any]): The composed config, with every interpolation
-            already resolved.
+        raw (Mapping[str, Any]): The composed config, with every interpolation resolved.
 
     Raises:
-        pydantic.ValidationError: On any structural or semantic violation,
-            naming the offending section and key.
+        pydantic.ValidationError: On any violation, naming the offending section and key.
     """
     return ExperimentConfig.model_validate(raw)
 

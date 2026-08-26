@@ -25,17 +25,14 @@ def _score_of(view: Tensor) -> Tensor:
 
 
 class PairRankingLoss(nn.Module):
-    """torch's margin ranking over a scored pair carrier ``[B, 2, D]``.
+    """torch's margin ranking over a scored pair ``[B, 2, D]``.
 
-    ``target[i] = +1`` says the first view should score higher, ``-1`` the
-    second; the hinge fires while the gap is below ``margin``.
-
-    The hinge form — a hard gap or nothing. Where the preference is graded rather than
-    binary, :class:`RankNetLoss` is the smooth counterpart.
+    ``target[i] = +1`` says the first view should score higher, ``-1`` the second; the hinge
+    fires while the gap is below ``margin``. :class:`RankNetLoss` is the smooth counterpart
+    for graded preferences.
 
     Parameters:
-        **kwargs: Forwarded verbatim to ``nn.MarginRankingLoss``
-            (``margin``, ``reduction``, ...).
+        **kwargs: Forwarded verbatim to ``nn.MarginRankingLoss`` (``margin``, ``reduction``, ...).
     """
 
     def __init__(self, **kwargs: Any) -> None:
@@ -66,13 +63,11 @@ class MarginRankingCriterion(WrappedCriterion):
 class RankNetLoss(nn.Module):
     """Binary cross-entropy on the score gap (Burges et al., 2005).
 
-    ``P(first ranks higher) = sigmoid(score_first - score_second)``, judged
-    against a target probability: ``1`` first preferred, ``0`` second, ``0.5``
-    a tie — graded preferences are the point of the logistic form.
+    ``P(first ranks higher) = sigmoid(score_first - score_second)``, compared with a target
+    probability: ``1`` first preferred, ``0`` second, ``0.5`` a tie.
 
     Parameters:
-        **kwargs: Forwarded verbatim to
-            ``functional.binary_cross_entropy_with_logits`` (``reduction``, ...).
+        **kwargs: Forwarded verbatim to ``functional.binary_cross_entropy_with_logits``.
     """
 
     def __init__(self, **kwargs: Any) -> None:

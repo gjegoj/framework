@@ -36,20 +36,11 @@ def backbone_path(config: ExperimentConfig) -> str:
 def build_model(config: ExperimentConfig, profile: DataProfile) -> tuple[Model, list[Task]]:
     """Build the model and its tasks.
 
-    This is the family seam, and both families now come through it. ``config.model``
-    naming an entry of ``vendor_model_registry`` is a *vendor* family — one that owns its head,
-    its loss and its decoding — and it takes the short path: the task entities, and the
-    model built with the class count the data profiled. Naming a backbone instead is the
-    composite family, and the sequence is backbone → adapters → tasks → components →
-    ``CompositeModel`` → teachers.
-
-    Nothing outside this function knows which it was, because ``Model`` and ``Task`` are
-    all the rest of assembly consumes.
-
-    Adapters go on before the tasks so the heads that follow are untouched by the
-    freezing, and before any weights are read — which is the whole reason this
-    cannot be a fit-time callback: a checkpoint from an adapted run is keyed for a
-    model that already has them.
+    The family seam. ``config.model`` naming an entry of ``vendor_model_registry`` is a
+    vendor family (it owns its head, loss and decoding) and takes the short path; naming a
+    backbone is the composite family: backbone → adapters → tasks → components →
+    ``CompositeModel`` → teachers. Adapters go on before the tasks and before any weights
+    are read: a checkpoint from an adapted run is keyed for a model that already has them.
     """
     if is_vendor_family(config):
         return _vendor_model(config, profile), build_task_entities(config, profile)
@@ -75,17 +66,10 @@ def build_model(config: ExperimentConfig, profile: DataProfile) -> tuple[Model, 
 def _teacher(declared: TeacherConfig, config: ExperimentConfig, profile: DataProfile) -> Model:
     """This run's tasks on another backbone — so the two models' logits match by construction.
 
-    Deliberately not ``build_model`` on an altered copy of the config: the list of
-    sections a teacher must not inherit would then live in a data structure, and
-    the next section added at the root would be inherited in silence. Building the
-    two pieces a teacher actually needs says the same thing and cannot go stale.
-    ``build_tasks`` only reads the profile, so the second call is safe.
-
-    It also builds criteria and metric containers the teacher will never use — a
-    teacher is only ever asked for logits. That is deliberate: sizing a head from
-    the run's tasks is the part that must not be duplicated, and a flag to skip
-    the rest would be a parameter standing in for a decision, over a few unused
-    objects per run.
+    Deliberately not ``build_model`` on an altered copy of the config: the sections a
+    teacher must not inherit would then be a list that goes stale. It also builds criteria
+    the teacher never uses; sizing the heads from the run's tasks is the part that must
+    not be duplicated.
     """
     backbone = instantiate(declared.backbone, backbone_registry)
     _, components = build_tasks(config, profile, backbone)

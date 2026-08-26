@@ -22,19 +22,10 @@ CLASS_DIM = 1
 def as_class_indices(target: Tensor) -> AdaptedTarget:
     """Class indices for both views — unless the target is already a distribution.
 
-    A multiclass target arrives one of two ways, and they are told apart by
-    dtype rather than by a flag: an index is integral by construction, since an
-    encoder produces it and a mask is an index map, while a batch transform that
-    mixed two samples produces a share of each class and never is. Both are
-    genuine targets of the same task, so neither is an error.
-
-    Cross-entropy takes a distribution as it is; rounding one would collapse
-    every mixed sample onto a single class. Metrics rank against a class rather
-    than a distribution over them, so the metric view is the class the sample
-    mostly is.
-
-    Augmentation also hands masks back as ``int32`` while criteria and metrics
-    both want ``long``, which is what the integral branch is for.
+    A multiclass target arrives as an index (integral by construction) or, after a batch
+    transform mixed two samples, as a share of each class — told apart by dtype, not a
+    flag. Cross-entropy takes a distribution as it is; metrics rank against the class the
+    sample mostly is. Augmentation hands masks back as ``int32`` while criteria want ``long``.
     """
     if target.is_floating_point():
         return AdaptedTarget(for_loss=target, for_metrics=target.argmax(dim=CLASS_DIM))

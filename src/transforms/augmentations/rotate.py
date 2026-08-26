@@ -14,17 +14,10 @@ QUARTER_TURNS = 4
 class Rotate90(A.CustomTransformsApplyMixin, A.DualTransform):
     """Turn by a random multiple of 90° counter-clockwise and advance the bound label.
 
-    The turn count is sampled once and applied to the image, to any mask, and to
-    the label as ``(label + turns) % 4`` — so the picture and its class cannot
-    drift apart. A folder of upright photographs therefore becomes a balanced
-    four-class rotation task without a single file being duplicated, and the
-    class count follows from the data as it does for any other task.
-
-    The label is expected to hold the image's *current* rotation class, which
-    for an unrotated dataset is zero.
-
-    Bind the column it rewrites with
-    ``AlbumentationsTransform(label_targets=["angle"])``.
+    One draw turns the image, any mask, and the label as ``(label + turns) % 4``, so a
+    folder of upright photographs becomes a balanced four-class rotation task. The label is
+    expected to hold the image's *current* rotation class — zero for an unrotated dataset.
+    Bind it with ``AlbumentationsTransform(label_targets=["angle"])``.
 
     Parameters:
         p (float): Probability of turning at all.

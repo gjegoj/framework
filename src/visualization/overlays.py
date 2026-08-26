@@ -22,14 +22,9 @@ _BLACK = (0, 0, 0)
 def png_data_uri(pixels: np.ndarray, max_side: int | None = None) -> str:
     """Encode a uint8 ``[H, W, 3]`` or ``[H, W, 4]`` array as ``data:image/png;base64,...``.
 
-    The mode follows the array's last axis, as PIL reads it: three channels are
-    RGB, four are RGBA.
-
-    ``max_side`` bounds what goes into the page rather than what the tensor holds.
-    Measured: eight cells of a ten-class segmentation at full 512px inline to a
-    49 MB page and take 13 seconds to build — every N epochs, into a tracker that
-    then has to embed it. Downscaling is smooth for pictures and nearest for
-    masks, because a mask that interpolates stops being a mask.
+    ``max_side`` bounds what goes into the page: measured, eight cells of a ten-class
+    segmentation at full 512px inline to a 49 MB page in 13 seconds. Downscaling is smooth
+    for pictures and nearest for masks, because a mask that interpolates stops being a mask.
     """
     image = Image.fromarray(pixels)
     target = _fitted(image.width, image.height, max_side)
@@ -44,23 +39,11 @@ def png_data_uri(pixels: np.ndarray, max_side: int | None = None) -> str:
 def mask_overlay_uri(mask: np.ndarray, rgb: tuple[int, int, int], max_side: int | None = None) -> str:
     """Encode a boolean ``[H, W]`` mask as a ``data:image/png;base64,...`` overlay.
 
-    The look is what makes overlap readable: a translucent class-colour fill, a 1px
-    class-colour inner rim for identity, and a 1px black outer rim so the shape holds
-    against any image behind it. Ground truth and prediction share the style on purpose
-    — where the same class overlaps, the two fills stack and darken, which is IoU by eye.
-
-    Both rims ask the same question twice — which pixels have a neighbour on the other
-    side of the border — so one primitive answers both, and what lies beyond the image
-    edge becomes an argument rather than an accident.
-
-    The mask is resized to what the page shows *before* the rims are drawn, so a
-    rim is one pixel of the picture the reader is looking at. Drawing the rims
-    first and shrinking the finished overlay is the intuitive order and the wrong
-    one: nearest-neighbour sampling keeps whichever source rows and columns it
-    lands on, and a 1px line is exactly one row wide. Measured on a 300x300 square
-    shrunk from 512 to 256 — the outer rim kept 150 pixels along its top edge and
-    one along its bottom, i.e. two of four sides erased. Rimming at display size
-    also does the work on a quarter of the pixels.
+    A translucent class-colour fill, a 1px class-colour inner rim, a 1px black outer rim so
+    the shape holds against any image; ground truth and prediction share the style, so
+    overlapping fills darken — IoU by eye. The mask is resized to display size *before* the
+    rims are drawn: measured, shrinking a rimmed 512 mask to 256 erased two of four sides,
+    because nearest-neighbour sampling drops whole rows.
     """
     shown = _at_display_size(mask, max_side)
     inner_rim = shown & _neighbours_of(~shown, beyond_the_edge=True)

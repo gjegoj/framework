@@ -24,19 +24,10 @@ log = logging.getLogger(__name__)
 def single_threaded_cv2(_worker_id: int) -> None:
     """DataLoader ``worker_init_fn``: one cv2 thread per worker, measured 1.5x faster.
 
-    OpenCV carries a process-wide thread pool sized to the machine, and loader
-    workers are processes — left alone, eight workers on eight cores run
-    sixty-four decoding threads against eight ancestors of them. Here the workers
-    *are* the parallelism, so each one decodes single-threaded; an epoch on an
-    8-core box measured 1.47x faster for it. The setting also reaches every other
-    cv2 call in the worker, albumentations' included.
-
-    A ``worker_init_fn`` is the one placement that survives every start method:
-    the pool is per-process and rebuilt on ``spawn``, so setting it in the parent
-    works only while ``fork`` lets children inherit it, and OpenCV reads no
-    environment variable that could travel instead. Workers-only is also the
-    right scope — a ``num_workers: 0`` run keeps cv2's own parallelism, which is
-    all the parallelism it has.
+    OpenCV's process-wide thread pool is sized to the machine, and loader workers are
+    processes, so eight workers run sixty-four decoding threads; here the workers *are* the
+    parallelism. A ``worker_init_fn`` survives every start method, and a ``num_workers: 0``
+    run keeps cv2's own parallelism.
     """
     cv2.setNumThreads(0)
 
@@ -44,26 +35,17 @@ def single_threaded_cv2(_worker_id: int) -> None:
 class TrainingData(L.LightningDataModule):
     """Serves per-stage DataLoaders from an already-set-up ``DataModule``.
 
-    Loader options forward verbatim to ``torch.utils.data.DataLoader``, so any
-    torch knob is reachable without this class declaring it. Two arguments are
-    the adapter's own and are not accepted among them: ``shuffle`` and
-    ``drop_last`` are stage conventions — training shuffles and may drop its
-    last incomplete batch, evaluation does neither, because a dropped
-    evaluation batch means metrics computed on part of the split.
-
-    Setup ordering lives with assembly: profile facts must exist before the
-    model is built, so ``DataModule.setup`` runs there, eagerly. This adapter
-    only turns stage datasets into loaders.
+    ``shuffle`` and ``drop_last`` are stage conventions and not accepted among the options:
+    training shuffles and may drop its last batch, evaluation does neither.
+    ``DataModule.setup`` runs in assembly, eagerly; this only turns stage datasets into loaders.
 
     Parameters:
         data (DataModule): Source of per-stage datasets; ``setup`` has run.
-        collate (Callable | None): Turns samples into a ``Batch``; ``None`` takes
-            the framework's own. A pipeline with ragged targets — detection
-            boxes, one image carrying three and the next eleven — reports its
-            own through ``DataModule.collate``, and assembly passes it here.
-        **loader_options (Any): Forwarded to every ``DataLoader``. One default is
-            filled in: ``worker_init_fn`` is :func:`single_threaded_cv2` above,
-            unless the caller passes their own — see its docstring for the why.
+        collate (Callable | None): Turns samples into a ``Batch``; ``None`` takes the
+            framework's own. A pipeline with ragged targets reports its own through
+            ``DataModule.collate``.
+        **loader_options (Any): Forwarded to every ``DataLoader``; ``worker_init_fn``
+            defaults to :func:`single_threaded_cv2`.
     """
 
     def __init__(
@@ -107,19 +89,10 @@ class TrainingData(L.LightningDataModule):
     def _tested_stage(self) -> Stage:
         """Test, or validation when the run declared no test data — and then it says so.
 
-        A pipeline may honestly have none: a YOLO descriptor often ships without a
-        test split, and per-stage sources need not declare all three. Falling back
-        lets such a run finish and report something, instead of dying after the fit
-        with the weights already trained.
-
-        What it must not do is stay quiet. Every ``test/*`` scalar would then be
-        computed on the rows the checkpoint was selected on and published under the
-        one name that is supposed to mean held-out data — an optimistic number
-        wearing an honest label. So the substitution is named once, here.
-
-        Resolved at the one place that asks for a test loader rather than inside
-        each pipeline, so every datamodule falls back the same way and says the same
-        sentence.
+        A pipeline may honestly have no test split, and falling back lets the run finish. What
+        it must not do is stay quiet: every ``test/*`` scalar would be computed on the rows the
+        checkpoint was selected on, under the one name that means held-out data. Resolved here
+        so every datamodule falls back the same way.
         """
         try:
             self._data.dataset(Stage.TEST)

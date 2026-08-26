@@ -11,14 +11,9 @@ from src.config.tasks import LossConfig
 class TeacherConfig(BaseModel):
     """One frozen teacher: an architecture, and optionally the weights to fill it with.
 
-    Its heads are derived from the student's tasks, so the two models' logits
-    match in shape by construction rather than by a user keeping two declarations
-    in step.
-
-    The field is ``backbone`` and not ``model`` although it sits where the student's
-    ``model`` section would: a teacher can only ever be a backbone. Distillation compares
-    per-task logits, which a family arriving whole does not expose — the run section
-    refuses the pairing outright — so the one thing this position accepts is named.
+    Its heads are derived from the student's tasks, so the two models' logits match by
+    construction. The field is ``backbone`` and not ``model``: a teacher can only be a
+    backbone, because distillation compares per-task logits a vendor family does not expose.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -43,19 +38,11 @@ class TeacherConfig(BaseModel):
 class DistillationConfig(BaseModel):
     """Training a student beside frozen teachers.
 
-    Each task's training loss gains a soft term comparing the student's logits
-    with the teachers' averaged ones. Nothing changes off training, so validation
-    and test report the same quantity an undistilled run does.
-
-    The soft term is declared as any other loss term is — a ``LossConfig``, weight
-    included — because that is what it is: one more criterion inside a task's
-    total, added with its weight and logged under its own name.
-
-    A root section rather than a callback, because it changes what the model
-    *computes*: no Lightning hook's return value reaches the loss, and a callback
-    adding a backward pass of its own would contribute unscaled gradients against
-    AMP's scaled ones. A technique that only changes what the model *holds* — EMA,
-    freezing — is a callback.
+    Each task's training loss gains a soft term comparing the student's logits with the
+    teachers' averaged ones, declared as any other loss term (a ``LossConfig``, weight
+    included). A root section rather than a callback because it changes what the model
+    *computes*; a technique that only changes what the model *holds* (EMA, freezing) is a
+    callback.
     """
 
     model_config = ConfigDict(extra="forbid")

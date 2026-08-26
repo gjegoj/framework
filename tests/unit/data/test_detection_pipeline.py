@@ -14,15 +14,15 @@ from src.assembly.data import build_data_module
 from src.config import load_config
 from src.core import DataProfile, Instances, Stage
 from src.data.collate import collate_samples
-from src.data.converters.canon import canon_object, canon_record, write_canon
+from src.data.converters.annotations import annotation_object, annotation_row, write_annotations
 
-DOG = [canon_object((50.0, 25.0, 150.0, 75.0), "dog")]
+DOG = [annotation_object((50.0, 25.0, 150.0, 75.0), "dog")]
 """The measured box: in a 200x100 picture letterboxed to 64x64 it lands on [16, 24, 48, 40]."""
 
-CAT = [canon_object((0.0, 0.0, 40.0, 40.0), "cat")]
+CAT = [annotation_object((0.0, 0.0, 40.0, 40.0), "cat")]
 
 
-def canon_tree(root: Path) -> None:
+def annotation_tree(root: Path) -> None:
     """Three train images — one dog, one cat, one negative — and one val image.
 
     Written by the canon writer itself, so this is the writer-to-reader path a real run
@@ -30,10 +30,10 @@ def canon_tree(root: Path) -> None:
     """
     for name in ("a", "b", "c", "d"):
         cv2.imwrite(str(root / f"{name}.jpg"), np.full((100, 200, 3), 128, dtype=np.uint8))
-    write_canon(
-        [canon_record("a.jpg", DOG), canon_record("b.jpg", CAT), canon_record("c.jpg", [])], root / "train.jsonl"
+    write_annotations(
+        [annotation_row("a.jpg", DOG), annotation_row("b.jpg", CAT), annotation_row("c.jpg", [])], root / "train.jsonl"
     )
-    write_canon([canon_record("d.jpg", DOG)], root / "val.jsonl")
+    write_annotations([annotation_row("d.jpg", DOG)], root / "val.jsonl")
 
 
 def detection_config(root: Path) -> Any:
@@ -61,7 +61,7 @@ def detection_config(root: Path) -> Any:
 
 def test_canon_rows_become_letterboxed_instances_batches(tmp_path: Path) -> None:
     """Every seam of the stage at once: source, encoder, geometry, collate — one assertion each."""
-    canon_tree(tmp_path)
+    annotation_tree(tmp_path)
     module = build_data_module(detection_config(tmp_path))
     profile = DataProfile()
     module.setup(profile)
@@ -78,7 +78,7 @@ def test_canon_rows_become_letterboxed_instances_batches(tmp_path: Path) -> None
 
 def test_the_boxes_of_a_batch_carry_the_letterbox_arithmetic_end_to_end(tmp_path: Path) -> None:
     """The number measured on the seam, now through encoder, transform and collation."""
-    canon_tree(tmp_path)
+    annotation_tree(tmp_path)
     module = build_data_module(detection_config(tmp_path))
     module.setup(DataProfile())
 
@@ -92,7 +92,7 @@ def test_the_boxes_of_a_batch_carry_the_letterbox_arithmetic_end_to_end(tmp_path
 
 def test_a_negative_row_takes_its_place_in_the_batch_holding_nothing(tmp_path: Path) -> None:
     """The row without objects is an image the model must learn to leave empty."""
-    canon_tree(tmp_path)
+    annotation_tree(tmp_path)
     module = build_data_module(detection_config(tmp_path))
     module.setup(DataProfile())
 

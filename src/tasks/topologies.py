@@ -28,7 +28,7 @@ class TaskTopology(ABC):
 
     A cell's shape outranks its meaning: a dense cell is a mask file and an instances
     cell is a list of objects whatever the labels say about them, while a global cell is
-    scalar-ish and only there does the objective pick the variant. The two voices meet in
+    scalar-ish and only there does the objective pick the variant. The two defaults meet in
     ``default_target_encoder`` in the builder, which is what assembly asks.
     """
 
@@ -60,11 +60,9 @@ class TaskTopology(ABC):
 class GlobalTopology(TaskTopology):
     """One prediction vector per sample — the one output every input arrangement feeds.
 
-    A single encoder offers it as ``FEATURES``; several views or streams stack
-    theirs into ``EMBEDDINGS``, where the head is identity and only metric
-    learning supervises. A single input serves every objective, metric learning
-    included: an ArcFace-style proxy judges one embedding per sample against
-    class labels, which is exactly this output structure with nothing to project.
+    A single encoder offers it as ``FEATURES``; several views or streams stack theirs into
+    ``EMBEDDINGS``, where the head is identity and only metric learning supervises. A
+    single input serves every objective, metric learning included (ArcFace-style proxies).
     """
 
     @override
@@ -78,7 +76,7 @@ class GlobalTopology(TaskTopology):
     @override
     def supports(self, objective: Objective, input_topology: InputTopology) -> bool:
         # Stacked views have no per-sample labels to project onto — comparison is
-        # the only supervision their carrier admits.
+        # the only supervision stacked views admit.
         return input_topology is InputTopology.SINGLE or objective is Objective.METRIC
 
 

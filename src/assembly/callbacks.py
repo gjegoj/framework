@@ -24,19 +24,10 @@ def build_callbacks(
 ) -> list[Callback]:
     """The declared callbacks, in the order the file gives them.
 
-    One grammar builds them, as it builds every other component. ``tasks`` and
-    ``profile`` are offered to every entry and reach only the ones that name
-    them — a batch transform has to rewrite each task's label, while a
-    checkpoint has no use for either.
-
-    Only facts assembly alone knows travel this way. A shared *config* value —
-    ``mean``, ``lr``, ``image_size`` — has its own way of reaching a component
-    and it is ``${mean}``: the same interpolation ``configs/transforms/*.yaml``
-    already uses. Offering one here was tried and reverted; a derived value
-    overrides what config declares, so a per-callback ``mean:`` was accepted and
-    then silently ignored. That is the whole of what a
-    "context-aware callback" needs: no second registry of builders, no special
-    case here.
+    One grammar builds them. ``tasks`` and ``profile`` are offered to every entry and reach
+    only the ones that name them. Only facts assembly alone knows travel this way: a shared
+    config value (``mean``, ``lr``) is reached by interpolation, ``${mean}``, as the
+    transforms reach it — offered here it would silently override a per-callback value.
     """
     if config.callbacks is None:
         return []

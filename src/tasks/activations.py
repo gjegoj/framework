@@ -34,7 +34,7 @@ def sigmoid_probabilities(logits: Tensor) -> Tensor:
 
 
 def identity(logits: Tensor) -> Tensor:
-    """Predictions are the raw outputs — e.g. embedding carriers for metric tasks."""
+    """Predictions are the raw outputs — e.g. the embeddings of metric tasks."""
     return logits
 
 

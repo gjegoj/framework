@@ -12,8 +12,8 @@ if TYPE_CHECKING:
 task_preset_registry: Registry[TaskPreset] = Registry("task preset")
 """Familiar task names as kinds of task; resolved via ``resolve_preset``.
 
-A preset names a *kind of task* — its point on the axes and, when the kind is judged
-differently than its label semantics alone would suggest, its customary metrics. Two
+A preset names a *kind of task* — its point on the axes and, when the kind's metrics
+differ from what its label semantics alone would suggest, its default metrics. Two
 presets may share a point; none may drift off one.
 
 Populated in ``presets.py``, the table beside the model it registers — the same split

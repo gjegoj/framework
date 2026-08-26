@@ -28,29 +28,18 @@ which shapes one batch's target — this adapts a model's parameters.
 class LoraAdapters:
     """Low-rank adapters on the named projections, everything else frozen.
 
-    A backbone arrives pretrained and enormous; this leaves it frozen and learns a small
-    ``lora_A``/``lora_B`` pair beside each targeted projection — measured on a timm
-    ViT-tiny, 118K trainable parameters out of 5.6M. Before anything reads the weights
-    the delta folds back, and what is left is the architecture that arrived.
-
-    Applied as a *transformation* of a built model rather than as a component it
-    contains: peft rewrites the targeted layers in place, so wrapping would only add a
-    name level over keys peft already renamed. peft itself is imported inside the calls
-    that need it — measured at 5.5 s, it is the heaviest dependency here, and
-    ``src.models`` is on the import path of every run.
+    The backbone stays frozen and a small ``lora_A``/``lora_B`` pair learns beside each
+    targeted projection — measured on a timm ViT-tiny, 118K trainable of 5.6M. Applied as
+    a transformation of a built model, because peft rewrites the layers in place; peft is
+    imported inside the calls that need it (measured: 5.5 s import).
 
     Parameters:
-        target_modules (Sequence[str]): Module-name suffixes or regexes to adapt,
-            e.g. ``[qkv, proj, fc1, fc2]`` for a timm ViT. No default: it is the
-            one setting that cannot be guessed from the architecture, and a value
-            that matches nothing is refused rather than left to train everything.
-        rank (int): Width of the delta — peft's ``r``, under the name the paper
-            uses.
+        target_modules (Sequence[str]): Module-name suffixes or regexes to adapt, e.g.
+            ``[qkv, proj, fc1, fc2]`` for a timm ViT. No default; matching nothing is refused.
+        rank (int): Width of the delta — peft's ``r``.
         alpha (float): Scaling numerator; the effective scale is ``alpha / rank``.
         dropout (float): Dropout on the adapter's input.
-        **kwargs: Forwarded verbatim to ``peft.LoraConfig`` — ``use_dora``,
-            ``use_rslora``, ``bias``, ``exclude_modules`` and the rest stay
-            reachable without this class declaring them.
+        **kwargs: Forwarded verbatim to ``peft.LoraConfig`` (``use_dora``, ``use_rslora``, ``bias``, ...).
     """
 
     def __init__(
@@ -101,18 +90,11 @@ class LoraAdapters:
 def graft_base_weights(model: nn.Module, weights: Mapping[str, Tensor]) -> bool:
     """Load a plain checkpoint's weights beneath the model's adapters, exactly.
 
-    Warm-starting adapters from an earlier run's weights: peft renamed every
-    targeted layer (``net.weight`` became ``net.base_layer.weight``), so the plain
-    keys are rewritten to the adapted names — a mechanical rename over
-    ``_adapted_layers``, no guessing — and the deltas keep their fresh start.
-    ``lora_B`` initialises at zero, so the grafted model computes exactly what the
-    checkpoint's weights say until training moves the delta (asserted in
-    ``test_checkpoints.py`` against a hand-computed forward).
-
-    Returns ``False`` when there is nothing to graft: the model has no adapters, or
-    the weights already carry adapter keys — an adapted run's own checkpoint loads
-    strictly and needs no rename. Raises when the renamed weights still do not fit:
-    the graft fixes exactly one mismatch, the adapters' rename, and nothing else.
+    peft renamed every targeted layer (``net.weight`` → ``net.base_layer.weight``), so the
+    plain keys are rewritten to the adapted names; ``lora_B`` initialises at zero, so the
+    grafted model computes exactly what the checkpoint says until training moves the delta.
+    Returns ``False`` when there is nothing to graft (no adapters, or adapter keys already
+    present); raises when the renamed weights still do not fit.
     """
     adapted = {name for name, _ in _adapted_layers(model)}
     if not adapted or any(".base_layer." in key or "lora_" in key for key in weights):
@@ -150,14 +132,9 @@ def _beneath(key: str, adapted: set[str]) -> str:
 def merge_adapters(model: nn.Module) -> int:
     """Fold every adapter into the layer it stands in for, and return how many were folded.
 
-    Exact, measured: outputs are unchanged and the keys come back identical to a
-    model that never saw peft — which is what makes a run's checkpoint and its
-    exported artifact indistinguishable from a plain run's. Destructive by
-    nature, so it belongs after the run's final weights are in place, never
-    before restoring them: a checkpoint is keyed with ``lora_`` and
-    ``base_layer`` names that a folded model no longer has.
-
-    A no-op on a model that was never adapted, so the caller needs no branch.
+    Exact, measured: outputs unchanged, keys identical to a model that never saw peft.
+    Destructive, so it belongs after the run's final weights are in place — a checkpoint is
+    keyed with ``lora_`` names a folded model no longer has. A no-op on an unadapted model.
     """
     adapted = _adapted_layers(model)
     for name, module in adapted:

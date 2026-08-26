@@ -18,15 +18,10 @@ if TYPE_CHECKING:
 def resolve_target(component: ComponentConfig, registry: Registry[Any] | None = None) -> Callable[..., Any]:
     """Return the constructor a component names, without calling it.
 
-    Two forms reach a constructor and both come through here: a registry ``name`` —
-    short and discoverable — and a dotted ``_target_`` import path, the escape hatch for
-    code we do not own. Resolving them in one place is what keeps them from drifting
-    apart semantically. Path resolution is delegated to ``hydra.utils.get_object``, so a
-    bad ``_target_`` surfaces as Hydra's own ``ImportError``, honest because ``_target_``
-    is Hydra's semantics.
-
-    Separate from ``instantiate`` because some components must stay uninstantiated: an
-    optimizer needs the model's parameters, which do not exist while config is read.
+    A registry ``name`` and a dotted ``_target_`` import path both come through here, so
+    the two cannot drift; path resolution is ``hydra.utils.get_object``, so a bad
+    ``_target_`` surfaces as Hydra's own ``ImportError``. Separate from ``instantiate``
+    because an optimizer needs the model's parameters, which do not exist yet.
 
     Raises:
         LookupError: For a ``name`` component with no registry, or an unknown key.
@@ -45,19 +40,15 @@ def resolve_target(component: ComponentConfig, registry: Registry[Any] | None = 
 def instantiate(component: ComponentConfig, registry: Registry[Any] | None = None, /, **derived: Any) -> Any:
     """Build the component a declaration names.
 
-    ``component`` and ``registry`` are positional-only, so a derived value may
-    be named anything without colliding with them.
+    ``component`` and ``registry`` are positional-only, so a derived value may be named
+    anything without colliding with them.
 
     Parameters:
         component (ComponentConfig): What to build, and with which arguments.
         registry (Registry | None): Needed for the ``name`` form.
-        **derived (Any): Values computed during assembly (schema- or
-            data-derived). They win over config params on conflict: they come
-            from the single source of truth, and a silent contradiction is how
-            misalignment bugs start. They are *offered*, not forced — a factory
-            that does not name one simply does not receive it, which lets a
-            caller offer the same fact to a whole family of components without
-            knowing which of them happens to want it.
+        **derived (Any): Values computed during assembly. They win over config params on
+            conflict (they come from the single source of truth) and are *offered*, not
+            forced: a factory that does not name one does not receive it.
     """
     factory = resolve_target(component, registry)
     params = {name: _resolve_value(value, derived) for name, value in component.params.items()}

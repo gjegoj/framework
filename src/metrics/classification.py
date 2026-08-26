@@ -23,20 +23,11 @@ _MULTILABEL = "multilabel"
 class ClassificationArtifactMetric(WrappedMetric):
     """A torchmetrics classification metric, sized by the facts its objective offers.
 
-    The three facts are **named** in this signature rather than swept into ``**kwargs``,
-    and that is mechanism rather than style: assembly offers derived values to whatever
-    *names* them, and ``**kwargs`` names nothing. A wrapper that forwarded blindly would
-    be built with no task mode and no class count, then fail inside torchmetrics about an
-    argument the config never mentioned. Written once here, so the three below cannot
-    drift from one another — and so the one signature that has to be right is one.
-
-    Every objective offers ``task``; only the ones with a class space add a count, and
-    which of the two names it carries is the objective's word. All three are handed on,
-    because each of the wrapped classes dispatches on ``task`` and ignores the count that
-    does not apply to it.
-
-    Subclasses say two things and nothing else: which torchmetrics class does the
-    arithmetic (``inner_type``), and what its value means (``compute``).
+    The facts are *named* in this signature rather than swept into ``**kwargs``, because
+    assembly offers derived values to whatever names them, and ``**kwargs`` names nothing.
+    All three are handed on: each wrapped class dispatches on ``task`` and ignores the
+    count that does not apply. Subclasses say which torchmetrics class does the arithmetic
+    (``inner_type``) and what its value means (``compute``).
     """
 
     inner_type: ClassVar[Callable[..., Metric]]

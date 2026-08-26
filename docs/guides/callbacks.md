@@ -93,7 +93,7 @@ so there is no reason to declare both.
 
 Some loss knobs are meant to move: focal `gamma` easing in, `label_smoothing`
 fading out, a distillation temperature cooling. The criterion stays a dumb
-brick that never sees Lightning — this callback is what knows the epoch:
+component that never sees Lightning — this callback is what knows the epoch:
 
 ```yaml
 callbacks:

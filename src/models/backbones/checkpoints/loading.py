@@ -25,20 +25,14 @@ def load_arrived_weights(
 ) -> dict[str, Tensor] | None:
     """Load a full checkpoint into a headless model; return the stashed head tensors.
 
-    Every checkpoint-format concern — EMA-branch priority, ``state_dict``/``model``
-    unwrapping, DDP and compile prefix stripping, safetensors — is delegated whole to
-    ``timm.models.load_checkpoint``, which works on any plain ``nn.Module``. What is
-    added on top: the load is reported, and a checkpoint matching nothing is refused,
-    because a user's weight file must never no-op in silence.
-
-    The knobs carry ``timm.load_checkpoint``'s own names. The stash rides its
-    ``filter_fn`` hook — keys under ``stash_prefixes`` never reach the model, and
-    return here for the family's own transplant to consume.
+    Every checkpoint-format concern (EMA branch, ``state_dict`` unwrapping, DDP/compile
+    prefixes, safetensors) is delegated to ``timm.models.load_checkpoint``. Added on top:
+    the load is reported, and a checkpoint matching nothing is refused. Keys under
+    ``stash_prefixes`` never reach the model and return here for the family's transplant.
 
     Parameters:
         model (nn.Module): The headless model to fill.
-        model_name (str): Named in the refusal, so a mismatch says which two things
-            did not meet.
+        model_name (str): Named in the refusal.
         path (str | Path): The weight file.
         use_ema (bool): Prefer the checkpoint's EMA branch where it has one.
         strict (bool): Refuse a state dict that does not match key for key.
@@ -46,8 +40,7 @@ def load_arrived_weights(
         stash_prefixes (tuple[str, ...]): Key prefixes that belong to the head.
 
     Returns:
-        dict[str, Tensor] | None: The head tensors held back, or ``None`` if the
-            checkpoint carried none.
+        dict[str, Tensor] | None: The head tensors held back, or ``None`` if none.
     """
     from timm.models import load_checkpoint
 

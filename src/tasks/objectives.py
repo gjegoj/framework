@@ -1,4 +1,4 @@
-"""How each label semantics is learned and judged: the bricks per ``Objective`` member."""
+"""How each label semantics is learned and evaluated: the components per ``Objective`` member."""
 
 from __future__ import annotations
 
@@ -30,14 +30,11 @@ if TYPE_CHECKING:
 
 
 class TaskObjective(ABC):
-    """The behaviour behind one ``Objective`` member: which bricks judge such labels.
+    """The behaviour behind one ``Objective`` member: head size, criterion, activation, adapter.
 
-    The enum answers *which* semantics a task has; a ``TaskObjective`` answers
-    *how* it works — head size, criterion, activation, target adapter. Every
-    brick is built from ``TargetFacts``, so how a target is *represented* stays
-    the encoder's choice rather than a second axis: the same continuous
-    semantics is served by a single output against mean squared error, or by
-    bins against cross-entropy, depending on the facts the data produced.
+    Every component is built from ``TargetFacts``, so how a target is *represented* stays
+    the encoder's choice rather than a second axis: the same continuous semantics is served
+    by one output against MSE, or by bins against cross-entropy, depending on the facts.
     ``needs_num_classes`` tells the builder a class count must be there.
     """
 
@@ -47,10 +44,8 @@ class TaskObjective(ABC):
     def out_features(self, facts: TargetFacts) -> int | None:
         """Head output size for this label semantics; ``None`` where a head projects nothing.
 
-        ``None`` rather than zero: metric learning's carrier *is* the output, so there is
-        no width to ask for. Spelled as a sentinel, the meaning of the number lived in the
-        topology that decoded it — one file said ``0`` and another said ``> 0`` — and
-        neither said what it stood for.
+        ``None`` rather than zero: metric learning's embedding *is* the output, so there is no
+        width to ask for.
         """
 
     @abstractmethod
@@ -208,12 +203,9 @@ class ContinuousObjective(TaskObjective):
 class MetricObjective(TaskObjective):
     """Embeddings shaped by comparison — against the batch, or against labels.
 
-    The carrier already holds final embeddings, so the head is identity and
-    ``out_features`` is not applicable. Supervision comes in two forms, and the
-    facts decide which: usually the structure of the batch itself (the in-batch
-    diagonal, so no target adapter), but a task that declared and encoded a
-    label column — ArcFace-style proxy classification — gets those labels
-    delivered. A criterion that ignores its target is unaffected either way.
+    The output already holds final embeddings, so the head is identity and ``out_features``
+    does not apply. Supervision is usually the batch's structure (the in-batch diagonal); a
+    task that declared a label column (ArcFace-style proxies) gets those labels delivered.
     """
 
     @override

@@ -15,15 +15,10 @@ if TYPE_CHECKING:
 def counted(names: Sequence[str] | None, labels: Iterable[str]) -> ClassDistribution:
     """Count labels, starting from every declared class so the unused ones still show.
 
-    One of the two shapes every target here takes — *counted*, how many samples or
-    pixels carry each class (classification, multilabel, segmentation), against
-    *measured* for a column of numbers. Its encoder picks, since only the encoder
-    knows the vocabulary and the parsing.
-
-    Seeding with the vocabulary is the whole point: a class the split never produced is
-    the most useful row in the table, and counting only what appeared would quietly
-    leave it out. A label outside the vocabulary is still counted — the encoders refuse
-    those at ``fit``, and a report that hid one would be hiding the diagnosis.
+    One of the two shapes a target's statistics take — *counted* (classes) against
+    *measured* (numbers); the encoder picks. A class the split never produced is the most
+    useful row, so the vocabulary seeds the count; a label outside it is still counted,
+    because the encoders refuse those at ``fit`` and a report should not hide the diagnosis.
 
     Parameters:
         names (Sequence[str] | None): The declared vocabulary, seeded at zero.

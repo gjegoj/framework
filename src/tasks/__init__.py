@@ -1,4 +1,4 @@
-"""The tasks capability: from universal ``Task`` declarations to the composite family's bricks."""
+"""The tasks capability: from universal ``Task`` declarations to the composite family's components."""
 
 from __future__ import annotations
 

@@ -70,15 +70,10 @@ def is_vendor_family(config: ExperimentConfig) -> bool:
 def refuse_what_a_vendor_cannot_serve(config: ExperimentConfig) -> None:
     """Fail before the first epoch, naming the section and where its knowledge belongs.
 
-    A vendor family owns its head, its loss and its decoding, so most of what an
-    experiment can declare has nothing to attach to: an augmentation pipeline that is
-    not box-aware, an exporter with no logits to trace, an adapter with no backbone of
-    ours to reparameterize.
-
-    A section silently ignored is worse than a run that dies: it reports numbers for a
-    recipe nobody ran, and the difference only shows up when someone tries to reproduce
-    it. Refusing them from one function that reads the config means a section added to
-    the framework is refused here or not at all — there is no second list to keep in step.
+    A vendor family owns its head, loss and decoding, so an augmentation pipeline, an
+    exporter or an adapter has nothing to attach to. A section silently ignored is worse
+    than a run that dies: it reports numbers for a recipe nobody ran. One function reads
+    the config, so a new section is refused here or not at all.
     """
     if not is_vendor_family(config):
         return

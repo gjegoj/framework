@@ -20,24 +20,13 @@ log = logging.getLogger(__name__)
 def shipped_weights(path: str) -> dict[str, Tensor]:
     """The weights a run's checkpoint holds for the model that ships.
 
-    A run writes its whole training module, so every key is the model's own under the
-    attribute it sits at — and a distilled run nests the student one level further,
-    because a decorator renames what it wraps. Measured, that rename cannot be hidden
-    inside the decorator: overriding ``state_dict`` propagates through the parent while
-    overriding ``load_state_dict`` does not, so the two halves would disagree and a save
-    would not load back.
-
-    Unwrapping it here gives one rule for every file this framework writes: a checkpoint
-    carries the weights of the model that ships, and the scaffolding a run wore —
-    teachers, a criterion's own state — is not part of them. One file then loads into a
-    distilled model and a plain one alike, which is what makes a later export-only run
-    possible without re-declaring teachers it will not use.
-
-    ``weights_only=True`` is enough for a Lightning checkpoint, weights-only or
-    full (measured), so reading one opens no arbitrary-code surface. A file
-    without a ``state_dict`` is refused by name: a backbone's own arrived weights
-    are a different kind of file and belong in ``model.checkpoint_path``, where
-    the adapter knows how to graft them.
+    A run writes its whole training module, and a distilled run nests the student one level
+    further. Unwrapping here gives one rule for every file this framework writes: a
+    checkpoint carries the shipped model's weights, and a run's scaffolding (teachers, a
+    criterion's state) is not part of them, so one file loads into a distilled and a plain
+    model alike. ``weights_only=True`` is enough for a Lightning checkpoint (measured). A
+    file without a ``state_dict`` is refused by name: a backbone's own arrived weights
+    belong in ``model.checkpoint_path``.
     """
     state = torch.load(path, map_location="cpu", weights_only=True)
     if not isinstance(state, dict) or "state_dict" not in state:

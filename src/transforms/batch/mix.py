@@ -30,19 +30,11 @@ amount, or a picture would take one neighbour and its label another.
 class LabelMix(ABC):
     """Shared base: one draw mixes the image and every task's label.
 
-    Because these change the image every task shares, they rewrite every task's label
-    from the *same* draw — a two-head model must not blend its heads one way and its
-    picture another.
-
-    Only global tasks can be served. A blended image has no coherent per-pixel target,
-    and metric learning's proxy and margin losses break on soft labels; both are refused
-    here rather than discovered after an hour of training.
-
-    The draw and the geometry are torchvision's, reached through the public extension
-    points every v2 transform defines: ``make_params`` samples the Beta weight and, for
-    CutMix, the box with its clamping and area-adjusted weight; ``transform`` blends or
-    pastes. Only the label mixing is ours, because torchvision's assumes one head with
-    one class count.
+    Every task's label is rewritten from the *same* draw, because the image every task
+    shares changed. Only global tasks are served: a blended image has no coherent per-pixel
+    target, and metric learning's losses break on soft labels — refused here, not an hour
+    in. The draw and geometry are torchvision's (``make_params``, ``transform``); only the
+    label mixing is ours, because torchvision's assumes one head.
 
     Parameters:
         tasks (Sequence[Task]): Every task whose label must be rewritten.

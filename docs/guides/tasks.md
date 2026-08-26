@@ -1,6 +1,6 @@
 # Tasks and presets
 
-A task is what an experiment learns and how it is judged. Everything else in a
+A task is what an experiment learns and how it is evaluated. Everything else in a
 config — the model, the loader, the callbacks — serves the tasks.
 
 ```yaml
@@ -139,7 +139,7 @@ tasks:
 
 One backbone encodes the batch once; each task's head reads the stream it names.
 `weight` scales a task's contribution to the total loss; `lr` gives its own
-bricks a different pace while the backbone keeps the optimizer's — see
+components a different pace while the backbone keeps the optimizer's — see
 [per-task rates](training.md#per-task-learning-rates).
 
 ## Overriding the head
@@ -184,7 +184,7 @@ and duplicates, `head` and `native_head` cannot both be set, and an unknown key
 in the section is an error naming it.
 
 At **assembly**: the topology validates the objective it was paired with, the
-metrics are built with the objective's own arguments, and a task declaring bricks
+metrics are built with the objective's own arguments, and a task declaring components
 a vendor family builds itself is refused with the reason.
 
 At **fit**: the data is validated against the declared vocabulary.

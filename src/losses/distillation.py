@@ -1,4 +1,4 @@
-"""Distillation criteria: a student judged against a teacher's outputs."""
+"""Distillation criteria: a student trained against a teacher's outputs."""
 
 from __future__ import annotations
 
@@ -17,19 +17,14 @@ if TYPE_CHECKING:
 class KLDivergenceLoss(nn.Module):
     """Temperature-scaled KL divergence from teacher logits to student logits.
 
-    ``KL(softmax(teacher/T) || softmax(student/T)) * T²`` — the ``T²`` factor
-    keeps soft-target gradients on the scale of hard-target ones, which is what
-    lets the two be added with an honest weight. The class dimension is dim 1
-    and everything after it rides along, so one module serves ``[B, C]`` and
-    dense ``[B, C, H, W]`` alike. The teacher side is detached: gradients reach
-    the student argument only.
-
-    ``temperature`` is a plain number read anew each step, so the ``anneal``
-    callback can cool it over the run.
+    ``KL(softmax(teacher/T) || softmax(student/T)) * T²`` — ``T²`` keeps soft-target
+    gradients on the scale of hard-target ones. The class dimension is dim 1 and the rest is
+    carried along. The teacher side is detached. ``temperature`` is a plain number read each
+    step, so the ``anneal`` callback can cool it.
 
     Parameters:
-        temperature (float): Softening; 1.0 is plain KL, higher exposes more of
-            the teacher's dark knowledge in the small logits.
+        temperature (float): Softening; 1.0 is plain KL, higher exposes more of the
+            teacher's small logits.
     """
 
     def __init__(self, temperature: float = 1.0) -> None:

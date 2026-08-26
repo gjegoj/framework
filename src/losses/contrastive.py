@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 
 
 def _normalized_pair(logits: Tensor, owner: str) -> tuple[Tensor, Tensor]:
-    """The pair carrier as L2-normalized views — what similarity losses consume."""
+    """The ``[B, 2, D]`` pair as L2-normalized views — what similarity losses consume."""
     first, second = split_views(logits, 2, owner)
     return functional.normalize(first, dim=-1), functional.normalize(second, dim=-1)
 
@@ -25,16 +25,12 @@ def _normalized_pair(logits: Tensor, owner: str) -> tuple[Tensor, Tensor]:
 class InfoNceLoss(nn.Module):
     """Symmetric InfoNCE over in-batch pairs — the CLIP objective.
 
-    Cross-entropy against the diagonal of the similarity matrix, averaged over
-    both directions (view-a retrieves view-b and vice versa).
-
-    The carrier is ``[B, N, D]`` from a multi-view or multi-stream backbone, and the
-    ``target`` argument is ignored: supervision *is* the in-batch diagonal — sample
-    ``i``'s views are the positive pair and every other sample is a negative.
+    Cross-entropy against the diagonal of the similarity matrix, averaged over both
+    directions. The input is ``[B, N, D]`` from a multi-view or multi-stream backbone; the
+    ``target`` argument is ignored — supervision *is* the in-batch diagonal.
 
     Parameters:
-        temperature (float): Initial softmax temperature; stored as a learnable
-            log-scale parameter, as in CLIP.
+        temperature (float): Initial softmax temperature; a learnable log-scale, as in CLIP.
     """
 
     def __init__(self, temperature: float = 0.07) -> None:
@@ -65,9 +61,8 @@ class InfoNceCriterion(WrappedCriterion):
 class SigLipLoss(nn.Module):
     """Pairwise sigmoid loss — the SigLIP objective.
 
-    Every image-text pair is judged independently (positive on the diagonal,
-    negative elsewhere), so no batch-wide softmax is needed. Scale and bias are
-    learnable, initialized as in the paper (``log 10`` and ``-10``).
+    Every pair is scored independently (positive on the diagonal, negative elsewhere), so no
+    batch-wide softmax is needed. Scale and bias are learnable, initialized as in the paper.
     """
 
     def __init__(self) -> None:
@@ -93,14 +88,13 @@ class SigLipCriterion(WrappedCriterion):
 
 
 class TripletLoss(nn.Module):
-    """Triplet margin loss over ``[B, 3, D]`` anchor/positive/negative carriers.
+    """Triplet margin loss over ``[B, 3, D]`` anchor/positive/negative views.
 
-    Views are consumed raw — the margin is defined in the embedding space the
-    backbone produces, so no normalization is applied here.
+    Views are consumed raw — the margin is defined in the embedding space the backbone
+    produces, so no normalization is applied.
 
     Parameters:
-        **kwargs: Forwarded verbatim to ``nn.TripletMarginLoss``
-            (``margin``, ``p``, ``swap``, ...).
+        **kwargs: Forwarded verbatim to ``nn.TripletMarginLoss`` (``margin``, ``p``, ``swap``, ...).
     """
 
     def __init__(self, **kwargs: Any) -> None:

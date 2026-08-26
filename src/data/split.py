@@ -57,24 +57,11 @@ def stratified_split(
 ) -> Splitter:
     """Build a splitter that gives every stage the same distribution of ``by``.
 
-    A plain random split leaves stage composition to chance: with an imbalanced
-    target, a small validation set can end up with too few — or zero — rows of the
-    rare class, and its metrics then say more about the draw than about the model.
-
-    How a row is grouped follows from the column's *content*, not its dtype:
-    values that repeat (class labels, whether stored as text or as integers) group
-    by the value itself, while a numeric column with more distinct values than
-    ``bins`` groups by quantile. Deciding on dtype instead would quantile-bin
-    integer class labels and collapse an imbalanced 0/1 target into one bin,
-    degrading the split to a random one without any error.
-
-    Cells carrying several labels at once ("cat,dog", or a list) are balanced one
-    label at a time by iterative stratification: past a handful of labels their
-    combinations are nearly unique, and holding combinations proportional would
-    leave almost every row unsplittable.
-
-    Values too rare to spread across stages join the earliest stage that claims
-    them, so long-tail data stays usable instead of failing the run.
+    Grouping follows the column's *content*: repeating values group by value, a numeric
+    column with more distinct values than ``bins`` groups by quantile — deciding on dtype
+    would quantile-bin integer class labels. Multi-label cells are balanced one label at a
+    time (iterative stratification). Values too rare to spread join the earliest stage that
+    claims them.
 
     Parameters:
         fractions (Mapping[Stage, float]): Per-stage share of rows, summing to 1.
@@ -110,18 +97,10 @@ def stratified_split(
 def group_split(fractions: Mapping[Stage, float], by: str, seed: int) -> Splitter:
     """Build a splitter that keeps rows sharing a value of ``by`` in one stage.
 
-    Rows are often not independent: several scans of one patient, frames of one
-    video, crops of one image. A row-wise split scatters such a family across
-    stages, and the model then meets in test what it already memorised in train —
-    the metric measures recall of a specific patient, not generalisation.
-
-    Whole groups move together, so stage sizes approximate the fractions instead
-    of matching them exactly; that slack is inherent to keeping groups intact.
-    The fractions still count *rows*, as they do everywhere else here — which is
-    why sklearn's ``GroupShuffleSplit`` is not used: its ``train_size`` is a share
-    of groups, so with groups of unequal size (the ordinary case, patients
-    contributing different numbers of scans) asking for 0.6 can hand over a fifth
-    of the data.
+    Scans of one patient, frames of one video: split row-wise, the model meets in test what
+    it memorised in train. Whole groups move together, so stage sizes approximate the
+    fractions. The fractions still count *rows* — sklearn's ``GroupShuffleSplit`` counts
+    groups, and with unequal groups asking for 0.6 can hand over a fifth of the data.
 
     Parameters:
         fractions (Mapping[Stage, float]): Per-stage share of rows, summing to 1.

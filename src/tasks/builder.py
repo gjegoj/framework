@@ -24,35 +24,29 @@ def build_task_components(
     prefer_native_head: bool = False,
     head_factory: Callable[[int, int], Head] | None = None,
 ) -> TaskComponents:
-    """Assemble the bricks that serve ``task`` inside a composite model.
+    """Assemble the components that serve ``task`` inside a composite model.
 
-    Resolves the task's axes to their behaviours, validates the pairing,
-    reads inferred facts (``num_classes``) from ``profile`` when the objective
-    needs them, and sizes the head from the backbone's stream dimension —
-    the ordering contract that keeps output sizes out of config.
+    Resolves the task's axes to their behaviours, validates the pairing, reads inferred
+    facts from ``profile`` when the objective needs them, and sizes the head from the
+    backbone's stream — the ordering that keeps output sizes out of config.
 
     Parameters:
-        stream (str | None): Read this stream instead of the topology's
-            default — e.g. a GLOBAL task on ``Stream.ENCODER`` of an smp
-            backbone.
-        prefer_native_head (bool): Use the backbone's own head for the
-            stream (smp's segmentation/classification head, timm's
-            classifier) instead of building a framework head.
-        head_factory (Callable | None): Build this head instead of the
-            topology's default, given ``(in_features, out_features)`` — how a
-            config override arrives without config entering this layer. A
-            factory rather than an instance, because the sizes are resolved
-            here.
+        task (Task): The declaration being served: its axes, name and weight.
+        profile (DataProfile): The facts ``DataModule.setup`` recorded, read for this task.
+        backbone (Backbone): Whose stream the head is sized from.
+        stream (str | None): Read this stream instead of the topology's default.
+        prefer_native_head (bool): Use the backbone's own head for the stream instead of a
+            framework head.
+        head_factory (Callable | None): Build this head instead of the topology's default,
+            given ``(in_features, out_features)`` — a factory, because the sizes are resolved here.
 
     Raises:
-        LookupError: If a native head is preferred but the backbone offers
-            none for the stream.
+        LookupError: If a native head is preferred but the backbone offers none for the stream.
     """
     objective = objective_registry.create(task.objective)
     topology = topology_registry.create(task.output_topology)
     # Both halves of "can this framework serve this task?", asked together and before
-    # anything is built. The second used to be a refusal thrown from inside `build_head`,
-    # i.e. from a method the builder was never meant to reach for such a task.
+    # anything is built.
     if not topology.supports(task.objective, task.input_topology):
         raise ValueError(
             f"Output topology '{task.output_topology}' with input topology '{task.input_topology}' "
@@ -97,15 +91,10 @@ def build_task_components(
 def default_target_encoder(output_topology: OutputTopology, objective: Objective) -> str | None:
     """The encoder a task's target starts from when config declares none.
 
-    The shape's voice outranks the semantics': a dense cell is a mask file and an
-    instances cell is a list of objects whatever the labels mean, while a global cell is
-    scalar-ish and only there does the objective pick the variant. ``None`` when neither
-    axis has one — the caller owns the refusal and its message, because what a user
-    should write instead is config grammar, which this layer does not speak.
-
-    Here rather than in assembly because this is the same composition of the same two
-    axes that ``build_task_components`` performs; a second home for it is how the two
-    would drift.
+    The shape outranks the semantics: a dense cell is a mask file and an instances cell a
+    list of objects whatever the labels mean; only a global cell asks the objective.
+    ``None`` when neither axis has one — the caller owns the refusal. Here rather than in
+    assembly because it is the same composition of the same two axes as ``build_task_components``.
     """
     shape = topology_registry.create(output_topology).default_target_encoder
     return shape or objective_registry.create(objective).default_target_encoder

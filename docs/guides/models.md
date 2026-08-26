@@ -188,7 +188,7 @@ would run with nothing to learn.
 
 **The deltas fold back before anything reads the weights.** After training — and
 after the best checkpoint is restored — every adapter is merged into the layer it
-stood in for. The fold is exact, so `test` judges what the artifact carries, and
+stood in for. The fold is exact, so `test` evaluates what the artifact carries, and
 the exported graph has no adapter overhead and no `lora_` names in it. A LoRA
 run's output is indistinguishable from a plain run's.
 
@@ -219,7 +219,7 @@ with an undistilled one's, and a checkpoint monitor watching `val/loss` still
 means what it meant.
 
 **The soft term is an ordinary loss term.** `loss:` is the same declaration a
-task's own `loss:` takes, so the temperature and the weight ride on it, the term
+task's own `loss:` takes, so the temperature and the weight sit on it, the term
 is logged under its own name beside the hard one (`train/label/kl` next to
 `train/label/ce`), and a list declares several comparisons added with their
 weights. There is no second place to weight distillation, and `weight: 0` is
@@ -233,7 +233,7 @@ a longer list; their raw logits are averaged, and one teacher is simply a list
 of one.
 
 **The artifact is the size of its student.** The teachers are held off the module
-tree — registered, they would ride into every checkpoint and into the EMA
+tree — registered, they would be written into every checkpoint and into the EMA
 callback's copy of the module, and a traced graph carries whatever is registered.
 Nothing about a deployment says a teacher was ever there.
 

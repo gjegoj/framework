@@ -63,17 +63,12 @@ class MaskLoader(ImageLoader):
     """Reads a mask file into a single ``[H, W]`` plane, and says that is what it is.
 
     ``geometry`` is the marker assembly reads to give the column mask treatment in the
-    augmentation pipeline: nearest-neighbour geometry, and ``Normalize`` leaving it
-    alone. It is the whole difference from declaring ``{name: image, grayscale: true}``
-    — grayscale cannot imply it, because a grayscale *photograph* (an X-ray) is still
-    a picture and must keep picture treatment.
-
-    The marker lives on the class rather than in config, so a user declares a loader
-    and never a kind: the two cannot fall out of step.
+    pipeline (nearest-neighbour, untouched by ``Normalize``). Grayscale cannot imply it — an
+    X-ray is a grayscale photograph — and it lives on the class rather than in config, so a
+    user declares a loader and never a kind.
 
     Parameters:
-        root (str | Path | None): Prefix for the mask paths stored in the table;
-            ``None`` uses them as given.
+        root (str | Path | None): Prefix for the mask paths stored in the table.
     """
 
     geometry: ClassVar[Geometry] = Geometry.MASK

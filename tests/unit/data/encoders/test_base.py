@@ -1,11 +1,4 @@
-"""Every column loads before the transforms; target columns encode after.
-
-``load`` is one table cell into the form the transforms see — identity for a
-value, a file read for a mask, because geometry needs pixels to move. ``encode``
-is the post-transform value into the training form, which is what lets an
-augmentation write a raw class name or a plain number and have the encoder make
-training sense of it.
-"""
+"""The ``TargetEncoder`` contract: load before the transforms, encode after; registration; geometry."""
 
 from __future__ import annotations
 
@@ -14,9 +7,17 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from src.core import Geometry
 from src.core.entities import Sample
 from src.data.dataset import TableDataset
-from src.data.encoders import GaussianBinsTargetEncoder, LabelTargetEncoder, TargetEncoder
+from src.data.encoders import (
+    GaussianBinsTargetEncoder,
+    LabelTargetEncoder,
+    MaskTargetEncoder,
+    ScalarTargetEncoder,
+    TargetEncoder,
+)
+from src.data.registry import target_encoder_registry
 from src.data.schema import DataSchema, InputColumn, TargetColumn
 
 
@@ -132,3 +133,23 @@ def test_a_target_columns_loader_is_its_encoders_pre_transform_half() -> None:
 
     assert value_column.loader("intact") == "intact"  # identity for a value encoder
     assert isinstance(mask_column.loader("whatever.png"), np.ndarray)  # the mask encoder's read
+
+
+def test_built_in_encoders_are_registered_for_config() -> None:
+    assert set(target_encoder_registry) == {
+        "label",
+        "multilabel",
+        "scalar",
+        "mask",
+        "boxes",
+        "gaussian_bins",
+        "linear_bins",
+    }
+    assert isinstance(target_encoder_registry.create("mask", num_classes=2), MaskTargetEncoder)
+
+
+def test_encoders_declare_their_geometry() -> None:
+    """Geometry is what tells a transform which targets follow the image, and how."""
+    assert MaskTargetEncoder(num_classes=2).geometry is Geometry.MASK
+    assert LabelTargetEncoder().geometry is Geometry.NONE
+    assert ScalarTargetEncoder().geometry is Geometry.NONE

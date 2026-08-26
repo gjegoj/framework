@@ -122,7 +122,7 @@ export:
 ```
 
 Written through torch's modern `torch.export`-based exporter, with the batch axis
-dynamic — so the same file serves one sample and a whole batch. The weights ride
+dynamic — so the same file serves one sample and a whole batch. The weights sit
 beside the graph in `model.onnx.data`: **both files travel together**, and a
 deployment that copies only `model.onnx` has copied a graph without weights. Pass
 `external_data: false` for a single file instead.

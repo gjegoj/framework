@@ -20,20 +20,14 @@ log = logging.getLogger(__name__)
 class ApplyBatchTransform(L.Callback):
     """Apply a batch transform to training batches until a point in the run.
 
-    Validation and test are excluded by construction rather than by a flag: the
-    hook this listens on fires in training only.
-
-    The transform returns a new batch, but ``on_train_batch_start`` is declared
-    to return nothing and Lightning discards whatever a callback gives back — so
-    the result is assigned into the batch that was handed over. The assignment
-    replaces the fields wholesale rather than merging them, so a transform that
-    changes which keys exist is represented faithfully.
+    Validation and test are excluded by construction: the hook fires in training only.
+    Lightning discards a callback's return value, so the result is assigned into the batch
+    that was handed over, replacing its fields wholesale.
 
     Parameters:
         transform (BatchTransform): What to apply.
-        until (float): Share of the run it stays active for. ``1.0`` is all of
-            it; ``0.8`` stops for the last fifth, which lets a model finish on
-            data of the kind it will be judged on.
+        until (float): Share of the run it stays active for; ``0.8`` stops for the last
+            fifth, so a model finishes on the kind of data it is evaluated on.
     """
 
     def __init__(self, transform: BatchTransform, until: float = 1.0) -> None:

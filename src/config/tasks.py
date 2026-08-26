@@ -97,7 +97,7 @@ class TaskConfig(BaseModel):
         None,
         gt=0,
         description=(
-            "Own learning rate for this task's bricks — its head and its criterion. None shares "
+            "Own learning rate for this task's components — its head and its criterion. None shares "
             "the run's rate; the backbone always follows the optimizer section."
         ),
     )
@@ -162,7 +162,7 @@ class TaskConfig(BaseModel):
             "objective": preset.objective,
         }
         if preset.metrics is not None and "metrics" not in data:
-            # The kind's customary judgment, injected where the user said nothing —
+            # The kind's default metrics, injected where the user said nothing —
             # visible in the loaded config and validated by the same grammar.
             resolved["metrics"] = preset.metrics
         return resolved

@@ -73,27 +73,12 @@ type Reading = ClassReading | ValueReading
 class AnnotationObjective(ABC):
     """How one ``Objective`` reads predictions and targets, on any topology.
 
-    ``reading`` says which kind it produces. Declared rather than inferred, because
-    it is asked *before* a reading exists — at assembly, when a topology is asked
-    whether it can label what this objective will read.
-
-    ``scores`` is one sample's **activated** output, and whether it still has a
-    class axis is the objective's own business — the activation decides:
-
-    | objective | activation | one sample's shape |
-    |---|---|---|
-    | multiclass | ``softmax_probabilities`` | ``[C, *positions]`` |
-    | multilabel | ``sigmoid_probabilities`` | ``[C, *positions]`` |
-    | binary | ``sigmoid_probabilities`` | ``[*positions]`` — one channel, squeezed |
-    | continuous | ``squeeze_single_output`` | ``[*positions]`` |
-
-    Measured, not assumed: ``sigmoid_probabilities`` runs ``squeeze_single_output``
-    first, so a binary head's ``[B, 1]`` arrives as ``[B]`` and its ``[B, 1, H, W]``
-    as ``[B, H, W]``. A reader written against the logits shape indexes ``[0]``
-    into that and gets an ``IndexError`` on a global task — or, worse, the first
-    *row* of the map on a dense one, silently.
-
-    ``target`` is the sample's metric-view target, which arrives hard: indices,
+    ``reading`` says which kind it produces — declared, because it is asked at assembly
+    before a reading exists. ``scores`` is one sample's **activated** output, and the
+    activation decides whether it still has a class axis: multiclass and multilabel are
+    ``[C, *positions]``; binary and continuous are ``[*positions]`` — measured,
+    ``sigmoid_probabilities`` squeezes the single channel, so a reader indexing ``[0]``
+    into it would take the first row of a dense map. ``target`` arrives hard: indices,
     multi-hot, or values.
     """
 
@@ -111,15 +96,9 @@ class AnnotationObjective(ABC):
 class AnnotationTopology(ABC):
     """How one ``OutputTopology`` turns a pair of readings into labels and a verdict.
 
-    One method per kind of reading, each defaulting to "this topology has no label
-    for that". A topology overrides the ones it draws and says nothing about the
-    rest — so a new reading kind adds one defaulted method here and touches no
-    existing topology, where a ``match`` inside each of them had to grow a case in
-    every one.
-
-    ``draws`` is **derived** from those overrides rather than declared beside them.
-    Declared, it could say yes where no branch existed, and the run found out an
-    epoch in; derived, the two cannot disagree.
+    One method per kind of reading, each defaulting to "no label for that"; a topology
+    overrides the ones it draws. ``draws`` is *derived* from those overrides, so the two
+    cannot disagree.
     """
 
     def label_classes(self, view: SampleView, task: Task, truth: ClassReading, predicted: ClassReading) -> None:
@@ -318,7 +297,7 @@ def _one(values: np.ndarray) -> float:
 
 @annotation_topology_registry.register(OutputTopology.GLOBAL)
 class GlobalAnnotation(AnnotationTopology):
-    """One prediction per sample: chips, judged by comparing what holds on each side."""
+    """One prediction per sample: chips, matched by comparing what holds on each side."""
 
     @override
     def label_values(self, view: SampleView, task: Task, truth: ValueReading, predicted: ValueReading) -> None:
@@ -349,15 +328,13 @@ class GlobalAnnotation(AnnotationTopology):
 
 @annotation_topology_registry.register(OutputTopology.DENSE)
 class DenseAnnotation(AnnotationTopology):
-    """One prediction per location: masks, judged by mean IoU over the classes either side shows.
+    """One prediction per location: masks, scored by mean IoU over the classes either side shows.
 
     It overrides ``label_classes`` and not ``label_values``: a field of numbers is a
-    heatmap, and the IR has no label kind for one yet. Saying so is the whole of it —
-    ``draws`` reads the overrides, so nothing has to be kept in step by hand.
+    heatmap, and the IR has no label kind for one yet.
 
     Parameters:
-        ignore_index (int | None): A class drawn by neither side and judged by
-            neither — the void label of a segmentation dataset.
+        ignore_index (int | None): A class drawn by neither side and scored by neither.
     """
 
     def __init__(self, ignore_index: int | None = None) -> None:
@@ -383,17 +360,10 @@ class DenseAnnotation(AnnotationTopology):
     def _mean_iou(self, truth: ClassReading, predicted: ClassReading) -> float | None:
         """Averaged over the classes either side shows — a class absent from both says nothing.
 
-        ``ignore_index`` has to drop the void *pixels*, not just the void class. A
-        model cannot predict void, so every void pixel it labels lands in some real
-        class's union and counts against it. Measured against
-        ``MulticlassJaccardIndex(ignore_index=...)``: a prediction correct on every
-        valid pixel scored 0.70 here while torchmetrics said 1.0, until the void was
-        masked out of both sides. That agreement is the whole point of sharing the
-        ``iou`` name with the epoch report.
-
-        ``None`` when there is nothing left to measure — a sample that is all void
-        earns no score at all, rather than a zero that would sort it as the worst on
-        the page and drag the slider's floor down with it.
+        ``ignore_index`` drops the void *pixels*, not just the void class: measured against
+        ``MulticlassJaccardIndex(ignore_index=...)``, a prediction correct on every valid pixel
+        scored 0.70 here until the void was masked out of both sides. ``None`` when nothing is
+        left to measure, rather than a zero that would sort the sample as the worst.
         """
         true_masks = {entry.index: entry.where for entry in truth.presences}
         predicted_masks = {entry.index: entry.where for entry in predicted.presences}
@@ -456,21 +426,10 @@ def _numpy(tensor: Tensor) -> np.ndarray:
 def build_annotators(tasks: Sequence[Task], **offered: Any) -> dict[str, Annotator]:
     """One annotator per drawable task; knobs reach the constructors that name them.
 
-    Split on the same two axes the task model is: an ``AnnotationObjective`` reads
-    predictions off the class axis and never looks at the trailing shape, so one
-    implementation serves a GLOBAL ``[C]`` output and a DENSE ``[C, H, W]`` one alike,
-    while an ``AnnotationTopology`` turns those readings into labels and a verdict — a
-    point becomes a chip, a plane becomes masks. ``AnnotationTopology.draws`` mirrors
-    ``TaskTopology.supports``. Keying one registry by the *pair* instead would duplicate
-    along the axis it flattened — two argmaxes and two thresholds across four classes.
-
-    Knobs (``threshold``, ``ignore_index``) are offered to every constructor and reach
-    the ones that name them, the pattern derived values follow.
-
-    A task that draws nothing is skipped with one line naming the task **and the
-    reason** — an objective with no per-sample label to show, a topology with nothing
-    per-sample at all, and a pairing the IR has no label for are three different
-    situations, and a run must never silently draw none of them.
+    Split on the task model's two axes: an ``AnnotationObjective`` reads predictions off
+    the class axis, so one serves GLOBAL ``[C]`` and DENSE ``[C, H, W]`` alike, while an
+    ``AnnotationTopology`` turns readings into labels and a verdict. A task that draws
+    nothing is skipped with one line naming the task and the reason.
     """
     built: dict[str, Annotator] = {}
     for task in tasks:

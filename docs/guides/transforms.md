@@ -62,7 +62,7 @@ boxes, and every other declared image:
 data:
   inputs:
     image: {column: left_path}
-    right_image: {column: right_path}      # both ride the same geometry
+    right_image: {column: right_path}      # both follow the same geometry
 ```
 
 Nothing in the `transforms` section says so. Each value declares its own
@@ -117,7 +117,7 @@ transforms:
 
 `min_box_visibility` and `min_box_area` are the two real choices here — when a
 cropped box stops being a training signal — and each drops a box *with its class
-name*, which is why the names ride their own field inside the call. Everything
+name*, which is why the names travel in their own field inside the call. Everything
 else about `bbox_params` follows from the format (xyxy pixels), so declaring it
 is refused rather than allowed to contradict the derived value.
 
@@ -225,7 +225,7 @@ encoder turns it into a distribution the head can learn — *after* the transfor
 on the drawn value. The range cannot be learned from a stub column, so it is
 declared:
 
-Its mask rides as an auxiliary input ([data — columns the model never
+Its mask arrives as an auxiliary input ([data — columns the model never
 sees](data.md#columns-the-model-never-sees)): the augmentation reads it, the
 pipeline keeps it aligned with the image, and it never reaches the batch.
 

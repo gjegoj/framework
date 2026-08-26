@@ -95,10 +95,10 @@ tasks:
     target: person_id
     target_encoder: {name: label}
     loss: {name: arcface_proxy, margin: 0.3}     # num_classes/embedding_dim are derived
-    lr: 1.0e-2                                   # this task's bricks learn faster than the backbone
+    lr: 1.0e-2                                   # this task's components learn faster than the backbone
 ```
 
-A task's `lr` moves its own bricks — the head and the criterion, prototypes
+A task's `lr` moves its own components — the head and the criterion, prototypes
 included — while the backbone keeps the optimizer's rate. Every task becomes a
 named optimizer group whether or not it declares one, so `lr_monitor` draws each
 by task name beside the backbone's; see
@@ -122,7 +122,7 @@ prediction, the embedding is the embedding.
 
 ## Ranking: which of two items comes first
 
-The carrier is a stacked pair — both items through the shared backbone — and
+The input is a stacked pair — both items through the shared backbone — and
 the target is a per-pair *number*, encoded by the `scalar` encoder:
 
 ```yaml

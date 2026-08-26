@@ -1,4 +1,4 @@
-"""Backbones producing the stacked view carrier ``Stream.EMBEDDINGS`` ``[B, N, D]``."""
+"""Backbones producing the stacked views ``Stream.EMBEDDINGS`` ``[B, N, D]``."""
 
 from __future__ import annotations
 
@@ -22,15 +22,13 @@ if TYPE_CHECKING:
 class MultiEncoderBackbone(Backbone):
     """Separate encoder per input, projected to one space and stacked ``[B, N, D]``.
 
-    Each sub-encoder reads its own batch input (via its ``input_name``) and
-    must expose ``Stream.FEATURES``; a per-encoder linear projection maps it
-    to ``embedding_dim``, and the views are stacked in declaration order
-    under ``Stream.EMBEDDINGS`` — the carrier contrastive criteria consume
-    (CLIP/SigLIP-style dual encoders).
+    Each sub-encoder reads its own batch input and must expose ``Stream.FEATURES``; a
+    per-encoder linear projection maps it to ``embedding_dim``, and the views are stacked in
+    declaration order under ``Stream.EMBEDDINGS`` (CLIP/SigLIP-style dual encoders).
 
     Parameters:
-        encoders (Mapping[str, Backbone]): Named sub-encoders, at least two;
-            insertion order defines the view order in the carrier.
+        encoders (Mapping[str, Backbone]): Named sub-encoders, at least two; insertion order
+            is the view order.
         embedding_dim (int): Width of the shared embedding space.
         normalize (bool): L2-normalize each view (the CLIP convention).
     """
@@ -72,16 +70,14 @@ class MultiEncoderBackbone(Backbone):
 class MultiViewBackbone(Backbone):
     """N views through one shared inner encoder, stacked into ``[B, N, D]``.
 
-    A decorator over any single-stream backbone: the view axis is folded into
-    the batch, the inner encoder runs once over all views, and the result is
-    unfolded into the ``Stream.EMBEDDINGS`` carrier. Views themselves are
-    produced on the data side (``MultiViewTransform``). Views are not
-    normalized here — criteria own that decision.
+    The view axis is folded into the batch, the inner encoder runs once, and the result is
+    unfolded under ``Stream.EMBEDDINGS``. Views are produced on the data side
+    (``MultiViewTransform``) and not normalized here — criteria own that.
 
     Parameters:
         inner (Backbone): The shared encoder; must expose ``Stream.FEATURES``.
-        embedding_dim (int | None): Optional per-view linear projection width
-            (SimCLR-style); ``None`` keeps the inner encoder's width.
+        embedding_dim (int | None): Optional per-view linear projection width; ``None``
+            keeps the inner width.
         input_name (str): Which batch input holds the stacked views ``[B, N, ...]``.
     """
 

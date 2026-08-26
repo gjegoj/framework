@@ -29,7 +29,7 @@ preset carries its point on the axes and its *customary metrics*, never a loss:
 a loss default follows from one axis alone, so a preset has nothing to add.
 
 Each axis owns its behaviour. `MulticlassObjective` knows what a multiclass task
-is judged by, what criterion it takes, and how its logits become predictions;
+is evaluated by, what criterion it takes, and how its logits become predictions;
 `DenseTopology` knows a dense task reads `Stream.DECODER` through a conv head.
 `build_task_components` composes the two and validates the pairing.
 

@@ -298,17 +298,10 @@ def _item(context: FieldContext, leaf: str, key: str, overlay: str, zone: Zone, 
 def _chip_style(color: str, kind: Kind, confidence: float | None) -> str:
     """Ground truth is the class colour; a prediction is that colour written on white.
 
-    The two used to differ by fill alone — a solid chip against a translucent one
-    of the same colour — and a translucent chip over an arbitrary image is hard to
-    read whatever is behind it. Now the backing is always white, the class colour
-    is the ink, and the two sides stay tied by hue.
-
-    Confidence moved to the rim, which frees the backing to stay opaque: a hesitant
-    prediction has a faint edge and a confident one a solid edge, and the number is
-    legible either way.
-
-    Ground truth's ink is chosen by measured contrast, not fixed white: a fixed
-    white read at 1.9:1 on the palette's light classes — see ``ink_on``.
+    The backing is always white and the class colour is the ink, so the two sides stay tied
+    by hue and a translucent chip never has to be read over an arbitrary image. Confidence
+    is the rim: faint for a hesitant prediction, solid for a confident one. Ground truth's
+    ink is chosen by measured contrast (a fixed white read at 1.9:1 on light classes).
     """
     if kind == "gt":
         return f"background:{color};color:{ink_on(color)}"

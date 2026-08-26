@@ -1,4 +1,4 @@
-"""Combining several criteria into one, when a task is judged on more than one thing."""
+"""Combining several criteria into one, when a task has more than one loss term."""
 
 from __future__ import annotations
 
@@ -18,13 +18,9 @@ if TYPE_CHECKING:
 class WeightedSumCriterion(Criterion):
     """Several criteria on the same output, added with weights.
 
-    Each part keeps its own name in the result, so a run logs the terms
-    separately and their movements stay readable — a total that stops falling
-    says much less than seeing which term stopped falling. Two parts sharing a
-    name is refused by ``Loss`` rather than silently merged.
-
-    The parts are held in a ``ModuleList``, so buffers a criterion registers —
-    class values, class weights — follow the model across devices.
+    Each part keeps its own name in the result, so a run logs the terms separately; two parts
+    sharing a name is refused by ``Loss``. The parts are held in a ``ModuleList``, so buffers
+    a criterion registers follow the model across devices.
 
     Parameters:
         parts (Sequence[tuple[Criterion, float]]): Each criterion with its weight.

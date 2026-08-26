@@ -1,14 +1,7 @@
 """A minimal, type-safe registry: pluggable components looked up by key.
 
-The registration rule lives on ``Registry`` itself. Two things it does **not** say,
-because both look like counterexamples:
-
-- Being constructed by assembly does not un-register anything. A default may build
-  registered components directly — ``ContinuousObjective.build_criterion`` returns a
-  ``WeightedSumCriterion`` over two registered criteria; only the nameless composer
-  around them stays out.
-- Abstract bases are outside the rule entirely: ``WrappedCriterion`` is not a
-  component, only the shape its subclasses share.
+Being built by assembly does not un-register anything (a default may build registered
+components directly); abstract bases such as ``WrappedCriterion`` are not components.
 """
 
 from __future__ import annotations
@@ -21,32 +14,14 @@ from typing import Any, overload
 class Registry[T]:
     """Maps hashable keys to component factories.
 
-    The framework's single extension mechanism: each capability package declares its
-    registries in ``<package>/registry.py``, implementations register at import time,
-    and assembly resolves config names through them. A key is anything hashable — a
-    short string for config-facing components, an enum member for axis behaviours, a
-    tuple for composite dispatch.
-
-    **A registry holds what a declaration *names*** — its own values, the derived
-    facts ``named_by`` offers, a nested slot filled with ``_target_``. What a
-    declaration only *implies* has no name to register under: a *composer* built
-    from a section's shape (``WeightedSumCriterion`` is what ``loss:`` being a list
-    becomes) and a *decorator* built from another section existing at all
-    (``DistilledModel`` exists because ``distillation:`` is present). The line is
-    who does the building — a name in the declaration, or the assembler reading its
-    shape; registering the latter would name a default or say twice what a section
-    already says. A registry is a convenience, not a gate: anything unregistered
-    stays reachable by ``_target_``.
+    The framework's single extension mechanism: packages declare registries in
+    ``<package>/registry.py``, implementations register at import time, assembly resolves
+    config names through them. A registry holds what a declaration *names*; what it only
+    *implies* (a composer built from a section's shape) has no name to register under, and
+    anything unregistered stays reachable by ``_target_``.
 
     Parameters:
-        kind (str): What is being registered, as it should read in an error
-            message — ``"criterion"``, ``"head"``.
-
-    Examples:
-        >>> criterion_registry: Registry[Criterion] = Registry("criterion")
-        >>> @criterion_registry.register("cross_entropy")
-        ... class CrossEntropyCriterion(WrappedCriterion): ...
-        >>> criterion = criterion_registry.create("cross_entropy", label_smoothing=0.1)
+        kind (str): What is being registered, as it reads in an error message — ``"criterion"``.
     """
 
     def __init__(self, kind: str) -> None:
@@ -71,12 +46,9 @@ class Registry[T]:
     def register_instance(self, key: Hashable, instance: T | None = None) -> Callable[[type[T]], type[T]] | None:
         """Register a prebuilt object; ``create(key)`` returns it as-is.
 
-        For components configured once and shared — axis behaviours, presets. Two
-        arities for one rule because Python decorates only a ``class`` or ``def``,
-        never an expression: pass the instance when the value is built on the spot,
-        or omit it to decorate a class whose no-argument construction *is* the
-        instance. The decorator constructs eagerly, so a declaration that cannot
-        build dies at import — the same moment a passed instance would have.
+        For components configured once and shared — axis behaviours, presets. Pass the instance,
+        or omit it to decorate a class whose no-argument construction *is* the instance; the
+        decorator constructs eagerly, so a declaration that cannot build dies at import.
         """
         if instance is not None:
             self._add(key, lambda: instance)
@@ -121,19 +93,10 @@ class Registry[T]:
 def named_by(callee: Callable[..., Any], offered: Mapping[str, Any]) -> dict[str, Any]:
     """The offered values ``callee`` names in its signature, and only those.
 
-    How a component receives a fact assembly computed — ``num_classes``,
-    ``class_values`` — without config having to restate it. Facts are *offered*: a
-    factory that does not name one simply does not receive it, which lets a caller
-    offer the same fact to a whole family of components without knowing which of
-    them wants it.
-
-    Matching is by name, never by ``**kwargs``, so a component that forwards
-    unknown arguments to an upstream library is not handed framework facts it
-    never asked for.
-
-    Parameters:
-        callee (Callable): Whose signature decides what it gets.
-        offered (Mapping[str, Any]): Everything available to offer.
+    How a component receives a fact assembly computed (``num_classes``) without config
+    restating it: a factory that does not name a fact does not receive it. Matched by name,
+    never by ``**kwargs``, so a component forwarding unknown arguments upstream is not handed
+    framework facts it never asked for.
     """
     if not offered:
         return {}

@@ -21,26 +21,17 @@ if TYPE_CHECKING:
 class Mosaic:
     """A 2x2 stitch across the batch, composing every task's target exactly.
 
-    Quadrant *k* takes its pixels from the batch rolled by *k*, top-left keeping the
-    sample's own — no resize, so every pixel comes from exactly one source. That is
-    what separates stitching from blending, and what lets a segmentation mask compose
-    by the identical swap and stay a valid index map: no interpolation, no dtype to
-    juggle. A global label instead takes the four quadrant areas as its weights, the
-    way a pasted rectangle's area weights a CutMix label.
-
-    A batch shorter than four wraps around, which costs variety but stays correct: the
-    label weights follow the same rolls, so a sample still reports where its pixels came
-    from. One split point per batch keeps the whole thing to a clone and three slice
-    assignments.
+    Quadrant *k* takes its pixels from the batch rolled by *k* — no resize, so every pixel
+    comes from exactly one source and a segmentation mask composes by the same swap. A
+    global label takes the four quadrant areas as its weights. A batch shorter than four
+    wraps around, which costs variety but stays correct.
 
     Parameters:
         tasks (Sequence[Task]): Every task whose target must be rewritten.
         profile (DataProfile): Where the class counts come from.
         input_name (str): Which input holds the image.
-        split_range (tuple[float, float]): Where the split may fall, as a
-            fraction of height and width. Sampled once per batch, separately
-            for each axis. Widening it towards 0 and 1 makes lopsided quadrants
-            more likely.
+        split_range (tuple[float, float]): Where the split may fall, as a fraction of height
+            and width; sampled once per batch, separately per axis.
     """
 
     def __init__(

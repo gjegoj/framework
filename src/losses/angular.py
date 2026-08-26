@@ -24,24 +24,17 @@ COSINE_TOLERANCE = 1.001
 class ArcFaceLoss(nn.Module):
     """Additive angular margin on cosine logits, then cross-entropy.
 
-    The target class must win by ``margin`` radians, not merely win —
-    ``cos(θ_y + m)`` replaces its logit — which is what forces tight classes
-    and wide gaps between them. Past ``π - m`` the substitution stops being
-    monotone, so a linear penalty takes over there (the paper's
-    ``easy_margin=False``).
-
-    ``margin`` and ``scale`` are plain numbers read anew on every step, so the
-    ``anneal`` callback can warm the margin up — the usual way to keep early
-    training from collapsing.
+    The target class must win by ``margin`` radians — ``cos(θ_y + m)`` replaces its logit —
+    which forces tight classes and wide gaps. Past ``π - m`` a linear penalty takes over
+    (the paper's ``easy_margin=False``). ``margin`` and ``scale`` are plain numbers read
+    each step, so the ``anneal`` callback can warm the margin up.
 
     Parameters:
         margin (float): Additive angular margin in radians.
-        scale (float): Multiplier restoring logit magnitude after the cosine
-            squashed it into [-1, 1].
+        scale (float): Multiplier restoring logit magnitude after the cosine squashed it.
 
     Reference:
-        Deng et al., "ArcFace: Additive Angular Margin Loss for Deep Face
-        Recognition" (2019).
+        Deng et al., "ArcFace: Additive Angular Margin Loss for Deep Face Recognition" (2019).
     """
 
     def __init__(self, margin: float = 0.5, scale: float = 64.0) -> None:
@@ -81,8 +74,7 @@ class ArcFaceLoss(nn.Module):
 class ArcFaceCriterion(WrappedCriterion):
     """ArcFace as a criterion — see :class:`ArcFaceLoss` for the math.
 
-    Pairs with the ``cosine`` head, which owns the class prototypes the model
-    deploys::
+    Pairs with the ``cosine`` head, which owns the class prototypes the model deploys::
 
         tasks:
           person:
@@ -92,8 +84,7 @@ class ArcFaceCriterion(WrappedCriterion):
             loss: {name: arcface, margin: 0.3}
 
     Parameters:
-        **kwargs: Forwarded verbatim to :class:`ArcFaceLoss`
-            (``margin``, ``scale``).
+        **kwargs: Forwarded verbatim to :class:`ArcFaceLoss` (``margin``, ``scale``).
     """
 
     part_name: ClassVar[str] = "arcface"
@@ -106,25 +97,16 @@ class ArcFaceCriterion(WrappedCriterion):
 class ProxyAngularCriterion(Criterion):
     """Learnable class prototypes turning an embedding head into a cosine classifier.
 
-    Train the embedder through proxy classification, then deploy it without the
-    proxies: the prototypes are deliberately part of the *criterion*, so they
-    train and checkpoint with the run but never enter the exported model.
-
-    **Which of the two to declare is decided by the export boundary.** An *embedder*
-    (faces, retrieval) throws the prototypes away after training, so it wants this one.
-    A *classifier* with ArcFace geometry needs them at inference, so a ``cosine`` head
-    owns them in the model and ``arcface`` is the stateless margin over its logits.
-
-    ``num_classes`` and ``embedding_dim`` are never written in config — assembly
-    offers them, from the fitted labels and from the stream the task reads. The
-    loss logs under the inner criterion's name, so swapping the margin renames
-    the logged part honestly.
+    The prototypes are part of the *criterion*, so they train and checkpoint with the run
+    but never enter the exported model — an embedder (faces, retrieval) wants this; a
+    classifier that needs them at inference uses a ``cosine`` head with ``arcface``.
+    ``num_classes`` and ``embedding_dim`` are offered by assembly, never written in config.
 
     Parameters:
         num_classes (int): One prototype per class of the fitted vocabulary.
         embedding_dim (int): Width of the embedding the head produces.
-        inner (Criterion | None): The margin criterion the cosine logits go to;
-            ``None`` builds the default ArcFace from the remaining arguments.
+        inner (Criterion | None): The margin criterion the cosine logits go to; ``None``
+            builds the default ArcFace from the remaining arguments.
         **kwargs: Forwarded verbatim to the default :class:`ArcFaceCriterion`.
     """
 

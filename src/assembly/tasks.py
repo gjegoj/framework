@@ -1,4 +1,4 @@
-"""Turning task declarations into entities and the bricks that serve them."""
+"""Turning task declarations into entities and the components that serve them."""
 
 from __future__ import annotations
 
@@ -48,11 +48,10 @@ def refuse_what_the_composite_family_cannot_serve(config: ExperimentConfig) -> N
 
 
 def build_task_entities(config: ExperimentConfig, profile: DataProfile) -> list[Task]:
-    """The declared tasks as entities, with no bricks behind them.
+    """The declared tasks as entities, with no components behind them.
 
-    Split from ``build_tasks`` because a vendor family needs exactly this half: it binds
-    its own head and criterion, which ``Task``'s own docstring already anticipates. Runs
-    after ``DataModule.setup`` either way — metric sizes come from the profiled facts.
+    Split from ``build_tasks`` because a vendor family needs exactly this half: it binds its
+    own head and criterion. Runs after ``DataModule.setup`` — metric sizes come from the facts.
     """
     return [
         Task(
@@ -72,11 +71,10 @@ def build_task_entities(config: ExperimentConfig, profile: DataProfile) -> list[
 def build_tasks(
     config: ExperimentConfig, profile: DataProfile, backbone: Backbone
 ) -> tuple[list[Task], dict[str, TaskComponents]]:
-    """Build the declared tasks and the composite bricks serving each.
+    """Build the declared tasks and the composite components serving each.
 
-    Runs after ``DataModule.setup``: metric sizes and head widths come from the
-    profiled facts, never from config. A task may override the objective's
-    default criterion; everything else follows from its two axes.
+    Runs after ``DataModule.setup``: metric sizes and head widths come from the profiled
+    facts, never from config. A task may override the objective's default criterion.
     """
     tasks = build_task_entities(config, profile)
     components: dict[str, TaskComponents] = {}
@@ -113,12 +111,9 @@ def _build_head(declared: HeadConfig, in_features: int, out_features: int) -> He
 def build_criterion(declared: LossConfig | Sequence[LossConfig], /, **derived: Any) -> Criterion:
     """One declared criterion, or several added with their weights.
 
-    The weight rides on the declaration rather than beside it, so a term keeps it
-    wherever the term is used — inside a task's objective, or inside the soft
-    comparison a distilled run adds to that objective. A single unweighted part is
-    itself, so the common case carries no wrapper.
-
-    ``derived`` is offered to every part and reaches only the ones that name it.
+    The weight sits on the declaration, so a term keeps it wherever it is used. A single
+    unweighted part is itself. ``derived`` is offered to every part and reaches the ones
+    that name it.
     """
     parts = [declared] if isinstance(declared, LossConfig) else list(declared)
     built: list[tuple[Criterion, float]] = [

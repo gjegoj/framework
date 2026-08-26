@@ -21,14 +21,12 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True, slots=True, eq=False)
 class TaskComponents:
-    """How the composite family serves one ``Task``: the bricks behind its predictions.
+    """How the composite family serves one ``Task``: the components behind its predictions.
 
-    ``Task`` (core) *declares* a learned objective in family-agnostic terms;
-    ``TaskComponents`` *materializes* that declaration for the composite
-    model — the concrete head, criterion, activation, and target adapter that
-    ``build_task_components`` derives from the task, data facts, and backbone
-    dimensions. ``weight`` is copied in; ``Task.weight`` stays the source of
-    truth.
+    ``Task`` *declares* a learned objective; ``TaskComponents`` *materializes* it for the
+    composite model — the head, criterion, activation and target adapter that
+    ``build_task_components`` derives from the task, the data facts and the backbone.
+    ``weight`` is copied in; ``Task.weight`` stays the source of truth.
     """
 
     head: Head
@@ -122,14 +120,14 @@ class CompositeModel(Model):
 
     @override
     def task_parameters(self, task_name: str) -> Iterable[nn.Parameter]:
-        """The task's head and criterion parameters — the bricks a per-task rate moves."""
+        """The task's head and criterion parameters — what a per-task rate moves."""
         for owner in (self.heads, self.criteria):
             if task_name in owner:
                 yield from owner[task_name].parameters()
 
     @override
     def criterion_of(self, task_name: str) -> nn.Module:
-        """This task's criterion — the brick a schedule moves a number on."""
+        """This task's criterion — what a schedule moves a number on."""
         try:
             found: nn.Module = self.criteria[task_name]
         except KeyError:

@@ -30,14 +30,9 @@ NAMESPACE_SEPARATOR = "\0"
 class CacheUsage:
     """How full a cache is, in the terms its budget was declared in.
 
-    ``declined`` counts only what the *budget* turned away — decoded and refused,
-    or skipped once the budget had already filled mid-column. A value refused for
-    its kind — a scalar target, a string — is not in it: those are never cached
-    by design, and counting them would report a full cache that is not.
-
-    ``full`` is the budget's own verdict: a file did not fit, and warming stopped
-    reading. Distinct from ``declined > 0`` in meaning, not just in type — it is
-    the fact the summary line keys on, where ``declined`` is only its size.
+    ``declined`` counts only what the budget turned away; values never cached by kind (a
+    scalar, a string) are not in it. ``full`` is the budget's own verdict — a file did not fit
+    and warming stopped reading — and is what the summary line keys on.
     """
 
     files: int
@@ -71,16 +66,10 @@ class LoaderCache(ABC):
     def warm(self, keys: Iterable[str], load: Callable[[Any], Any], label: str = "files") -> None:
         """Fill the cache by calling ``load`` once per distinct key.
 
-        ``warm`` stores nothing itself — it drives a loader wrapped with
-        :func:`cached`, and that wrapper is the one line of code which writes to
-        the store; it also serves a value it already holds without loading, so
-        warming twice is cheap rather than wrong. Run this in the parent
-        process, before any worker forks.
-
-        ``label`` names *what* is being warmed (``train: input/image``) — the one
-        thing only the caller knows. It titles the progress bar and keys the
-        per-label accounting ``summarize`` reports, so what the bar said and what
-        the summary says are one string.
+        Drives a loader wrapped with :func:`cached` — the one writer to the store — and serves a
+        held value without loading, so warming twice is cheap. Run in the parent process, before
+        any worker forks. ``label`` (``train: input/image``) titles the progress bar and keys the
+        per-label accounting ``summarize`` reports.
         """
 
     @abstractmethod
@@ -100,15 +89,9 @@ class LoaderCache(ABC):
     def scoped(self, namespace: str) -> LoaderCache:
         """A view of this cache whose keys are private to ``namespace``.
 
-        One cache serves every input and every file-reading encoder, so that
-        they share one budget — but a cell value alone does not say which column
-        it came from. An image column and a mask column holding the same
-        filename under different roots would otherwise serve each other's
-        arrays, and the pixels would arrive where an index map was promised.
-
-        A view object rather than a key convention at each call site: the one
-        object carries the store and the identity together, so a consumer that
-        is handed a cache cannot forget the namespace that makes keys its own.
+        One cache serves every column so they share one budget, but a cell value alone does not
+        say which column it came from — an image and a mask column holding the same filename
+        would serve each other's arrays. The view carries the store and the identity together.
         """
         return _ScopedCache(self, namespace)
 
@@ -153,31 +136,15 @@ class _ScopedCache(LoaderCache):
 class RamCache(LoaderCache):
     """Decoded arrays held in memory, up to a byte budget.
 
-    Only arrays are kept: a loader returning text or a scalar is simply not cached,
-    which is why no loader has to declare whether it reads files.
-
-    **Filled once in the parent process, read-only afterwards.** Writes are accepted
-    only while ``warm`` runs, which is what keeps the store frozen once ``DataLoader``
-    forks — a cache filled lazily inside workers would be filled independently by each
-    of them, multiplying its size by ``num_workers``.
-
-    Copy-on-write then carries the pixels but not the scaffolding. An array's data
-    buffer is a separate allocation that reading does not reference-count, so the
-    gigabytes are genuinely shared; the dict, its keys and the array object headers
-    *are* reference-counted, and CPython writes to them on ordinary reads, so those
-    pages are copied per worker — tens of megabytes at a hundred thousand entries.
-    Removing that remainder needs shared memory or a memory-mapped file, which is a
-    second implementation of this port rather than a change to this one.
+    Only arrays are kept. Filled once in the parent process and read-only afterwards: writes
+    are accepted only while ``warm`` runs, so ``DataLoader`` workers share one store instead
+    of each filling their own. Copy-on-write shares the pixel buffers; the dict and the array
+    headers are reference-counted and get copied per worker (tens of MB at 100k entries).
 
     Parameters:
-        max_gib (float): Memory budget. The first file that does not fit ends the
-            warm-up's *reading*, not just its storing — decoding files only to
-            discard them is the cost a cache exists to remove. What did not make
-            it in is read from disk each epoch, as it would be without a cache at
-            all. Deliberately forgone: a smaller file behind the one that filled
-            the budget might still have fit.
-        workers (int): Threads used to warm it. Image decoding releases the GIL,
-            so these genuinely overlap.
+        max_gib (float): Memory budget. The first file that does not fit ends the warm-up's
+            reading, not just its storing; what did not make it in is read from disk each epoch.
+        workers (int): Threads that warm it; image decoding releases the GIL.
     """
 
     def __init__(self, max_gib: float = 4.0, workers: int = 8) -> None:

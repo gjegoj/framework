@@ -33,45 +33,21 @@ log = logging.getLogger(__name__)
 class SmpBackbone(Backbone):
     """Encoder+decoder from smp, exposing ``Stream.ENCODER`` and ``Stream.DECODER``.
 
-    smp's encoder and decoder are kept while its built-in segmentation head leaves the
-    forward path, which preserves the framework's backbone-to-heads split — per-task
-    heads, per-head learning rates, multitask on one backbone:
-
-    - ``Stream.ENCODER`` — last encoder stage ``[B, D, H', W']``; pair it with the
-      native classification head (which pools internally) for GLOBAL tasks.
-    - ``Stream.DECODER`` — full decoder output ``[B, D, H, W]``, ready for a
-      segmentation head (DENSE tasks).
-
-    The original smp head is retained as an unregistered cloning template, so
-    ``native_head`` can rebuild it at the right ``out_features`` for any architecture —
-    the last projection layer is found generically, without ``isinstance`` checks.
-
-    One class covers every smp architecture, including DPT with DINO-style ViT encoders.
-    Those are the one deliberate divergence from raw smp: when the encoder carries
-    prefix tokens, its final LayerNorm is applied to the intermediate features, which
-    upstream skips and exposes no flag for. The patch applies itself and logs at INFO.
+    smp's built-in segmentation head leaves the forward path, so the framework's per-task
+    heads apply; the original head is kept as an unregistered template ``native_head`` can
+    rebuild at any ``out_features``. ``ENCODER`` is the last encoder stage ``[B, D, H', W']``,
+    ``DECODER`` the full decoder output ``[B, D, H, W]``. For DPT with ViT encoders, the
+    encoder's final LayerNorm is applied to the intermediate features (upstream skips it).
 
     Parameters:
-        arch (str): smp architecture, e.g. ``"unet"``, ``"dpt"`` (smp's own
-            argument name; ``name`` is taken by the registry key in configs).
-        encoder_name (str): Encoder backbone, e.g. ``"resnet34"``, or a timm
-            ViT for DPT, e.g. ``"tu-vit_small_plus_patch16_dinov3.lvd1689m"``
-            with ``encoder_weights=True``.
-        pretrained (bool): Load ImageNet encoder weights. A config may instead
-            set ``encoder_weights`` explicitly (e.g. ``True`` to load a ViT
-            encoder's own pretrained weights, DINO-style). Moot when
-            ``checkpoint_path`` is given: a file is the weight source.
+        arch (str): smp architecture, e.g. ``"unet"``, ``"dpt"``.
+        encoder_name (str): Encoder backbone, e.g. ``"resnet34"``, or a timm ViT for DPT.
+        pretrained (bool): Load ImageNet encoder weights; moot when ``checkpoint_path`` is given.
         input_name (str): Which batch input to encode.
-        checkpoint_path (str | Path | None): Arrived weights of this
-            architecture — a full smp model's checkpoint. Encoder and decoder
-            tensors load; the segmentation head is stashed for ``native_head``
-            to transplant. ``use_ema``/``strict``/``weights_only`` carry
-            ``timm.load_checkpoint``'s own names and defaults — mechanics in
-            the ``checkpoints`` package.
+        checkpoint_path (str | Path | None): A full smp model's checkpoint; encoder and
+            decoder load, the segmentation head is stashed for ``native_head``.
         use_ema (bool): Prefer the checkpoint's EMA branch when present.
-        strict (bool): Refuse a checkpoint that does not match exactly;
-            ``False`` allows deliberate partial loads, reported loudly and
-            refused entirely when nothing matched.
+        strict (bool): Refuse a checkpoint that does not match exactly; ``False`` allows partial loads.
         weights_only (bool): ``torch.load`` safety knob, forwarded.
         **kwargs: Forwarded verbatim to ``smp.create_model``.
     """

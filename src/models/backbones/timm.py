@@ -28,30 +28,20 @@ if TYPE_CHECKING:
 class TimmBackbone(Backbone):
     """Wraps any timm model as a backbone with one pooled feature stream.
 
-    The model is created with ``num_classes=0``, so its forward returns the
-    pooled feature vector ``[B, num_features]``, exposed under
-    ``Stream.FEATURES``.
+    Created with ``num_classes=0``, so the forward returns the pooled ``[B, num_features]``
+    vector under ``Stream.FEATURES``.
 
     Parameters:
-        model_name (str): timm model id, e.g. ``"resnet18"`` (``name`` is
-            taken by the registry key in component configs).
-        pretrained (bool): Load pretrained weights (needs network or cache).
-            Moot when ``checkpoint_path`` is given: a file is the weight
-            source, and downloading the hub to overwrite it is dead traffic.
+        model_name (str): timm model id, e.g. ``"resnet18"``.
+        pretrained (bool): Load pretrained weights; moot when ``checkpoint_path`` is given.
         input_name (str): Which batch input to encode.
-        checkpoint_path (str | Path | None): Arrived weights of this
-            architecture — a full timm model's checkpoint. The backbone
-            tensors load; the classifier is stashed for ``native_head`` to
-            transplant. ``use_ema``/``strict``/``weights_only`` carry
-            ``timm.load_checkpoint``'s own names and defaults — mechanics in
-            the ``checkpoints`` package.
+        checkpoint_path (str | Path | None): A full timm model's checkpoint; the backbone
+            tensors load, the classifier is stashed for ``native_head``.
         use_ema (bool): Prefer the checkpoint's EMA branch when present.
-        strict (bool): Refuse a checkpoint that does not match the backbone
-            exactly; ``False`` allows deliberate partial loads, reported
-            loudly and refused entirely when nothing matched.
+        strict (bool): Refuse a checkpoint that does not match exactly; ``False`` allows
+            partial loads, reported and refused entirely when nothing matched.
         weights_only (bool): ``torch.load`` safety knob, forwarded.
-        **kwargs: Forwarded verbatim to ``timm.create_model``
-            (``in_chans``, ``drop_rate``, ...).
+        **kwargs: Forwarded verbatim to ``timm.create_model`` (``in_chans``, ``drop_rate``, ...).
     """
 
     def __init__(

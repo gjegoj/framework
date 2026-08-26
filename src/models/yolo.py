@@ -39,32 +39,19 @@ _DETECTION_COLUMNS = 6
 class YoloModel(Model):
     """A YOLO network trained through this framework's loop rather than ultralytics'.
 
-    The network is held as a submodule, so device moves, EMA and checkpoints see its
-    parameters like any other model's.
-
-    What this class owns is the translation between the framework's currency and the
-    vendor's dialect, in both directions and nowhere else: a ``Batch`` becomes the three
-    keys the detection criterion reads, and what survives suppression becomes
-    ``Instances``. Everything downstream — the training loop, callbacks, checkpointing,
-    metrics — therefore never learns a vendor's shape. Both directions rebuild dicts of
-    references and copy nothing.
-
-    ``ultralytics`` is imported inside the methods that need it, so a run that never
-    touches detection does not pay for the import.
+    The network is a submodule, so device moves, EMA and checkpoints see its parameters.
+    This class owns only the translation between a ``Batch`` and the vendor's dialect, in
+    both directions: the three keys the detection criterion reads in, ``Instances`` out.
+    ``ultralytics`` is imported inside the methods that need it.
 
     Parameters:
-        model_name (str): An ultralytics architecture file (``yolov8n.yaml``) or a
-            ``.pt`` weights path. One path serves every kind: measured, ``YOLO`` picks
-            ``DetectionModel``, ``SegmentationModel`` or ``PoseModel`` from the name, so
-            this class does not branch on what it is building.
-        num_classes (int): Offered by assembly from the dataset descriptor, never written
-            in config — the same derived fact every head is sized from.
+        model_name (str): An ultralytics architecture file (``yolov8n.yaml``) or a ``.pt``
+            weights path; ``YOLO`` picks the model kind from the name (measured).
+        num_classes (int): Offered by assembly from the dataset descriptor, never in config.
         confidence_threshold (float): Minimum confidence a detection is kept at.
         iou_threshold (float): Overlap above which suppression drops the weaker box.
-        **hyperparameters (Any): Forwarded verbatim to ultralytics' own configuration —
-            the loss gains (``box``/``cls``/``dfl``) and the augmentation knobs alike,
-            because the vendor keeps them in one namespace and splitting them across two
-            of our sections would mean maintaining a table of which key belongs where.
+        **hyperparameters (Any): Forwarded verbatim to ultralytics' configuration — loss
+            gains (``box``/``cls``/``dfl``) and augmentation knobs alike.
     """
 
     def __init__(
@@ -132,16 +119,10 @@ class YoloModel(Model):
     def _decoded(self, output: Any, batch: Batch) -> Prediction:
         """One walk's output as the framework's own ragged shape, per image.
 
-        Training is the one mode with nothing to hand back. A detection head emits its
-        feature maps while training and only assembles the decodable tensor in eval —
-        ultralytics does not spend the decode on a step whose output nobody reads, and
-        its own trainer measures on a separate validation pass for the same reason.
-        Returning empty objects instead would be a fabricated answer that a train-stage
-        mAP would then report as zero, which looks like a broken model rather than a
-        measurement nobody took.
-
-        The mode is read here rather than at each caller because it is a fact about the
-        *output* — whether the head assembled something decodable — not about who asked.
+        Training is the one mode with nothing to hand back: a detection head emits feature maps
+        while training and assembles the decodable tensor only in eval. Returning empty objects
+        instead would report a train-stage mAP of zero for a measurement nobody took. The mode
+        is read here because it is a fact about the output, not about who asked.
         """
         from ultralytics.utils.nms import non_max_suppression
 

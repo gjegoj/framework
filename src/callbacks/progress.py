@@ -52,15 +52,9 @@ def row_key(logged: str) -> str | None:
 class MetricHistory:
     """Current values, per-step deltas, and direction-aware bests of logged scalars.
 
-    Plain Python on purpose — the tracking is testable without Lightning or
-    rich, and the bar stays display glue.
-
-    Directions are never guessed from a name. They are declared by the module,
-    and what it does not declare is a loss: at table altitude this framework logs
-    its metrics, which are declared, and its losses, which are not — a total, its
-    parts, and whatever a decorated model adds to them. A metric declared
-    *directionless* still tracks no best, which is the half of that rule doing
-    real work.
+    Plain Python, testable without Lightning or rich. Directions are declared by the
+    module, never guessed from a name; what it does not declare is a loss. A metric declared
+    *directionless* tracks no best.
     """
 
     def __init__(self, directions: Mapping[str, bool | None] | None = None) -> None:
@@ -77,16 +71,8 @@ class MetricHistory:
     def direction(self, key: str) -> _MetricMode | None:
         """The declared optimization mode, or ``min`` for the losses nobody declares.
 
-        Undeclared means a loss, and a loss is minimized by construction — the
-        optimizer descends the weighted sum of exactly those parts. Reading it
-        this way rather than from a list the module keeps costs nothing and is
-        blind to where a part came from, so a decorated model's own term is
-        signed like any other.
-
-        The premise is that metrics and losses are all this framework logs at
-        table altitude; ``test_nothing_but_a_loss_arrives_undeclared`` names the
-        keys that rely on it, so a fourth kind fails there rather than appearing
-        with a best it never earned.
+        Undeclared means a loss, minimized by construction.
+        ``test_nothing_but_a_loss_arrives_undeclared`` names the keys that rely on it.
         """
         if key not in self._directions:
             return "min"
@@ -116,16 +102,12 @@ class MetricHistory:
 class MetricsProgressBar(RichProgressBar):
     """``RichProgressBar`` with a live metrics table rendered below the bar.
 
-    Each row is one series (``label/f1``, ``loss``) with its current Train/Val/Test
-    values, the best Train/Val values observed, and colour-coded deltas beside them.
-    Which direction counts as an improvement is the metric's own declared
-    ``higher_is_better``, asked from the module through the ``DeclaresMetricDirections``
-    port and never guessed from a name; what the module does not declare is a loss, and
-    a loss is minimized.
+    Each row is one series (``label/f1``, ``loss``) with its current Train/Val/Test values,
+    the best Train/Val values, and colour-coded deltas. Improvement direction is the metric's
+    declared ``higher_is_better`` (``DeclaresMetricDirections``); undeclared is a loss.
 
     Parameters:
-        metric_filters (list[str] | None): Substrings narrowing the table; a
-            key is shown when its name contains any entry. ``None`` shows
+        metric_filters (list[str] | None): Substrings narrowing the table; ``None`` shows
             every table-shaped key.
         **kwargs: Forwarded verbatim to ``RichProgressBar``.
     """
@@ -169,16 +151,9 @@ class MetricsProgressBar(RichProgressBar):
     def refresh(self, hard: bool = False) -> None:
         """Refresh the bar and re-render the table from the latest logged values.
 
-        Mirrors ``RichProgressBar.refresh``: a hard (or interactive) refresh
-        redraws fully, a soft one avoids flicker.
-
-        The table reads ``callback_metrics``, not the bar's own ``get_metrics``.
-        The latter serves ``progress_bar_metrics`` — only what was logged with
-        ``prog_bar=True``, which here is the training loss and nothing else, so a
-        table fed from it has five columns it can never fill. Measured: at the
-        end of a validation epoch and after ``test``, ``progress_bar_metrics`` is
-        empty while ``callback_metrics`` holds every key the run logged, named
-        exactly as this table's rows are.
+        Mirrors ``RichProgressBar.refresh``. The table reads ``callback_metrics``, not the bar's
+        ``get_metrics`` — measured, ``progress_bar_metrics`` is empty at the end of a validation
+        epoch and after ``test`` while ``callback_metrics`` holds every key the run logged.
         """
         if not self.progress:
             return

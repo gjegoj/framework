@@ -22,15 +22,9 @@ def steps_per_epoch(trainer: L.Trainer) -> int:
 def at_epoch(trainer: L.Trainer, epoch: int) -> str:
     """``epoch 2 (step 12)``, from the epoch a callback holds.
 
-    Three currencies describe one instant, and each reader wants a different one: config
-    declares a *share* of the run, because that survives a change of epoch count; a
-    callback acts on an *epoch*, because that is what its hooks are handed; a tracker's
-    x-axis and anyone reading a loss curve count in *steps*. Naming only one leaves the
-    reader converting with a calculator, and getting it wrong — steps-per-epoch depends
-    on gradient accumulation and the loader's ``drop_last``.
-
-    So a boundary is announced in both of the two a reader can act on, in one phrasing,
-    whichever currency the caller happens to hold.
+    Config declares a *share* of the run, a callback acts on an *epoch*, a tracker counts
+    in *steps*; a boundary is announced in both of the two a reader can act on, because
+    steps-per-epoch depends on gradient accumulation and ``drop_last``.
     """
     return f"epoch {epoch} (step {epoch * steps_per_epoch(trainer)})"
 

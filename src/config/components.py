@@ -16,15 +16,10 @@ class ComponentConfig(BaseModel):
         loss: {name: cross_entropy, label_smoothing: 0.1}    # registry name + params
         loss: {_target_: my_pkg.FocalLoss, gamma: 2.0}       # import path + params
 
-    Exactly one of ``name`` (a registry key) or ``_target_`` (a dotted import
-    path — the escape hatch) must be set; every other key becomes a constructor
-    argument, so any upstream knob is reachable from config.
-
-    ``_target_`` is spelled as Hydra spells it, and means the same thing. The
-    rest of Hydra's meta-keys are *rejected* rather than ignored: recursion is
-    always on, and whether a component is built now or handed over as a factory
-    is decided in code, where the type demands it — silently dropping
-    ``_partial_`` would give a user an instance where they asked for a factory.
+    Exactly one of ``name`` or ``_target_`` must be set; every other key becomes a
+    constructor argument. ``_target_`` means what Hydra means by it; Hydra's other
+    meta-keys are *rejected* rather than ignored, because silently dropping ``_partial_``
+    would give a user an instance where they asked for a factory.
     """
 
     model_config = ConfigDict(extra="allow", populate_by_name=True)

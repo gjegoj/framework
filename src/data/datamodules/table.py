@@ -26,14 +26,10 @@ log = logging.getLogger(__name__)
 class SourceWithTransforms:
     """One source and the transforms its own rows take, wherever they land.
 
-    Combining datasets that want different handling is what this is for: a
-    clean set beside a noisy one, a synthetic set that should not be augmented
-    a second time. A declared transform *replaces* the stage's for those rows
-    rather than extending it — which is what lets a source be augmented less,
-    not only more — so it has to end the way the stage transform does.
-
-    Stages left undeclared fall back to the stage transform, so a source that
-    only differs in training says only that.
+    For combining datasets that want different handling: a clean set beside a noisy one, a
+    synthetic set that should not be augmented twice. A declared transform *replaces* the
+    stage's for those rows, so it has to end the way the stage transform does; undeclared
+    stages fall back to the stage transform.
     """
 
     source: TableSource
@@ -59,15 +55,10 @@ type-checking — the size of a stage is what callers ask for most.
 class TableDataModule(DataModule):
     """The table-driven ``DataModule``: annotation rows in, per-stage datasets out.
 
-    ``setup`` is the hinge of experiment assembly: encoders are fitted on the
-    train split only (no leakage from val/test), the facts they infer land in
-    the ``DataProfile``, and only then can tasks and heads be built with
-    concrete output sizes.
-
-    A stage may draw on several sources. Encoders still fit on all of its train
-    rows at once, so a vocabulary spans every source; only the transforms stay
-    per source, which is why a stage is a concatenation of datasets rather than
-    one dataset over a concatenated table.
+    ``setup`` is the hinge of assembly: encoders fit on the train split only, their facts
+    land in the ``DataProfile``, and only then can heads be built with concrete sizes. A
+    stage may draw on several sources; encoders still fit on all of its train rows at once,
+    only the transforms stay per source.
     """
 
     def __init__(
@@ -103,15 +94,9 @@ class TableDataModule(DataModule):
     def _warm_cache(self, cache: LoaderCache, stages: dict[Stage, list[_SourceRows]]) -> None:
         """Read the repeating stages once, here in the parent process.
 
-        Train and val are read every epoch; test is read once, so memory spent
-        on it buys nothing. This runs before ``DataLoader`` forks, which is what
-        lets every worker share one set of decoded pixels. Any column is warmed by
-        its loader — for a target that is the encoder's pre-transform half, the
-        same call the dataset itself makes.
-
-        This method contributes exactly what only it knows: the schema's labels,
-        the stage in front of them, and the moment the pass is over. The counting
-        and the closing lines are the cache's own — see ``summarize``.
+        Train and val are read every epoch; test is read once, so memory spent on it buys
+        nothing. Runs before ``DataLoader`` forks, so every worker shares one set of decoded
+        pixels. A target column is warmed through its encoder's pre-transform half.
         """
         for stage in (Stage.TRAIN, Stage.VAL):
             for rows in stages.get(stage, []):

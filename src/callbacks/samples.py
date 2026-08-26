@@ -39,65 +39,23 @@ log = logging.getLogger(__name__)
 class SampleGrid(L.Callback):
     """Draw a batch of samples, ground truth against prediction, as one HTML page.
 
-    The consumer end of the visualization pipeline. A step *returns* what it produced —
-    the exact forward that trained, at the weights that trained, with no second
-    inference — and Lightning hands that return value to this callback's batch-end hook
-    beside the very batch it came from. Nothing is stored on the module, so nothing can
-    go stale: what arrives is this batch's, or nothing.
-
-    The traffic runs the other way too. Lightning calls ``on_*_batch_start`` before the
-    step, so this says there and then whether the batch about to run is one it will draw
-    (``AwaitsPreview.awaiting_preview``), and the module builds a preview only when
-    asked. Holding one is not free — it shares storage with the activated outputs, which
-    Lightning keeps alive through the optimizer step — so a run without this callback
-    pays nothing, and a run with it pays on the one batch in a few hundred that becomes
-    a page.
-
-    What a run will *not* produce is said as early as it can be known. A misspelt stage
-    or an impossible knob fails at assembly; a task with no per-sample label to show is
-    named before the first epoch; a tracker without ``log_html``, and a module whose step
-    returns no preview, each warn once and name both sides. None of them kills a run over
-    a picture.
+    A step returns its preview to this callback's batch-end hook beside the batch it came
+    from, built only for batches this callback asked for in ``on_*_batch_start``
+    (``AwaitsPreview``). What a run will not draw is said early, and never kills a run.
 
     Parameters:
-        tasks (Sequence[Task]): Every task whose predictions may be drawn — the
-            static half of what this callback needs, and a derived value the
-            composition root already offers. Asking the training module for it
-            instead would make the module answer for facts it does not own.
-        mean (Sequence[float]): The normalisation mean the run's transforms
-            applied, to undo it. Defaults to ImageNet's, which is also what the
-            root config normalises by — so the shipped pair agrees by construction.
-            A run that normalises differently changes it once, at the root, and
-            reaches it here the way every shared config value is reached:
-            ``mean: "${mean}"``, the same interpolation the transforms use. Passed
-            explicitly by ``configs/callbacks/samples.yaml`` for exactly that
-            reason: the default is a starting point, not an assumption, and a grid
-            denormalising by numbers the transforms did not use draws a picture
-            that is wrong in a way that looks like a model problem.
+        tasks (Sequence[Task]): Every task whose predictions may be drawn; offered by assembly.
+        mean (Sequence[float]): The normalisation mean the transforms applied; ``mean: "${mean}"``.
         std (Sequence[float]): The matching standard deviation.
         num_images (int): How many samples of the batch to draw.
-        every_n_epochs (int): Draw on fit epochs divisible by this. A test pass
-            runs once and has no epochs, so it ignores this and draws whenever it
-            is asked for.
-        batch_index (int): Which batch of the epoch to draw. Fixed rather than
-            random, so the same samples reappear each time and drift is visible.
-        stages (Sequence[str]): Which stages draw; every stage by default. Val and
-            test are the sample-stable ones — no augmentation, so the same pictures
-            reappear each epoch and drift is what changes. Train shows the pixels
-            the model actually trained on, augmentation included, which is the only
-            way to see a transform that is wrong. One caveat there: after a batch
-            transform (MixUp, Mosaic) the pixels are a blend while the source pill
-            still names the original file, because the batch's metadata is not
-            rewritten with it.
+        every_n_epochs (int): Draw on fit epochs divisible by this; a test pass always draws.
+        batch_index (int): Which batch of the epoch to draw — fixed, so drift is visible.
+        stages (Sequence[str]): Which stages draw; every stage by default. Train shows augmented pixels.
         title (str): The page's title, and the tracker series it lands under.
-        threshold (float): Offered to the annotators that name it — the binary
-            and multilabel readers.
+        threshold (float): Offered to the annotators that name it (binary, multilabel).
         ignore_index (int | None): Offered to the dense annotator that names it.
-        max_side (int | None): Pictures and masks are downscaled to fit this
-            before being inlined — see ``MAX_DISPLAY_SIDE`` for the measurement
-            behind the default. ``None`` inlines them whole.
-        max_chip_chars (int): Chip text budget before truncation; the lightbox
-            swaps the full text back in.
+        max_side (int | None): Downscale pictures to fit this before inlining; ``None`` inlines whole.
+        max_chip_chars (int): Chip text budget before truncation; the lightbox shows the full text.
     """
 
     def __init__(
@@ -359,10 +317,8 @@ class SampleGrid(L.Callback):
     def _is_drawable(self, alias: str, tensor: Any) -> bool:
         """A picture, and one whose channels this callback's mean and std can undo.
 
-        Fewer channels than declared is the ordinary grayscale case and slices
-        cleanly. More is not: a 4-band input against a 3-value mean used to die
-        inside the denormalisation with a bare shape mismatch, an hour into a run,
-        naming neither the callback nor the input. It is skipped and named instead.
+        Fewer channels than declared is the grayscale case and slices cleanly; more (a 4-band
+        input against a 3-value mean) is skipped and named instead of dying in denormalisation.
         """
         if not _is_picture(tensor):
             return False

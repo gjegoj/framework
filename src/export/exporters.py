@@ -25,13 +25,9 @@ they landed in the graph.
 class Exporter(ABC):
     """Writes a deployable graph to a file, and reads it back to prove it.
 
-    ``load`` is abstract rather than an optional extra: a format nobody can read
-    back leaves "the export succeeded" unprovable, and every format worth
-    shipping to has a runtime.
-
-    Tolerances live here rather than in a verification section because the
-    tolerance is knowledge of the format — an fp16 engine drifts where a traced
-    graph does not — and a format's knobs are its constructor arguments.
+    ``load`` is abstract: a format nobody can read back leaves the export unprovable.
+    Tolerances live here because they are knowledge of the format — an fp16 engine drifts
+    where a traced graph does not.
 
     Parameters:
         atol (float): Absolute output error tolerated against the source model.

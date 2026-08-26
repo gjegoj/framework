@@ -19,22 +19,15 @@ if TYPE_CHECKING:
 class DeployableModel(nn.Module):
     """The run's model as a deployment graph: tensors in, tensors out.
 
-    Neither ``Batch`` nor ``Prediction`` survives tracing — measured, tracing a
-    backbone directly raises "Tracer cannot infer type of Features(...)". This is
-    the one place that translates, and it translates through ``Model.predict``,
-    so every model family exports the same way and the artifact returns exactly
-    what validation compared against.
-
-    Names travel with the graph rather than beside it: an exporter that has to
-    name tensors in the file reads them off the module they describe, so the two
-    cannot drift.
+    Neither ``Batch`` nor ``Prediction`` survives tracing (measured: "Tracer cannot infer
+    type of Features"), so this is the one place that translates, through
+    ``Model.predict``, so every family exports the same way. Names travel with the graph:
+    an exporter reads them off the module they describe.
 
     Parameters:
         model (Model): The trained model, whichever family built it.
-        input_names (Sequence[str]): Batch input names, in the order the exported
-            graph takes them positionally.
-        output_names (Sequence[str]): Task names, in the order the exported graph
-            returns them.
+        input_names (Sequence[str]): Batch input names, in the order the graph takes them.
+        output_names (Sequence[str]): Task names, in the order the graph returns them.
     """
 
     def __init__(self, model: Model, input_names: Sequence[str], output_names: Sequence[str]) -> None:

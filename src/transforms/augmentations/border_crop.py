@@ -17,30 +17,20 @@ opposite limits summing above 1, so no widening here can meet its counterpart.
 class RandomBorderCrop(A.CustomTransformsApplyMixin, A.RandomCropFromBorders):
     """Trim a random strip from each border and mark the sample as cropped.
 
-    ``min_crop`` is the reason this exists rather than the parent alone: a
-    uniform draw may trim two pixels, and a sample cropped by two pixels teaches
-    a model nothing while being labelled as cropped. When no side reaches the
-    threshold, one eligible side is widened to it — a correction on top of the
-    parent's draw, so the parent keeps owning the distribution.
-
-    The other class comes from the transform *not* applying, so the dataset's
-    own labels have to be the negative class already.
-
-    Bind the column it rewrites with
-    ``AlbumentationsTransform(label_targets=["was_cropped"])``.
+    ``min_crop`` is why this exists: a uniform draw may trim two pixels, and a sample
+    cropped by two pixels teaches nothing while being labelled as cropped, so one eligible
+    side is widened to the threshold. The negative class comes from the transform *not*
+    applying, so the dataset's own labels must already be it. Bind the column it rewrites
+    with ``AlbumentationsTransform(label_targets=["was_cropped"])``.
 
     Parameters:
         crop_left (float): Largest fraction of the width trimmed from the left.
         crop_right (float): Largest fraction of the width trimmed from the right.
         crop_top (float): Largest fraction of the height trimmed from the top.
         crop_bottom (float): Largest fraction of the height trimmed from the bottom.
-        min_crop (float): Fraction at least one side must reach; ``0`` asks for
-            no guarantee. It cannot exceed every per-side maximum, or no side
-            could ever satisfy it.
-        applied_label (int | str): The raw value the bound column takes when the
-            crop applies — encoding runs *after* the transforms, so write the class
-            as the table writes it (``cropped`` beside
-            ``classes: {0: intact, 1: cropped}``).
+        min_crop (float): Fraction at least one side must reach; ``0`` asks for no guarantee.
+        applied_label (int | str): The raw value the bound column takes when the crop applies
+            — encoding runs after the transforms, so write the class as the table writes it.
         p (float): Probability of cropping at all.
     """
 

@@ -53,8 +53,7 @@ class MetricSummary(L.Callback):
     def on_test_end(self, trainer: L.Trainer, pl_module: L.LightningModule) -> None:
         if not trainer.is_global_zero:
             return
-        # Every configured backend, not `trainer.logger`: that is the first of them, so a
-        # run with two trackers used to fill one summary table and leave the other empty.
+        # Every configured backend, not `trainer.logger`, which is only the first of them.
         summaries = [one for one in trainer.loggers if isinstance(one, SingleValueLogger)]
         if not summaries:
             log.debug("No configured backend has a summary table; test headline metrics stay in the logs.")
