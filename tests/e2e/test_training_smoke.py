@@ -74,7 +74,7 @@ def test_one_epoch_of_training_runs_through_every_layer() -> None:
         source=InMemorySource(table),
         schema=DataSchema(
             inputs={"point": InputColumn(column="x", loader=load_point)},
-            targets={"label": TargetColumn(column="label", encoder=LabelTargetEncoder())},
+            targets={"label": TargetColumn(column="label", encoder=LabelTargetEncoder(classes={0: "cat", 1: "dog"}))},
         ),
         splitter=random_split({Stage.TRAIN: 0.5, Stage.VAL: 0.25, Stage.TEST: 0.25}, seed=42),
     )

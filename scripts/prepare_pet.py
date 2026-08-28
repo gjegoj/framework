@@ -187,6 +187,15 @@ def main() -> None:
         f"random_age spans {min(ages)}–{max(ages)} with a deviation of {float(np.std(ages)):.2f}. "
         f"It is noise: a regression on it cannot do better than that number, and doing so would mean a leak."
     )
+    # The vocabularies a task declares, ready to paste: the index space is a declaration,
+    # never learned from whichever rows a split leaves in train, so the script that knows
+    # every name writes them out.
+    breeds = ", ".join(
+        f"{index}: {breed}" for index, breed in enumerate(sorted({record["breed"] for record in records}))
+    )
+    print("Declare the vocabularies on the tasks (the order is yours to keep):")
+    print("  species: {0: cat, 1: dog}")
+    print(f"  breed: {{{breeds}}}")
 
 
 if __name__ == "__main__":

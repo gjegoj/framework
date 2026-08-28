@@ -83,6 +83,12 @@ class BinnedTargetEncoder(TargetEncoder):
         low, high = float(numbers.min()), float(numbers.max())
         if low == high:
             raise ValueError(f"{type(self).__name__} cannot bin a constant target: every training value is {low}.")
+        log.info(
+            "%s learned its range from the training split: [%g, %g]; declare 'low' and 'high' to pin it.",
+            type(self).__name__,
+            low,
+            high,
+        )
         self._lay_out_bins(low, high)
 
     def _lay_out_bins(self, low: float, high: float) -> None:

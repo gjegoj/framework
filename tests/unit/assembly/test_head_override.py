@@ -16,7 +16,7 @@ from tests.support.fakes import FlattenBackbone
 from tests.support.narrowing import tensor
 
 FEATURES = 12
-PERSON = {"preset": "classification", "target": "person_id"}
+PERSON = {"preset": "classification", "target": "person_id", "classes": {0: "0", 1: "1", 2: "2"}}
 
 
 def experiment(**task_extras: Any) -> Any:

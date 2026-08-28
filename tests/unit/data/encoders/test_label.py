@@ -10,18 +10,18 @@ from src.data.encoders import LabelTargetEncoder, MultiLabelTargetEncoder
 from src.data.registry import target_encoder_registry
 
 
-def test_label_encoder_learns_sorted_vocabulary_on_fit() -> None:
-    encoder = LabelTargetEncoder()
+def test_the_declared_order_is_the_index_space_not_the_alphabet() -> None:
+    encoder = LabelTargetEncoder(classes={0: "dog", 1: "cat"})
 
     encoder.fit(pd.Series(["dog", "cat", "dog"]))
 
-    assert encoder.num_classes == 2
-    assert encoder.class_names == ["cat", "dog"]
+    assert encoder.class_names == ["dog", "cat"]
+    assert encoder.encode("cat") == 1
 
 
 def test_label_encoder_encodes_to_a_raw_class_index() -> None:
     """Encoders stay raw: tensors are made once, by the transform or collation."""
-    encoder = LabelTargetEncoder()
+    encoder = LabelTargetEncoder(classes={0: "cat", 1: "dog"})
     encoder.fit(pd.Series(["dog", "cat"]))
 
     encoded = encoder.encode("dog")
@@ -31,16 +31,11 @@ def test_label_encoder_encodes_to_a_raw_class_index() -> None:
 
 
 def test_label_encoder_names_known_classes_for_unseen_value() -> None:
-    encoder = LabelTargetEncoder()
+    encoder = LabelTargetEncoder(classes={0: "cat", 1: "dog"})
     encoder.fit(pd.Series(["cat", "dog"]))
 
     with pytest.raises(LookupError, match="bird"):
         encoder.encode("bird")
-
-
-def test_label_encoder_refuses_to_encode_before_fit() -> None:
-    with pytest.raises(RuntimeError, match="fit"):
-        LabelTargetEncoder().encode("cat")
 
 
 def test_a_declared_vocabulary_validates_the_data_instead_of_learning_it() -> None:
@@ -74,8 +69,16 @@ def test_a_multilabel_vocabulary_is_declared_the_same_way() -> None:
         encoder.fit(["indoor,people", "outdor"])
 
 
-def fitted(values: list[object], **kwargs: object) -> MultiLabelTargetEncoder:
-    encoder = MultiLabelTargetEncoder(**kwargs)  # type: ignore[arg-type]
+def fitted(values: list[object], separator: str = ",") -> MultiLabelTargetEncoder:
+    """The encoder over the labels ``values`` carry, declared in sorted order."""
+    labels = {
+        str(part).strip()
+        for value in values
+        if value is not None
+        for part in (value if isinstance(value, list) else str(value).split(separator))
+        if str(part).strip()
+    }
+    encoder = MultiLabelTargetEncoder(classes=dict(enumerate(sorted(labels))), separator=separator)
     encoder.fit(values)
     return encoder
 
@@ -147,11 +150,6 @@ def test_a_label_missing_from_the_vocabulary_is_reported() -> None:
         encoder.encode("cat,unicorn")
 
 
-def test_encoding_before_fitting_is_reported() -> None:
-    with pytest.raises(RuntimeError, match="not fitted"):
-        MultiLabelTargetEncoder().encode("cat")
-
-
 def test_the_encoder_is_reachable_from_config_by_name() -> None:
 
-    assert isinstance(target_encoder_registry.create("multilabel"), MultiLabelTargetEncoder)
+    assert isinstance(target_encoder_registry.create("multilabel", classes={0: "a", 1: "b"}), MultiLabelTargetEncoder)

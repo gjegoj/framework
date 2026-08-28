@@ -26,7 +26,7 @@ def load_fake_image(path: object) -> Tensor:
 
 
 def make_schema() -> DataSchema:
-    label_encoder = LabelTargetEncoder()
+    label_encoder = LabelTargetEncoder(classes={0: "cat", 1: "dog"})
     label_encoder.fit(pd.Series(["cat", "dog"]))
     return DataSchema(
         inputs={"image": InputColumn(column="path", loader=load_fake_image)},

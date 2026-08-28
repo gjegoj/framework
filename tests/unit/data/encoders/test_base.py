@@ -145,11 +145,11 @@ def test_built_in_encoders_are_registered_for_config() -> None:
         "gaussian_bins",
         "linear_bins",
     }
-    assert isinstance(target_encoder_registry.create("mask", num_classes=2), MaskTargetEncoder)
+    assert isinstance(target_encoder_registry.create("mask", classes={0: "a", 1: "b"}), MaskTargetEncoder)
 
 
 def test_encoders_declare_their_geometry() -> None:
     """Geometry is what tells a transform which targets follow the image, and how."""
-    assert MaskTargetEncoder(num_classes=2).geometry is Geometry.MASK
-    assert LabelTargetEncoder().geometry is Geometry.NONE
+    assert MaskTargetEncoder(classes={0: "a", 1: "b"}).geometry is Geometry.MASK
+    assert LabelTargetEncoder(classes={0: "cat", 1: "dog"}).geometry is Geometry.NONE
     assert ScalarTargetEncoder().geometry is Geometry.NONE

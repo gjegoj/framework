@@ -196,3 +196,12 @@ def test_scalar_encoder_needs_no_fit_and_reports_no_classes() -> None:
     assert isinstance(encoded, float)
     assert encoder.num_classes is None
     assert encoder.class_names is None
+
+
+def test_a_learned_range_is_said_out_loud(caplog: pytest.LogCaptureFixture) -> None:
+    """The range is the one fact these encoders take from the rows; a run must be told what it was."""
+    with caplog.at_level(logging.INFO, logger="src.data.encoders.continuous"):
+        GaussianBinsTargetEncoder(bins=10).fit(TRAIN)
+
+    assert "learned its range" in caplog.text
+    assert "[0, 100]" in caplog.text

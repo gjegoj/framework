@@ -40,7 +40,7 @@ def test_records_of_different_tasks_do_not_mix() -> None:
 
 def test_an_encoder_reports_exactly_what_it_inferred() -> None:
     """The caller never enumerates facts, so a new kind of fact reaches a profile untouched."""
-    encoder = LabelTargetEncoder()
+    encoder = LabelTargetEncoder(classes={0: "cat", 1: "dog"})
     encoder.fit(["cat", "dog"])
 
     assert encoder.facts() == TargetFacts(num_classes=2, class_names=["cat", "dog"])
@@ -66,8 +66,3 @@ def test_a_binned_encoder_reports_the_values_behind_its_classes() -> None:
     assert facts.num_classes == 8
     assert facts.class_values is not None
     assert len(facts.class_values) == 8
-
-
-def test_an_unfitted_encoder_reports_nothing_yet() -> None:
-    """Facts appear at fit time; before that a profile would record a lie."""
-    assert LabelTargetEncoder().facts() == TargetFacts()

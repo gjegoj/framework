@@ -14,26 +14,16 @@ if TYPE_CHECKING:
     from src.core.entities import Sample
 
 _PIPELINE_KIND = {Geometry.IMAGE: "image", Geometry.MASK: "mask", Geometry.NONE: "label"}
-"""How ``additional_targets`` names each geometry a value may be carried under.
+"""How ``additional_targets`` names each geometry; ``BOXES`` travels as the pipeline's own
+``bboxes`` argument instead. Spelled out because albumentations' ``Targets`` enum is not a
+``StrEnum`` and does not satisfy the ``dict[str, str]`` the API declares."""
 
-Spelled out rather than taken from albumentations' ``Targets`` enum, which is a plain
-``Enum`` and not a ``StrEnum``: its members are accepted at runtime but do not satisfy
-the ``dict[str, str]`` the API declares. ``BOXES`` is absent on purpose — boxes travel through the
-pipeline's own ``bboxes`` argument, not an additional target: measured on albumentationsx
-2.3.7, ``label_fields`` are not plumbed through ``additional_targets`` and a second boxes
-field raises ``KeyError`` on its labels.
-"""
+_BBOXES = "bboxes"
+"""Albumentations' own argument for the boxes array, verbatim."""
 
-BOXES = "bboxes"
-"""Albumentations' own argument for the boxes array — its name, spelled once here."""
-
-BOX_LABELS = "box_labels"
-"""The label field a BOXES target's class names travel under inside the pipeline call.
-
-Their own key rather than the target's name, because albumentations filters this list in
-step with the boxes — a crop that drops a box drops its name — and the pair is put back
-together under the target's name afterwards.
-"""
+_BOX_LABELS = "box_labels"
+"""Our label field for the boxes' class names: albumentations filters it in step with the
+boxes, so a crop that drops a box drops its name."""
 
 
 class AlbumentationsTransform:
@@ -42,7 +32,7 @@ class AlbumentationsTransform:
     One pipeline call, so every sampled parameter is shared between the image, its mask, its
     boxes and every other declared input; undeclared values never reach it. A ``BOXES``
     target travels as ``(float32 [N, 4] xyxy pixels, list of names)``, split into
-    ``bboxes`` and ``BOX_LABELS`` and put back together.
+    ``bboxes`` and a label field and put back together.
 
     Parameters:
         transforms (Sequence): Albumentations operations, in order; end with ``ToTensorV2``.
@@ -74,46 +64,42 @@ class AlbumentationsTransform:
         declared_targets = _geometries("targets", targets or {})
         if not self._inputs:
             raise ValueError("AlbumentationsTransform needs at least one image input.")
-        _refuse_a_name_in_two_roles(self._inputs, self._auxiliary_inputs, declared_targets, label_targets)
+        _refuse_a_colliding_name(self._inputs, self._auxiliary_inputs, declared_targets, label_targets)
         _refuse_a_non_pixel_input(self._inputs, self._auxiliary_inputs)
-        self._targets = {**declared_targets, **dict.fromkeys(label_targets, Geometry.NONE)}
-        self._boxes_target = _boxes_target(self._targets)
-        _refuse_contradicted_options(self._boxes_target, compose_options, min_box_visibility, min_box_area)
+        self._boxes_target = _boxes_target(declared_targets)
+        # Every target but the boxes one: those travel as `bboxes`, not as an additional target.
+        self._targets = {
+            **{name: geometry for name, geometry in declared_targets.items() if name != self._boxes_target},
+            **dict.fromkeys(label_targets, Geometry.NONE),
+        }
+        _refuse_a_derived_option(self._boxes_target, compose_options)
         carried = {**self._inputs, **self._auxiliary_inputs, **self._targets}
         self._pipeline = A.Compose(
             list(transforms),
-            additional_targets={
-                name: _PIPELINE_KIND[geometry] for name, geometry in carried.items() if name != self._boxes_target
-            },
-            # Off by default — a training run should not phone home — but not ours to force.
+            additional_targets={name: _PIPELINE_KIND[geometry] for name, geometry in carried.items()},
             **_box_params(self._boxes_target, min_box_visibility, min_box_area),
+            # Off by default — a training run should not phone home — but not ours to force.
             **{"telemetry": False, **compose_options},
         )
 
     def __call__(self, sample: Sample) -> Sample:
-        given: dict[str, Any] = {
-            **{name: sample.inputs[name] for name in self._inputs},
-            **{name: sample.auxiliary_inputs[name] for name in self._auxiliary_inputs},
-            **{name: sample.targets[name] for name in self._targets if name != self._boxes_target},
-        }
+        roles = (
+            (self._inputs, sample.inputs),
+            (self._auxiliary_inputs, sample.auxiliary_inputs),
+            (self._targets, sample.targets),
+        )
+        arguments: dict[str, Any] = {name: values[name] for names, values in roles for name in names}
         if self._boxes_target is not None:
-            boxes, names = sample.targets[self._boxes_target]
-            given[BOXES], given[BOX_LABELS] = boxes, list(names)
-        augmented = self._pipeline(**given)
-        for name in self._inputs:
-            sample.inputs[name] = augmented[name]
-        # Written back so a later transform in a chain reads the geometry the image now
-        # has; collation never looks at the field either way.
-        for name in self._auxiliary_inputs:
-            sample.auxiliary_inputs[name] = augmented[name]
-        for name in self._targets:
-            if name != self._boxes_target:
-                sample.targets[name] = augmented[name]
+            arguments[_BBOXES], arguments[_BOX_LABELS] = sample.targets[self._boxes_target]
+        augmented = self._pipeline(**arguments)
+        # Auxiliary inputs are written back too, so a later transform in a chain reads the
+        # geometry the image now has; collation never looks at them either way.
+        for names, values in roles:
+            for name in names:
+                values[name] = augmented[name]
         if self._boxes_target is not None:
-            sample.targets[self._boxes_target] = (
-                np.asarray(augmented[BOXES], dtype=np.float32).reshape(-1, 4),
-                list(augmented[BOX_LABELS]),
-            )
+            # Measured on albumentationsx 2.3.7: bboxes come back as float64 [N, 4], (0, 4) included.
+            sample.targets[self._boxes_target] = (augmented[_BBOXES].astype(np.float32), augmented[_BOX_LABELS])
         return sample
 
 
@@ -165,10 +151,8 @@ def _boxes_target(targets: Mapping[str, Geometry]) -> str | None:
     return boxed[0] if boxed else None
 
 
-def _refuse_contradicted_options(
-    boxes_target: str | None, compose_options: Mapping[str, Any], min_visibility: float, min_area: float
-) -> None:
-    """Options this seam derives, declared a second time — or box knobs with no boxes."""
+def _refuse_a_derived_option(boxes_target: str | None, compose_options: Mapping[str, Any]) -> None:
+    """An option this seam derives, declared a second time in ``compose_options``."""
     if "additional_targets" in compose_options:
         raise ValueError(
             "'additional_targets' is derived here, from 'inputs', 'targets', 'auxiliary_inputs' and "
@@ -180,37 +164,36 @@ def _refuse_contradicted_options(
             f"'bbox_params' is derived from the '{boxes_target}' target — pascal_voc pixels, the label "
             f"field, and the min_box knobs. Declare those instead."
         )
-    if boxes_target is None and (min_visibility or min_area):
-        raise ValueError(
-            "min_box_visibility/min_box_area declared, but no target has "
-            f"'{Geometry.BOXES}' geometry — the filter would silently never run."
-        )
 
 
 def _box_params(boxes_target: str | None, min_visibility: float, min_area: float) -> dict[str, Any]:
-    """``bbox_params`` for the one boxes target, or nothing at all.
+    """``bbox_params`` for the one boxes target, or nothing at all; box knobs with no boxes are refused.
 
     ``pascal_voc`` is albumentations' name for xyxy pixels — the convention ``Instances``
     pins, so no dialect is converted anywhere between the encoder and the batch.
     """
     if boxes_target is None:
+        if min_visibility or min_area:
+            raise ValueError(
+                "min_box_visibility/min_box_area declared, but no target has "
+                f"'{Geometry.BOXES}' geometry — the filter would silently never run."
+            )
         return {}
     return {
         "bbox_params": A.BboxParams(
             coord_format="pascal_voc",
-            label_fields=[BOX_LABELS],
+            label_fields=[_BOX_LABELS],
             min_visibility=min_visibility,
             min_area=min_area,
         )
     }
 
 
-def _refuse_a_name_in_two_roles(*roles: Sequence[str] | Mapping[str, Geometry]) -> None:
-    """A name declared twice would be one kwarg of one pipeline call — a silent overwrite.
+def _refuse_a_colliding_name(*roles: Sequence[str] | Mapping[str, Geometry]) -> None:
+    """A name declared twice, or one albumentations reads as its own, would silently overwrite a value.
 
     The four roles are separate namespaces everywhere else: an input and a task may
-    legally share a name, and only here do they collide. Naming the clash at
-    construction beats one value quietly winning over another every epoch.
+    legally share a name, and only here — as kwargs of one pipeline call — do they collide.
     """
     declared = [name for role in roles for name in role]
     duplicated = sorted({name for name in declared if declared.count(name) > 1})
@@ -220,6 +203,6 @@ def _refuse_a_name_in_two_roles(*roles: Sequence[str] | Mapping[str, Geometry]) 
             "'targets', 'label_targets'. Every name becomes one argument of one pipeline call, so a "
             "duplicate would silently overwrite a value."
         )
-    reserved = sorted({name for name in declared if name in {BOXES, BOX_LABELS}})
+    reserved = sorted({name for name in declared if name in {_BBOXES, _BOX_LABELS}})
     if reserved:
         raise ValueError(f"{', '.join(reserved)}: reserved for this seam's boxes arguments. Rename the declared value.")

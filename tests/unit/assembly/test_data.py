@@ -80,7 +80,8 @@ def test_target_geometries_are_derived_from_the_encoders_never_configured(tmp_pa
             "mask": {
                 "preset": "segmentation",
                 "target": "mask",
-                "target_encoder": {"name": "mask", "num_classes": 3, "root": str(tmp_path)},
+                "classes": {0: "a", 1: "b", 2: "c"},
+                "target_encoder": {"name": "mask", "root": str(tmp_path)},
             }
         },
     )

@@ -166,7 +166,9 @@ def test_the_declared_rate_travels_from_yaml_to_the_task() -> None:
                 "split": {"train": 0.6, "val": 0.2, "test": 0.2},
                 "inputs": {"image": {"column": "image"}},
             },
-            "tasks": {"label": {"preset": "classification", "target": "label", "lr": FAST_LR}},
+            "tasks": {
+                "label": {"preset": "classification", "target": "label", "classes": {0: "cat", 1: "dog"}, "lr": FAST_LR}
+            },
             "model": {"name": "timm", "model_name": "resnet18"},
         }
     )

@@ -32,8 +32,7 @@ class BoxesTargetEncoder(TargetEncoder):
     collation renumbers. A malformed cell is refused showing what it held.
 
     Parameters:
-        classes (Mapping[int, str] | None): Declared vocabulary, index to name. Learned from
-            the training cells when absent — the annotations carry the names.
+        classes (Mapping[int, str]): The vocabulary, index to name.
     """
 
     geometry: ClassVar[Geometry] = Geometry.BOXES
@@ -42,23 +41,16 @@ class BoxesTargetEncoder(TargetEncoder):
     CLASS: ClassVar[str] = "class"
     """The canonical object fields, spelled once: the converters write what this reads."""
 
-    def __init__(self, classes: Mapping[int, str] | None = None) -> None:
-        names = ordered_names(classes) if classes is not None else None
-        self._declared = names is not None
-        self._index: dict[str, int] | None = (
-            {name: position for position, name in enumerate(names)} if names is not None else None
-        )
+    def __init__(self, classes: Mapping[int, str]) -> None:
+        self._names = ordered_names(classes)
+        self._positions = {name: position for position, name in enumerate(self._names)}
 
     def fit(self, values: Iterable[Any]) -> None:
         seen = {name for value in values for name in self._parsed(value)[1]}
-        if self._declared:
-            assert self._index is not None
-            unknown = sorted(seen - self._index.keys())
-            if unknown:
-                known = ", ".join(self._index)
-                raise LookupError(f"Unknown classes {', '.join(unknown)} in a boxes column. Declared: {known}.")
-            return
-        self._index = {name: position for position, name in enumerate(sorted(seen))}
+        unknown = sorted(seen - self._positions.keys())
+        if unknown:
+            known = ", ".join(self._names)
+            raise LookupError(f"Unknown classes {', '.join(unknown)} in a boxes column. Declared: {known}.")
 
     @override
     def load(self, value: Any) -> tuple[np.ndarray, list[str]]:
@@ -66,26 +58,24 @@ class BoxesTargetEncoder(TargetEncoder):
         return self._parsed(value)
 
     def encode(self, value: Any) -> Instances:
-        if self._index is None:
-            raise RuntimeError("BoxesTargetEncoder is not fitted; call fit(train_values) first.")
         boxes, names = value
-        unknown = sorted({name for name in names if name not in self._index})
+        unknown = sorted({name for name in names if name not in self._positions})
         if unknown:
-            known = ", ".join(self._index)
+            known = ", ".join(self._names)
             raise LookupError(f"Unknown classes {', '.join(unknown)} in a boxes target. Known classes: {known}.")
         return Instances(
-            boxes=torch.as_tensor(np.asarray(boxes, dtype=np.float32).reshape(len(names), 4)),
-            labels=torch.as_tensor([self._index[name] for name in names], dtype=torch.int64),
+            boxes=torch.as_tensor(np.asarray(boxes, dtype=np.float32)),
+            labels=torch.as_tensor([self._positions[name] for name in names], dtype=torch.int64),
             sample_index=torch.zeros(len(names), dtype=torch.int64),
         )
 
     @property
-    def num_classes(self) -> int | None:
-        return len(self._index) if self._index is not None else None
+    def num_classes(self) -> int:
+        return len(self._names)
 
     @property
-    def class_names(self) -> list[str] | None:
-        return list(self._index) if self._index is not None else None
+    def class_names(self) -> list[str]:
+        return list(self._names)
 
     @override
     def distribution(self, values: Iterable[Any]) -> Distribution | None:
@@ -109,4 +99,5 @@ class BoxesTargetEncoder(TargetEncoder):
                 raise ValueError(f"A '{self.BOX}' holds [x1, y1, x2, y2], got {entry[self.BOX]!r:.120}.")
             boxes.append(corners)
             names.append(str(entry[self.CLASS]))
-        return np.asarray(boxes, dtype=np.float32).reshape(len(names), 4), names
+        # `[]` is shape (0,); a negative is (0, 4).
+        return np.asarray(boxes, dtype=np.float32).reshape(-1, 4), names

@@ -36,7 +36,7 @@ SPLIT: Final[dict[str, Any]] = {"train": 0.5, "val": 0.25, "test": 0.25}
 DATA: Final[dict[str, Any]] = {"source": "a.csv", "inputs": INPUTS, "split": SPLIT}
 """The smallest data section that validates. Its source is never read."""
 
-TASK: Final[dict[str, Any]] = {"preset": "classification", "target": "label"}
+TASK: Final[dict[str, Any]] = {"preset": "classification", "target": "label", "classes": {0: "cat", 1: "dog"}}
 """One classification task over the column ``write_dataset`` writes."""
 
 TASKS: Final[dict[str, Any]] = {"label": TASK}

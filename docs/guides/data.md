@@ -404,9 +404,10 @@ the objective's *semantics* second — so declaring one is an override:
 | `segmentation` (any objective) | `mask` | a mask file path |
 | `detection` | `boxes` | a list of `{"box": [x1, y1, x2, y2], "class": name}` |
 
-A mask is the one target whose *vocabulary* config still has to state: reading it
-without one would take the class count from whatever indices a split happened to
-show, and a class no image carries would silently vanish from the index map.
+Every target read as classes declares its *vocabulary* — see
+[declaring the class vocabulary](tasks.md#declaring-the-class-vocabulary). Read
+without one, the index space would be whatever a split happened to show, and a
+class no row carries would silently vanish from it.
 
 ```yaml
 tasks:

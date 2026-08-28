@@ -61,7 +61,12 @@ def test_masks_travel_from_files_through_augmentation_into_a_dense_loss(tmp_path
         schema=DataSchema(
             inputs={"image": InputColumn(column="image", loader=ImageLoader(root=tmp_path))},
             targets={
-                "mask": TargetColumn(column="mask", encoder=MaskTargetEncoder(num_classes=CLASSES, root=tmp_path))
+                "mask": TargetColumn(
+                    column="mask",
+                    encoder=MaskTargetEncoder(
+                        classes={index: f"class_{index}" for index in range(CLASSES)}, root=tmp_path
+                    ),
+                )
             },
         ),
         splitter=random_split({Stage.TRAIN: 0.5, Stage.VAL: 0.25, Stage.TEST: 0.25}, seed=42),

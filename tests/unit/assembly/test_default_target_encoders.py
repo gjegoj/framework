@@ -32,7 +32,8 @@ def schema_for(task: dict[str, Any]) -> Any:
     ],
 )
 def test_a_preset_supplies_its_own_target_encoder(preset: str, encoder: type) -> None:
-    schema = schema_for({"preset": preset, "target": "y"})
+    vocabulary = {"classes": {0: "cat", 1: "dog"}} if preset in {"classification", "multilabel_classification"} else {}
+    schema = schema_for({"preset": preset, "target": "y", **vocabulary})
 
     assert isinstance(schema.targets["target"].encoder, encoder)
 
@@ -42,13 +43,14 @@ def test_a_declared_encoder_still_wins() -> None:
         {
             "preset": "multilabel_classification",
             "target": "y",
+            "classes": {0: "dog", 1: "cat"},
             "target_encoder": {"name": "multilabel", "separator": "|"},
         }
     )
     encoder = schema.targets["target"].encoder
     encoder.fit(["cat|dog"])
 
-    assert encoder.class_names == ["cat", "dog"]
+    assert encoder.class_names == ["dog", "cat"]
 
 
 def test_a_segmentation_task_composes_the_mask_encoder_from_its_classes_alone() -> None:
@@ -63,15 +65,39 @@ def test_a_segmentation_task_composes_the_mask_encoder_from_its_classes_alone() 
     assert encoder.class_names == ["pet", "background", "boundary"]
 
 
-def test_a_dense_task_without_class_facts_is_refused_by_the_encoder_that_needs_them() -> None:
-    """The loud stop moved from an assembly gate to the encoder whose reading needs the count."""
-    with pytest.raises(ValueError, match="classes"):
-        schema_for({"preset": "segmentation", "target": "mask"})
+@pytest.mark.parametrize("preset", ["classification", "multilabel_classification", "segmentation", "detection"])
+def test_a_task_whose_encoder_reads_a_vocabulary_must_declare_classes(preset: str) -> None:
+    """The index space is a declaration, never learned from whichever rows the split left in
+    train — learned, it shrank when a rare class dropped out and the checkpoint stopped fitting."""
+    with pytest.raises(ValueError, match="needs 'classes'"):
+        schema_for({"preset": preset, "target": "y"})
+
+
+def test_a_declared_encoder_without_classes_is_refused_the_same_way() -> None:
+    with pytest.raises(ValueError, match="needs 'classes'"):
+        schema_for({"preset": "classification", "target": "y", "target_encoder": {"name": "label"}})
+
+
+def test_classes_written_inside_the_encoder_declaration_still_count() -> None:
+    schema = schema_for(
+        {
+            "preset": "classification",
+            "target": "y",
+            "target_encoder": {"name": "label", "classes": {0: "cat", 1: "dog"}},
+        }
+    )
+
+    assert schema.targets["target"].encoder.class_names == ["cat", "dog"]
 
 
 def test_a_declared_mask_encoder_works_as_before() -> None:
     schema = schema_for(
-        {"preset": "segmentation", "target": "mask", "target_encoder": {"name": "mask", "num_classes": 3}}
+        {
+            "preset": "segmentation",
+            "target": "mask",
+            "classes": {0: "a", 1: "b", 2: "c"},
+            "target_encoder": {"name": "mask"},
+        }
     )
 
     assert isinstance(schema.targets["target"].encoder, MaskTargetEncoder)
@@ -79,7 +105,7 @@ def test_a_declared_mask_encoder_works_as_before() -> None:
 
 def test_a_detection_task_needs_no_target_encoder_line() -> None:
     """INSTANCES admits no real encoder choice, and a knob with one correct value is code."""
-    schema = schema_for({"preset": "detection", "target": "objects"})
+    schema = schema_for({"preset": "detection", "target": "objects", "classes": {0: "cat", 1: "dog"}})
 
     assert isinstance(schema.targets["target"].encoder, BoxesTargetEncoder)
 

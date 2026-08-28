@@ -82,7 +82,7 @@ per-sample label, so there is nothing for a per-sample metric to compare.
 | Key | Default | Meaning |
 |---|---|---|
 | `target` | — | The table column holding this task's ground truth. The data schema derives from the tasks, so a column is named once |
-| `classes` | learned | `{0: cat, 1: dog}` — the declared vocabulary, as the source of truth |
+| `classes` | **required** where the target is read as classes (`label`, `multilabel`, `mask`, `boxes`); refused for a continuous target | `{0: cat, 1: dog}` — the vocabulary, index to name |
 | `target_encoder` | from the axes | How a target cell becomes a tensor — the topology's shape first, the objective's semantics second |
 | `loss` | from the objective | One criterion, or a list added with weights |
 | `head` | from the topology | Which *kind* of head; sizes stay derived |
@@ -92,12 +92,14 @@ per-sample label, so there is nothing for a per-sample metric to compare.
 | `lr` | the run's rate | Own rate for this task's head and criterion |
 | `metrics` | from the objective | Metrics keyed by the label they log under |
 
-Sizes are never among them. `num_classes` comes from the fitted encoder,
-`in_features` from the backbone stream — see [derived values](../concepts.md#sizes-come-from-the-data-never-from-config).
+Sizes are never among them. `num_classes` is the length of `classes`,
+`in_features` comes from the backbone stream — see [derived values](../concepts.md#sizes-come-from-the-data-never-from-config).
 
 ## Declaring the class vocabulary
 
-`classes` turns the class space from something learned into something declared:
+Every target read as classes — `classification`, `multilabel_classification`,
+`segmentation`, `detection` and their variants — declares its vocabulary, and
+assembly refuses a task that reads one without it, before any row is read:
 
 ```yaml
 tasks:
@@ -107,14 +109,18 @@ tasks:
     classes: {0: cat, 1: dog, 2: rabbit}
 ```
 
-Three things follow. The data is validated against it at fit, so a typo in a
-label is an error rather than a silent extra class. The index space survives
-resampling — dropping every `rabbit` row from the train split no longer shifts
-`dog` to index 2. And the names label per-class log keys
-(`val/species/f1/rabbit`), confusion-matrix axes and the samples grid.
+The vocabulary is the index space the model's outputs live in, which is why it is
+declared rather than learned from the rows: learned, it would shrink when a sample
+cap or a resample dropped a rare class from train, reorder when a class was added,
+and a checkpoint keyed on it would stop fitting in silence. Declared, the data is
+validated against it at fit (a typo is an error, not an extra class), `dog` keeps
+its index when every `rabbit` row is dropped, and the names label per-class log
+keys (`val/species/f1/rabbit`), confusion-matrix axes and the samples grid.
 
 Indices must be exactly `0..n-1` and names must be unique; a continuous objective
-refuses `classes` outright, because bins own its value space.
+refuses `classes` outright, because bins own its value space. For a table with
+many classes, let the script that knows every name write the block —
+`scripts/prepare_pet.py` prints them for the pet table, breeds included.
 
 ## Several tasks at once
 
@@ -183,8 +189,9 @@ At **config load**: the preset resolves, `classes` is checked for completeness
 and duplicates, `head` and `native_head` cannot both be set, and an unknown key
 in the section is an error naming it.
 
-At **assembly**: the topology validates the objective it was paired with, the
-metrics are built with the objective's own arguments, and a task declaring components
-a vendor family builds itself is refused with the reason.
+At **assembly**: the topology validates the objective it was paired with, a task
+whose encoder reads a vocabulary is refused by name if it declared no `classes`,
+the metrics are built with the objective's own arguments, and a task declaring
+components a vendor family builds itself is refused with the reason.
 
 At **fit**: the data is validated against the declared vocabulary.

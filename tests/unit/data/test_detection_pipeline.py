@@ -52,7 +52,7 @@ def detection_config(root: Path) -> Any:
                 "source": {"train": str(root / "train.jsonl"), "val": str(root / "val.jsonl")},
                 "inputs": {"image": {"column": "image", "loader": {"name": "image", "root": str(root)}}},
             },
-            "tasks": {"boxes": {"preset": "detection", "target": "objects"}},
+            "tasks": {"boxes": {"preset": "detection", "target": "objects", "classes": {0: "cat", 1: "dog"}}},
             "model": {"name": "timm", "model_name": "resnet18", "pretrained": False},
             "transforms": {stage: dict(stage_pipeline) for stage in ("train", "val")},
         }

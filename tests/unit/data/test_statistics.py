@@ -82,7 +82,7 @@ def test_an_encoder_that_does_not_describe_its_column_says_so_rather_than_vanish
         pass
 
     assert Opaque().distribution([1.0]) is not None  # inherited, and it does describe
-    assert MaskTargetEncoder(num_classes=2).distribution.__doc__ is not None
+    assert MaskTargetEncoder(classes={0: "a", 1: "b"}).distribution.__doc__ is not None
 
 
 def test_segmentation_counts_its_pixels_where_the_reference_dropped_it(tmp_path: Path) -> None:
@@ -115,7 +115,7 @@ def test_a_mask_beyond_the_declared_classes_is_refused_by_name(tmp_path: Path) -
     cv2.imwrite(str(root / "m.png"), mask)
 
     with pytest.raises(ValueError, match="class index 7"):
-        MaskTargetEncoder(num_classes=2).distribution([str(root / "m.png")])
+        MaskTargetEncoder(classes={0: "a", 1: "b"}).distribution([str(root / "m.png")])
 
 
 def test_a_pipeline_reports_its_size_and_its_targets_together() -> None:
@@ -125,7 +125,7 @@ def test_a_pipeline_reports_its_size_and_its_targets_together() -> None:
         source=InMemorySource(table),
         schema=DataSchema(
             inputs={"point": InputColumn(column="x", loader=float)},
-            targets={"label": TargetColumn(column="label", encoder=LabelTargetEncoder())},
+            targets={"label": TargetColumn(column="label", encoder=LabelTargetEncoder(classes={0: "cat", 1: "dog"}))},
         ),
         splitter=random_split({Stage.TRAIN: 0.5, Stage.VAL: 0.5}, seed=0),
     )

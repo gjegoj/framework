@@ -61,7 +61,7 @@ def test_a_per_class_metric_lands_as_mean_plus_named_leaves(tmp_path: Any) -> No
         source=InMemorySource(table),
         schema=DataSchema(
             inputs={"image": InputColumn(column="x", loader=load_pair)},
-            targets={"label": TargetColumn(column="label", encoder=LabelTargetEncoder())},
+            targets={"label": TargetColumn(column="label", encoder=LabelTargetEncoder(classes={0: "cat", 1: "dog"}))},
         ),
         splitter=random_split({Stage.TRAIN: 0.5, Stage.VAL: 0.25, Stage.TEST: 0.25}, seed=42),
     )

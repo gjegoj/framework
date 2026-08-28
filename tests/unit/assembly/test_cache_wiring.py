@@ -34,7 +34,8 @@ def test_a_mask_encoder_is_offered_the_cache() -> None:
             "mask": {
                 "preset": "segmentation",
                 "target": "mask",
-                "target_encoder": {"name": "mask", "num_classes": 2},
+                "classes": {0: "a", 1: "b"},
+                "target_encoder": {"name": "mask"},
             }
         },
         model={"name": "smp", "architecture": "unet", "encoder_name": "resnet18"},
@@ -49,14 +50,14 @@ def test_an_encoder_that_does_not_want_a_cache_is_not_handed_one() -> None:
     """The derived value is offered, not forced; a label encoder names no 'cache'."""
     schema = build_data_schema(paper_config(), RamCache(max_gib=0.5))
 
-    assert schema.targets["label"].encoder.class_names is None
+    assert schema.targets["label"].encoder.class_names == ["cat", "dog"]
 
 
 def test_a_run_without_a_cache_builds_exactly_as_before() -> None:
     schema = build_data_schema(paper_config())
 
     assert schema.inputs["image"].column == "image"
-    assert schema.targets["label"].encoder.num_classes is None
+    assert schema.targets["label"].encoder.num_classes == 2
 
 
 def test_assembly_namespaces_and_schema_labels_are_one_spelling() -> None:

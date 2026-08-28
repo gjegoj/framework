@@ -45,7 +45,7 @@ def module(
     loader = ImageLoader(root=root)
     schema = DataSchema(
         inputs={"image": InputColumn(column="path", loader=cached(loader, cache) if cache else loader)},
-        targets={"label": TargetColumn(column="label", encoder=LabelTargetEncoder())},
+        targets={"label": TargetColumn(column="label", encoder=LabelTargetEncoder(classes={0: "cat", 1: "dog"}))},
     )
     return TableDataModule(
         source=InMemorySource(dataset(root)),

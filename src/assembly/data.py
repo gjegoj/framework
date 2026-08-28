@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from inspect import Parameter, signature
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -34,7 +35,7 @@ from src.models.registry import vendor_model_registry
 from src.tasks import default_target_encoder
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Callable, Mapping
     from typing import Any
 
     from src.config import ComponentConfig, ExperimentConfig
@@ -143,6 +144,8 @@ def _build_target_encoder(name: str, task: TaskConfig, derived: Mapping[str, Any
                 f"Task '{name}' declares classes both on the task and inside its target_encoder; "
                 "declare the vocabulary once — on the task."
             )
+        if task.classes is None and "classes" not in task.target_encoder.params:
+            _refuse_a_missing_vocabulary(name, resolve_target(task.target_encoder, target_encoder_registry))
         declared: TargetEncoder = instantiate(task.target_encoder, target_encoder_registry, **offered)
         return _honouring_declared_classes(name, task, declared)
     default = default_target_encoder(task.output_topology, task.objective)
@@ -153,7 +156,27 @@ def _build_target_encoder(name: str, task: TaskConfig, derived: Mapping[str, Any
             f"target, or declare the 'target_encoder' that makes sense of it."
         )
     factory = target_encoder_registry.get(default)
+    if task.classes is None:
+        _refuse_a_missing_vocabulary(name, factory)
     return _honouring_declared_classes(name, task, factory(**named_by(factory, offered)))
+
+
+def _refuse_a_missing_vocabulary(name: str, factory: Callable[..., Any]) -> None:
+    """A task whose encoder needs ``classes`` must declare them; nothing is learned from the rows.
+
+    The index space of a model's outputs is a declaration, not a fact of whichever rows a
+    split or a sample cap left in train: learned, it shrank when a rare class dropped out
+    and reordered when a class was added, and the checkpoint keyed on it stopped fitting
+    in silence. Read off the constructor, so any encoder that requires a vocabulary is
+    covered without a list here.
+    """
+    parameter = signature(factory).parameters.get("classes")
+    if parameter is not None and parameter.default is Parameter.empty:
+        raise ValueError(
+            f"Task '{name}' needs 'classes': its target encoder reads a vocabulary, and the index "
+            f"space must be declared rather than learned from the rows. Declare it on the task, "
+            f"e.g. classes: {{0: background, 1: defect}}."
+        )
 
 
 def _honouring_declared_classes(name: str, task: TaskConfig, built: TargetEncoder) -> TargetEncoder:
@@ -166,7 +189,7 @@ def _honouring_declared_classes(name: str, task: TaskConfig, built: TargetEncode
     if task.classes is not None and built.class_names is None:
         raise ValueError(
             f"Task '{name}' declares classes, but its target encoder does not carry a vocabulary. "
-            "Declare an encoder that does (label, multilabel, mask), or drop 'classes'."
+            "Declare an encoder that does (label, multilabel, mask, boxes), or drop 'classes'."
         )
     return built
 

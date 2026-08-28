@@ -19,6 +19,7 @@ from src.config import load_config
 from tests.support.datasets import write_images, write_table
 
 VOCABULARY = ("sunny", "beach", "people", "night")
+CLASSES = "{" + ", ".join(f"{index}: {name}" for index, name in enumerate(VOCABULARY)) + "}"
 
 EXPERIMENT = """
 seed: 7
@@ -37,6 +38,7 @@ tasks:
   tags:
     preset: multilabel_classification
     target: tags
+    classes: {classes}
     target_encoder: {{name: multilabel}}
     metrics: {{accuracy: {{name: accuracy}}, f1: {{name: f1}}}}
 
@@ -79,7 +81,7 @@ def write_tagged(root: Path, rows: int = 40) -> None:
 @pytest.mark.e2e
 def test_a_multilabel_experiment_trains_and_tests(tmp_path: Path) -> None:
     write_tagged(tmp_path)
-    (tmp_path / "experiment.yaml").write_text(EXPERIMENT.format(root=tmp_path))
+    (tmp_path / "experiment.yaml").write_text(EXPERIMENT.format(root=tmp_path, classes=CLASSES))
 
     raw = yaml.safe_load((tmp_path / "experiment.yaml").read_text())
     resolved = OmegaConf.to_container(OmegaConf.create(raw), resolve=True)
@@ -94,10 +96,10 @@ def test_a_multilabel_experiment_trains_and_tests(tmp_path: Path) -> None:
 
 
 @pytest.mark.e2e
-def test_the_head_is_sized_from_the_labels_found_in_the_data(tmp_path: Path) -> None:
+def test_the_head_is_sized_from_the_declared_vocabulary(tmp_path: Path) -> None:
     """Nobody declares the class count: it follows from the vocabulary the encoder learned."""
     write_tagged(tmp_path)
-    (tmp_path / "experiment.yaml").write_text(EXPERIMENT.format(root=tmp_path))
+    (tmp_path / "experiment.yaml").write_text(EXPERIMENT.format(root=tmp_path, classes=CLASSES))
 
     raw = yaml.safe_load((tmp_path / "experiment.yaml").read_text())
     config = load_config(OmegaConf.to_container(OmegaConf.create(raw), resolve=True))  # type: ignore[arg-type]

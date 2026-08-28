@@ -28,7 +28,7 @@ def make_module(transform_train: bool = False) -> TableDataModule:
     )
     schema = DataSchema(
         inputs={"image": InputColumn(column="path", loader=load_zeros)},
-        targets={"label": TargetColumn(column="label", encoder=LabelTargetEncoder())},
+        targets={"label": TargetColumn(column="label", encoder=LabelTargetEncoder(classes={0: "cat", 1: "dog"}))},
     )
 
     def brighten(sample: Sample) -> Sample:
@@ -102,7 +102,7 @@ def test_one_source_with_nothing_to_divide_it_is_refused() -> None:
     table = pd.DataFrame({"path": ["0.jpg"], "label": ["cat"]})
     schema = DataSchema(
         inputs={"image": InputColumn(column="path", loader=load_zeros)},
-        targets={"label": TargetColumn(column="label", encoder=LabelTargetEncoder())},
+        targets={"label": TargetColumn(column="label", encoder=LabelTargetEncoder(classes={0: "cat", 1: "dog"}))},
     )
 
     with pytest.raises(ValueError, match="data.split"):
@@ -116,7 +116,7 @@ def test_per_stage_sources_beside_a_split_are_refused() -> None:
     table = pd.DataFrame({"path": ["0.jpg"], "label": ["cat"]})
     schema = DataSchema(
         inputs={"image": InputColumn(column="path", loader=load_zeros)},
-        targets={"label": TargetColumn(column="label", encoder=LabelTargetEncoder())},
+        targets={"label": TargetColumn(column="label", encoder=LabelTargetEncoder(classes={0: "cat", 1: "dog"}))},
     )
 
     with pytest.raises(ValueError, match="already divided"):

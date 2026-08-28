@@ -52,5 +52,7 @@ def label_schema() -> DataSchema:
     """One image input read by ``load_zeros``, and one label target fitted from the rows."""
     return DataSchema(
         inputs={"image": InputColumn(column=PATH_COLUMN, loader=load_zeros)},
-        targets={LABEL_COLUMN: TargetColumn(column=LABEL_COLUMN, encoder=LabelTargetEncoder())},
+        targets={
+            LABEL_COLUMN: TargetColumn(column=LABEL_COLUMN, encoder=LabelTargetEncoder(classes={0: "cat", 1: "dog"}))
+        },
     )

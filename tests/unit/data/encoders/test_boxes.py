@@ -20,7 +20,7 @@ CELL: list[dict[str, Any]] = [
 
 
 def fitted(cells: list[Any] | None = None) -> BoxesTargetEncoder:
-    encoder = BoxesTargetEncoder()
+    encoder = BoxesTargetEncoder(classes={0: "cat", 1: "dog"})
     encoder.fit(cells if cells is not None else [CELL])
     return encoder
 
@@ -30,11 +30,11 @@ def test_the_encoder_declares_that_its_values_are_boxes() -> None:
     assert BoxesTargetEncoder.geometry is Geometry.BOXES
 
 
-def test_the_vocabulary_is_learned_from_the_cells_and_reported_as_facts() -> None:
-    """A detection head sizes itself from the annotations, like every other head."""
-    encoder = fitted()
+def test_the_declared_vocabulary_is_reported_as_facts_in_its_own_order() -> None:
+    """A detection head sizes itself from the declaration; the order is the user's, not the alphabet's."""
+    encoder = BoxesTargetEncoder(classes={0: "dog", 1: "cat"})
 
-    assert encoder.class_names == ["cat", "dog"]
+    assert encoder.class_names == ["dog", "cat"]
     assert encoder.facts().num_classes == 2
 
 
@@ -98,11 +98,6 @@ def test_an_unknown_class_at_encode_names_itself_and_the_known_ones() -> None:
 
     with pytest.raises(LookupError, match="wolf"):
         encoder.encode((np.zeros((1, 4), dtype=np.float32), ["wolf"]))
-
-
-def test_encoding_before_fitting_says_so_rather_than_inventing_indices() -> None:
-    with pytest.raises(RuntimeError, match="fit"):
-        BoxesTargetEncoder().encode((np.zeros((1, 4), dtype=np.float32), ["dog"]))
 
 
 @pytest.mark.parametrize(

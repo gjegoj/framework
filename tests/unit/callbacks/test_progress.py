@@ -120,7 +120,7 @@ def after_a_run() -> MetricsProgressBar:
         source=InMemorySource(table),
         schema=DataSchema(
             inputs={"image": InputColumn(column="x", loader=lambda value: torch.tensor([float(value), 1.0]))},
-            targets={"label": TargetColumn(column="label", encoder=LabelTargetEncoder())},
+            targets={"label": TargetColumn(column="label", encoder=LabelTargetEncoder(classes={0: "cat", 1: "dog"}))},
         ),
         splitter=random_split({Stage.TRAIN: 0.5, Stage.VAL: 0.25, Stage.TEST: 0.25}, seed=42),
     )

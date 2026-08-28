@@ -72,6 +72,7 @@ tasks:
   label:
     preset: classification
     target: label
+    classes: {{0: cat, 1: dog}}
     metrics: {{accuracy: {{name: accuracy}}}}
 
 transforms:

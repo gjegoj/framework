@@ -23,12 +23,12 @@ repos:
         args: ["--maxkb=1024"]
 
 -   repo: https://github.com/crate-ci/typos
-    rev: v1.49.0
+    rev: v1.49.1
     hooks:
     -   id: typos
 
 -   repo: https://github.com/pycqa/isort
-    rev: 8.0.1
+    rev: 9.0.1
     hooks:
     -   id: isort
         name: isort (python)
@@ -39,7 +39,7 @@ repos:
     -   id: black
 
 -   repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.16.4
+    rev: v0.16.5
     hooks:
     -   id: ruff-check
         args: [--fix]

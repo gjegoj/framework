@@ -267,6 +267,7 @@ from src.config.presets import TaskPreset, task_preset_registry
 from src.config.components import MetricConfig
 from src.core.taxonomy import Objective, OutputTopology
 
+
 @task_preset_registry.register_instance("depth")
 class Depth(TaskPreset):
     output_topology: OutputTopology = OutputTopology.DENSE
@@ -291,12 +292,11 @@ naming every axis.
 
 ```python
 @table_source_registry.register("parquet")
-class ParquetSource(FileSource):
-    ...
+class ParquetSource(FileSource): ...
+
 
 @target_encoder_registry.register("rle_mask")
-class RleMaskEncoder(TargetEncoder):
-    ...
+class RleMaskEncoder(TargetEncoder): ...
 ```
 
 An encoder is the one place that knows what its column holds, so it also answers
@@ -307,6 +307,9 @@ report then names the task rather than dropping it.
 Encoders live in `src/data/encoders/`, one module per family (`label`,
 `continuous`, `mask`, `boxes`) over `base.py`; a new family is a new module,
 imported from the package's `__init__` so its registration runs with the rest.
+An encoder whose values are classes takes `classes` as a required constructor
+argument — assembly reads that off the signature and refuses a task that
+declared none, before any row is read.
 
 ## An exporter
 

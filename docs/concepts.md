@@ -37,9 +37,10 @@ is evaluated by, what criterion it takes, and how its logits become predictions;
 
 ## Sizes come from the data, never from config
 
-`num_classes` is never written in a config file. The data module fits its target
-encoders on the train split, records what it learned into a `DataProfile`, and
-*only then* are tasks and heads built:
+`num_classes` is never written in a config file: it is the length of the vocabulary
+a task declares. The data module fits its target encoders on the train split —
+validating it against the declared vocabularies, learning a bin range — records
+the facts into a `DataProfile`, and *only then* are tasks and heads built:
 
 ```
 setup(profile)  →  DataProfile  →  Task  →  Head(in_features, out_features)
@@ -143,7 +144,7 @@ seams are where a YOLO-style family plugs in without a second assembler.
 ## One training step, whatever the family
 
 ```python
-result = model.step(batch)     # one forward: loss + predictions + metric-view targets
+result = model.step(batch)  # one forward: loss + predictions + metric-view targets
 result.loss.total.backward()
 ```
 
