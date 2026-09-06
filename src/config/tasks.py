@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from src.config.components import ComponentConfig, MetricConfig
 from src.config.presets import resolve_preset
@@ -39,7 +39,7 @@ class TaskConfig(BaseModel):
     a preset is resolved before validation, so ``output_topology`` and ``objective``
     are always concrete afterwards. The target column and its encoder are
     declared here, once — the data schema derives from tasks (single source
-    of truth). ``None`` for ``target_encoder``, ``loss``, and ``stream`` means
+    of truth). ``None`` for ``target_encoder``, ``loss``, and ``streams`` means
     "the objective's or topology's default", chosen at assembly.
     """
 
@@ -88,9 +88,12 @@ class TaskConfig(BaseModel):
             "— e.g. {name: cosine} for an angular-margin classifier."
         ),
     )
-    stream: str | None = Field(
+    streams: tuple[str, ...] | None = Field(
         None,
-        description="Backbone output this task's head reads ('features', 'encoder'); None takes the topology's default.",
+        description=(
+            "Which backbone streams the head reads — one name or a list, in reading order. Absent, the "
+            "topology's default ('features', 'decoder') or, for a detection task, the backbone's pyramid."
+        ),
     )
     weight: float = Field(1.0, gt=0, description="Multiplier of this task's loss in the total.")
     lr: float | None = Field(
@@ -116,6 +119,12 @@ class TaskConfig(BaseModel):
             "Needed when those weights are the point — a detector, a released classifier."
         ),
     )
+
+    @field_validator("streams", mode="before")
+    @classmethod
+    def _one_name_or_several(cls, value: object) -> object:
+        """``streams: encoder`` and ``streams: [p4, p5]`` are one key: a string is a one-tuple."""
+        return (value,) if isinstance(value, str) else value
 
     @model_validator(mode="after")
     def _one_way_of_choosing_a_head(self) -> TaskConfig:

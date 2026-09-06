@@ -38,21 +38,21 @@ def test_the_head_template_is_not_a_registered_submodule(backbone: SmpBackbone) 
 
 
 def test_native_decoder_head_maps_decoder_features_to_classes(backbone: SmpBackbone) -> None:
-    head = backbone.native_head(Stream.DECODER, in_features=16, out_features=3)
+    head = backbone.native_head((Stream.DECODER,), in_features=16, out_features=3)
 
     assert head is not None
     assert head(torch.randn(2, 16, 64, 64)).shape == (2, 3, 64, 64)
 
 
 def test_native_encoder_head_pools_and_classifies(backbone: SmpBackbone) -> None:
-    head = backbone.native_head(Stream.ENCODER, in_features=512, out_features=3)
+    head = backbone.native_head((Stream.ENCODER,), in_features=512, out_features=3)
 
     assert head is not None
     assert head(torch.randn(2, 512, 2, 2)).shape == (2, 3)
 
 
 def test_native_head_is_none_for_unknown_streams(backbone: SmpBackbone) -> None:
-    assert backbone.native_head(Stream.FEATURES, in_features=16, out_features=3) is None
+    assert backbone.native_head((Stream.FEATURES,), in_features=16, out_features=3) is None
 
 
 def test_registered_under_the_smp_key() -> None:

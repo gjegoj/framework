@@ -14,15 +14,16 @@ if TYPE_CHECKING:
     from src.core.entities import DataProfile, Task
     from src.core.ports import Backbone
     from src.core.taxonomy import Objective, OutputTopology
+    from src.tasks.topologies import TaskTopology
 
 
 def build_task_components(
     task: Task,
     profile: DataProfile,
     backbone: Backbone,
-    stream: str | None = None,
+    streams: tuple[str, ...] | None = None,
     prefer_native_head: bool = False,
-    head_factory: Callable[[int, int], Head] | None = None,
+    head_factory: Callable[[int | tuple[int, ...], int], Head] | None = None,
 ) -> TaskComponents:
     """Assemble the components that serve ``task`` inside a composite model.
 
@@ -33,15 +34,17 @@ def build_task_components(
     Parameters:
         task (Task): The declaration being served: its axes, name and weight.
         profile (DataProfile): The facts ``DataModule.setup`` recorded, read for this task.
-        backbone (Backbone): Whose stream the head is sized from.
-        stream (str | None): Read this stream instead of the topology's default.
-        prefer_native_head (bool): Use the backbone's own head for the stream instead of a
-            framework head.
+        backbone (Backbone): Whose streams the head is sized from.
+        streams (tuple[str, ...] | None): Read these streams instead of the topology's default
+            or the backbone's pyramid.
+        prefer_native_head (bool): Use the backbone's own head for the streams instead of a
+            framework head; the default where the framework composes none.
         head_factory (Callable | None): Build this head instead of the topology's default,
             given ``(in_features, out_features)`` — a factory, because the sizes are resolved here.
 
     Raises:
-        LookupError: If a native head is preferred but the backbone offers none for the stream.
+        LookupError: If the native head is wanted but the backbone offers none for the streams,
+            or a task reads a pyramid the backbone does not declare.
     """
     objective = objective_registry.create(task.objective)
     topology = topology_registry.create(task.output_topology)
@@ -52,26 +55,20 @@ def build_task_components(
             f"Output topology '{task.output_topology}' with input topology '{task.input_topology}' "
             f"cannot be supervised by objective '{task.objective}'."
         )
-    if not topology.composes_head:
-        raise ValueError(
-            f"Task '{task.name}' is '{task.output_topology}', whose head belongs to the model family that "
-            f"owns it — its assigner and its loss are part of the same design, and this framework "
-            f"composes none of them. Declare a vendor family instead, e.g. "
-            f"model: {{name: yolo, model_name: yolov8n.yaml}}."
-        )
     if objective.needs_num_classes:
         profile.require_num_classes(task.name)
     facts = profile.facts(task.name)
-    chosen_stream = stream if stream is not None else topology.stream(task.input_topology)
-    in_features = backbone.feature_dim(chosen_stream)
+    streams = _streams_of(task, topology, backbone, streams)
+    widths = tuple(backbone.feature_dim(name) for name in streams)
+    in_features: int | tuple[int, ...] = widths[0] if len(widths) == 1 else widths
     out_features = objective.out_features(facts)
     head: Head
     if head_factory is not None:
         head = head_factory(in_features, _projected(task, out_features))
-    elif prefer_native_head:
-        native = backbone.native_head(chosen_stream, in_features, _projected(task, out_features))
+    elif prefer_native_head or not topology.composes_head:
+        native = backbone.native_head(streams, in_features, _projected(task, out_features))
         if native is None:
-            raise LookupError(f"{type(backbone).__name__} offers no native head for stream '{chosen_stream}'.")
+            raise LookupError(f"{type(backbone).__name__} offers no native head for {', '.join(streams)}.")
         # A native module that already is a Head keeps its own shape: wrapping it
         # would bury contract paths (freeze's `...heads.<task>.base`) under a
         # private attribute.
@@ -83,9 +80,26 @@ def build_task_components(
         criterion=objective.build_criterion(facts),
         activation=objective.build_activation(facts),
         target_adapter=objective.build_target_adapter(facts),
-        stream=chosen_stream,
+        streams=streams,
         weight=task.weight,
     )
+
+
+def _streams_of(
+    task: Task, topology: TaskTopology, backbone: Backbone, declared: tuple[str, ...] | None
+) -> tuple[str, ...]:
+    """The streams this task's head reads: the config's, else the topology's, else the backbone's pyramid.
+
+    Declared wins over derived, as everywhere. How many streams a head can read is the
+    head's own business — a single-stream head handed several refuses itself by name.
+    """
+    streams = declared or topology.streams(task.input_topology) or backbone.pyramid()
+    if not streams:
+        raise LookupError(
+            f"{type(backbone).__name__} declares no pyramid, and task '{task.name}' reads one: a "
+            f"'{task.output_topology}' task needs a backbone with a detection head of its own."
+        )
+    return streams
 
 
 def default_target_encoder(output_topology: OutputTopology, objective: Objective) -> str | None:

@@ -2,17 +2,17 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import torch
-from torch import nn
+from torch import Tensor, nn
 from torch.nn import functional
 
-from src.core.ports import Head
+from src.core.ports import Head, one_stream
 from src.models.registry import head_registry
 
 if TYPE_CHECKING:
-    from torch import Tensor
+    from collections.abc import Mapping
 
 
 @head_registry.register("linear")
@@ -23,7 +23,8 @@ class LinearHead(Head):
         super().__init__()
         self._projection = nn.Linear(in_features, out_features)
 
-    def forward(self, features: Tensor) -> Tensor:
+    def forward(self, features: Tensor | Mapping[str, Tensor]) -> Tensor:
+        features = one_stream(features, head=type(self).__name__)
         # nn.Module.__call__ erases the return type to Any; pin it back.
         return cast("Tensor", self._projection(features))
 
@@ -32,7 +33,8 @@ class LinearHead(Head):
 class IdentityHead(Head):
     """Passes the stream through — for backbones that already emit task outputs."""
 
-    def forward(self, features: Tensor) -> Tensor:
+    def forward(self, features: Tensor | Mapping[str, Tensor]) -> Tensor:
+        features = one_stream(features, head=type(self).__name__)
         return features
 
 
@@ -48,7 +50,8 @@ class ConvHead(Head):
         super().__init__()
         self._projection = nn.Conv2d(in_features, out_features, kernel_size=kernel_size, padding=kernel_size // 2)
 
-    def forward(self, features: Tensor) -> Tensor:
+    def forward(self, features: Tensor | Mapping[str, Tensor]) -> Tensor:
+        features = one_stream(features, head=type(self).__name__)
         # nn.Module.__call__ erases the return type to Any; pin it back.
         return cast("Tensor", self._projection(features))
 
@@ -76,7 +79,8 @@ class CosineHead(Head):
         self.prototypes = nn.Parameter(torch.empty(out_features, embedding_dim or in_features))
         nn.init.xavier_uniform_(self.prototypes)
 
-    def forward(self, features: Tensor) -> Tensor:
+    def forward(self, features: Tensor | Mapping[str, Tensor]) -> Tensor:
+        features = one_stream(features, head=type(self).__name__)
         embedding = self._projection(features) if self._projection is not None else features
         return functional.linear(functional.normalize(embedding, dim=1), functional.normalize(self.prototypes, dim=1))
 
@@ -94,7 +98,8 @@ class WrappedHead(Head):
         super().__init__()
         self._module = module
 
-    def forward(self, features: Tensor) -> Tensor:
+    def forward(self, features: Tensor | Mapping[str, Tensor]) -> Tensor:
+        features = one_stream(features, head=type(self).__name__)
         return cast("Tensor", self._module(features))
 
 
@@ -115,6 +120,39 @@ class ExpandedHead(Head):
         self.base = base
         self.novel = novel
 
-    def forward(self, features: Tensor) -> Tensor:
+    def forward(self, features: Tensor | Mapping[str, Tensor]) -> Tensor:
+        features = one_stream(features, head=type(self).__name__)
         # dim=1 is the class axis of batch-first logits — [B, C] and [B, C, H, W] alike.
         return torch.cat((self.base(features), self.novel(features)), dim=1)
+
+
+class DetectHead(Head):
+    """A detection head over a pyramid: the levels in, one raw tensor out.
+
+    Wraps ultralytics' ``Detect`` without importing it — the backbone that owns the graph
+    builds and hands it over. ``[B, 4·reg_max + nc, A]`` in train and eval alike: ultralytics
+    returns a dict in train and ``(decoded, dict)`` in eval, and this reads the dict from
+    either. Decoding is a separate step, not a mode.
+
+    Parameters:
+        detect (nn.Module): The wrapped ``Detect``.
+        streams (tuple[str, ...]): The pyramid levels, in the order the head reads them.
+        strides (tuple[int, ...]): Stride per level.
+        reg_max (int): Bins per box side in the DFL distribution.
+    """
+
+    def __init__(self, detect: nn.Module, *, streams: tuple[str, ...], strides: tuple[int, ...], reg_max: int) -> None:
+        super().__init__()
+        self.detect = detect
+        self.streams = streams
+        self.strides = strides
+        self.reg_max = reg_max
+        vendor: Any = detect  # nn.Module types every attribute as Tensor | Module; nc is an int
+        self.num_classes = int(vendor.nc)
+
+    def forward(self, features: Tensor | Mapping[str, Tensor]) -> Tensor:
+        if isinstance(features, Tensor):
+            raise TypeError(f"DetectHead reads the pyramid {', '.join(self.streams)}, but was handed one stream.")
+        raw = self.detect([features[name] for name in self.streams])
+        predictions = raw[1] if isinstance(raw, tuple) else raw
+        return torch.cat([predictions["boxes"], predictions["scores"]], dim=1)

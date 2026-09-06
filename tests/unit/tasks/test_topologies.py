@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import pytest
 import torch
 
 from src.core import InputTopology, Objective, OutputTopology, Stream
 from src.models import ConvHead, IdentityHead, LinearHead
 from src.tasks import DenseTopology, GlobalTopology, InstancesTopology
 from src.tasks.registry import topology_registry
+from src.tasks.topologies import TaskTopology
 
 
 def test_registry_covers_the_implemented_topologies() -> None:
@@ -25,13 +27,13 @@ def test_global_builds_a_linear_head_of_the_requested_size() -> None:
     assert head(torch.zeros(2, 8)).shape == (2, 3)
 
 
-def test_the_stream_is_a_joint_decision_of_output_and_input() -> None:
+def test_the_streams_are_a_joint_decision_of_output_and_input() -> None:
     """One vector off FEATURES when one encoder made it, off EMBEDDINGS when views did."""
     topology = GlobalTopology()
 
-    assert topology.stream(InputTopology.SINGLE) == Stream.FEATURES
-    assert topology.stream(InputTopology.MULTIVIEW) == Stream.EMBEDDINGS
-    assert topology.stream(InputTopology.MULTISTREAM) == Stream.EMBEDDINGS
+    assert topology.streams(InputTopology.SINGLE) == (Stream.FEATURES,)
+    assert topology.streams(InputTopology.MULTIVIEW) == (Stream.EMBEDDINGS,)
+    assert topology.streams(InputTopology.MULTISTREAM) == (Stream.EMBEDDINGS,)
 
 
 def test_global_with_a_single_input_supports_every_objective() -> None:
@@ -63,9 +65,19 @@ def test_global_serves_metric_learning_with_an_identity_head() -> None:
 
 
 def test_dense_reads_the_decoder_stream_whatever_the_input() -> None:
-    dense = DenseTopology()
+    assert DenseTopology().streams(InputTopology.SINGLE) == (Stream.DECODER,)
 
-    assert dense.stream(InputTopology.SINGLE) == Stream.DECODER
+
+def test_instances_defer_the_streams_to_the_backbones_pyramid() -> None:
+    """Which levels, how many and in what order is the backbone's fact, never the topology's."""
+    assert InstancesTopology().streams(InputTopology.SINGLE) is None
+
+
+@pytest.mark.parametrize("topology", [GlobalTopology(), DenseTopology()])
+def test_a_single_stream_topology_refuses_pyramid_widths_by_name(topology: TaskTopology) -> None:
+    """Sized from three widths, a linear or conv head would silently pick one of them."""
+    with pytest.raises(ValueError, match=f"{type(topology).__name__} reads one stream"):
+        topology.build_head(in_features=(64, 128, 256), out_features=3)
 
 
 def test_dense_builds_a_conv_head_preserving_spatial_dims() -> None:
@@ -91,18 +103,9 @@ def test_a_dense_output_refuses_stacked_inputs_whatever_the_objective() -> None:
         assert not dense.supports(objective, InputTopology.MULTIVIEW), objective
 
 
-def test_a_per_instance_task_declares_that_nothing_composes_its_head() -> None:
-    """Its assigner, its anchors and its loss are one design, and this framework composes
-    none of them. Building something anyway would put a linear layer where a detection
-    head belongs, and the run would fail on a shape far from the declaration that caused it.
-
-    Declared beside ``supports`` rather than thrown from ``build_head``: the two are one
-    question — can this framework serve this task? — and the builder asks them together,
-    before anything is built. A refusal inside ``build_head`` lived in a method the
-    builder was never meant to reach, which is a promise the base class makes and this
-    subclass breaks. ``test_a_per_instance_task_is_refused_where_the_decision_is_taken``
-    in ``test_builder.py`` is where the sentence a user reads is pinned.
-    """
+def test_a_per_instance_task_declares_that_the_backbones_head_serves() -> None:
+    """The framework composes no detection head, so the builder takes the native one
+    without being asked; ``test_builder.py`` pins what happens when there is none."""
     assert not InstancesTopology().composes_head
     assert GlobalTopology().composes_head
 

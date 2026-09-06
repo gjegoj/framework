@@ -91,9 +91,12 @@ class TimmBackbone(Backbone):
         return {Stream.FEATURES: self._feature_dim}
 
     @override
-    def native_head(self, stream: str, in_features: int, out_features: int) -> nn.Module | None:
-        if stream != Stream.FEATURES:
+    def native_head(
+        self, streams: tuple[str, ...], in_features: int | tuple[int, ...], out_features: int
+    ) -> nn.Module | None:
+        if streams != (Stream.FEATURES,):
             return None
+        assert isinstance(in_features, int)  # one stream matched, so one width
         if self._carried_classifier is not None:
             return transplanted_classifier(self._carried_classifier, in_features, out_features)
         from timm.layers import create_classifier

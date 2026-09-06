@@ -70,3 +70,19 @@ def test_declared_classes_arrive_typed() -> None:
     task = TaskConfig.model_validate({"preset": "classification", "target": "t", "classes": {0: "cat", 1: "dog"}})
 
     assert task.classes == {0: "cat", 1: "dog"}
+
+
+@pytest.mark.parametrize(("declared", "expected"), [("encoder", ("encoder",)), (["p4", "p5"], ("p4", "p5"))])
+def test_streams_take_one_name_or_several_and_read_back_as_a_tuple(declared: object, expected: tuple[str, ...]) -> None:
+    task = TaskConfig.model_validate(
+        {"preset": "classification", "target": "t", "classes": {0: "a", 1: "b"}, "streams": declared}
+    )
+
+    assert task.streams == expected
+
+
+def test_the_old_stream_key_is_refused_naming_the_rename() -> None:
+    with pytest.raises(ValidationError, match="stream"):
+        TaskConfig.model_validate(
+            {"preset": "classification", "target": "t", "classes": {0: "a", 1: "b"}, "stream": "encoder"}
+        )

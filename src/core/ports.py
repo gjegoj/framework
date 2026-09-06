@@ -6,13 +6,12 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable, Mapping
 from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
 
-from torch import nn
+from torch import Tensor, nn
 
 # At runtime, not under TYPE_CHECKING: `DataModule.statistics` builds one as its default.
 from src.core.entities import DatasetStatistics
 
 if TYPE_CHECKING:
-    from torch import Tensor
     from torch.utils.data import Dataset
 
     from src.core.entities import (
@@ -152,25 +151,50 @@ class Backbone(nn.Module, ABC):
         """
         return type(self).__name__
 
-    def native_head(self, stream: str, in_features: int, out_features: int) -> nn.Module | None:
-        """Return the architecture's own head for ``stream``, or ``None``.
+    def pyramid(self) -> tuple[str, ...]:
+        """The streams a detection head reads, in reading order; ``()`` when this backbone has none.
 
-        ``None`` means the framework builds its own head; the builder consults this only when
-        a task prefers the native head.
+        A concrete default rather than a protocol, as ``native_head`` is: every backbone can
+        answer, and most answer "none". The names are the backbone's own — ``p3, p4, p5``
+        by convention, or whatever a custom net calls the levels it hands over.
+        """
+        return ()
+
+    def native_head(
+        self, streams: tuple[str, ...], in_features: int | tuple[int, ...], out_features: int
+    ) -> nn.Module | None:
+        """Return the architecture's own head for ``streams``, or ``None``.
+
+        ``None`` means the framework builds its own head; the builder consults this when a
+        task prefers the native head, or when the topology composes none of its own.
         """
         return None
 
 
 class Head(nn.Module, ABC):
-    """Maps one feature stream to a task's raw logits (pre-activation)."""
+    """Maps a feature stream — or several, handed as a mapping — to a task's raw logits."""
 
     @abstractmethod
-    def forward(self, features: Tensor) -> Tensor:
+    def forward(self, features: Tensor | Mapping[str, Tensor]) -> Tensor:
         """Project ``features`` to logits for one task."""
 
-    def __call__(self, features: Tensor) -> Tensor:
+    def __call__(self, features: Tensor | Mapping[str, Tensor]) -> Tensor:
         """Typed delegate to ``nn.Module.__call__``, so hooks run and the type survives."""
         return cast("Tensor", super().__call__(features))
+
+
+def one_stream(features: Tensor | Mapping[str, Tensor], *, head: str) -> Tensor:
+    """The single stream a head reads, refused by name when it was handed several.
+
+    A single-stream head on a multi-stream topology is a declaration error, not a shape
+    to guess at.
+    """
+    if isinstance(features, Tensor):
+        return features
+    raise TypeError(
+        f"{head} reads one stream, but was handed {len(features)}: {', '.join(features)}. "
+        f"A head over several streams is declared by its topology or its backbone."
+    )
 
 
 class Criterion(nn.Module, ABC):

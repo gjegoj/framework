@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 import torch
 
+from src.core.ports import one_stream
 from src.models import ConvHead, IdentityHead, LinearHead
 
 
@@ -26,3 +27,17 @@ def test_identity_head_passes_the_stream_through() -> None:
     stream = torch.randn(3, 5)
 
     assert torch.equal(IdentityHead()(stream), stream)
+
+
+def test_a_single_stream_head_refuses_a_pyramid_by_name() -> None:
+    """A head over one stream handed several has been declared on the wrong topology."""
+    pyramid = {"p3": torch.zeros(1, 4, 8, 8), "p4": torch.zeros(1, 8, 4, 4)}
+
+    with pytest.raises(TypeError, match="LinearHead reads one stream.*p3, p4"):
+        LinearHead(4, 2)(pyramid)
+
+
+def test_one_stream_passes_a_tensor_through() -> None:
+    features = torch.zeros(2, 4)
+
+    assert one_stream(features, head="LinearHead") is features

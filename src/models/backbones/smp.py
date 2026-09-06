@@ -131,16 +131,19 @@ class SmpBackbone(Backbone):
         return {Stream.ENCODER: self._encoder_dim, Stream.DECODER: self._decoder_dim}
 
     @override
-    def native_head(self, stream: str, in_features: int, out_features: int) -> nn.Module | None:
-        if stream == Stream.DECODER:
+    def native_head(
+        self, streams: tuple[str, ...], in_features: int | tuple[int, ...], out_features: int
+    ) -> nn.Module | None:
+        if streams == (Stream.DECODER,):
             if self._carried_head is not None:
                 return transplanted_segmentation_head(self._head_template[0], self._carried_head, out_features)
             head = copy.deepcopy(self._head_template[0])
             replace_last_projection(head, out_features)
             return head
-        if stream == Stream.ENCODER:
+        if streams == (Stream.ENCODER,):
             from segmentation_models_pytorch.base import ClassificationHead
 
+            assert isinstance(in_features, int)  # one stream matched, so one width
             classifier: nn.Module = ClassificationHead(in_channels=in_features, classes=out_features, pooling="avg")
             return classifier
         return None

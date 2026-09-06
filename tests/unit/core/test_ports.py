@@ -51,7 +51,7 @@ class LinearHead(Head):
         super().__init__()
         self._linear = nn.Linear(in_features, out_features)
 
-    def forward(self, features: Tensor) -> Tensor:
+    def forward(self, features: Tensor | Mapping[str, Tensor]) -> Tensor:
         # nn.Module.__call__ erases the return type to Any; pin it back.
         return cast(Tensor, self._linear(features))
 
@@ -140,3 +140,8 @@ def test_one_training_step_composes_from_ports_alone() -> None:
     assert set(loss.parts) == {"label/ce"}
     assert loss.total.requires_grad
     assert metrics.compute() == {"seen": 4}
+
+
+def test_a_backbone_declares_no_pyramid_unless_it_has_one() -> None:
+    """The concrete default, as ``native_head`` returns ``None``: a detection backbone overrides it."""
+    assert FlattenBackbone(dim=4).pyramid() == ()

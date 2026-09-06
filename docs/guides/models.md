@@ -13,6 +13,28 @@ model:
 Heads are never configured here — they derive from tasks and size themselves
 from the profiled data facts.
 
+## Detection on a composed backbone
+
+`model: {name: ultralytics, model_name: yolov8n.yaml}` builds ultralytics' graph and
+serves it in the composite grammar: everything before `Detect` is the backbone, exposing
+the pyramid `p3`, `p4`, `p5` (strides 8/16/32) and `features` — P5 pooled to `[B, D]` —
+so a whole-image task sits beside the boxes on one backbone (`streams: features`).
+A `detection` task reads the pyramid the backbone declares — three levels for `yolov8n`,
+four for `yolov8n-p2`, named by stride — and the framework has no detection head of its
+own, so the backbone's `Detect` is rebuilt per task at the profile's class count
+(`native_head` is the default there, not a knob). The head returns one raw tensor
+`[B, 4·reg_max + nc, A]` in every mode; decoding is a separate step.
+
+Every yaml ultralytics ships whose head is `Detect` is a config string (v8, 11, 12);
+`v10Detect` and RT-DETR are refused by name until their own head adapters land.
+Weights never come with the name: `checkpoint_path: runs/yolov8n.pt` grafts an
+ultralytics `.pt` — the body strictly, the head's box branch always, its class branch
+when the class count matches — and says what it transplanted. The file is a pickled
+module, read with `weights_only=False`: only a path you wrote is ever unpickled.
+
+Until stage 3 of the detection roadmap a composed detection model builds but has no
+criterion; a run declaring one is refused before any data is read, naming the stage.
+
 ## Vendor families
 
 Everything above composes: this framework wraps a backbone, builds the heads, declares

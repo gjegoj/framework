@@ -65,14 +65,14 @@ def test_input_name_selects_the_batch_input() -> None:
 
 
 def test_native_head_is_timms_classifier(backbone: TimmBackbone) -> None:
-    head = backbone.native_head(Stream.FEATURES, in_features=512, out_features=3)
+    head = backbone.native_head((Stream.FEATURES,), in_features=512, out_features=3)
 
     assert head is not None
     assert head(torch.randn(2, 512)).shape == (2, 3)
 
 
 def test_native_head_is_none_for_other_streams(backbone: TimmBackbone) -> None:
-    assert backbone.native_head(Stream.DECODER, in_features=512, out_features=3) is None
+    assert backbone.native_head((Stream.DECODER,), in_features=512, out_features=3) is None
 
 
 def test_heads_are_sized_from_the_real_model(backbone: TimmBackbone) -> None:

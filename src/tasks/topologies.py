@@ -1,4 +1,4 @@
-"""How each output structure is served: head kind and stream per ``OutputTopology`` member."""
+"""How each output structure is served: head kind and streams per ``OutputTopology`` member."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ class TaskTopology(ABC):
     choice, and which ``(objective, input)`` pairs it serves.
 
     The enum answers *what shape* a task's output has; a ``TaskTopology`` answers
-    *how* it is produced. The stream is a method of the input axis because it is a
+    *how* it is produced. The streams are a method of the input axis because they are a
     joint fact: one prediction vector is read off ``FEATURES`` when one encoder
     made it and off ``EMBEDDINGS`` when several views did.
     """
@@ -33,21 +33,21 @@ class TaskTopology(ABC):
     """
 
     composes_head: ClassVar[bool] = True
-    """Whether the framework builds this topology's head at all.
+    """Whether the framework has a head of its own for this output structure.
 
-    Beside ``supports`` rather than inside ``build_head``, because the two are one
-    question asked of a declaration — *can this framework serve this task?* — and the
-    builder asks them together, before it has built anything. Stated as a refusal thrown
-    from ``build_head`` instead, the answer lived inside a method the builder was never
-    meant to reach, which is a promise the base class makes and one subclass breaks.
+    ``False`` means the backbone's native head serves — the builder goes there without
+    being asked. It is ``False`` for INSTANCES only while the only detection head is a
+    backbone's; the day the framework composes one, ``build_head`` returns it and this
+    flag is deleted with its readers (roadmap: *Vendor-era scaffolding*).
     """
 
-    def stream(self, input_topology: InputTopology) -> str:
-        """Which backbone stream carries this output's substrate."""
-        return Stream.FEATURES
+    def streams(self, input_topology: InputTopology) -> tuple[str, ...] | None:
+        """Which backbone streams carry this output's substrate, in the order a head reads
+        them; ``None`` defers to the backbone's own ``pyramid()``."""
+        return (Stream.FEATURES,)
 
     @abstractmethod
-    def build_head(self, in_features: int, out_features: int | None) -> Head:
+    def build_head(self, in_features: int | tuple[int, ...], out_features: int | None) -> Head:
         """A fresh head sized for one task; ``out_features`` is ``None`` when there is
         nothing to project and the stream itself is the output."""
 
@@ -66,12 +66,13 @@ class GlobalTopology(TaskTopology):
     """
 
     @override
-    def stream(self, input_topology: InputTopology) -> str:
-        return Stream.FEATURES if input_topology is InputTopology.SINGLE else Stream.EMBEDDINGS
+    def streams(self, input_topology: InputTopology) -> tuple[str, ...] | None:
+        return (Stream.FEATURES,) if input_topology is InputTopology.SINGLE else (Stream.EMBEDDINGS,)
 
-    def build_head(self, in_features: int, out_features: int | None) -> Head:
+    def build_head(self, in_features: int | tuple[int, ...], out_features: int | None) -> Head:
+        width = _one_width(in_features, self)
         # No width to project onto is the metric-learning contract: the embedding IS the output.
-        return IdentityHead() if out_features is None else LinearHead(in_features, out_features)
+        return IdentityHead() if out_features is None else LinearHead(width, out_features)
 
     @override
     def supports(self, objective: Objective, input_topology: InputTopology) -> bool:
@@ -94,13 +95,14 @@ class DenseTopology(TaskTopology):
     default_target_encoder: ClassVar[str | None] = "mask"
 
     @override
-    def stream(self, input_topology: InputTopology) -> str:
-        return Stream.DECODER
+    def streams(self, input_topology: InputTopology) -> tuple[str, ...] | None:
+        return (Stream.DECODER,)
 
-    def build_head(self, in_features: int, out_features: int | None) -> Head:
+    def build_head(self, in_features: int | tuple[int, ...], out_features: int | None) -> Head:
+        width = _one_width(in_features, self)
         if out_features is None:
             raise ValueError("A dense head projects onto classes, so it needs a width; none was asked for.")
-        return ConvHead(in_features, out_features)
+        return ConvHead(width, out_features)
 
     @override
     def supports(self, objective: Objective, input_topology: InputTopology) -> bool:
@@ -109,14 +111,11 @@ class DenseTopology(TaskTopology):
 
 @topology_registry.register_instance(OutputTopology.INSTANCES)
 class InstancesTopology(TaskTopology):
-    """A variable-length set of objects per sample — produced by the family that owns them.
+    """A variable-length set of objects per sample.
 
-    Registered although it composes nothing. A per-instance head is a vendor's: its
-    assigner, its anchors and its loss are one design, and the framework composes none of
-    them. What this class is for is to say so — ``composes_head = False`` — so that a
-    ``preset: detection`` pointed at a composed backbone is refused by the builder, in a
-    sentence naming the mismatch, rather than by a shape error inside a head that should
-    never have been built.
+    The framework has no head of its own for it: the backbone's native detection head
+    serves, reading the pyramid the backbone declares and sized by the profile like every
+    head; a backbone declaring no pyramid is refused by name.
     """
 
     composes_head: ClassVar[bool] = False
@@ -125,14 +124,24 @@ class InstancesTopology(TaskTopology):
     default_target_encoder: ClassVar[str | None] = "boxes"
 
     @override
-    def build_head(self, in_features: int, out_features: int | None) -> Head:
-        """Unreachable: ``composes_head`` is ``False``, so the builder refuses first.
+    def streams(self, input_topology: InputTopology) -> tuple[str, ...] | None:
+        return None  # the backbone's pyramid: its levels, its count, its order
 
-        Declared only because the base class does. The explanation a user needs lives at
-        the check, which is where the decision is actually taken.
-        """
-        raise NotImplementedError("The builder refuses a non-composing topology before reaching this.")
+    @override
+    def build_head(self, in_features: int | tuple[int, ...], out_features: int | None) -> Head:
+        """Unreachable while ``composes_head`` is ``False``: the backbone's native head serves."""
+        raise NotImplementedError("The framework composes no detection head; the backbone's native head serves.")
 
     @override
     def supports(self, objective: Objective, input_topology: InputTopology) -> bool:
         return input_topology is InputTopology.SINGLE and objective is Objective.MULTICLASS
+
+
+def _one_width(in_features: int | tuple[int, ...], topology: TaskTopology) -> int:
+    """The width of the one stream a single-stream topology's head is sized from."""
+    if isinstance(in_features, int):
+        return in_features
+    raise ValueError(
+        f"{type(topology).__name__} reads one stream, but was sized from {len(in_features)} widths "
+        f"{in_features}; a head over several streams belongs to a topology that reads them."
+    )

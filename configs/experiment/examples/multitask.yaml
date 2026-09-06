@@ -32,7 +32,7 @@ tasks:
     preset: classification
     target: species
     classes: {0: cat, 1: dog}
-    stream: encoder
+    streams: encoder
     native_head: true
     weight: 0.5
     # Its own pace: the head is small and starts from nothing, while the backbone
@@ -46,6 +46,6 @@ tasks:
   age:
     preset: regression
     target: random_age
-    stream: encoder
+    streams: encoder
     native_head: true
     weight: 0.2

@@ -28,22 +28,19 @@ if TYPE_CHECKING:
 
 
 def refuse_what_the_composite_family_cannot_serve(config: ExperimentConfig) -> None:
-    """Fail on config alone, before a dataset is read or a cache is warmed.
+    """Refuse a composed detection run before any data is read: it builds, but nothing trains it yet.
 
-    The mirror of ``refuse_what_a_vendor_cannot_serve``, for the other family: a task
-    whose topology does not compose a head (instances) cannot be served by a composed
-    backbone, and that is knowable without touching data. The builder keeps its own
-    refusal for a hand-built ``Task``. Deleted whole when stage 2 composes instances
-    heads.
+    Stage 2 of the detection roadmap gives the composed family a model; stage 3 gives it a
+    criterion, and deletes this function.
     """
     if is_vendor_family(config):
         return
     for name, declared in config.tasks.items():
         if not topology_registry.create(declared.output_topology).composes_head:
             raise ValueError(
-                f"Task '{name}' is '{declared.output_topology}', and no composed backbone serves that: "
-                f"its head, assigner and loss belong to the model family that owns them. Declare a "
-                f"vendor family instead, e.g. model: {{name: yolo, model_name: yolov8n.yaml}}."
+                f"Task '{name}' is '{declared.output_topology}': a composed detection model builds, but has "
+                f"no criterion yet (detection roadmap, stage 3). Declare a vendor family to train today, "
+                f"e.g. model: {{name: yolo, model_name: yolov8n.yaml}}."
             )
 
 
@@ -86,18 +83,18 @@ def build_tasks(
             task,
             profile,
             backbone,
-            stream=declared.stream,
+            streams=declared.streams,
             prefer_native_head=declared.native_head,
             head_factory=partial(_build_head, declared.head) if declared.head is not None else None,
         )
         if declared.loss is not None:
-            criterion = _task_criterion(declared.loss, facts, embedding_dim=backbone.feature_dim(built.stream))
+            criterion = _task_criterion(declared.loss, facts, embedding_dim=backbone.feature_dim(built.streams[0]))
             built = replace(built, criterion=criterion)
         components[name] = built
     return tasks, components
 
 
-def _build_head(declared: HeadConfig, in_features: int, out_features: int) -> Head:
+def _build_head(declared: HeadConfig, in_features: int | tuple[int, ...], out_features: int) -> Head:
     """The declared kind of head, at the sizes the builder resolved.
 
     The sizes arrive as derived values: a head receives the ones it names, so

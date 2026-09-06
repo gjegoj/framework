@@ -7,15 +7,17 @@ from src.models.backbones.hf import HFTextBackbone
 from src.models.backbones.multi import MultiEncoderBackbone, MultiViewBackbone
 from src.models.backbones.smp import SmpBackbone
 from src.models.backbones.timm import TimmBackbone
+from src.models.backbones.ultralytics import UltralyticsBackbone
 from src.models.composite import CompositeModel, TaskComponents
 from src.models.distillation import DistilledModel, without_teachers
-from src.models.heads import ConvHead, CosineHead, ExpandedHead, IdentityHead, LinearHead, WrappedHead
+from src.models.heads import ConvHead, CosineHead, DetectHead, ExpandedHead, IdentityHead, LinearHead, WrappedHead
 from src.models.yolo import YoloModel
 
 __all__ = [
     "CompositeModel",
     "ConvHead",
     "CosineHead",
+    "DetectHead",
     "DistilledModel",
     "ExpandedHead",
     "HFTextBackbone",
@@ -27,6 +29,7 @@ __all__ = [
     "SmpBackbone",
     "TaskComponents",
     "TimmBackbone",
+    "UltralyticsBackbone",
     "WrappedHead",
     "YoloModel",
     "merge_adapters",

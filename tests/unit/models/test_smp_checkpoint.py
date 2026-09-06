@@ -48,7 +48,7 @@ def test_equal_class_counts_transplant_the_whole_head(tmp_path: Path) -> None:
     path, trained = full_model_file(tmp_path, classes=3)
     backbone = build_backbone(checkpoint_path=path)
 
-    head = backbone.native_head("decoder", backbone.feature_dim("decoder"), 3)
+    head = backbone.native_head(("decoder",), backbone.feature_dim("decoder"), 3)
 
     assert head is not None
     assert not isinstance(head, ExpandedHead)
@@ -59,7 +59,7 @@ def test_growing_the_class_space_transplants_base_and_leaves_novel_fresh(tmp_pat
     path, trained = full_model_file(tmp_path, classes=3)
     backbone = build_backbone(checkpoint_path=path)
 
-    head = backbone.native_head("decoder", backbone.feature_dim("decoder"), 4)
+    head = backbone.native_head(("decoder",), backbone.feature_dim("decoder"), 4)
 
     assert isinstance(head, ExpandedHead)
     assert torch.equal(head.base.state_dict()["0.weight"], trained.state_dict()["segmentation_head.0.weight"])
@@ -75,7 +75,7 @@ def test_narrowing_the_class_space_is_refused(tmp_path: Path) -> None:
     backbone = build_backbone(checkpoint_path=path)
 
     with pytest.raises(ValueError, match="mapping"):
-        backbone.native_head("decoder", backbone.feature_dim("decoder"), 2)
+        backbone.native_head(("decoder",), backbone.feature_dim("decoder"), 2)
 
 
 def test_a_foreign_decoder_width_is_refused(tmp_path: Path) -> None:
@@ -87,13 +87,13 @@ def test_a_foreign_decoder_width_is_refused(tmp_path: Path) -> None:
     backbone = build_backbone(checkpoint_path=path)
 
     with pytest.raises(ValueError, match="feature"):
-        backbone.native_head("decoder", backbone.feature_dim("decoder"), 3)
+        backbone.native_head(("decoder",), backbone.feature_dim("decoder"), 3)
 
 
 def test_without_a_checkpoint_the_native_head_stays_fresh() -> None:
     backbone = build_backbone(pretrained=False)
 
-    head = backbone.native_head("decoder", backbone.feature_dim("decoder"), 3)
+    head = backbone.native_head(("decoder",), backbone.feature_dim("decoder"), 3)
 
     assert head is not None
     assert not isinstance(head, ExpandedHead)

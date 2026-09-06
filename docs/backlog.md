@@ -224,8 +224,11 @@ Drawing a sample needs two facts: which inputs are pictures, and how to give
 their pixels back their original look. The grid answers both itself —
 
 ```python
-def _is_picture(tensor): return tensor.ndim == 4 and tensor.is_floating_point()
-images = (images * std + mean).clamp(0.0, 1.0)     # mean/std declared on the callback
+def _is_picture(tensor):
+    return tensor.ndim == 4 and tensor.is_floating_point()
+
+
+images = (images * std + mean).clamp(0.0, 1.0)  # mean/std declared on the callback
 ```
 
 — and both answers already exist elsewhere.
@@ -559,3 +562,25 @@ would desynchronise them silently. **If two detection tasks over one image ever
 become real**, the seam grows per-target label plumbing (a label field per boxes
 target, and the pairs repacked by name) in `AlbumentationsTransform`; the
 refusal marks the spot.
+
+
+## `v10Detect` and RT-DETR heads
+
+**Surfaced:** 2026-08-29, building the composed detection family (stage 2).
+
+`UltralyticsBackbone` serves the `Detect` line (v8/11/12) and refuses a yaml ending in
+`v10Detect` or `RTDETRDecoder` by name: each is a head adapter with a raw-output contract
+of its own — a one-to-one branch beside the one-to-many, a query decoder over the
+pyramid — that `DetectHead`'s `[B, 4·reg_max + nc, A]` does not describe. **When one of
+them is wanted**, it is a second head class in `src/models/heads.py` and a branch in
+`native_head`; the refusal marks the spot.
+
+## `composes_head` and the stage-2 refusal
+
+**Surfaced:** 2026-08-29, in the same work.
+
+`TaskTopology.composes_head` now means "the backbone's native head serves", and
+`refuse_what_the_composite_family_cannot_serve` refuses a composed detection *run*
+(the model builds; no criterion trains it). Both are stage scaffolding: the roadmap's
+*Vendor-era scaffolding* section (`docs/superpowers/specs/2026-08-17-detection-roadmap-design.md`)
+says which stage deletes each.

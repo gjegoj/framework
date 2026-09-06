@@ -13,10 +13,13 @@ from src.core import (
     Batch,
     DataProfile,
     Features,
+    Head,
     InputTopology,
     Objective,
     OutputTopology,
+    Stream,
 )
+from src.core.entities import Task
 from src.models import CompositeModel, ExpandedHead, LinearHead, TaskComponents
 from src.tasks import build_task_components, default_target_encoder
 from tests.support.entities import a_task, profiling
@@ -43,20 +46,6 @@ def test_missing_num_classes_names_the_task_and_hints_setup() -> None:
         build_task_components(a_task(), DataProfile(), FlattenBackbone(dim=12))
 
 
-def test_a_per_instance_task_is_refused_where_the_decision_is_taken() -> None:
-    """A ``preset: detection`` pointed at a composed backbone, named as the mismatch it is.
-
-    The refusal used to live inside ``InstancesTopology.build_head`` — a method this
-    builder is never meant to reach for such a task, and one the base class promises will
-    return a head. It now sits beside the ``supports`` check, which asks the other half of
-    the same question, and the sentence points at the section a user has to change.
-    """
-    detection = a_task(output_topology=OutputTopology.INSTANCES)
-
-    with pytest.raises(ValueError, match=r"model: \{name: yolo"):
-        build_task_components(detection, profiling(label=3), FlattenBackbone(dim=12))
-
-
 def test_incompatible_axes_are_rejected_with_both_names() -> None:
     dense_metric = a_task(output_topology=OutputTopology.DENSE, objective=Objective.METRIC)
     with pytest.raises(ValueError, match="cannot be supervised"):
@@ -73,21 +62,24 @@ class TwoStreamBackbone(Backbone):
     def feature_dims(self) -> Mapping[str, int]:
         return {"features": 12, "extra": 12}
 
-    def native_head(self, stream: str, in_features: int, out_features: int) -> nn.Module | None:
-        if stream == "extra":
+    def native_head(
+        self, streams: tuple[str, ...], in_features: int | tuple[int, ...], out_features: int
+    ) -> nn.Module | None:
+        if streams == ("extra",):
+            assert isinstance(in_features, int)
             return nn.Linear(in_features, out_features)
         return None
 
 
 def test_stream_override_reads_another_stream() -> None:
-    components = build_task_components(a_task(), profiling(label=3), TwoStreamBackbone(), stream="extra")
+    components = build_task_components(a_task(), profiling(label=3), TwoStreamBackbone(), streams=("extra",))
 
-    assert components.stream == "extra"
+    assert components.streams == ("extra",)
 
 
 def test_prefer_native_head_uses_the_backbones_head() -> None:
     components = build_task_components(
-        a_task(), profiling(label=3), TwoStreamBackbone(), stream="extra", prefer_native_head=True
+        a_task(), profiling(label=3), TwoStreamBackbone(), streams=("extra",), prefer_native_head=True
     )
 
     assert components.head(torch.zeros(2, 12)).shape == (2, 3)
@@ -207,12 +199,84 @@ def test_a_native_head_that_already_is_a_head_stays_unwrapped() -> None:
     contract path under a private attribute."""
 
     class HeadOfferingBackbone(TwoStreamBackbone):
-        def native_head(self, stream: str, in_features: int, out_features: int) -> nn.Module | None:
+        def native_head(
+            self, streams: tuple[str, ...], in_features: int | tuple[int, ...], out_features: int
+        ) -> nn.Module | None:
+            assert isinstance(in_features, int)
             return ExpandedHead(base=nn.Linear(in_features, 2), novel=nn.Linear(in_features, 1))
 
     components = build_task_components(a_task(), profiling(label=3), HeadOfferingBackbone(), prefer_native_head=True)
 
     assert isinstance(components.head, ExpandedHead)
+
+
+class PyramidBackbone(Backbone):
+    """Four levels under names of its own, a pooled vector, and a native head for the pyramid."""
+
+    LEVELS = ("l4", "l7", "l9", "l11")
+
+    def forward(self, inputs: dict[str, Tensor]) -> Features:
+        image = inputs["image"]
+        levels = {name: image[:, :, ::step, ::step] for name, step in zip(self.LEVELS, (1, 2, 4, 8), strict=True)}
+        return Features(streams={**levels, Stream.FEATURES: image.mean(dim=(2, 3))})
+
+    def feature_dims(self) -> Mapping[str, int]:
+        return {**dict.fromkeys(self.LEVELS, 3), Stream.FEATURES: 3}
+
+    def pyramid(self) -> tuple[str, ...]:
+        return self.LEVELS
+
+    def native_head(
+        self, streams: tuple[str, ...], in_features: int | tuple[int, ...], out_features: int
+    ) -> nn.Module | None:
+        return SumHead(streams, out_features) if streams == self.LEVELS else None
+
+
+class SumHead(Head):
+    """A stand-in detection head: reads the mapping in the order it was built for, returns one tensor."""
+
+    def __init__(self, streams: tuple[str, ...], out_features: int) -> None:
+        super().__init__()
+        self.streams = streams
+        self._out = out_features
+
+    def forward(self, features: Tensor | Mapping[str, Tensor]) -> Tensor:
+        assert not isinstance(features, Tensor)
+        pooled = [features[name].mean(dim=(2, 3)) for name in self.streams]
+        return torch.stack(pooled, dim=1)[:, :, : self._out]
+
+
+def detection_task() -> Task:
+    """``a_task`` on the instances topology; its name stays ``label``."""
+    return a_task(output_topology=OutputTopology.INSTANCES)
+
+
+def test_an_instances_task_reads_the_backbones_pyramid_through_its_native_head() -> None:
+    """The framework composes no detection head, so 'native' is the default — and the
+    backbone, not the topology, says which levels there are, how many, and in what order."""
+    components = build_task_components(detection_task(), profiling(label=3), PyramidBackbone())
+
+    assert isinstance(components.head, SumHead)
+    assert components.streams == ("l4", "l7", "l9", "l11")
+
+
+def test_a_backbone_without_a_pyramid_is_refused_naming_it_and_the_task() -> None:
+    with pytest.raises(LookupError, match="TwoStreamBackbone declares no pyramid, and task 'label' reads one"):
+        build_task_components(detection_task(), profiling(label=3), TwoStreamBackbone())
+
+
+def test_declared_streams_reach_a_custom_head_in_that_order_whatever_the_pyramid() -> None:
+    """A config-declared head reads the layers it names; the backbone's wider pyramid is not forced on it."""
+    components = build_task_components(
+        detection_task(),
+        profiling(label=3),
+        PyramidBackbone(),
+        streams=("l11", "l7"),
+        head_factory=lambda widths, out: SumHead(("l11", "l7"), out),
+    )
+
+    assert components.streams == ("l11", "l7")
+    assert isinstance(components.head, SumHead)
 
 
 def test_the_default_encoder_composes_shape_over_semantics() -> None:

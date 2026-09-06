@@ -15,7 +15,7 @@ from src.core.taxonomy import Stream
 if TYPE_CHECKING:
     from torch import Tensor
 
-    from src.core.entities import Batch
+    from src.core.entities import Batch, Features
     from src.core.ports import Activation, Backbone, Criterion, Head, TargetAdapter
 
 
@@ -33,12 +33,19 @@ class TaskComponents:
     criterion: Criterion
     activation: Activation
     target_adapter: TargetAdapter | None
-    stream: str = Stream.FEATURES
+    streams: tuple[str, ...] = (Stream.FEATURES,)
     weight: float = 1.0
 
     def __post_init__(self) -> None:
         if self.weight <= 0:
             raise ValueError(f"Task weight must be positive, got {self.weight}.")
+
+
+def _read(features: Features, streams: tuple[str, ...]) -> Tensor | dict[str, Tensor]:
+    """What a head is handed: one stream's tensor, or several as a mapping in the head's order."""
+    if len(streams) == 1:
+        return features[streams[0]]
+    return {name: features[name] for name in streams}
 
 
 class CompositeModel(Model):
@@ -74,7 +81,7 @@ class CompositeModel(Model):
         metric_targets: dict[str, TaskOutput] = {}
         losses: list[Loss] = []
         for name, component in self._components.items():
-            logits = component.head(features[component.stream])
+            logits = component.head(_read(features, component.streams))
             adapted = self._adapt_target(batch, name, component)
             task_loss = component.criterion(logits, adapted.for_loss).scoped(name)
             losses.append(component.weight * task_loss)
@@ -90,7 +97,7 @@ class CompositeModel(Model):
     @override
     def predict(self, batch: Batch) -> Prediction:
         features = self.backbone(batch.inputs)
-        raw = {name: component.head(features[component.stream]) for name, component in self._components.items()}
+        raw = {name: component.head(_read(features, component.streams)) for name, component in self._components.items()}
         outputs: dict[str, TaskOutput] = {
             name: self._components[name].activation(logits) for name, logits in raw.items()
         }

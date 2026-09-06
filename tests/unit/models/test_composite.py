@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 import pytest
 import torch
 from torch import Tensor, nn
 
-from src.core import AdaptedTarget, Batch, Criterion, Loss, Model
+from src.core import AdaptedTarget, Backbone, Batch, Criterion, Features, Head, Loss, Model
 from src.models import CompositeModel, LinearHead, TaskComponents
 from tests.support.fakes import FlattenBackbone
 from tests.support.narrowing import tensor
@@ -243,3 +245,37 @@ def test_a_step_reports_the_same_logits_it_scored() -> None:
     assert result.prediction.logits is not None
     assert set(result.prediction.logits) == set(result.prediction.outputs)
     assert result.prediction.logits["label"].shape == (4, 3)
+
+
+def test_a_multi_stream_component_is_handed_a_mapping_in_its_streams_order() -> None:
+    seen: list[list[str]] = []
+
+    class RecordingHead(Head):
+        def forward(self, features: Tensor | Mapping[str, Tensor]) -> Tensor:
+            assert not isinstance(features, Tensor)
+            seen.append(list(features))
+            return torch.zeros(2, 3)
+
+    class TwoStreamBackbone(Backbone):
+        def forward(self, inputs: dict[str, Tensor]) -> Features:
+            return Features(streams={"b": inputs["image"], "a": inputs["image"]})
+
+        def feature_dims(self) -> Mapping[str, int]:
+            return {"a": 12, "b": 12}
+
+    model = CompositeModel(
+        backbone=TwoStreamBackbone(),
+        components={
+            "pair": TaskComponents(
+                head=RecordingHead(),
+                criterion=ConstantCriterion("ce", 1.0),
+                activation=lambda logits: logits,
+                target_adapter=identity_adapter,
+                streams=("a", "b"),
+            )
+        },
+    )
+    batch = Batch(inputs={"image": torch.zeros(2, 12)}, targets={"pair": torch.zeros(2)})
+    model.predict(batch)
+
+    assert seen == [["a", "b"]]

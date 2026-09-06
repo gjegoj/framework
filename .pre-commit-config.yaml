@@ -23,7 +23,7 @@ repos:
         args: ["--maxkb=1024"]
 
 -   repo: https://github.com/crate-ci/typos
-    rev: v1.49.1
+    rev: v1.50.1
     hooks:
     -   id: typos
 
@@ -39,7 +39,7 @@ repos:
     -   id: black
 
 -   repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.16.5
+    rev: v0.16.6
     hooks:
     -   id: ruff-check
         args: [--fix]

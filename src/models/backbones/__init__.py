@@ -6,6 +6,7 @@ from src.models.backbones.hf import HFTextBackbone
 from src.models.backbones.multi import MultiEncoderBackbone, MultiViewBackbone
 from src.models.backbones.smp import SmpBackbone
 from src.models.backbones.timm import TimmBackbone
+from src.models.backbones.ultralytics import UltralyticsBackbone
 
 __all__ = [
     "HFTextBackbone",
@@ -13,4 +14,5 @@ __all__ = [
     "MultiViewBackbone",
     "SmpBackbone",
     "TimmBackbone",
+    "UltralyticsBackbone",
 ]

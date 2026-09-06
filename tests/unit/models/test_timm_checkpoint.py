@@ -70,7 +70,7 @@ def test_equal_class_counts_transplant_the_whole_classifier(tmp_path: Path) -> N
     path, trained = full_model_file(tmp_path, num_classes=3)
     backbone = TimmBackbone(model_name=MODEL, checkpoint_path=path)
 
-    head = backbone.native_head("features", backbone.feature_dim("features"), 3)
+    head = backbone.native_head(("features",), backbone.feature_dim("features"), 3)
 
     assert head is not None
     assert not isinstance(head, ExpandedHead)
@@ -81,7 +81,7 @@ def test_growing_the_class_space_transplants_base_and_leaves_novel_fresh(tmp_pat
     path, trained = full_model_file(tmp_path, num_classes=3)
     backbone = TimmBackbone(model_name=MODEL, checkpoint_path=path)
 
-    head = backbone.native_head("features", backbone.feature_dim("features"), 4)
+    head = backbone.native_head(("features",), backbone.feature_dim("features"), 4)
 
     assert isinstance(head, ExpandedHead)
     assert torch.equal(dict(head.base.named_parameters())["weight"], trained.state_dict()["fc.weight"])
@@ -95,7 +95,7 @@ def test_narrowing_the_class_space_is_refused(tmp_path: Path) -> None:
     backbone = TimmBackbone(model_name=MODEL, checkpoint_path=path)
 
     with pytest.raises(ValueError, match="mapping"):
-        backbone.native_head("features", backbone.feature_dim("features"), 2)
+        backbone.native_head(("features",), backbone.feature_dim("features"), 2)
 
 
 def test_a_foreign_feature_space_is_refused(tmp_path: Path) -> None:
@@ -103,13 +103,13 @@ def test_a_foreign_feature_space_is_refused(tmp_path: Path) -> None:
     backbone = TimmBackbone(model_name=MODEL, checkpoint_path=path)
 
     with pytest.raises(ValueError, match="feature"):
-        backbone.native_head("features", backbone.feature_dim("features") + 1, 3)
+        backbone.native_head(("features",), backbone.feature_dim("features") + 1, 3)
 
 
 def test_without_a_checkpoint_the_native_head_stays_fresh() -> None:
     backbone = TimmBackbone(model_name=MODEL, pretrained=False)
 
-    head = backbone.native_head("features", backbone.feature_dim("features"), 3)
+    head = backbone.native_head(("features",), backbone.feature_dim("features"), 3)
 
     assert head is not None
     assert not isinstance(head, ExpandedHead)
@@ -120,7 +120,7 @@ def test_transplanted_rows_stay_trainable_until_freeze_says_otherwise(tmp_path: 
     path, _ = full_model_file(tmp_path, num_classes=3)
     backbone = TimmBackbone(model_name=MODEL, checkpoint_path=path)
 
-    head = backbone.native_head("features", backbone.feature_dim("features"), 4)
+    head = backbone.native_head(("features",), backbone.feature_dim("features"), 4)
 
     assert head is not None
     assert all(parameter.requires_grad for parameter in head.parameters())

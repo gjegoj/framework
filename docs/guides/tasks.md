@@ -87,7 +87,7 @@ per-sample label, so there is nothing for a per-sample metric to compare.
 | `loss` | from the objective | One criterion, or a list added with weights |
 | `head` | from the topology | Which *kind* of head; sizes stay derived |
 | `native_head` | `false` | Keep the pretrained model's own head instead |
-| `stream` | from the topology | Which backbone output the head reads |
+| `streams` | from the topology, or the backbone's pyramid for detection | Which backbone streams the head reads — one name or a list, in reading order |
 | `weight` | `1.0` | This task's share of the total loss |
 | `lr` | the run's rate | Own rate for this task's head and criterion |
 | `metrics` | from the objective | Metrics keyed by the label they log under |
@@ -138,7 +138,7 @@ tasks:
   label:
     preset: classification
     target: is_defective
-    stream: encoder          # read the encoder, not the decoder
+    streams: encoder         # read the encoder, not the decoder
     weight: 0.3
     lr: 5.0e-4
 ```
@@ -160,6 +160,10 @@ tasks:
     head: {name: cosine}          # learnable prototypes, cosine logits
     loss: {name: arcface, margin: 0.3}
 ```
+
+A head that reads several layers names them — `streams: [p4, p5]`, or
+`[block7, block11]` on a backbone that calls its levels so; a detection task needs
+none of this, its backbone declares the pyramid.
 
 `native_head: true` is the other direction: keep the head the pretrained model
 ships with, which is what you want when those weights are the point. Declaring

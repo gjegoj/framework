@@ -146,14 +146,14 @@ def test_a_composed_run_is_left_alone() -> None:
 def test_an_instances_task_on_a_composed_backbone_is_refused_before_the_table_is_read(
     tmp_path: Path,
 ) -> None:
-    """The mirror of the vendor refusal: decidable from config alone, so it must not
-    cost a data pass. The source below does not exist — if the refusal ran after
-    ``build_data_module``, this test would die on the missing file instead."""
+    """Stage 2: the model builds, but nothing can train it before stage 3 — refused before
+    a data pass, with the reason. The source below does not exist — if the refusal ran
+    after ``build_data_module``, this test would die on the missing file instead."""
     config = paper_config(
         data=DATA | {"source": str(tmp_path / "never_written.csv")},
         tasks={"boxes": {"preset": "detection"}},
         model=MODEL,
     )
 
-    with pytest.raises(ValueError, match="vendor family"):
+    with pytest.raises(ValueError, match="no criterion yet"):
         assemble(config)
