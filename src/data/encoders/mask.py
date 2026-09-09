@@ -9,13 +9,12 @@ from typing import TYPE_CHECKING, Any, ClassVar, override
 
 import numpy as np
 
-from src.core.entities import ClassDistribution, Distribution
 from src.core.taxonomy import Geometry
-from src.core.vocabulary import ordered_names
 from src.data.cache import cached
-from src.data.encoders.base import TargetEncoder
+from src.data.encoders.base import FileTargetEncoder, VocabularyTargetEncoder
 from src.data.loaders import ImageLoader
 from src.data.registry import target_encoder_registry
+from src.data.statistics import ClassDistribution, Distribution
 
 if TYPE_CHECKING:
     from src.data.cache import LoaderCache
@@ -25,7 +24,7 @@ log = logging.getLogger(__name__)
 
 
 @target_encoder_registry.register("mask")
-class MaskTargetEncoder(TargetEncoder):
+class MaskTargetEncoder(VocabularyTargetEncoder, FileTargetEncoder):
     """Segmentation masks: an image file of class indices into an ``[H, W]`` array.
 
     Reading is delegated to a grayscale ``ImageLoader``, so masks get the same root handling
@@ -35,22 +34,19 @@ class MaskTargetEncoder(TargetEncoder):
     Parameters:
         classes (Mapping[int, str]): The vocabulary, index to name.
         root (str | Path | None): Prefix for the mask paths stored in the table.
-        cache (LoaderCache | None): Serves mask reads from memory; assembly offers one.
     """
 
     geometry: ClassVar[Geometry] = Geometry.MASK
 
-    def __init__(
-        self,
-        classes: Mapping[int, str],
-        root: str | Path | None = None,
-        cache: LoaderCache | None = None,
-    ) -> None:
-        self._names = ordered_names(classes)
-        # The mask is read through a loader this encoder owns, so caching has to be
-        # handed in: there is nothing on the outside left to wrap.
-        read: InputLoader = ImageLoader(root=root, grayscale=True)
-        self._read = cached(read, cache) if cache is not None else read
+    def __init__(self, classes: Mapping[int, str], root: str | Path | None = None) -> None:
+        super().__init__(classes)
+        # The mask is read through a loader this encoder owns, so a cache has to be
+        # handed in afterwards (``use_cache``): there is nothing on the outside to wrap.
+        self._read: InputLoader = ImageLoader(root=root, grayscale=True)
+
+    @override
+    def use_cache(self, cache: LoaderCache) -> None:
+        self._read = cached(self._read, cache)
 
     @override
     def load(self, value: Any) -> np.ndarray:
@@ -82,11 +78,3 @@ class MaskTargetEncoder(TargetEncoder):
                 )
             totals += counts
         return ClassDistribution(counts={name: int(total) for name, total in zip(self._names, totals, strict=True)})
-
-    @property
-    def num_classes(self) -> int:
-        return len(self._names)
-
-    @property
-    def class_names(self) -> list[str]:
-        return list(self._names)

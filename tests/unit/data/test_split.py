@@ -78,3 +78,12 @@ def test_random_split_rejects_fractions_not_summing_to_one() -> None:
 def test_random_split_rejects_an_empty_plan() -> None:
     with pytest.raises(ValueError, match="empty"):
         random_split({}, seed=0)
+
+
+def test_random_split_refuses_to_leave_a_stage_without_a_row() -> None:
+    """Three rows over 0.7/0.15/0.15 floor val to nothing (measured: 2/0/1). A stage that would report on
+    no rows is refused by name, as the stratified and grouped splitters already refuse it."""
+    split = random_split({Stage.TRAIN: 0.7, Stage.VAL: 0.15, Stage.TEST: 0.15}, seed=1)
+
+    with pytest.raises(ValueError, match=r"val.*without a single row"):
+        split(make_table(3))

@@ -24,12 +24,14 @@ def test_mse_returns_a_named_loss() -> None:
 
 
 def test_mse_squeezes_the_channel_on_dense_shapes() -> None:
-    logits = torch.zeros(2, 1, 4, 4)
-    target = torch.ones(2, 4, 4)
+    """Per-sample values that differ, so a silent broadcast to ``[B, B, H, W]`` reads as another
+    number (3.5) rather than by luck as the right one."""
+    logits = torch.tensor([0.0, 1.0]).view(2, 1, 1, 1).expand(2, 1, 4, 4)
+    target = torch.tensor([1.0, 3.0]).view(2, 1, 1).expand(2, 4, 4)
 
     loss = MeanSquaredErrorCriterion()(logits, target)
 
-    assert loss.total.item() == pytest.approx(1.0)
+    assert loss.total.item() == pytest.approx(2.5)
 
 
 def test_mse_accepts_matching_shapes() -> None:

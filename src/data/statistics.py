@@ -2,14 +2,106 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from src.core.entities import ClassDistribution, ValueDistribution
+from src.core.taxonomy import Stage
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
+
+
+@dataclass(frozen=True, slots=True)
+class ClassDistribution:
+    """How many of each class a column holds — the imbalance, before it surprises anyone.
+
+    Zero-count classes are kept: a class the training split never shows is the most useful
+    line. ``counts`` sums to the row count for a single-label column, to more for a
+    multilabel one, and to pixels for a mask.
+    """
+
+    counts: dict[str, int]
+
+    @property
+    def total(self) -> int:
+        return sum(self.counts.values())
+
+    @property
+    def shares(self) -> dict[str, float]:
+        """Each class as a fraction of the total; all zero when there is nothing to divide."""
+        total = self.total
+        return {name: (count / total if total else 0.0) for name, count in self.counts.items()}
+
+
+@dataclass(frozen=True, slots=True)
+class ValueDistribution:
+    """The five-number summary of a numeric column, plus its mean and deviation.
+
+    Quantiles rather than a histogram: the shape of a target is read from where its
+    mass sits, and the quartiles say that in five numbers that fit a terminal row —
+    where a histogram would need a bin count nobody has a principled value for.
+    """
+
+    count: int
+    mean: float
+    deviation: float
+    minimum: float
+    q25: float
+    median: float
+    q75: float
+    maximum: float
+
+
+type Distribution = ClassDistribution | ValueDistribution
+"""What one target column looks like, in whichever of the two shapes fits it."""
+
+
+@dataclass(frozen=True, slots=True)
+class DatasetStatistics:
+    """What a run is about to train on: how much of it there is, and what it holds.
+
+    Row counts are here because a split that went wrong — an empty stage, a test set larger
+    than train — shows up there and nowhere else.
+    """
+
+    rows: dict[Stage, int] = field(default_factory=dict)
+    targets: dict[str, dict[Stage, Distribution]] = field(default_factory=dict)
+
+    def __bool__(self) -> bool:
+        """Whether there is anything at all to report."""
+        return bool(self.rows or self.targets)
+
+
+@dataclass(frozen=True, slots=True)
+class Bars:
+    """Named quantities drawn as grouped bars — a class balance across stages.
+
+    One series per group and one value per label within it, so a class missing from one
+    split is a gap rather than a number to hunt for.
+    """
+
+    series: tuple[str, ...]
+    values: tuple[tuple[float, ...], ...]
+    labels: tuple[str, ...]
+    xaxis: str
+    yaxis: str
+
+
+@dataclass(frozen=True, slots=True)
+class BoxPlot:
+    """Five-number summaries drawn as boxes — one per series, on shared axes.
+
+    Carries the ``ValueDistribution``s themselves, not a copy of their numbers. Whiskers are
+    the observed minimum and maximum, not Tukey's fences: outliers would need the raw values
+    held in memory for a picture drawn once.
+    """
+
+    series: tuple[str, ...]
+    boxes: tuple[ValueDistribution, ...]
+    xaxis: str
+    yaxis: str
 
 
 def counted(names: Sequence[str] | None, labels: Iterable[str]) -> ClassDistribution:

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from src.data.encoders.base import TargetEncoder
+from src.data.encoders.base import FileTargetEncoder, TargetEncoder, VocabularyTargetEncoder
 from src.data.encoders.boxes import BoxesTargetEncoder
 from src.data.encoders.continuous import (
     BinnedTargetEncoder,
@@ -16,6 +16,7 @@ from src.data.encoders.mask import MaskTargetEncoder
 __all__ = [
     "BinnedTargetEncoder",
     "BoxesTargetEncoder",
+    "FileTargetEncoder",
     "GaussianBinsTargetEncoder",
     "LabelTargetEncoder",
     "LinearBinsTargetEncoder",
@@ -23,4 +24,5 @@ __all__ = [
     "MultiLabelTargetEncoder",
     "ScalarTargetEncoder",
     "TargetEncoder",
+    "VocabularyTargetEncoder",
 ]

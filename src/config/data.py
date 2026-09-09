@@ -218,8 +218,7 @@ class DataConfig(BaseModel):
     """Where the annotation rows come from and how their columns feed the model.
 
     Task targets are absent on purpose: a target column and its encoder are declared once,
-    on the task. A section with no ``inputs`` is valid — a vendor pipeline reads its images
-    from its own descriptor. The form of ``source`` picks how a dataset arrives::
+    on the task. The form of ``source`` picks how a dataset arrives::
 
         source: data/annotations.csv               # one table, 'split' divides it
         split: {train: 0.7, val: 0.15, test: 0.15}
@@ -244,6 +243,7 @@ class DataConfig(BaseModel):
         ),
     )
     inputs: dict[str, InputColumnConfig] = Field(
+        min_length=1,
         description="Model inputs by name; the name is how a batch and a backbone refer to them.",
     )
     auxiliary_inputs: dict[str, AuxiliaryInputColumnConfig] = Field(
@@ -285,8 +285,7 @@ class DataConfig(BaseModel):
         """Per-stage sources are used as given, so they must name a train stage and transform only their own."""
         if not isinstance(self.source, dict):
             # Whether one source can stand without a `split` is the table's question, and
-            # `TableDataModule` already answers it. Asked here as well it would also refuse
-            # a vendor pipeline, whose descriptor names its own stages.
+            # `TableDataModule` already answers it.
             return self
         if Stage.TRAIN not in self.source:
             declared = ", ".join(sorted(self.source)) or "none"

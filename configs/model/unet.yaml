@@ -2,7 +2,7 @@
 #
 # `encoder` is the last encoder stage `[B, D, H', W']` and `decoder` is the full-size
 # map `[B, D, H, W]`. A dense task reads the decoder; a global task beside it reads the
-# encoder and asks for the backbone's own pooling classifier (`native_head: true`),
+# encoder and asks for the backbone's own pooling classifier (`head: native`),
 # because a linear head cannot take a feature *map*.
 #
 # That is what makes one backbone serve segmentation and classification at once — see

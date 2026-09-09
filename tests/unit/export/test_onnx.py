@@ -172,10 +172,8 @@ def test_a_lone_tensor_carries_no_index(tmp_path: Path) -> None:
 def test_a_scheme_that_is_not_offered_is_refused_with_the_valid_ones() -> None:
     """A plausible name must not quietly fall back to the default and ship the wrong interface.
 
-    ``generic`` is what the reference called this feature, so it is what a user
-    arriving from it would write. A wrong *word* rather than a misspelling on
-    purpose: this repo's spell-checking hook rewrites a near-miss in place, and it
-    once turned this very test green by making its value valid.
+    ``generic`` is a wrong *word* rather than a misspelling on purpose: this repo's spell-checking
+    hook rewrites a near-miss in place, and once turned this very test green by making its value valid.
     """
     with pytest.raises(ValueError, match="TensorNames must be one of declared, uniform"):
         OnnxExporter(tensor_names="generic")  # type: ignore[arg-type]

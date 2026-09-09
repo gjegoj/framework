@@ -9,7 +9,8 @@ from typing import TYPE_CHECKING, override
 import lightning as L
 from torch import Tensor, nn
 
-from src.callbacks.moment import at_epoch
+from src.callbacks.moment import at_epoch, declared_moment, epoch_at
+from src.core import log_keys
 from src.core.ports import Model
 
 if TYPE_CHECKING:
@@ -22,6 +23,14 @@ SCHEDULES: dict[str, Callable[[float], float]] = {
     "cosine": lambda progress: (1.0 - math.cos(math.pi * progress)) / 2.0,
 }
 """Easings over progress in [0, 1]; cosine leaves both ends gently."""
+
+SCHEDULE_FAMILY = "schedule"
+"""The stage-less family an annealed value is logged under: ``schedule/{task}/{attribute}``.
+
+Stage-less on purpose — the value is a fact of the epoch, not of a split — which is also
+why the progress table does not row it. Composed through ``log_keys.join`` like every
+other key; the family name is this callback's own, as ``lr`` is the optimizer's.
+"""
 
 
 def scheduled_value(epoch: int, window: int, start: float, end: float, shape: Callable[[float], float]) -> float:
@@ -63,15 +72,13 @@ class AnnealCriterion(L.Callback):
         super().__init__()
         if schedule not in SCHEDULES:
             raise ValueError(f"AnnealCriterion knows no '{schedule}' schedule; available: {sorted(SCHEDULES)}.")
-        if not 0.0 < over <= 1.0:
-            raise ValueError(f"AnnealCriterion over must be a share of the run in (0, 1], got {over}.")
         self._task = task
         self._part, _, self._attribute = parameter.rpartition(".")
         self._start = float(start)
         self._end = float(end)
         self._shape = SCHEDULES[schedule]
         self._schedule = schedule  # kept for the announcement; the shape cannot name itself
-        self._over = over
+        self._over = declared_moment(over, owner="AnnealCriterion", knob="over", role="end")
         self._owner: nn.Module | None = None
         self._window = 0
 
@@ -83,7 +90,7 @@ class AnnealCriterion(L.Callback):
                 "AnnealCriterion counts in epochs, and this trainer declares no max_epochs. "
                 "Set trainer.max_epochs, or drop the schedule."
             )
-        self._window = max(1, round(self._over * max_epochs))
+        self._window = epoch_at(self._over, max_epochs)
         self._owner = self._find_owner(self._criterion_of(pl_module))
         # The ramp is a pure function of the epoch and leaves no trace of its own,
         # so a run that ends with a different loss than it started with would say
@@ -105,7 +112,7 @@ class AnnealCriterion(L.Callback):
             return
         value = scheduled_value(trainer.current_epoch, self._window, self._start, self._end, self._shape)
         setattr(self._owner, self._attribute, value)
-        pl_module.log(f"schedule/{self._task}/{self._attribute}", value)
+        pl_module.log(log_keys.join(SCHEDULE_FAMILY, self._task, self._attribute), value)
 
     def _criterion_of(self, pl_module: L.LightningModule) -> nn.Module:
         """The task's criterion, asked of the model rather than looked for in its tree.
@@ -121,7 +128,7 @@ class AnnealCriterion(L.Callback):
         if criterion is None:
             raise ValueError(
                 f"AnnealCriterion schedules a number on a task's own criterion, and "
-                f"{type(model).__name__} composes none — a vendor family owns its loss internally."
+                f"{type(model).__name__} composes none — a model that arrives whole owns its loss internally."
             )
         return criterion
 

@@ -7,15 +7,28 @@ a PNG it will not look at.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pandas as pd
 import torch
 
-from src.data import DataSchema, InputColumn, LabelTargetEncoder, TargetColumn
+from src.core import Stage
+from src.data import (
+    DataSchema,
+    DeclaredSource,
+    InputColumn,
+    LabelTargetEncoder,
+    TableDataModule,
+    TargetColumn,
+    random_split,
+)
 
 if TYPE_CHECKING:
+    from collections.abc import Callable, Mapping
+
     from torch import Tensor
+
+    from src.core import DatasetFacts, SampleTransform
 
 PATH_COLUMN = "path"
 """Where a row names its image. Never opened by ``load_zeros``."""
@@ -56,3 +69,43 @@ def label_schema() -> DataSchema:
             LABEL_COLUMN: TargetColumn(column=LABEL_COLUMN, encoder=LabelTargetEncoder(classes={0: "cat", 1: "dog"}))
         },
     )
+
+
+def load_point(value: object) -> Tensor:
+    """An input loader turning a number into a two-wide vector, ``[x, 1]``.
+
+    Wide enough for a ``LinearHead`` to learn from, small enough that a fit is a blink;
+    the constant second lane keeps a one-row batch from being a scalar.
+    """
+    return torch.tensor([float(value), 1.0])  # type: ignore[arg-type]
+
+
+def in_memory_pipeline(
+    rows: int = 8,
+    *,
+    input: str = "image",
+    loader: Callable[[Any], Any] = load_point,
+    transforms: Mapping[Stage, SampleTransform] | None = None,
+) -> tuple[TableDataModule, DatasetFacts]:
+    """``rows`` numbers under a two-class label, split 50/25/25 and set up; the facts come back with it.
+
+    What a test about training, a callback or a report wants: *a* pipeline whose rows
+    are tensors the moment they are read, never files. The input is named ``image`` so
+    ``FlattenBackbone`` reads it unchanged; a test with a backbone of its own names the
+    input it reads. A test about the pipeline itself still builds its own table.
+    """
+    table = pd.DataFrame({"x": [float(index) for index in range(rows)], LABEL_COLUMN: ["cat", "dog"] * (rows // 2)})
+    module = TableDataModule(
+        sources=[DeclaredSource(table)],
+        schema=DataSchema(
+            inputs={input: InputColumn(column="x", loader=loader)},
+            targets={
+                LABEL_COLUMN: TargetColumn(
+                    column=LABEL_COLUMN, encoder=LabelTargetEncoder(classes={0: "cat", 1: "dog"})
+                )
+            },
+        ),
+        splitter=random_split({Stage.TRAIN: 0.5, Stage.VAL: 0.25, Stage.TEST: 0.25}, seed=42),
+        transforms=transforms,
+    )
+    return module, module.setup()

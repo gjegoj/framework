@@ -1,4 +1,4 @@
-# Tasks and presets
+# Tasks and kinds
 
 A task is what an experiment learns and how it is evaluated. Everything else in a
 config — the model, the loader, the callbacks — serves the tasks.
@@ -6,7 +6,7 @@ config — the model, the loader, the callbacks — serves the tasks.
 ```yaml
 tasks:
   species:
-    preset: classification
+    kind: classification
     target: species
 ```
 
@@ -14,83 +14,75 @@ The key (`species`) is the task's name. It is the key its targets arrive under,
 the key its losses and metrics log under, and the name of its parameter group on
 the learning-rate graph — so choose it the way you would choose a column name.
 
-## The axes behind the preset
+## The kinds
 
-There is no `TaskType` enum. A task is a point on the four axes
-[concepts.md](../concepts.md#a-task-is-a-composition-not-a-type) lays out; the
-three a preset can name are:
+There is no `TaskType` enum and no table of axes. A task is an instance of one
+`TaskKind` class in `src/tasks/kinds.py`, and the class states everything the
+framework needs to serve it: which encoder its target starts from, which backbone
+streams its head reads and what head that is, its loss, how its logits become
+predictions, what it is judged by, and how a sample of it is drawn. These are the
+kinds the framework ships, under the names config spells them:
 
-| Axis | Question | Members |
-|---|---|---|
-| `output_topology` | What does one prediction look like? | `global`, `dense`, `instances` |
-| `input_topology` | How are the inputs arranged? | `single` (the default), `multiview`, `multistream` |
-| `objective` | How do labels supervise it? | `multiclass`, `binary`, `multilabel`, `continuous`, `metric` |
+| `kind` | One prediction is | Default encoder | Default metrics |
+|---|---|---|---|
+| `classification` | one class of N | `label` | f1, precision, recall (per class), confusion matrix |
+| `binary_classification` | yes or no | `scalar` | the same |
+| `multilabel_classification` | any number of classes | `multilabel` | the same |
+| `regression` | a number | `scalar` | mae |
+| `metric_learning` | an embedding, judged against class proxies | `label` | — |
+| `contrastive` | aligned embeddings of two streams (CLIP-style) | — | — |
+| `ranking` | embeddings of N views of one item | — | — |
+| `segmentation` | one class per pixel | `mask` | iou, plus the classification set |
+| `binary_segmentation` | foreground or not, per pixel | `mask` | the same |
+| `multilabel_segmentation` | any number of classes per pixel — declared, refused at build until an encoder produces a multi-hot mask | `mask` | the same |
+| `detection` | a set of boxes, each one class of N | `boxes` | map |
 
-A preset is a familiar name for one point, and it is resolved while the config
-loads — no preset survives into the built experiment:
+Kinds whose entry is `—` are structure-supervised: supervision comes from the
+batch's shape (pairs, triplets, the in-batch diagonal) rather than from a
+per-sample label, so there is nothing for a per-sample metric to compare and
+nothing to draw.
 
-| `preset` | topology × objective | Default metrics |
-|---|---|---|
-| `classification` | `global × multiclass` | f1, precision, recall (per class), confusion matrix |
-| `binary_classification` | `global × binary` | the same |
-| `multilabel_classification` | `global × multilabel` | the same |
-| `regression` | `global × continuous` | mae |
-| `metric_learning` | `global × metric` | — |
-| `segmentation` | `dense × multiclass` | iou, plus the classification set |
-| `binary_segmentation` | `dense × binary` | the same |
-| `multilabel_segmentation` | `dense × multilabel` | the same |
-| `contrastive` | `global × metric`, over `multistream` inputs | — |
-| `ranking` | `global × metric`, over `multiview` inputs | — |
-| `detection` | `instances × multiclass` | map |
+Sharing between kinds is inheritance written in that one file, not a legality
+matrix: `Segmentation` takes its label semantics from the same piece as
+`Classification` and its shape from the same piece as `BinarySegmentation`, so
+"one class per pixel" is a subclass that says so, and an impossible pairing is
+simply a class nobody wrote. `segmentation` names the *semantic* kind; an instance
+variant would land under `instance_segmentation` rather than competing for the name.
 
-The target encoder is derived from the same pair, and reads the other way round —
-the *shape* of a cell outranks its semantics, so every dense kind reads a mask
-whatever its objective, and only a global cell asks the objective which variant
-it is:
+A kind of your own is a subclass, reachable with no edit to the framework:
 
-| Axes | Default encoder | The cell holds |
-|---|---|---|
-| `global × multiclass` | `label` | a class name or index |
-| `global × binary`, `global × continuous` | `scalar` | a number |
-| `global × multilabel` | `multilabel` | `"cat,dog"` or a list |
-| `global × metric` | — | nothing: supervision is the batch's structure |
-| `dense × anything` | `mask` | a mask file path |
-| `instances × multiclass` | `boxes` | a list of `{"box": …, "class": …}` objects |
+```python
+from src.tasks import Classification
 
-`segmentation` names the *semantic* kind; an instance variant would land under
-`instance_segmentation` rather than competing for the name.
 
-A pair with no preset is written out:
+class FocalClassification(Classification):
+    default_metrics = {"accuracy": {"name": "accuracy"}}
+
+    def loss(self, facts, width):
+        return FocalCriterion(gamma=2.0)
+```
 
 ```yaml
 tasks:
-  defect:
-    output_topology: dense
-    objective: multilabel      # overlapping classes per pixel
-    target: mask_path
-    classes: {0: sound, 1: scratch, 2: dent}
+  species: {kind: {_target_: my_pkg.FocalClassification}, target: species, classes: {0: cat, 1: dog}}
 ```
 
-Declaring both a `preset` and an axis is a config error, not a preference.
-
-Presets whose entry is `—` above are structure-supervised: supervision comes from
-the batch's shape (pairs, triplets, the in-batch diagonal) rather than from a
-per-sample label, so there is nothing for a per-sample metric to compare.
+→ [Extending the framework](extending.md#a-kind-of-task)
 
 ## What a task declares
 
 | Key | Default | Meaning |
 |---|---|---|
+| `kind` | **required** | A name from the table above, or `{_target_: ...}` for a kind of your own |
 | `target` | — | The table column holding this task's ground truth. The data schema derives from the tasks, so a column is named once |
-| `classes` | **required** where the target is read as classes (`label`, `multilabel`, `mask`, `boxes`); refused for a continuous target | `{0: cat, 1: dog}` — the vocabulary, index to name |
-| `target_encoder` | from the axes | How a target cell becomes a tensor — the topology's shape first, the objective's semantics second |
-| `loss` | from the objective | One criterion, or a list added with weights |
-| `head` | from the topology | Which *kind* of head; sizes stay derived |
-| `native_head` | `false` | Keep the pretrained model's own head instead |
-| `streams` | from the topology, or the backbone's pyramid for detection | Which backbone streams the head reads — one name or a list, in reading order |
+| `classes` | **required** where the target is read as classes (`label`, `multilabel`, `mask`, `boxes`); refused where the kind's encoder carries no vocabulary | `{0: cat, 1: dog}` — the vocabulary, index to name |
+| `target_encoder` | from the kind | How a target cell becomes a tensor |
+| `loss` | from the kind | One criterion, or a list added with weights |
+| `head` | from the kind | Which *kind* of head; sizes stay derived |
+| `streams` | from the kind, or the backbone's pyramid for detection | Which backbone streams the head reads — one name or a list, in reading order |
 | `weight` | `1.0` | This task's share of the total loss |
 | `lr` | the run's rate | Own rate for this task's head and criterion |
-| `metrics` | from the objective | Metrics keyed by the label they log under |
+| `metrics` | from the kind | Metrics keyed by the label they log under; a declared mapping replaces the kind's set whole |
 
 Sizes are never among them. `num_classes` is the length of `classes`,
 `in_features` comes from the backbone stream — see [derived values](../concepts.md#sizes-come-from-the-data-never-from-config).
@@ -99,12 +91,12 @@ Sizes are never among them. `num_classes` is the length of `classes`,
 
 Every target read as classes — `classification`, `multilabel_classification`,
 `segmentation`, `detection` and their variants — declares its vocabulary, and
-assembly refuses a task that reads one without it, before any row is read:
+the build refuses a task that reads one without it, before any row is read:
 
 ```yaml
 tasks:
   species:
-    preset: classification
+    kind: classification
     target: species
     classes: {0: cat, 1: dog, 2: rabbit}
 ```
@@ -117,10 +109,11 @@ validated against it at fit (a typo is an error, not an extra class), `dog` keep
 its index when every `rabbit` row is dropped, and the names label per-class log
 keys (`val/species/f1/rabbit`), confusion-matrix axes and the samples grid.
 
-Indices must be exactly `0..n-1` and names must be unique; a continuous objective
-refuses `classes` outright, because bins own its value space. For a table with
-many classes, let the script that knows every name write the block —
-`scripts/prepare_pet.py` prints them for the pet table, breeds included.
+Indices must be exactly `0..n-1` and names must be unique; a regression task
+refuses `classes`, because its encoder carries no vocabulary and bins own its
+value space. For a table with many classes, let the script that knows every name
+write the block — `scripts/prepare_pet.py` prints them for the pet table, breeds
+included.
 
 ## Several tasks at once
 
@@ -129,14 +122,14 @@ Tasks are a dict, so uniqueness comes free and every task is named:
 ```yaml
 tasks:
   mask:
-    preset: segmentation
+    kind: segmentation
     target: mask_path
     classes: {0: background, 1: defect}
     loss:
       - {name: cross_entropy, weight: 1.0}
       - {name: dice, weight: 1.0}
   label:
-    preset: classification
+    kind: classification
     target: is_defective
     streams: encoder         # read the encoder, not the decoder
     weight: 0.3
@@ -150,12 +143,12 @@ components a different pace while the backbone keeps the optimizer's — see
 
 ## Overriding the head
 
-The topology picks the head kind, and an override names a kind only:
+The kind picks the head, and an override names a kind of head only:
 
 ```yaml
 tasks:
   person:
-    preset: classification
+    kind: classification
     target: person_id
     head: {name: cosine}          # learnable prototypes, cosine logits
     loss: {name: arcface, margin: 0.3}
@@ -165,9 +158,10 @@ A head that reads several layers names them — `streams: [p4, p5]`, or
 `[block7, block11]` on a backbone that calls its levels so; a detection task needs
 none of this, its backbone declares the pyramid.
 
-`native_head: true` is the other direction: keep the head the pretrained model
-ships with, which is what you want when those weights are the point. Declaring
-both `head` and `native_head` is refused — they answer the same question.
+`head: native` is the other direction: keep the head the pretrained model ships
+with, which is what you want when those weights are the point. `native` is a reserved
+name rather than a registered head — the backbone builds it — and it takes no arguments;
+the same key answers both questions, so the two cannot disagree.
 
 ## Binned regression
 
@@ -177,7 +171,7 @@ regression semantics. Choosing the encoder is the whole change:
 ```yaml
 tasks:
   score:
-    preset: regression
+    kind: regression
     target: score
     target_encoder: {name: gaussian_bins, bins: 20}
 ```
@@ -189,13 +183,16 @@ the encoder learns and why the range is padded.
 
 ## What is validated when
 
-At **config load**: the preset resolves, `classes` is checked for completeness
-and duplicates, `head` and `native_head` cannot both be set, and an unknown key
-in the section is an error naming it.
+At **config load**: `kind` is present and spelled as a name or an import path,
+`classes` is checked for completeness and duplicates, `native` refuses arguments,
+and an unknown key in the section is an error naming it — the
+retired spellings (`preset`, `output_topology`, `input_topology`, `objective`) by
+name, pointing at `kind`.
 
-At **assembly**: the topology validates the objective it was paired with, a task
-whose encoder reads a vocabulary is refused by name if it declared no `classes`,
-the metrics are built with the objective's own arguments, and a task declaring
-components a vendor family builds itself is refused with the reason.
+At **build**: an unknown kind is refused listing the known ones, a task whose
+encoder reads a vocabulary is refused by name if it declared no `classes`, a
+declared `classes` the kind's encoder cannot carry is refused, the metrics are
+built with the kind's own arguments (its defaults where none were declared, and
+the substitution is logged).
 
 At **fit**: the data is validated against the declared vocabulary.

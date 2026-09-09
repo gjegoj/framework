@@ -37,8 +37,8 @@ def test_a_missing_library_names_the_command_that_fixes_it() -> None:
 
 
 @without_tensorrt
-def test_construction_reports_the_missing_library_at_assembly() -> None:
-    """Failing while the experiment is assembled beats failing after an hour of training."""
+def test_construction_reports_the_missing_library_at_build_time() -> None:
+    """Failing while the experiment is built beats failing after an hour of training."""
     with pytest.raises(ImportError, match="tensorrt"):
         TensorRtExporter()
 

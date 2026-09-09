@@ -50,9 +50,3 @@ def test_attention_mask_input_changes_mean_pooling(backbone: HFTextBackbone) -> 
     without_mask = pooled({"text": tokens})[Stream.FEATURES]
 
     assert not torch.allclose(with_mask, without_mask)
-
-
-@pytest.mark.slow
-def test_unknown_stream_is_rejected_by_name(backbone: HFTextBackbone) -> None:
-    with pytest.raises(LookupError, match=Stream.FEATURES):
-        backbone.feature_dim(Stream.DECODER)

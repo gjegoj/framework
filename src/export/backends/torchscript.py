@@ -7,7 +7,7 @@ import warnings
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 import torch
 
@@ -58,10 +58,10 @@ class TorchScriptExporter(Exporter):
     ``torch.jit.script`` cannot compile a forward that builds a ``Batch``.
     """
 
+    suffix: ClassVar[str] = "pt"
+
     def export(self, model: DeployableModel, example: tuple[Tensor, ...], destination: Path) -> Path:
-        # Not with_suffix: a destination whose name carries a dot ('model.v2') would lose it.
-        path = destination.parent / f"{destination.name}.pt"
-        path.parent.mkdir(parents=True, exist_ok=True)
+        path = self.artifact_path(destination)
         with torch.no_grad(), _without_the_deprecation_notice():
             compiled = torch.jit.trace(model, example)
             torch.jit.save(compiled, str(path))

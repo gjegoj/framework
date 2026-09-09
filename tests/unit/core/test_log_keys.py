@@ -17,43 +17,26 @@ def test_stage_members_compose_as_their_string_values() -> None:
     assert log_keys.join(Stage.VAL, "label", "accuracy") == "val/label/accuracy"
 
 
-def test_a_stage_first_key_splits_into_series_by_stage() -> None:
-    """One graph per series, stages as its lines — losses and metrics alike, no special case."""
-    assert log_keys.split_for_tracker("val/label/f1") == ("label/f1", "val")
-    assert log_keys.split_for_tracker("train/loss") == ("loss", "train")
+def test_a_stage_first_key_parses_into_its_stage_and_path() -> None:
+    """One parser for the grammar, so no consumer re-splits a string by hand."""
+    key = log_keys.parse("val/label/f1")
+
+    assert key.stage == Stage.VAL
+    assert key.path == ("label", "f1")
+    assert not key.per_class
 
 
-def test_the_classes_of_one_metric_share_a_graph_with_their_mean() -> None:
-    """Comparing classes is what a per-class metric is for, and stages cannot be that comparison.
+def test_a_per_class_leaf_is_recognised_by_its_depth_and_collapses_to_its_family() -> None:
+    """``{task}/{metric}/{class}`` is the one shape a vector metric writes; nothing needs to know the value's meaning."""
+    key = log_keys.parse("val/label/f1/cat")
 
-    Split by stage instead, a forty-class run draws forty graphs of one line each.
-    """
-    assert log_keys.split_for_tracker("val/label/f1/cat") == ("val/label/f1", "cat")
-    assert log_keys.split_for_tracker("val/label/f1/dog") == ("val/label/f1", "dog")
-    assert log_keys.split_for_tracker("val/label/f1/mean") == ("val/label/f1", "mean")
-    assert log_keys.split_for_tracker("train/label/f1/cat") == ("train/label/f1", "cat")
-
-
-def test_a_loss_part_is_not_mistaken_for_a_per_class_leaf() -> None:
-    """A part is scoped exactly once, so it stays two segments deep and keeps its stages together.
-
-    A criterion that scoped twice would land its parts on a graph per stage, which
-    is why the depth is asserted rather than assumed.
-    """
-    assert log_keys.split_for_tracker("train/label/ce") == ("label/ce", "train")
-    assert log_keys.split_for_tracker("val/label/kl") == ("label/kl", "val")
+    assert key.per_class
+    assert key.leaf == "cat"
+    assert key.family == "val/label/f1"
+    assert not key.is_mean
+    assert log_keys.parse("val/label/f1/mean").is_mean
 
 
-def test_a_key_of_one_segment_stands_alone() -> None:
-    """Nothing to compare it with and no leaf to name a line by."""
-    assert log_keys.split_for_tracker("epoch") == ("epoch", "value")
-
-
-def test_a_stage_less_family_shares_a_graph_by_its_leaves() -> None:
-    """The learning rates of every parameter group belong on one graph, one line each.
-
-    Did the head move faster than the encoder is the comparison a per-group rate is
-    declared for, and a title per group is exactly the comparison it cannot make.
-    """
-    assert log_keys.split_for_tracker("lr/backbone") == ("lr", "backbone")
-    assert log_keys.split_for_tracker("lr/label") == ("lr", "label")
+def test_a_stage_less_key_has_no_stage() -> None:
+    assert log_keys.parse("lr/backbone").stage is None
+    assert log_keys.parse("epoch") == log_keys.LogKey(stage=None, path=("epoch",))

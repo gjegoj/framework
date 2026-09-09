@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from src.callbacks.progress import MetricHistory, MetricsProgressBar, row_key
-from src.core.ports import DeclaresMetricDirections
+from src.training.ports import DeclaresMetricDirections
 from tests.support.lightning import quiet_trainer
 
 
@@ -80,51 +80,20 @@ def after_a_run() -> MetricsProgressBar:
     """The bar of a finished fit-and-test, so both claims read one run rather than two."""
     from functools import partial
 
-    import pandas as pd
     import torch
 
-    from src.core import DataProfile, Objective, OutputTopology, Stage, Task
-    from src.data import (
-        DataSchema,
-        InMemorySource,
-        InputColumn,
-        LabelTargetEncoder,
-        TableDataModule,
-        TargetColumn,
-        random_split,
-    )
-    from src.losses import CrossEntropyCriterion
-    from src.models import CompositeModel, LinearHead, TaskComponents
-    from src.tasks.adapters import as_class_indices
     from src.training import TrainingData, TrainingModule
-    from tests.support.fakes import FlattenBackbone
+    from tests.support.entities import a_task
+    from tests.support.fakes import a_composite
+    from tests.support.tables import in_memory_pipeline
 
-    task = Task(name="label", output_topology=OutputTopology.GLOBAL, objective=Objective.MULTICLASS, metrics={})
+    task = a_task()
     module = TrainingModule(
-        model=CompositeModel(
-            backbone=FlattenBackbone(dim=2),
-            components={
-                "label": TaskComponents(
-                    head=LinearHead(2, 2),
-                    criterion=CrossEntropyCriterion(),
-                    activation=lambda logits: logits,
-                    target_adapter=as_class_indices,
-                )
-            },
-        ),
+        model=a_composite(2),
         tasks=[task],
         optimizer_factory=partial(torch.optim.SGD, lr=0.1),
     )
-    table = pd.DataFrame({"x": [float(i) for i in range(8)], "label": ["cat", "dog"] * 4})
-    data_module = TableDataModule(
-        source=InMemorySource(table),
-        schema=DataSchema(
-            inputs={"image": InputColumn(column="x", loader=lambda value: torch.tensor([float(value), 1.0]))},
-            targets={"label": TargetColumn(column="label", encoder=LabelTargetEncoder(classes={0: "cat", 1: "dog"}))},
-        ),
-        splitter=random_split({Stage.TRAIN: 0.5, Stage.VAL: 0.25, Stage.TEST: 0.25}, seed=42),
-    )
-    data_module.setup(DataProfile())
+    data_module, _ = in_memory_pipeline()
     data = TrainingData(data_module, batch_size=2)
     bar = MetricsProgressBar()
     trainer = quiet_trainer(callbacks=[bar], enable_progress_bar=True)
@@ -145,7 +114,7 @@ def test_the_table_sees_every_stage_the_run_reported(after_a_run: MetricsProgres
     Fed from the bar's own `get_metrics` it would show that one value and leave
     Val and Test permanently blank — measured, empty at both.
     """
-    seen = set(after_a_run._history.current)
+    seen = set(after_a_run.history.current)
 
     assert {"train/loss", "val/loss", "test/loss"} <= seen
 
@@ -156,7 +125,7 @@ def test_the_finished_table_shows_train_and_val_beside_test(after_a_run: Metrics
     Lightning empties `callback_metrics` between `fit` and `test`, so a table built
     from the keys of one refresh blanks Train and Val exactly when Test arrives.
     """
-    table = after_a_run._build_table()
+    table = after_a_run.table()
     series = [str(cell) for cell in table.columns[0].cells]
     row = series.index("loss")
     values = {column.header: str(list(column.cells)[row]) for column in table.columns[1:]}
@@ -172,8 +141,8 @@ def test_a_loss_part_gets_a_best_like_the_total_it_belongs_to(after_a_run: Metri
     Left without one, a part would sit beside a total that has a best and show
     none — which reads as "this one has no direction" rather than "nobody said".
     """
-    assert after_a_run._history.direction("train/label/ce") == "min"
-    assert "train/label/ce" in after_a_run._history.best
+    assert after_a_run.history.direction("train/label/ce") == "min"
+    assert "train/label/ce" in after_a_run.history.best
 
 
 def test_nothing_but_a_loss_arrives_undeclared(after_a_run: MetricsProgressBar) -> None:
@@ -184,7 +153,7 @@ def test_nothing_but_a_loss_arrives_undeclared(after_a_run: MetricsProgressBar) 
     """
     module = after_a_run.trainer.lightning_module
     assert isinstance(module, DeclaresMetricDirections)
-    undeclared = set(after_a_run._history.current) - set(module.metric_directions())
+    undeclared = set(after_a_run.history.current) - set(module.metric_directions())
 
     assert undeclared == {
         "train/loss",
@@ -194,3 +163,16 @@ def test_nothing_but_a_loss_arrives_undeclared(after_a_run: MetricsProgressBar) 
         "val/label/ce",
         "test/label/ce",
     }
+
+
+def test_a_stage_less_observation_never_becomes_a_row_of_the_table() -> None:
+    """A key with no stage has no series to sit under: ``epoch`` is dropped on the Lightning path by
+    ``row_key``, and the table must drop it on the public path too — hand-splitting the key at the
+    separator had turned it into a row with an empty name."""
+    bar = MetricsProgressBar()
+    bar.history.observe("epoch", 3.0)
+    bar.history.observe("val/label/ce", 0.5)
+
+    series = [str(cell) for cell in bar.table().columns[0].cells]
+
+    assert series == ["label/ce"]

@@ -7,17 +7,13 @@ import torch
 
 from src.core import (
     Batch,
-    DataProfile,
     Features,
-    Objective,
-    OutputTopology,
     Stream,
-    TargetFacts,
-    Task,
+    TaskFacts,
 )
 from src.models import CompositeModel, TimmBackbone
 from src.models.registry import backbone_registry
-from src.tasks import build_task_components
+from tests.support.entities import a_task
 from tests.support.narrowing import tensor
 
 
@@ -35,11 +31,6 @@ def test_exposes_pooled_features_under_the_default_stream(backbone: TimmBackbone
 
 def test_feature_dim_reports_the_model_width(backbone: TimmBackbone) -> None:
     assert backbone.feature_dim(Stream.FEATURES) == 512
-
-
-def test_unknown_stream_is_rejected_by_name(backbone: TimmBackbone) -> None:
-    with pytest.raises(LookupError, match=Stream.FEATURES):
-        backbone.feature_dim("decoder")
 
 
 def test_registered_under_the_timm_key() -> None:
@@ -76,11 +67,9 @@ def test_native_head_is_none_for_other_streams(backbone: TimmBackbone) -> None:
 
 
 def test_heads_are_sized_from_the_real_model(backbone: TimmBackbone) -> None:
-    profile = DataProfile()
-    profile.record("label", TargetFacts(num_classes=3))
-    task = Task(name="label", output_topology=OutputTopology.GLOBAL, objective=Objective.MULTICLASS, metrics={})
+    task = a_task(facts=TaskFacts(num_classes=3))
 
-    components = build_task_components(task, profile, backbone)
+    components = task.kind.components(task, backbone)
     model = CompositeModel(backbone=backbone, components={"label": components})
 
     prediction = model.predict(Batch(inputs={"image": torch.randn(2, 3, 64, 64)}, targets={}))

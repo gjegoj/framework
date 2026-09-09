@@ -55,7 +55,7 @@ def test_mask_targets_ride_the_same_geometry_as_the_image() -> None:
 
 
 def test_a_geometry_arrives_as_its_config_string_too() -> None:
-    """Assembly hands members; a hand-written pipeline may spell the same fact as a string."""
+    """The pipeline hands members; a hand-written pipeline may spell the same fact as a string."""
     sample = Sample(inputs={"image": gradient_image()}, targets={"mask": gradient_mask()})
 
     transformed = AlbumentationsTransform([A.RandomCrop(height=2, width=3)], targets={"mask": "mask"})(sample)
@@ -202,3 +202,26 @@ def test_a_value_named_after_the_boxes_carrier_is_refused() -> None:
     """``bboxes`` is this seam's own argument; a declared value of that name would collide."""
     with pytest.raises(ValueError, match="bboxes"):
         AlbumentationsTransform([ALWAYS_FLIP], targets={"bboxes": Geometry.MASK})
+
+
+def test_geometry_is_bound_after_construction_so_a_wrapper_can_pass_it_down() -> None:
+    """The builder binds what the schema derived through ``with_geometry``; undeclared, a mask never enters the pipeline."""
+    plain = AlbumentationsTransform([ALWAYS_FLIP])
+    bound = plain.with_geometry(inputs={"image": Geometry.IMAGE}, targets={"mask": Geometry.MASK}, auxiliary_inputs={})
+
+    untouched = plain(Sample(inputs={"image": gradient_image()}, targets={"mask": gradient_mask()}))
+    followed = bound(Sample(inputs={"image": gradient_image()}, targets={"mask": gradient_mask()}))
+
+    assert np.array_equal(untouched.targets["mask"], gradient_mask())
+    assert not np.array_equal(followed.targets["mask"], gradient_mask())
+
+
+def test_a_box_outside_its_image_is_refused_naming_the_row_and_the_size() -> None:
+    """Measured on albumentationsx 2.3.7: the pipeline refuses the box itself, as ``Expected x_max
+    for bbox [0.25 0.25 1.25 0.75 0.] to be in the range [0.0, 1.0]`` — normalised, inside a
+    worker, naming no row. Only the image knows its size, so this seam is where the row is named."""
+    sample = boxed_sample([[50.0, 25.0, 250.0, 75.0]], ["dog"])
+    sample.meta[Sample.CELLS] = {"image": "a.jpg"}
+
+    with pytest.raises(ValueError, match=r"objects.*250.*200x100.*a\.jpg"):
+        AlbumentationsTransform([ALWAYS_FLIP], targets={"objects": Geometry.BOXES})(sample)

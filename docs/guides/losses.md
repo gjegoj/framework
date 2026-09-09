@@ -1,8 +1,9 @@
 # Losses
 
 How a task's criterion is declared. The short answer is usually: not at all —
-every objective carries a default (`multiclass` → cross-entropy, `continuous` →
-mse, `metric` → InfoNCE), and `loss:` is an override.
+every kind carries a default (`classification` → cross-entropy, `regression` →
+mse, `metric_learning` → `arcface_proxy` over the task's labels, `contrastive` and
+`ranking` → InfoNCE over the stacked views), and `loss:` is an override.
 
 ## One grammar, with weights
 
@@ -12,7 +13,7 @@ arguments. One shape whether it stands alone or in a list:
 ```yaml
 tasks:
   label:
-    preset: classification
+    kind: classification
     target: label
     loss: cross_entropy                          # bare name
     # loss: {name: cross_entropy, label_smoothing: 0.1}
@@ -37,17 +38,20 @@ The registry: `cross_entropy` (`ce`), `bce`, `focal`, `mse`, `mae`, `huber`,
     loss: {_target_: my_pkg.MyCriterion, alpha: 0.3}
 ```
 
-## What is never written: derived values
+## What is never written: the task's facts
 
-Facts only assembly knows are offered to every loss, and a loss receives the
-ones it names. Nothing here is repeated in config, so a change of backbone or
-dataset cannot desynchronize it:
+A criterion sized by the task says so on its class — a `sized(facts,
+embedding_dim, **params)` classmethod — and `losses/build.py` builds it from the task's
+facts through that; every other criterion is built from its declaration alone.
+Nothing here is repeated in config, so a change of backbone or dataset cannot
+desynchronize it:
 
 - `num_classes` — from the fitted label vocabulary,
 - `class_values` — the number each bin stands for, from a binned encoder,
 - `embedding_dim` — the width of the stream the task reads, from the backbone.
 
-That is why `loss: {name: arcface_proxy}` is a complete declaration.
+That is why `loss: {name: arcface_proxy}` is a complete declaration, and why
+writing `num_classes` on it is refused by name.
 
 ## Slots: a criterion inside a criterion
 
@@ -91,10 +95,10 @@ the embedding stream:
 ```yaml
 tasks:
   person:
-    preset: metric_learning
+    kind: metric_learning
     target: person_id
-    target_encoder: {name: label}
-    loss: {name: arcface_proxy, margin: 0.3}     # num_classes/embedding_dim are derived
+    classes: {0: alice, 1: bob}
+    loss: {name: arcface_proxy, margin: 0.3}     # the kind's own default, here with a margin; num_classes/embedding_dim are derived
     lr: 1.0e-2                                   # this task's components learn faster than the backbone
 ```
 
@@ -111,7 +115,7 @@ training-time margin over its logits:
 ```yaml
 tasks:
   person:
-    preset: classification
+    kind: classification
     target: person_id
     head: {name: cosine}                          # sizes derived; add embedding_dim: 512 to project first
     loss: {name: arcface, margin: 0.3}
@@ -128,7 +132,7 @@ the target is a per-pair *number*, encoded by the `scalar` encoder:
 ```yaml
 tasks:
   prefers:
-    preset: ranking
+    kind: ranking
     target: preference
     target_encoder: {name: scalar}
     loss: {name: margin_ranking, margin: 0.5}     # target is +1 / -1

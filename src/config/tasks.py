@@ -1,23 +1,23 @@
-"""The tasks section: one declared objective per entry, keyed by task name."""
+"""The tasks section: one learned task per entry, keyed by name."""
 
 from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from src.config.components import ComponentConfig, MetricConfig
-from src.config.presets import resolve_preset
-from src.core.taxonomy import InputTopology, Objective, OutputTopology
-from src.core.vocabulary import ordered_names
 
 HeadConfig = ComponentConfig
 """The head to build for a task: a registry name ('cosine') or an import path.
 
 Sizes are never written here — ``in_features`` and ``out_features`` stay
-derived from the backbone stream and the profiled data facts.
+derived from the backbone stream and the task's facts.
 """
 
 TargetEncoderConfig = ComponentConfig
 """The encoder turning a target cell into a tensor: a registry name ('label', 'mask') or an import path."""
+
+RETIRED_KEYS = ("preset", "output_topology", "input_topology", "objective")
+"""The spellings a task used to be declared by; each is refused naming ``kind``."""
 
 
 class LossConfig(ComponentConfig):
@@ -33,28 +33,25 @@ class LossConfig(ComponentConfig):
 
 
 class TaskConfig(BaseModel):
-    """One learned objective as declared in config.
+    """One task as declared in config.
 
-    Declare either a ``preset`` (a familiar name) or both explicit axes;
-    a preset is resolved before validation, so ``output_topology`` and ``objective``
-    are always concrete afterwards. The target column and its encoder are
-    declared here, once — the data schema derives from tasks (single source
-    of truth). ``None`` for ``target_encoder``, ``loss``, and ``streams`` means
-    "the objective's or topology's default", chosen at assembly.
+    ``kind`` names what the task is — a familiar name (``classification``,
+    ``segmentation``) or, for a kind of your own, the component form with ``_target_``.
+    The kind states the defaults; the target column and its encoder are declared here,
+    once — the data schema derives from tasks (single source of truth). ``None`` for
+    ``target_encoder``, ``loss``, ``streams`` and ``metrics`` means "the kind's default",
+    chosen at build time.
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    preset: str | None = Field(
-        None,
-        description="Familiar name ('classification', 'segmentation') standing for a point on the task axes.",
+    kind: ComponentConfig = Field(
+        description=(
+            "What the task is: a familiar name — classification, binary_classification, "
+            "multilabel_classification, regression, metric_learning, segmentation, binary_segmentation, "
+            "multilabel_segmentation, contrastive, ranking, detection — or {_target_: my_pkg.Depth} for a kind of your own."
+        ),
     )
-    output_topology: OutputTopology = Field(description="Shape of the prediction: per-sample, per-pixel, per-object.")
-    input_topology: InputTopology = Field(
-        default=InputTopology.SINGLE,
-        description="How the inputs are arranged: one per sample, N views, or separate streams.",
-    )
-    objective: Objective = Field(description="What is being learned: single-label, multi-label, regression.")
     target: str | None = Field(None, description="Table column holding this task's ground truth.")
     classes: dict[int, str] | None = Field(
         None,
@@ -67,8 +64,8 @@ class TaskConfig(BaseModel):
     target_encoder: TargetEncoderConfig | None = Field(
         None,
         description=(
-            "How a target cell becomes a tensor. None takes the encoder the objective implies — "
-            "class indices for multiclass, an indicator vector for multilabel, the value itself "
+            "How a target cell becomes a tensor. None takes the encoder the kind implies — "
+            "class indices for classification, an indicator vector for multilabel, the value itself "
             "for regression — so declaring one is an override. Per-pixel targets are the exception: "
             "a mask is a file of its own and its encoder needs the class count."
         ),
@@ -76,23 +73,24 @@ class TaskConfig(BaseModel):
     loss: LossConfig | list[LossConfig] | None = Field(
         None,
         description=(
-            "Criterion for this task; None takes the objective's default. A list declares several "
+            "Criterion for this task; None takes the kind's default. A list declares several "
             "criteria on the same output, added with their weights and logged term by term."
         ),
     )
     head: HeadConfig | None = Field(
         None,
         description=(
-            "Which kind of head serves this task; None takes the topology's default (linear for "
-            "global, conv for dense). Sizes are always derived, so an override names the kind only "
-            "— e.g. {name: cosine} for an angular-margin classifier."
+            "Which head serves this task; None takes the kind's default (linear for a global output, "
+            "conv for a dense one). Sizes are always derived, so an override names the kind only — "
+            "{name: cosine} for an angular-margin classifier — or the reserved name 'native' for the "
+            "head the backbone brings, which matters when those weights are the point."
         ),
     )
     streams: tuple[str, ...] | None = Field(
         None,
         description=(
             "Which backbone streams the head reads — one name or a list, in reading order. Absent, the "
-            "topology's default ('features', 'decoder') or, for a detection task, the backbone's pyramid."
+            "kind's default ('features', 'decoder') or, for a detection task, the backbone's pyramid."
         ),
     )
     weight: float = Field(1.0, gt=0, description="Multiplier of this task's loss in the total.")
@@ -109,14 +107,8 @@ class TaskConfig(BaseModel):
         description=(
             "Metrics by the label they log under; every entry names its metric ('name' or "
             "'_target_'), so two flavours of one metric may stand side by side — "
-            "{f1_macro: {name: f1, average: macro}}. None takes the objective's default set."
-        ),
-    )
-    native_head: bool = Field(
-        False,
-        description=(
-            "Keep the head the pretrained model ships with instead of deriving one from the task. "
-            "Needed when those weights are the point — a detector, a released classifier."
+            "{f1_macro: {name: f1, average: macro}}. None takes the kind's default set, whole; "
+            "a declared mapping replaces it whole."
         ),
     )
 
@@ -126,52 +118,16 @@ class TaskConfig(BaseModel):
         """``streams: encoder`` and ``streams: [p4, p5]`` are one key: a string is a one-tuple."""
         return (value,) if isinstance(value, str) else value
 
-    @model_validator(mode="after")
-    def _one_way_of_choosing_a_head(self) -> TaskConfig:
-        """Both keys answer the same question, and together one of them would win silently."""
-        if self.head is not None and self.native_head:
-            raise ValueError(
-                "Set either 'head' (build this kind) or 'native_head' (keep the backbone's own), not both."
-            )
-        return self
-
-    @model_validator(mode="after")
-    def _classes_form_a_contract(self) -> TaskConfig:
-        """The declared vocabulary *is* the index space, so it has to be complete and unambiguous."""
-        if self.classes is None:
-            return self
-        if self.objective is Objective.CONTINUOUS:
-            raise ValueError("'classes' declared for a continuous objective; bins own its value space.")
-        # Called for the refusal, not the list: config keeps the mapping it was given, and
-        # the ordered names are what an encoder wants. The rule itself has one owner, so
-        # the message a user sees is the same whether they declared the vocabulary on a
-        # task or handed it to an encoder from Python.
-        ordered_names(self.classes)
-        return self
-
     @model_validator(mode="before")
     @classmethod
-    def _resolve_the_preset(cls, data: object) -> object:
-        """Expand a familiar name into axes and customary metrics, before anything reads them."""
-        if not isinstance(data, dict) or data.get("preset") is None:
+    def _refuse_the_retired_spellings(cls, data: object) -> object:
+        """A task is declared by its kind; the preset and the explicit axes it replaced are named, not guessed at."""
+        if not isinstance(data, dict):
             return data
-        if "output_topology" in data or "input_topology" in data or "objective" in data:
+        retired = [key for key in RETIRED_KEYS if key in data]
+        if retired:
             raise ValueError(
-                "Set either 'preset' or explicit 'output_topology'/'input_topology'/'objective', not both."
+                f"Task keys {', '.join(retired)} are gone: declare the task's 'kind' instead "
+                f"(kind: classification, or kind: {{_target_: my_pkg.Depth}})."
             )
-        try:
-            preset = resolve_preset(data["preset"])
-        except LookupError as error:
-            # Pydantic wraps only ValueError into ValidationError; keep the message.
-            raise ValueError(str(error)) from error
-        resolved = {
-            **data,
-            "output_topology": preset.output_topology,
-            "input_topology": preset.input_topology,
-            "objective": preset.objective,
-        }
-        if preset.metrics is not None and "metrics" not in data:
-            # The kind's default metrics, injected where the user said nothing —
-            # visible in the loaded config and validated by the same grammar.
-            resolved["metrics"] = preset.metrics
-        return resolved
+        return data

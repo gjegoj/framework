@@ -196,9 +196,8 @@ def test_the_swing_is_shared_out_by_area_not_by_value() -> None:
 def test_a_small_region_gets_the_whole_swing() -> None:
     """``spread`` means the same thing whatever the region's size.
 
-    The generator spans ``[0, 1]`` over the whole *image*, so a region that catches only
-    a sliver of it used to realise a fraction of the swing — measured, 33% at 1% coverage.
-    Equalising inside the mask is what makes the knob size-independent.
+    The generator spans ``[0, 1]`` over the whole *image*; equalising inside the mask is what keeps a
+    sliver of it from realising a fraction of the swing — measured, 33% at 1% coverage.
     """
     for side in (SIDE, SIDE // 4, 6):
         region = np.zeros((SIDE, SIDE), dtype=np.uint8)
@@ -211,9 +210,8 @@ def test_a_small_region_gets_the_whole_swing() -> None:
 def test_pixels_run_past_the_declared_range_but_never_past_the_table() -> None:
     """``temperature_range`` bounds the label, not the pixels.
 
-    Bounding both with one number is what used to squeeze a wide swing into the middle
-    of the range, where the ratio is flat and nothing shows. The coefficient table is
-    the real limit, and going past it is what would break the colour.
+    The coefficient table is the real limit, and going past it is what would break the colour; bounding
+    both with one number squeezes a wide swing into the flat middle of the range, where nothing shows.
     """
     field = drawn(spread=1200, region=mask(whole=True), temperature_range=(3400, 3400))["field"]
 
@@ -368,3 +366,11 @@ def test_a_setting_the_table_cannot_serve_is_refused_at_construction(kwargs: dic
     """Failing here beats failing on the first batch, an hour into a run."""
     with pytest.raises(ValueError, match=expected):
         MaskedPlanckianJitter(mask_key="lesion", **kwargs)
+
+
+def test_the_label_keeps_the_fraction_of_a_kelvin_the_region_averaged_to() -> None:
+    """A patchy field rarely averages to a whole kelvin; a label rounded down sits up to a kelvin
+    below what the region actually is, and the field's mean is what the label promises to be."""
+    transform = MaskedPlanckianJitter(mask_key="lesion")
+
+    assert transform.apply_to_label(0.0, temperature=3999.6) == 3999.6

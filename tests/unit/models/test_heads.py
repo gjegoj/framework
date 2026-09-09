@@ -1,4 +1,4 @@
-"""Built-in heads: linear projection and the identity pass-through."""
+"""Built-in heads: projections over one stream, refusing a pyramid by name."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import pytest
 import torch
 
 from src.core.ports import one_stream
-from src.models import ConvHead, IdentityHead, LinearHead
+from src.models import ConvHead, LinearHead
 
 
 def test_linear_head_projects_to_out_features() -> None:
@@ -21,12 +21,6 @@ def test_conv_head_projects_channels_and_keeps_spatial_dims(kernel: dict[str, in
     head = ConvHead(in_features=16, out_features=3, **kernel)
 
     assert head(torch.zeros(2, 16, 8, 8)).shape == (2, 3, 8, 8)
-
-
-def test_identity_head_passes_the_stream_through() -> None:
-    stream = torch.randn(3, 5)
-
-    assert torch.equal(IdentityHead()(stream), stream)
 
 
 def test_a_single_stream_head_refuses_a_pyramid_by_name() -> None:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -10,7 +11,7 @@ import cv2
 import numpy as np
 import pytest
 
-from src.data.converters.coco import convert
+from src.data.converters.coco import convert, main
 
 
 def coco_export(root: Path, annotations: list[dict[str, Any]] | None = None) -> Path:
@@ -99,3 +100,30 @@ def test_an_annotation_whose_image_the_export_does_not_describe_is_refused(tmp_p
 
     with pytest.raises(ValueError, match="99"):
         convert(export, images=tmp_path / "images", into=tmp_path / "canon")
+
+
+def test_an_annotation_naming_an_unknown_category_is_refused_by_image_and_id(tmp_path: Path) -> None:
+    """A bare ``KeyError: 42`` names neither the image nor the table it is missing from."""
+    export = coco_export(
+        tmp_path, annotations=[{"image_id": 1, "category_id": 42, "bbox": [5.0, 1.0, 10.0, 8.0], "iscrowd": 0}]
+    )
+
+    with pytest.raises(ValueError, match=r"a\.jpg.*42"):
+        convert(export, images=tmp_path / "images", into=tmp_path / "canon")
+
+
+def test_the_command_line_entry_writes_the_file_and_prints_the_report(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``python -m src.data.converters.coco --annotations ... --images ... --into ...`` does what ``convert`` does and says so."""
+    export = coco_export(tmp_path)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["coco", "--annotations", str(export), "--images", str(tmp_path / "images"), "--into", str(tmp_path / "canon")],
+    )
+
+    main()
+
+    assert capsys.readouterr().out.strip() == "2 images, 1 objects; dropped 1 crowd object(s)."
+    assert [path.name for path in (tmp_path / "canon").iterdir()] == ["annotations.jsonl"]

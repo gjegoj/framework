@@ -55,7 +55,8 @@ def test_a_mask_encoder_reads_through_the_cache(tmp_path: Path) -> None:
     """Warmed by ``load`` — the reading half, and the same call the dataset makes."""
     cache = RamCache(max_gib=1.0)
     name = write_mask(tmp_path)
-    encoder = MaskTargetEncoder(classes={0: "a", 1: "b"}, root=tmp_path, cache=cache)
+    encoder = MaskTargetEncoder(classes={0: "a", 1: "b"}, root=tmp_path)
+    encoder.use_cache(cache)
 
     cache.warm([name], encoder.load)
 
@@ -70,7 +71,7 @@ def test_a_mask_encoder_without_a_cache_behaves_as_before(tmp_path: Path) -> Non
 
 
 def test_an_uncached_loader_is_untouched(tmp_path: Path) -> None:
-    """Wrapping is a decision made at assembly; the loader itself knows nothing about it."""
+    """Wrapping is a decision made at build time; the loader itself knows nothing about it."""
     name = write_mask(tmp_path)
     loader = ImageLoader(root=tmp_path, grayscale=True)
 

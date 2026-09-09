@@ -25,7 +25,7 @@ runs a callback's `on_*_batch_start` before the step, which is early enough for 
 grid to say whether the batch about to run is one it will draw:
 
 ```python
-class AwaitsPreview(Protocol):     # core/ports.py
+class AwaitsPreview(Protocol):  # core/ports.py
     @property
     def awaiting_preview(self) -> bool: ...
 ```
@@ -39,7 +39,7 @@ to ask and nothing to save.
 
 A module of your own that does not return a preview draws nothing, and says so
 once, naming what it returned instead. That is the one thing no amount of
-assembly-time checking can catch: only a step can show what a step returns.
+build-time checking can catch: only a step can show what a step returns.
 
 Nothing is drawn during Lightning's sanity check. It runs a validation batch
 before a single optimizer step, and its page would land under the same title and
@@ -64,10 +64,8 @@ callbacks:
     std: "${std}"
 ```
 
-`mean` and `std` default to ImageNet's statistics — the same ones the root config
-normalises by, named once in `core/normalisation.py` so the pair cannot drift
-apart. Pass them anyway, as the group does: the default is a starting point, not
-an assumption, and `"${mean}"` is the same interpolation
+`mean` and `std` have no default here: the page undoes whatever the transforms
+applied, and the one place that knows it is the root. `"${mean}"` is the same interpolation
 `configs/transforms/*.yaml` uses for the very same value, so a run that
 normalises differently changes one number at the root and both sides follow. A
 grid denormalising by numbers the transforms did not use draws a picture that is
@@ -90,9 +88,10 @@ not an epoch later: `num_images` and `every_n_epochs` below 1, a negative
 `batch_index`, a `threshold` outside `[0, 1]`, a `std` of a different length than
 `mean`.
 
-`stages` defaults to `[val]`: validation batches carry no augmentation, so the
-same samples come back epoch after epoch and drift is visible. `batch_index`
-defaults to `0` for the same reason.
+`stages` defaults to every stage; narrow it to `[val]` when the augmented train
+pictures are noise to you — validation batches carry no augmentation, so the same
+samples come back epoch after epoch and drift is visible. `batch_index` defaults
+to `0` for the same reason.
 
 ## What a cell shows
 
@@ -145,7 +144,7 @@ Two controls, and they combine:
 
   One slider per task **and metric**: a task that measures itself two ways gets
   two. The numbers are named the way the framework names them — `iou`, `mae`, the
-  keys `metric_registry` holds and the presets declare — so the page and the
+  keys `metric_registry` holds and the kinds declare — so the page and the
   progress table stop calling one quantity two things.
 
 `n / m shown` under them; and a combination that hides everything replaces the
@@ -161,44 +160,45 @@ task's fields off in the tree above.
 
 ## Which tasks are drawn
 
-An annotator is composed from the task's two axes, the same way
-`build_task_components` composes a task's components: an **objective** reads
-predictions off the class axis, a **topology** turns that reading into labels and
-a verdict.
+Each kind composes a **reader** — how its activated outputs and targets are read —
+with a **drawer** — how a pair of readings becomes labels and a verdict. The
+readers and drawers live in `visualization/annotators.py`; which pair a kind uses
+is stated on the kind, in `src/tasks/kinds.py`.
 
-| | multiclass | binary | multilabel | continuous | metric |
-|---|---|---|---|---|---|
-| global | chips | chips | chips | chips | *nothing to show* |
-| dense | masks | masks | masks | *not yet* | unsupported |
-| multistream / multiview | unsupported | unsupported | unsupported | unsupported | *nothing to show* |
+| Kind | Draws |
+|---|---|
+| `classification`, `binary_classification`, `multilabel_classification`, `regression` | chips |
+| `segmentation`, `binary_segmentation`, `multilabel_segmentation` | masks |
+| `metric_learning`, `contrastive`, `ranking` | *nothing to show* |
+| `detection` | *not yet* |
 
-A task that draws nothing is skipped with one log line naming it **and the
-reason** — metric learning has no per-sample label, a dense regression is a
-heatmap and the IR has no label kind for one yet. New task types arrive before
-their annotators do, and a grid that silently omitted them would look complete.
+A kind that draws nothing says so (`not_drawn`), and the callback skips the task
+with one log line naming it **and the reason** when it is built. New kinds arrive
+before their drawings do, and a grid that silently omitted them would look complete.
 
-## Adding an annotator
+## Adding a reader or a drawer
 
-A new `Objective` member is one class in `annotation_objective_registry`; a new
-`Topology` member is one class in `annotation_topology_registry`. Neither has to
-know about the other.
+A reader is a `Reader` subclass; a drawer is a `Drawer` subclass overriding the
+labeller for each kind of reading it draws and saying nothing about the rest. A
+kind composes the two:
 
 ```python
-@annotation_objective_registry.register(Objective.MY_OBJECTIVE)
-class MyAnnotation(AnnotationObjective):
-    """Reads the class axis; the trailing shape is the topology's business."""
-
+class MyReader(Reader):
     def __init__(self, threshold: float = 0.5) -> None:
         self._threshold = threshold
 
     def read_output(self, scores: np.ndarray) -> Reading: ...
 
     def read_target(self, target: np.ndarray) -> Reading: ...
+
+
+class MyKind(Classification):
+    def reader(self, knobs: DrawingKnobs) -> Reader:
+        return MyReader(threshold=knobs.threshold)
 ```
 
-`threshold` and `ignore_index` are offered to every constructor and reach the
-ones that name them, so a reader declares the knobs it wants and the rest see
-nothing. Both are set on the callback:
+`DrawingKnobs` carries `threshold` and `ignore_index`, both set on the callback and
+handed to every kind, which reads what it needs:
 
 ```yaml
   - name: samples
@@ -208,24 +208,13 @@ nothing. Both are set on the callback:
     std: ${std}
 ```
 
-A topology overrides the labeller for each kind of reading it can draw, and says
-nothing about the rest:
-
-```python
-@annotation_topology_registry.register(OutputTopology.MY_TOPOLOGY)
-class MyAnnotation(AnnotationTopology):
-    def label_classes(self, view, task, truth, predicted) -> None: ...
-    # no label_values: this topology has no label for a field of numbers
-```
-
-`draws` is derived from those overrides, so nothing has to be kept in step: a
-pairing a topology has not written a labeller for is refused when the callback is
-built, with the task and the reason named.
+A pairing a drawer has no labeller for is refused by name the first time it is
+drawn; a kind pairs a reader with a drawer that draws what it produces.
 
 A **new kind of reading** — boxes for detection, say — is one dataclass, one
-member of the `Reading` union, one arm in `annotate`'s `match`, and one defaulted
-method on `AnnotationTopology`. No existing topology changes, and a topology that
-does not draw boxes needs no line about them.
+member of the `Reading` union, one arm in `Drawer.annotate`'s `match`, and one
+defaulted method on `Drawer`. No existing drawer changes, and a drawer that does
+not draw boxes needs no line about them.
 
 ## Adding a kind of label
 
@@ -235,7 +224,7 @@ heatmap, detection boxes) touches four named places:
 1. the entity joins the `Label` union in `entities.py`;
 2. a `LabelRenderer` subclass in `renderers.py`, registered under the entity's
    type — `leaves` names what the palette colours, `render` draws it;
-3. an annotation objective/topology in `annotators.py` produces it;
+3. a reader or a drawer in `annotators.py` produces it, composed by a kind;
 4. the exhaustiveness pin in `test_renderers.py` goes green again.
 
 The renderer registries are keyed by the entity type itself rather than by a
@@ -243,9 +232,9 @@ config name: which renderer runs is decided by what the annotator produced,
 never by a declaration. Same `Registry` mechanism, minus the `{name: ...}`
 sugar.
 
-The tasks a page draws reach the callback from the composition root, as a derived
-value — `build_callbacks` already offers them to every entry. The module is asked
-only for the thing it alone owns, the step it just ran.
+The tasks a page draws are read off the module in `setup` — `TrainingModule`
+publishes them as `tasks`, and a module of your own must too, or the grid says so
+once and draws nothing. The step's preview is the other thing the module owns.
 
 ## Where the page goes
 

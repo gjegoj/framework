@@ -8,10 +8,11 @@ from typing import TYPE_CHECKING, Any
 import albumentations as A
 import numpy as np
 
+from src.core.entities import Sample
 from src.core.taxonomy import Geometry, Modality
 
 if TYPE_CHECKING:
-    from src.core.entities import Sample
+    from src.core.ports import SampleTransform
 
 _PIPELINE_KIND = {Geometry.IMAGE: "image", Geometry.MASK: "mask", Geometry.NONE: "label"}
 """How ``additional_targets`` names each geometry; ``BOXES`` travels as the pipeline's own
@@ -34,12 +35,15 @@ class AlbumentationsTransform:
     target travels as ``(float32 [N, 4] xyxy pixels, list of names)``, split into
     ``bboxes`` and a label field and put back together.
 
+    Which arrays travel, and as what, is bound after construction through ``with_geometry``
+    (the ``GeometryAware`` port, ADR-0004). The constructor takes the three mappings for a
+    transform built by hand — a test, a notebook — and refuses to be rebound once it has.
+
     Parameters:
         transforms (Sequence): Albumentations operations, in order; end with ``ToTensorV2``.
-        inputs (Mapping[str, Geometry | str]): Inputs to carry, each with its geometry —
-            derived at assembly from the loaders, never written by hand.
-        targets (Mapping[str, Geometry | str]): Targets to carry, each with its geometry —
-            derived at assembly from the encoders.
+        inputs (Mapping[str, Geometry | str]): Inputs to carry, each with its geometry;
+            the image alone by default.
+        targets (Mapping[str, Geometry | str]): Targets to carry, each with its geometry.
         auxiliary_inputs (Mapping[str, Geometry | str]): Arrays only the augmentations read.
         label_targets (Sequence[str]): Targets an augmentation may rewrite (a rotation class).
         min_box_visibility (float): Fraction of a box that must survive a crop to be kept.
@@ -59,6 +63,14 @@ class AlbumentationsTransform:
         min_box_area: float = 0.0,
         **compose_options: Any,
     ) -> None:
+        self._declaration: dict[str, Any] = {
+            "transforms": list(transforms),
+            "label_targets": tuple(label_targets),
+            "min_box_visibility": min_box_visibility,
+            "min_box_area": min_box_area,
+            **compose_options,
+        }
+        self._geometry_declared = any(value is not None for value in (inputs, targets, auxiliary_inputs))
         self._inputs = _geometries("inputs", inputs if inputs is not None else {Modality.IMAGE: Geometry.IMAGE})
         self._auxiliary_inputs = _geometries("auxiliary_inputs", auxiliary_inputs or {})
         declared_targets = _geometries("targets", targets or {})
@@ -82,6 +94,29 @@ class AlbumentationsTransform:
             **{"telemetry": False, **compose_options},
         )
 
+    def with_geometry(
+        self,
+        inputs: Mapping[str, Geometry],
+        targets: Mapping[str, Geometry],
+        auxiliary_inputs: Mapping[str, Geometry],
+    ) -> SampleTransform:
+        """The same pipeline, rebuilt over these arrays — the ``GeometryAware`` port.
+
+        Rebuilt rather than patched: ``additional_targets`` and ``bbox_params`` are fixed
+        when albumentations composes, so the honest way to change them is to compose again
+        from the declaration this one was built from. A geometry written by hand is refused
+        rather than overwritten — the pipeline derives the same facts, and two spellings of them
+        could disagree.
+        """
+        if self._geometry_declared:
+            raise ValueError(
+                "AlbumentationsTransform declares 'inputs', 'targets' or 'auxiliary_inputs' by hand, but "
+                "the pipeline derives them from the loaders and encoders. Drop the declaration."
+            )
+        return AlbumentationsTransform(
+            inputs=inputs, targets=targets, auxiliary_inputs=auxiliary_inputs, **self._declaration
+        )
+
     def __call__(self, sample: Sample) -> Sample:
         roles = (
             (self._inputs, sample.inputs),
@@ -90,7 +125,9 @@ class AlbumentationsTransform:
         )
         arguments: dict[str, Any] = {name: values[name] for names, values in roles for name in names}
         if self._boxes_target is not None:
-            arguments[_BBOXES], arguments[_BOX_LABELS] = sample.targets[self._boxes_target]
+            boxes, names = sample.targets[self._boxes_target]
+            _refuse_a_box_outside(self._boxes_target, boxes, sample, self._picture(sample))
+            arguments[_BBOXES], arguments[_BOX_LABELS] = boxes, names
         augmented = self._pipeline(**arguments)
         # Auxiliary inputs are written back too, so a later transform in a chain reads the
         # geometry the image now has; collation never looks at them either way.
@@ -102,11 +139,37 @@ class AlbumentationsTransform:
             sample.targets[self._boxes_target] = (augmented[_BBOXES].astype(np.float32), augmented[_BOX_LABELS])
         return sample
 
+    def _picture(self, sample: Sample) -> tuple[int, int]:
+        """Height and width of the picture the boxes belong to — the first pixel input carried."""
+        height, width = np.asarray(sample.inputs[next(iter(self._inputs))]).shape[:2]
+        return int(height), int(width)
+
+
+def _refuse_a_box_outside(target: str, boxes: Any, sample: Sample, picture: tuple[int, int]) -> None:
+    """A box leaving its image, refused naming the row — the first place the image's size is known.
+
+    The encoder refuses at setup what needs no image; this is the rest. Measured on
+    albumentationsx 2.3.7: left to the pipeline, the box dies inside the first epoch as
+    ``Expected x_max for bbox [0.25 0.25 1.25 0.75 0.] to be in the range [0.0, 1.0]`` —
+    normalised, in a worker, naming neither the row nor the image.
+    """
+    height, width = picture
+    corners = np.asarray(boxes, dtype=np.float32).reshape(-1, 4)
+    outside = (corners[:, 0] < 0) | (corners[:, 1] < 0) | (corners[:, 2] > width) | (corners[:, 3] > height)
+    if not outside.any():
+        return
+    cells = sample.meta.get(Sample.CELLS)
+    where = f" in row {cells}" if cells else ""
+    raise ValueError(
+        f"Target '{target}' holds the box {corners[outside][0].round(2).tolist()} outside its {width}x{height} "
+        f"image{where}. Boxes are pixels of the image as loaded; clip the annotation, as the converters do."
+    )
+
 
 def _geometries(role: str, declared: Mapping[str, Geometry | str]) -> dict[str, Geometry]:
     """Declared kinds as members, refusing an unknown spelling by role and value.
 
-    A mapping reaching this seam from config holds plain strings; one built by assembly
+    A mapping reaching this seam from config holds plain strings; one built by the pipeline
     holds members. Normalising here is what lets both be written the natural way.
     """
     members = set(Geometry)
@@ -122,7 +185,7 @@ def _refuse_a_non_pixel_input(*roles: Mapping[str, Geometry]) -> None:
 
     A ``NONE`` input would be handed to albumentations as a label, and a ``BOXES`` one
     has no image to belong to — both are mistakes worth naming while the experiment is
-    built rather than shapes to guess at every epoch. Assembly filters ``NONE`` columns
+    built rather than shapes to guess at every epoch. The pipeline filters ``NONE`` columns
     out before this seam, so what arrives here arrived by hand.
     """
     for declared in roles:

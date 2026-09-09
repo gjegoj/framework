@@ -10,12 +10,9 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
-import pytest
-import yaml
-from omegaconf import OmegaConf
 
-from src.assembly import assemble, run
-from src.config import load_config
+from src.build import build, run
+from tests.support.configs import experiment_from_yaml
 from tests.support.datasets import write_images, write_table
 
 VOCABULARY = ("sunny", "beach", "people", "night")
@@ -36,7 +33,7 @@ data:
 
 tasks:
   tags:
-    preset: multilabel_classification
+    kind: multilabel_classification
     target: tags
     classes: {classes}
     target_encoder: {{name: multilabel}}
@@ -78,16 +75,11 @@ def write_tagged(root: Path, rows: int = 40) -> None:
     write_table(root, records)
 
 
-@pytest.mark.e2e
 def test_a_multilabel_experiment_trains_and_tests(tmp_path: Path) -> None:
     write_tagged(tmp_path)
-    (tmp_path / "experiment.yaml").write_text(EXPERIMENT.format(root=tmp_path, classes=CLASSES))
+    config = experiment_from_yaml(EXPERIMENT.format(root=tmp_path, classes=CLASSES))
 
-    raw = yaml.safe_load((tmp_path / "experiment.yaml").read_text())
-    resolved = OmegaConf.to_container(OmegaConf.create(raw), resolve=True)
-    config = load_config(resolved)  # type: ignore[arg-type]
-
-    experiment = assemble(config)
+    experiment = build(config)
     run(experiment, config)
 
     assert experiment.trainer.state.finished
@@ -95,16 +87,11 @@ def test_a_multilabel_experiment_trains_and_tests(tmp_path: Path) -> None:
     assert "test/tags/f1" in experiment.trainer.callback_metrics
 
 
-@pytest.mark.e2e
 def test_the_head_is_sized_from_the_declared_vocabulary(tmp_path: Path) -> None:
     """Nobody declares the class count: it follows from the vocabulary the encoder learned."""
     write_tagged(tmp_path)
-    (tmp_path / "experiment.yaml").write_text(EXPERIMENT.format(root=tmp_path, classes=CLASSES))
 
-    raw = yaml.safe_load((tmp_path / "experiment.yaml").read_text())
-    config = load_config(OmegaConf.to_container(OmegaConf.create(raw), resolve=True))  # type: ignore[arg-type]
-
-    experiment = assemble(config)
+    experiment = build(experiment_from_yaml(EXPERIMENT.format(root=tmp_path, classes=CLASSES)))
 
     batch = next(iter(experiment.data.train_dataloader()))
     assert batch.targets["tags"].shape[1] == len(VOCABULARY)

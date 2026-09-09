@@ -3,69 +3,31 @@
 from __future__ import annotations
 
 from functools import partial
-from pathlib import Path
 from typing import Any
 
-import pandas as pd
 import torch
-from torch import Tensor
 from torchmetrics import F1Score
 
-from src.core import DataProfile, Objective, OutputTopology, Stage, Task
-from src.data import (
-    DataSchema,
-    InMemorySource,
-    InputColumn,
-    LabelTargetEncoder,
-    TableDataModule,
-    TargetColumn,
-    random_split,
-)
-from src.losses import CrossEntropyCriterion
+from src.core import Stage
 from src.metrics import WrappedMetricSet
-from src.models import CompositeModel, LinearHead, TaskComponents
-from src.tasks.adapters import as_class_indices
 from src.training import TrainingData, TrainingModule
-from tests.support.fakes import FlattenBackbone
+from tests.support.entities import a_task
+from tests.support.fakes import a_composite
 from tests.support.lightning import quiet_trainer
-
-
-def load_pair(value: Any) -> Tensor:
-    return torch.tensor([float(value), 1.0])
+from tests.support.tables import in_memory_pipeline
 
 
 def test_a_per_class_metric_lands_as_mean_plus_named_leaves(tmp_path: Any) -> None:
     """The preset default is `average: none`; a run must log it, not crash on a vector."""
     per_class = WrappedMetricSet({"f1": F1Score(task="multiclass", num_classes=2, average="none")})
-    task = Task(
-        name="label",
-        output_topology=OutputTopology.GLOBAL,
-        objective=Objective.MULTICLASS,
-        metrics={Stage.TRAIN: per_class},
-        class_names=["cat", "dog"],
+    task = a_task(class_names=["cat", "dog"])
+    module = TrainingModule(
+        model=a_composite(2),
+        tasks=[task],
+        metrics={"label": {Stage.TRAIN: per_class}},
+        optimizer_factory=partial(torch.optim.SGD, lr=0.1),
     )
-    model = CompositeModel(
-        backbone=FlattenBackbone(dim=2),
-        components={
-            "label": TaskComponents(
-                head=LinearHead(2, 2),
-                criterion=CrossEntropyCriterion(),
-                activation=lambda logits: logits,
-                target_adapter=as_class_indices,
-            )
-        },
-    )
-    module = TrainingModule(model=model, tasks=[task], optimizer_factory=partial(torch.optim.SGD, lr=0.1))
-    table = pd.DataFrame({"x": [float(index) for index in range(8)], "label": ["cat", "dog"] * 4})
-    data_module = TableDataModule(
-        source=InMemorySource(table),
-        schema=DataSchema(
-            inputs={"image": InputColumn(column="x", loader=load_pair)},
-            targets={"label": TargetColumn(column="label", encoder=LabelTargetEncoder(classes={0: "cat", 1: "dog"}))},
-        ),
-        splitter=random_split({Stage.TRAIN: 0.5, Stage.VAL: 0.25, Stage.TEST: 0.25}, seed=42),
-    )
-    data_module.setup(DataProfile())
+    data_module, _ = in_memory_pipeline()
     trainer = quiet_trainer(limit_val_batches=0, default_root_dir=tmp_path)
 
     trainer.fit(module, datamodule=TrainingData(data_module, batch_size=2))
@@ -74,43 +36,21 @@ def test_a_per_class_metric_lands_as_mean_plus_named_leaves(tmp_path: Any) -> No
     assert {"train/label/f1/mean", "train/label/f1/cat", "train/label/f1/dog"} <= logged
 
 
-def test_the_training_module_depends_on_core_alone() -> None:
-    """Routing is core policy; a capability import here would be a boundary leak."""
-    import src.training.module
-
-    source = Path(src.training.module.__file__).read_text()
-    assert "from src.metrics" not in source
-
-
 def test_the_module_reports_its_metrics_directions_under_logged_keys() -> None:
     """Consumers (the progress bar) rank values without re-deriving semantics from names."""
     from torchmetrics import MeanAbsoluteError
 
-    from src.core.ports import DeclaresMetricDirections
-    from src.models import LinearHead, TaskComponents
+    from src.training.ports import DeclaresMetricDirections
 
-    task = Task(
-        name="label",
-        output_topology=OutputTopology.GLOBAL,
-        objective=Objective.MULTICLASS,
-        metrics={
-            Stage.TRAIN: WrappedMetricSet({"f1": F1Score(task="multiclass", num_classes=2)}),
-            Stage.VAL: WrappedMetricSet({"mae": MeanAbsoluteError()}),
-        },
-    )
     module = TrainingModule(
-        model=CompositeModel(
-            backbone=FlattenBackbone(dim=2),
-            components={
-                "label": TaskComponents(
-                    head=LinearHead(2, 2),
-                    criterion=CrossEntropyCriterion(),
-                    activation=lambda logits: logits,
-                    target_adapter=as_class_indices,
-                )
-            },
-        ),
-        tasks=[task],
+        model=a_composite(2),
+        tasks=[a_task()],
+        metrics={
+            "label": {
+                Stage.TRAIN: WrappedMetricSet({"f1": F1Score(task="multiclass", num_classes=2)}),
+                Stage.VAL: WrappedMetricSet({"mae": MeanAbsoluteError()}),
+            }
+        },
         optimizer_factory=partial(torch.optim.SGD, lr=0.1),
     )
 

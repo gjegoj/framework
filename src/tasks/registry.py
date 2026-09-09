@@ -7,11 +7,7 @@ from typing import TYPE_CHECKING
 from src.core.registry import Registry
 
 if TYPE_CHECKING:
-    from src.tasks.objectives import TaskObjective
-    from src.tasks.topologies import TaskTopology
+    from src.tasks.kinds import TaskKind
 
-objective_registry: Registry[TaskObjective] = Registry("objective")
-"""Behaviour per ``Objective`` member; METRIC joins with metric learning."""
-
-topology_registry: Registry[TaskTopology] = Registry("topology")
-"""Behaviour per ``OutputTopology`` member — three entries, one per output structure."""
+task_kind_registry: Registry[TaskKind] = Registry("task kind")
+"""The familiar kinds of task by the name config spells them; a kind of your own arrives by ``_target_``."""

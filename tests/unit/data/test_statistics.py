@@ -5,24 +5,17 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
-import pandas as pd
 import pytest
 
-from src.core import DataProfile, Stage
-from src.core.entities import ClassDistribution, ValueDistribution
+from src.core import DatasetFacts, Stage
 from src.data import (
-    DataSchema,
-    InMemorySource,
-    InputColumn,
     LabelTargetEncoder,
     MaskTargetEncoder,
     MultiLabelTargetEncoder,
     ScalarTargetEncoder,
-    TableDataModule,
-    TargetColumn,
-    random_split,
 )
-from src.data.statistics import counted, measured
+from src.data.statistics import ClassDistribution, ValueDistribution, counted, measured
+from tests.support.tables import in_memory_pipeline
 
 
 def test_a_class_the_split_never_produced_is_still_a_row() -> None:
@@ -72,24 +65,20 @@ def test_a_column_holding_no_number_is_not_described() -> None:
 
 
 def test_an_encoder_that_does_not_describe_its_column_says_so_rather_than_vanishing() -> None:
-    """The reference expressed this by omitting the method, and the column disappeared.
-
-    A base-class method returning `None` keeps the task in the report, where the
-    reason can be printed beside its name.
+    """A base-class method returning `None` keeps the task in the report, where the reason can be
+    printed beside its name; an omitted method would make the column disappear.
     """
 
     class Opaque(ScalarTargetEncoder):
         pass
 
     assert Opaque().distribution([1.0]) is not None  # inherited, and it does describe
-    assert MaskTargetEncoder(classes={0: "a", 1: "b"}).distribution.__doc__ is not None
 
 
-def test_segmentation_counts_its_pixels_where_the_reference_dropped_it(tmp_path: Path) -> None:
+def test_segmentation_counts_its_pixels(tmp_path: Path) -> None:
     """Class imbalance in a mask is measured in pixels, and it is the imbalance a loss fights.
 
-    Measured cost: 0.88 ms per mask, so seconds for a whole dataset, once, before
-    the first epoch — the reference called this too expensive and reported nothing.
+    Measured cost: 0.88 ms per mask, so seconds for a whole dataset, once, before the first epoch.
     """
     import cv2
 
@@ -120,20 +109,11 @@ def test_a_mask_beyond_the_declared_classes_is_refused_by_name(tmp_path: Path) -
 
 def test_a_pipeline_reports_its_size_and_its_targets_together() -> None:
     """The first question is how much, the second is what — and one record answers both."""
-    table = pd.DataFrame({"x": [float(index) for index in range(8)], "label": ["cat", "dog"] * 4})
-    module = TableDataModule(
-        source=InMemorySource(table),
-        schema=DataSchema(
-            inputs={"point": InputColumn(column="x", loader=float)},
-            targets={"label": TargetColumn(column="label", encoder=LabelTargetEncoder(classes={0: "cat", 1: "dog"}))},
-        ),
-        splitter=random_split({Stage.TRAIN: 0.5, Stage.VAL: 0.5}, seed=0),
-    )
+    module, _ = in_memory_pipeline(input="point", loader=float)
 
-    module.setup(DataProfile())
     statistics = module.statistics()
 
-    assert statistics.rows == {Stage.TRAIN: 4, Stage.VAL: 4}
+    assert statistics.rows == {Stage.TRAIN: 4, Stage.VAL: 2, Stage.TEST: 2}
     assert set(statistics.targets) == {"label"}
     balance = statistics.targets["label"][Stage.TRAIN]
     assert isinstance(balance, ClassDistribution)
@@ -141,15 +121,14 @@ def test_a_pipeline_reports_its_size_and_its_targets_together() -> None:
 
 
 def test_a_pipeline_that_cannot_describe_its_data_answers_with_nothing() -> None:
-    """A default on the port, not a missing method: every consumer has something to call.
-
-    The reference guarded with `isinstance(datamodule, LitDataModule)`, so a
-    pipeline of someone else's making reported nothing and said nothing either.
+    """A default on the port, not a missing method: every consumer has something to call, so a
+    pipeline of someone else's making is asked the same question and answers with nothing.
     """
-    from src.core.ports import DataModule
+    from src.data.datamodules.base import DataModule
 
     class Vendor(DataModule):
-        def setup(self, profile: DataProfile) -> None: ...
+        def setup(self) -> DatasetFacts:
+            return {}
 
         def dataset(self, stage: Stage) -> object:  # type: ignore[override]
             raise LookupError("none")

@@ -10,7 +10,7 @@ defaults:
 
 tasks:
   label:
-    preset: classification
+    kind: classification
     target: species
     # Optional: omitted, the encoder learns the vocabulary from the train split.
     # Declared, it becomes the source of truth — the data is validated against it at

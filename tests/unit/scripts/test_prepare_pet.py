@@ -81,9 +81,7 @@ def test_a_trimap_becomes_zero_based_class_indices() -> None:
 
 
 def test_the_index_is_read_whole_and_its_header_skipped(tmp_path: Path) -> None:
-    """`list.txt` is the entire dataset; `trainval.txt` is half of it, which is what
-    the reference read without saying so. The file also opens with commented lines.
-    """
+    """`list.txt` is the entire dataset; `trainval.txt` is half of it. The file also opens with commented lines."""
     prepare = script()
     (tmp_path / "list.txt").write_text(
         "#Image CLASS-ID SPECIES BREED ID\n#SPECIES: 1:Cat 2:Dog\nAbyssinian_100 1 1 1\nbeagle_10 10 2 2\n"
@@ -98,8 +96,8 @@ def test_the_index_is_read_whole_and_its_header_skipped(tmp_path: Path) -> None:
 
 
 def test_a_row_whose_files_are_missing_is_counted_not_dropped_in_silence(tmp_path: Path) -> None:
-    """A preparation script whose output cannot be reconciled with its input is one
-    nobody can trust. The reference `continue`d with no count and no reason.
+    """A preparation script whose output cannot be reconciled with its input is one nobody can
+    trust: a dropped row is counted and given a reason.
     """
     prepare, images, trimaps, masks = staged(tmp_path)
     rows = [prepare.Listed(name="ghost_1", species="dog")]

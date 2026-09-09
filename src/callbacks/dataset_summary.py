@@ -19,11 +19,11 @@ import lightning as L
 from rich.table import Table
 
 from src.console import HEADER_STYLE, TITLE_STYLE, console
-from src.core.entities import ClassDistribution, DatasetStatistics, Distribution, ValueDistribution
-from src.core.ports import DataModule
 from src.core.registry import Registry
-from src.core.reporting import Bars, BarsLogger, BoxPlot, BoxPlotLogger
 from src.core.taxonomy import Stage
+from src.data.datamodules.base import DataModule
+from src.data.statistics import Bars, BoxPlot, ClassDistribution, DatasetStatistics, Distribution, ValueDistribution
+from src.loggers.ports import BarsLogger, BoxPlotLogger
 
 log = logging.getLogger(__name__)
 

@@ -8,14 +8,14 @@ head, the loss and the read-back into their distributional forms.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-import pytest
-import yaml
-from omegaconf import OmegaConf
-
-from src.assembly import assemble, run
-from src.config import load_config
+from src.build import build, run
+from tests.support.configs import experiment_from_yaml
 from tests.support.datasets import write_images, write_table
+
+if TYPE_CHECKING:
+    from src.config import ExperimentConfig
 
 BINS = 12
 
@@ -34,7 +34,7 @@ data:
 
 tasks:
   score:
-    preset: regression
+    kind: regression
     target: score
     target_encoder: {{name: gaussian_bins, bins: 12}}
 
@@ -76,40 +76,35 @@ def write_scored(root: Path, rows: int = 24) -> None:
     write_table(root, records)
 
 
-def configure(root: Path) -> object:
+def configure(root: Path) -> ExperimentConfig:
     write_scored(root)
-    (root / "experiment.yaml").write_text(EXPERIMENT.format(root=root))
-    raw = yaml.safe_load((root / "experiment.yaml").read_text())
-    return load_config(OmegaConf.to_container(OmegaConf.create(raw), resolve=True))  # type: ignore[arg-type]
+    return experiment_from_yaml(EXPERIMENT.format(root=root))
 
 
-@pytest.mark.e2e
 def test_a_binned_regression_trains_and_reports_an_ordinary_regression_metric(tmp_path: Path) -> None:
     """Nothing in the task declaration mentions bins: choosing the encoder is the whole change."""
     config = configure(tmp_path)
-    experiment = assemble(config)  # type: ignore[arg-type]
+    experiment = build(config)
 
-    run(experiment, config)  # type: ignore[arg-type]
+    run(experiment, config)
 
     assert experiment.trainer.state.finished
     assert experiment.trainer.callback_metrics["test/score/mae"].ndim == 0
 
 
-@pytest.mark.e2e
 def test_both_loss_terms_are_learned_and_logged_apart(tmp_path: Path) -> None:
     """A total that stops falling says less than seeing which of the two terms did."""
     config = configure(tmp_path)
-    experiment = assemble(config)  # type: ignore[arg-type]
+    experiment = build(config)
 
-    run(experiment, config)  # type: ignore[arg-type]
+    run(experiment, config)
 
     logged = set(experiment.trainer.callback_metrics)
     assert {"test/score/ce", "test/score/expectation"} <= logged
 
 
-@pytest.mark.e2e
 def test_the_encoder_alone_widens_the_target_to_its_bins(tmp_path: Path) -> None:
-    experiment = assemble(configure(tmp_path))  # type: ignore[arg-type]
+    experiment = build(configure(tmp_path))
 
     batch = next(iter(experiment.data.train_dataloader()))
 

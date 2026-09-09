@@ -18,7 +18,8 @@ if TYPE_CHECKING:
 
     from clearml.logger import Logger as ClearMLBackendLogger
 
-    from src.core.reporting import Bars, BoxPlot, Curve, Matrix
+    from src.data.statistics import Bars, BoxPlot
+    from src.metrics.entities import Curve, Matrix
 
 log = logging.getLogger(__name__)
 
@@ -51,7 +52,6 @@ class ClearMLLogger(Logger):
         project_name (str | None): ClearML project; backend default when None.
         task_name (str | None): Run name; backend default when None.
         tags (list[str] | None): Tags on the run; one resolving to an empty interpolation is dropped.
-        architecture (str | None): Offered by assembly, not written in config; joins the tags.
         reuse_last_task_id (bool): A fresh run per fit beats ClearML's own reuse heuristic.
         **kwargs (Any): Forwarded verbatim to ``Task.init``, so any upstream option stays reachable.
     """
@@ -61,17 +61,17 @@ class ClearMLLogger(Logger):
         project_name: str | None = None,
         task_name: str | None = None,
         tags: list[str] | None = None,
-        architecture: str | None = None,
         reuse_last_task_id: bool = False,
         **kwargs: Any,
     ) -> None:
         super().__init__()
         from clearml import Task
 
+        self._tags = _worth_showing(tags or [])
         self._task: Task = Task.init(
             project_name=project_name,
             task_name=task_name,
-            tags=_worth_showing([*(tags or []), architecture]),
+            tags=self._tags,
             reuse_last_task_id=reuse_last_task_id,
             **kwargs,
         )
@@ -80,6 +80,14 @@ class ClearMLLogger(Logger):
     @property
     def name(self) -> str:
         return str(self._task.name)
+
+    @rank_zero_only
+    def tag_run(self, architecture: str | None) -> None:
+        """The ``TagsRuns`` port: the architecture joins the declared tags, once, if it says anything."""
+        new = [tag for tag in _worth_showing([architecture]) if tag not in self._tags]
+        if new:
+            self._tags = [*self._tags, *new]
+            self._task.add_tags(new)
 
     @property
     def version(self) -> str:
@@ -97,7 +105,7 @@ class ClearMLLogger(Logger):
     @rank_zero_only
     def log_metrics(self, metrics: Mapping[str, float], step: int | None = None) -> None:
         for key, value in metrics.items():
-            title, series = log_keys.split_for_tracker(key)
+            title, series = split_for_tracker(key)
             self._backend.report_scalar(title=title, series=series, value=float(value), iteration=step or 0)
 
     @rank_zero_only
@@ -174,7 +182,7 @@ class ClearMLLogger(Logger):
         if curve.series is None:
             raise ValueError(
                 f"Curve '{title}' arrived without series names; a curve reaches a backend "
-                "completed — the router (core.reporting) fills them from the task's classes."
+                "completed — the router (loggers.report) fills them from the task's classes."
             )
         for series, x, y in zip(curve.series, curve.x, curve.y, strict=True):
             scatter = np.column_stack([x.detach().cpu().float().numpy(), y.detach().cpu().float().numpy()])
@@ -215,3 +223,20 @@ class ClearMLLogger(Logger):
             self._task.flush()
         except Exception as error:  # noqa: BLE001 — telemetry must not take the run's results with it
             log.warning("ClearML flush failed during finalize: %s", error)
+
+
+def split_for_tracker(key: str) -> tuple[str, str]:
+    """A key as ClearML's ``(title, series)`` — one graph per title, one line per series.
+
+    - ``train/label/ce`` → ``("label/ce", "train")``: stages of one number share a graph.
+    - ``val/label/f1/cat`` → ``("val/label/f1", "cat")``: a per-class family compares its
+      classes on one graph, at the cost of train and val means sitting apart.
+    - ``lr/backbone`` → ``("lr", "backbone")``: no stage, so the leaves are the comparison.
+    - ``epoch`` → ``("epoch", "value")``.
+    """
+    parsed = log_keys.parse(key)
+    if parsed.stage is None:
+        return (key, "value") if len(parsed.path) == 1 else (parsed.family, parsed.leaf)
+    if parsed.per_class:
+        return parsed.family, parsed.leaf
+    return parsed.rest, str(parsed.stage)

@@ -71,7 +71,7 @@ def test_the_config_defaults_an_auxiliary_input_to_the_mask_loader() -> None:
                 "inputs": {"image": {"column": "image_path"}},
                 "auxiliary_inputs": {"lesion": {"column": "mask_path"}},
             },
-            "tasks": {"warmth": {"preset": "regression", "target": "warmth"}},
+            "tasks": {"warmth": {"kind": "regression", "target": "warmth"}},
             "model": {"name": "timm", "model_name": "resnet18"},
         }
     )
@@ -80,7 +80,7 @@ def test_the_config_defaults_an_auxiliary_input_to_the_mask_loader() -> None:
 
 
 def test_the_mask_loader_reads_one_plane_and_says_it_is_spatial(tmp_path: Path) -> None:
-    """``spatial`` is the class-level marker assembly derives mask treatment from;
+    """``spatial`` is the class-level marker ``build_stage_transforms`` derives mask treatment from;
     ``grayscale`` alone cannot carry it — an X-ray is a grayscale *photograph*."""
     import cv2
 
@@ -92,11 +92,12 @@ def test_the_mask_loader_reads_one_plane_and_says_it_is_spatial(tmp_path: Path) 
     assert MaskLoader.geometry is Geometry.MASK
 
 
-def test_assembly_offers_the_auxiliary_input_names_to_the_pipeline() -> None:
+def test_build_stage_transforms_offers_the_auxiliary_input_names_to_the_pipeline() -> None:
     """Never written by hand in config: derived from data.auxiliary_inputs, the same
     channel spatial_targets already travels."""
-    from src.assembly.data import build_data_schema, build_transforms
     from src.core.taxonomy import Stage
+    from src.data.build import build_stage_transforms
+    from tests.support.configs import schema_of
 
     config = ExperimentConfig.model_validate(
         {
@@ -105,7 +106,7 @@ def test_assembly_offers_the_auxiliary_input_names_to_the_pipeline() -> None:
                 "inputs": {"image": {"column": "image_path"}},
                 "auxiliary_inputs": {"lesion": {"column": "mask_path"}},
             },
-            "tasks": {"warmth": {"preset": "regression", "target": "warmth"}},
+            "tasks": {"warmth": {"kind": "regression", "target": "warmth"}},
             "model": {"name": "timm", "model_name": "resnet18"},
             "transforms": {
                 "train": {
@@ -116,7 +117,7 @@ def test_assembly_offers_the_auxiliary_input_names_to_the_pipeline() -> None:
         }
     )
 
-    built = build_transforms(config, build_data_schema(config))[Stage.TRAIN]
+    built = build_stage_transforms(config.transforms, schema_of(config))[Stage.TRAIN]
     sample = built(
         Sample(
             inputs={"image": np.zeros((4, 4, 3), np.uint8)},
@@ -137,9 +138,10 @@ def test_a_masked_augmentation_feeds_a_binned_target_and_the_mask_dies_with_the_
 
     import cv2
 
-    from src.assembly.data import build_data_schema, build_transforms
     from src.core.taxonomy import Stage
+    from src.data.build import build_stage_transforms
     from src.data.sources import CsvSource
+    from tests.support.configs import schema_of
 
     cv2.imwrite(str(tmp_path / "0.png"), np.full((32, 32, 3), 128, np.uint8))
     mask = np.zeros((32, 32), np.uint8)
@@ -161,7 +163,7 @@ def test_a_masked_augmentation_feeds_a_binned_target_and_the_mask_dies_with_the_
             },
             "tasks": {
                 "warmth": {
-                    "preset": "regression",
+                    "kind": "regression",
                     "target": "warmth",
                     "target_encoder": {"name": "gaussian_bins", "bins": 8, "low": 3000, "high": 4600},
                 }
@@ -184,11 +186,11 @@ def test_a_masked_augmentation_feeds_a_binned_target_and_the_mask_dies_with_the_
             },
         }
     )
-    schema = build_data_schema(config)
+    schema = schema_of(config)
     dataset = TableDataset(
         CsvSource(paths=[str(tmp_path / "rows.csv")]).read(),
         schema,
-        build_transforms(config, schema)[Stage.TRAIN],
+        build_stage_transforms(config.transforms, schema)[Stage.TRAIN],
     )
 
     batch = collate_samples([dataset[0]])
@@ -211,7 +213,8 @@ def test_a_masked_augmentation_feeds_a_binned_target_and_the_mask_dies_with_the_
 def test_a_mask_loaded_model_input_is_marked_spatial_in_the_schema() -> None:
     """The marker is read off the raw loader BEFORE the cache wraps it: ``cached()``
     returns a bare closure, so probing the wrapped loader would silently read False."""
-    from src.assembly.data import build_cache, build_data_schema
+    from src.data.build import build_cache
+    from tests.support.configs import schema_of
 
     config = ExperimentConfig.model_validate(
         {
@@ -223,12 +226,12 @@ def test_a_mask_loaded_model_input_is_marked_spatial_in_the_schema() -> None:
                 },
                 "cache": {"name": "ram", "max_gib": 1},
             },
-            "tasks": {"warmth": {"preset": "regression", "target": "warmth"}},
+            "tasks": {"warmth": {"kind": "regression", "target": "warmth"}},
             "model": {"name": "timm", "model_name": "resnet18"},
         }
     )
 
-    schema = build_data_schema(config, build_cache(config))
+    schema = schema_of(config, build_cache(config.data.cache))
 
     assert schema.inputs["lesion_mask"].geometry is Geometry.MASK
     assert schema.inputs["image"].geometry is Geometry.IMAGE
@@ -249,9 +252,10 @@ def test_a_mask_model_input_reaches_the_batch_uncorrupted(tmp_path: Path) -> Non
 
     import cv2
 
-    from src.assembly.data import build_data_schema, build_transforms
     from src.core.taxonomy import Stage
+    from src.data.build import build_stage_transforms
     from src.data.sources import CsvSource
+    from tests.support.configs import schema_of
 
     cv2.imwrite(str(tmp_path / "0.png"), np.full((16, 16, 3), 128, np.uint8))
     cv2.imwrite(str(tmp_path / "0_mask.png"), (np.eye(16) > 0).astype(np.uint8))
@@ -271,7 +275,7 @@ def test_a_mask_model_input_reaches_the_batch_uncorrupted(tmp_path: Path) -> Non
                     "lesion_mask": {"column": "mask_path", "loader": {"name": "mask"}},
                 },
             },
-            "tasks": {"warmth": {"preset": "regression", "target": "warmth"}},
+            "tasks": {"warmth": {"kind": "regression", "target": "warmth"}},
             "model": {"name": "timm", "model_name": "resnet18"},
             "transforms": {
                 "train": {
@@ -284,11 +288,11 @@ def test_a_mask_model_input_reaches_the_batch_uncorrupted(tmp_path: Path) -> Non
             },
         }
     )
-    schema = build_data_schema(config)
+    schema = schema_of(config)
     dataset = TableDataset(
         CsvSource(paths=[str(tmp_path / "rows.csv")]).read(),
         schema,
-        build_transforms(config, schema)[Stage.TRAIN],
+        build_stage_transforms(config.transforms, schema)[Stage.TRAIN],
     )
 
     batch = collate_samples([dataset[0]])

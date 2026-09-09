@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import numpy as np
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 type Kind = Literal["gt", "pred"]
 
@@ -65,7 +68,7 @@ class Classifications:
 class Regression:
     """One regressed number — FiftyOne's shape exactly.
 
-    Scalar because that is what this framework produces: ``ContinuousObjective`` collapses
+    Scalar because that is what this framework produces: ``Regression``'s activation collapses
     a head's output to one value. It carries no error field: the direction of a miss is
     readable from the two chips, and how far belongs to the verdict, which can be filtered on.
     """
@@ -122,6 +125,20 @@ class Verdict:
 
     correct: bool | None = None
     scores: tuple[Score, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class TaskView:
+    """One task as a page needs to know it: the name its fields are keyed under, and its class space.
+
+    Named apart from ``Task`` so this package stays a leaf (ADR-0003). A drawer keys a
+    field, spells a class index as a word and names a task in a refusal; a task's kind,
+    weight, criterion and facts are none of its business, and importing them for two
+    attributes would put an arrow back up. The caller holding a ``Task`` builds one.
+    """
+
+    name: str
+    class_names: Sequence[str] | None = None
 
 
 @dataclass(slots=True)

@@ -19,7 +19,7 @@ type Adapters = Callable[[nn.Module], None]
 """Injects trainable adapters into a model in place and freezes what they stand in for.
 
 Returns nothing on purpose: the model is rewritten, and a returned module would
-suggest the original survived it. Not to be read as ``core.ports.TargetAdapter``,
+suggest the original survived it. Not to be read as ``models.composite.TargetAdapter``,
 which shapes one batch's target — this adapts a model's parameters.
 """
 

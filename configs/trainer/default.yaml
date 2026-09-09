@@ -1,6 +1,6 @@
 max_epochs: "${epochs}"
 # Where Lightning puts what nothing else claims. Written here rather than filled
-# in by assembly, for the reason every other path is: the run directory is a
+# in by the composition root, for the reason every other path is: the run directory is a
 # config key, so config is what reaches it.
 default_root_dir: ${run.directory}
 accelerator: auto

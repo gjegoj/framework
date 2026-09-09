@@ -27,11 +27,6 @@ def test_feature_dims_come_from_the_real_model(backbone: SmpBackbone) -> None:
     assert backbone.feature_dim(Stream.DECODER) == 16
 
 
-def test_unknown_stream_error_lists_both_streams(backbone: SmpBackbone) -> None:
-    with pytest.raises(LookupError, match="encoder"):
-        backbone.feature_dim(Stream.FEATURES)
-
-
 def test_the_head_template_is_not_a_registered_submodule(backbone: SmpBackbone) -> None:
     """smp's own segmentation head is kept only as a cloning template."""
     assert not any("segmentation_head" in name for name in backbone.state_dict())

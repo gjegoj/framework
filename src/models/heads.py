@@ -1,4 +1,4 @@
-"""Built-in head_registry for the composite family."""
+"""Built-in heads for the composite family: what a task's features become its outputs through."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import torch
 from torch import Tensor, nn
 from torch.nn import functional
 
-from src.core.ports import Head, one_stream
+from src.core.ports import one_stream
 from src.models.registry import head_registry
 
 if TYPE_CHECKING:
@@ -16,8 +16,8 @@ if TYPE_CHECKING:
 
 
 @head_registry.register("linear")
-class LinearHead(Head):
-    """A single linear projection — the default head for GLOBAL topologies."""
+class LinearHead(nn.Module):
+    """A single linear projection — the default head for a global output."""
 
     def __init__(self, in_features: int, out_features: int) -> None:
         super().__init__()
@@ -29,17 +29,8 @@ class LinearHead(Head):
         return cast("Tensor", self._projection(features))
 
 
-@head_registry.register("identity")
-class IdentityHead(Head):
-    """Passes the stream through — for backbones that already emit task outputs."""
-
-    def forward(self, features: Tensor | Mapping[str, Tensor]) -> Tensor:
-        features = one_stream(features, head=type(self).__name__)
-        return features
-
-
 @head_registry.register("conv")
-class ConvHead(Head):
+class ConvHead(nn.Module):
     """Channel projection over spatial features — the default DENSE head.
 
     Maps ``[B, in, H, W]`` to ``[B, out, H, W]``; wider kernels keep the
@@ -57,7 +48,7 @@ class ConvHead(Head):
 
 
 @head_registry.register("cosine")
-class CosineHead(Head):
+class CosineHead(nn.Module):
     """Cosine similarities to learnable class prototypes — the angular-margin classifier.
 
     Normalizes the feature and every prototype, so each logit is ``cos(θ)``. The margin
@@ -85,32 +76,14 @@ class CosineHead(Head):
         return functional.linear(functional.normalize(embedding, dim=1), functional.normalize(self.prototypes, dim=1))
 
 
-class WrappedHead(Head):
-    """Any torch module as a ``Head`` — how backbone-native heads enter the framework.
-
-    The same convention as ``WrappedCriterion``: the wrapped module is a
-    registered submodule, so its parameters train and checkpoint with the
-    model. Not registry-listed — the builder creates it around whatever
-    ``Backbone.native_head`` returns.
-    """
-
-    def __init__(self, module: nn.Module) -> None:
-        super().__init__()
-        self._module = module
-
-    def forward(self, features: Tensor | Mapping[str, Tensor]) -> Tensor:
-        features = one_stream(features, head=type(self).__name__)
-        return cast("Tensor", self._module(features))
-
-
-class ExpandedHead(Head):
+class ExpandedHead(nn.Module):
     """A classifier whose class space grew: trained ``base`` rows beside a fresh ``novel`` block.
 
     Two modules instead of one wider matrix on purpose: ``requires_grad``
     lives on whole tensors, and a gradient mask would still let AdamW's
     decoupled decay move the "frozen" rows. With the boundary as a submodule,
     the freeze callback, the optimizer, and EMA all work unchanged
-    (``modules: [...heads.<task>.base]``). The submodule names are that
+    (``modules: [heads.<task>.base]``). The submodule names are that
     contract. Not registry-listed — the timm adapter assembles it around a
     transplanted checkpoint classifier.
     """
@@ -126,7 +99,7 @@ class ExpandedHead(Head):
         return torch.cat((self.base(features), self.novel(features)), dim=1)
 
 
-class DetectHead(Head):
+class DetectHead(nn.Module):
     """A detection head over a pyramid: the levels in, one raw tensor out.
 
     Wraps ultralytics' ``Detect`` without importing it — the backbone that owns the graph
@@ -147,8 +120,8 @@ class DetectHead(Head):
         self.streams = streams
         self.strides = strides
         self.reg_max = reg_max
-        vendor: Any = detect  # nn.Module types every attribute as Tensor | Module; nc is an int
-        self.num_classes = int(vendor.nc)
+        module: Any = detect  # nn.Module types every attribute as Tensor | Module; nc is an int
+        self.num_classes = int(module.nc)
 
     def forward(self, features: Tensor | Mapping[str, Tensor]) -> Tensor:
         if isinstance(features, Tensor):

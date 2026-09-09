@@ -11,36 +11,22 @@ from functools import partial
 from pathlib import Path
 from typing import Any
 
-import pandas as pd
-import pytest
 import torch
 import yaml
 from torch import Tensor
 
-from src.assembly.metrics import build_metric_sets
 from src.config import MetricConfig
 from src.core import (
     Backbone,
-    DataProfile,
     Features,
-    Objective,
-    OutputTopology,
-    Stage,
-    Task,
 )
-from src.data import (
-    DataSchema,
-    InMemorySource,
-    InputColumn,
-    LabelTargetEncoder,
-    TableDataModule,
-    TargetColumn,
-    random_split,
-)
+from src.metrics.build import build_metric_sets
 from src.models import CompositeModel
-from src.tasks import build_task_components
+from src.tasks import Classification
 from src.training import TrainingData, TrainingModule
+from tests.support.entities import a_task
 from tests.support.lightning import quiet_trainer
+from tests.support.tables import in_memory_pipeline
 
 
 class PointBackbone(Backbone):
@@ -56,7 +42,6 @@ def load_point(value: Any) -> Tensor:
     return torch.tensor([number, -number])
 
 
-@pytest.mark.e2e
 def shipped_monitors() -> set[str]:
     """Every metric key the shipped callbacks group asks a callback to watch."""
     declared = yaml.safe_load(Path("configs/callbacks/default.yaml").read_text(encoding="utf-8"))
@@ -64,41 +49,18 @@ def shipped_monitors() -> set[str]:
 
 
 def test_one_epoch_of_training_runs_through_every_layer() -> None:
-    table = pd.DataFrame(
-        {
-            "x": [float(index) for index in range(16)],
-            "label": ["cat", "dog"] * 8,
-        }
-    )
-    data_module = TableDataModule(
-        source=InMemorySource(table),
-        schema=DataSchema(
-            inputs={"point": InputColumn(column="x", loader=load_point)},
-            targets={"label": TargetColumn(column="label", encoder=LabelTargetEncoder(classes={0: "cat", 1: "dog"}))},
-        ),
-        splitter=random_split({Stage.TRAIN: 0.5, Stage.VAL: 0.25, Stage.TEST: 0.25}, seed=42),
-    )
-    profile = DataProfile()
-    data_module.setup(profile)
+    data_module, facts = in_memory_pipeline(16, input="point", loader=load_point)
 
-    task = Task(
-        name="label",
-        output_topology=OutputTopology.GLOBAL,
-        objective=Objective.MULTICLASS,
-        metrics=build_metric_sets(
-            Objective.MULTICLASS,
-            facts=profile.facts("label"),
-            metrics={"accuracy": MetricConfig(name="accuracy")},
-        ),
+    task = a_task(facts=facts["label"])
+    metrics = build_metric_sets(
+        Classification(), facts=facts["label"], metrics={"accuracy": MetricConfig(name="accuracy")}
     )
     backbone = PointBackbone()
-    model = CompositeModel(
-        backbone=backbone,
-        components={task.name: build_task_components(task, profile, backbone)},
-    )
+    model = CompositeModel(backbone=backbone, components={task.name: task.kind.components(task, backbone)})
     module = TrainingModule(
         model=model,
         tasks=[task],
+        metrics={task.name: metrics},
         optimizer_factory=partial(torch.optim.SGD, lr=0.05),
     )
     data = TrainingData(data_module, batch_size=4)

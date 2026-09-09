@@ -9,38 +9,36 @@ Two levels, and the upper replaces the lower — declared metrics always win:
 
 1. Declared `metrics:` — always wins, and replaces rather than merges, so a
    set can be narrowed.
-2. The *kind of task*: the preset carries the metrics customary for it —
+2. The *kind of task*: the kind carries the metrics customary for it —
    `classification` brings `f1`/`precision`/`recall` (per class) plus a
    `confusion_matrix`, `regression` brings `mae`, `segmentation` adds `iou`
    to that set; metric-learning kinds bring none.
 
-The preset's word is injected when the config loads, so the loaded experiment
-shows the metrics it will run. A task declared with explicit
-`topology`/`objective` claims no kind and therefore no default metrics: it
-declares its own metrics, or runs without.
+The kind's word is filled in when the run is built, not when the config
+loads: config reads only `core`, and the kinds live in `tasks/`. A loaded
+experiment therefore shows `metrics: null` where nothing was declared, and the
+run says what it filled in — `Task 'label': metrics from kind 'classification':
+f1, precision, recall, confusion_matrix`.
 
-The presets themselves — which point on the axes each one names, and what else a
-task declares — are in [tasks and presets](tasks.md).
+The kinds themselves — what each one is, and what else a task declares — are in
+[tasks and kinds](tasks.md).
 
-## Adding your own preset
+## Adding your own kind
 
-The table lives in `src.config.presets`, and registration is open —
-a package registers its kind before `load_config` runs, one line, metrics
-included:
+A kind is a class, and its default metrics are one attribute on it:
 
 ```python
-from src.config.presets import MetricConfig, TaskPreset, task_preset_registry
-from src.core import Objective, OutputTopology
+from src.tasks import Regression
 
-@task_preset_registry.register_instance("depth")
-class Depth(TaskPreset):
-    output_topology: OutputTopology = OutputTopology.DENSE
-    objective: Objective = Objective.CONTINUOUS
-    metrics: dict[str, MetricConfig] | None = {"mae": MetricConfig(name="mae")}
+
+class Depth(Regression):
+    default_metrics = {"mae": {"name": "mae"}, "rmse": {"_target_": "torchmetrics.MeanSquaredError", "squared": False}}
 ```
 
-The class is built and validated into the metric grammar the moment it is
-decorated, so a malformed default fails at import, not an hour into training.
+Each entry goes through the same metric grammar as a hand-written declaration when
+the run is built, so a malformed default fails before any data is read, not an
+hour into training. See [a kind of task](extending.md#a-kind-of-task) for the rest
+a kind can state.
 
 ## One rule
 
@@ -52,7 +50,7 @@ is exactly one way to read every entry:
 ```yaml
 tasks:
   label:
-    preset: classification
+    kind: classification
     target: label
     metrics:
       accuracy: {name: accuracy}
@@ -140,10 +138,13 @@ The run then logs `val/label/top1` and `val/label/top5` side by side.
 
 ## Sizing comes from the data, and only where it fits
 
-The objective offers its facts — the torchmetrics `task` mode, `num_classes` /
+The kind knows its facts — the torchmetrics `task` mode, `num_classes` /
 `num_labels` from the fitted vocabulary — and a metric receives the ones it
-names. Nothing is forced, so a metric that compares plain numbers stands
-beside one that ranks classes without being handed arguments it would refuse:
+names in its signature (the one place facts are matched by name, kept for
+torchmetrics' constructors). Nothing is forced, so a metric that compares plain
+numbers stands beside one that ranks classes without being handed arguments it
+would refuse; and none of them is written in config, where a copy could only
+disagree — `num_classes: 7` on a metric is refused by name:
 
 ```yaml
     metrics:
@@ -157,11 +158,11 @@ Registry names: `accuracy`, `f1`, `precision`, `recall`, `iou`, `mae`, `mse`,
 ## Any metric by import path
 
 The registry is a convenience, not a gate. Anything with a torchmetrics-style
-`update`/`compute` is reachable, and it too is offered the facts it names:
+`update`/`compute` is reachable, and it too receives the facts it names:
 
 ```yaml
     metrics:
-      calibration: {_target_: torchmetrics.CalibrationError, task: multiclass, n_bins: 10}
+      calibration: {_target_: torchmetrics.CalibrationError, n_bins: 10}   # task and num_classes arrive
       rmse: {_target_: torchmetrics.MeanSquaredError, squared: false}
 ```
 
@@ -169,4 +170,4 @@ The registry is a convenience, not a gate. Anything with a torchmetrics-style
 
 An entry that does not say which metric it is — or says it twice, with both a
 `name` and a `_target_` — is refused when the config loads. An unknown
-registry name is refused at assembly, listing the known ones.
+registry name is refused at build time, listing the known ones.

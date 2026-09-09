@@ -1,4 +1,4 @@
-.PHONY: help install pre-commit clean test test-unit typecheck check test-run
+.PHONY: help install pre-commit clean test test-gate typecheck check test-run
 
 PET_TABLE := data/pet/data.csv
 
@@ -26,8 +26,8 @@ clean: ## Clean cache and temporary files
 test: ## Run all tests
 	uv run pytest tests/ -v
 
-test-unit: ## Run unit tests only (tests/unit — the pre-commit gate)
-	uv run pytest tests/unit -v -m "not slow"
+test-gate: ## The pre-commit gate: the whole suite but the tests that need a model hub
+	uv run pytest tests -v -m "not slow"
 
 typecheck: ## Run mypy static analysis
 	uv run mypy src tests

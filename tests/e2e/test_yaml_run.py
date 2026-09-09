@@ -1,4 +1,4 @@
-"""The acceptance test for assembly: a YAML file on disk trains for one epoch.
+"""The acceptance test for the composition root: a YAML file on disk trains for one epoch.
 
 This is the first time the framework runs the way users will run it — the CLI
 does nothing this test does not do, beyond letting Hydra compose the mapping.
@@ -11,12 +11,9 @@ from pathlib import Path
 from typing import cast
 
 import pandas as pd
-import pytest
-import yaml
-from omegaconf import OmegaConf
 
-from src.assembly import Experiment, assemble, run
-from src.config import load_config
+from src.build import Experiment, build, run
+from tests.support.configs import experiment_from_yaml
 from tests.support.datasets import write_dataset
 
 ONE_SOURCE = """data:
@@ -70,7 +67,7 @@ image_size: [16, 16]
 {data}
 tasks:
   label:
-    preset: classification
+    kind: classification
     target: label
     classes: {{0: cat, 1: dog}}
     metrics: {{accuracy: {{name: accuracy}}}}
@@ -107,35 +104,23 @@ def written(root: Path, rows: int = 8) -> pd.DataFrame:
 
 
 def run_experiment(root: Path, data: str) -> Experiment:
-    (root / "experiment.yaml").write_text(EXPERIMENT.format(root=root, data=data.format(root=root)))
+    config = experiment_from_yaml(EXPERIMENT.format(root=root, data=data.format(root=root)))
 
-    raw = yaml.safe_load((root / "experiment.yaml").read_text())
-    resolved = OmegaConf.to_container(OmegaConf.create(raw), resolve=True)
-    config = load_config(resolved)  # type: ignore[arg-type]
-
-    experiment = assemble(config)
+    experiment = build(config)
     run(experiment, config)
     return experiment
 
 
-@pytest.mark.e2e
 def test_a_yaml_experiment_trains_and_tests(tmp_path: Path) -> None:
     written(tmp_path)
-    (tmp_path / "experiment.yaml").write_text(EXPERIMENT.format(root=tmp_path, data=ONE_SOURCE.format(root=tmp_path)))
 
-    raw = yaml.safe_load((tmp_path / "experiment.yaml").read_text())
-    resolved = OmegaConf.to_container(OmegaConf.create(raw), resolve=True)
-    config = load_config(resolved)  # type: ignore[arg-type]
-
-    experiment = assemble(config)
-    run(experiment, config)
+    experiment = run_experiment(tmp_path, ONE_SOURCE)
 
     assert experiment.trainer.state.finished
     assert "test/label/accuracy" in experiment.trainer.callback_metrics
     assert experiment.trainer.lr_scheduler_configs != []
 
 
-@pytest.mark.e2e
 def test_a_yaml_experiment_runs_on_sources_that_are_already_divided(tmp_path: Path) -> None:
     """A partition decided upstream reaches the run intact — no fractions, no re-cutting."""
     frame = written(tmp_path)
@@ -155,7 +140,6 @@ def test_a_yaml_experiment_runs_on_sources_that_are_already_divided(tmp_path: Pa
     assert [len(cast("Sized", dataset)) for dataset in datasets] == [4, 2, 2]
 
 
-@pytest.mark.e2e
 def test_two_sources_each_with_its_own_transforms_train_together(tmp_path: Path) -> None:
     """Datasets that need different handling are combined without leaving the one pipeline."""
     frame = written(tmp_path, rows=16)
@@ -174,7 +158,6 @@ def test_two_sources_each_with_its_own_transforms_train_together(tmp_path: Path)
     assert sum(len(cast("Sized", dataset)) for dataset in datasets) == 16
 
 
-@pytest.mark.e2e
 def test_a_cached_experiment_trains_and_tests(tmp_path: Path) -> None:
     """A cache is an optimisation: the run has to behave exactly as it would without one."""
     written(tmp_path)

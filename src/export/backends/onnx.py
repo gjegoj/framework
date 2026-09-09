@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 import torch
 
@@ -73,6 +73,8 @@ class OnnxExporter(Exporter):
         **kwargs: Forwarded verbatim to ``torch.onnx.export``.
     """
 
+    suffix: ClassVar[str] = "onnx"
+
     def __init__(
         self,
         opset_version: int = 18,
@@ -92,7 +94,7 @@ class OnnxExporter(Exporter):
             )
         # Imported here, not at module scope: this package sits on the import path of every run,
         # the ONNX stack costs 460 ms (measured), and a stale environment must still fail while
-        # the experiment is assembled rather than an hour into training.
+        # the experiment is built rather than an hour into training.
         import onnx  # noqa: F401
         import onnxruntime  # noqa: F401
         import onnxscript  # noqa: F401
@@ -102,8 +104,7 @@ class OnnxExporter(Exporter):
         self._options = kwargs
 
     def export(self, model: DeployableModel, example: tuple[Tensor, ...], destination: Path) -> Path:
-        path = destination.parent / f"{destination.name}.onnx"
-        path.parent.mkdir(parents=True, exist_ok=True)
+        path = self.artifact_path(destination)
         batch = torch.export.Dim(BATCH_AXIS)
         with torch.no_grad():
             torch.onnx.export(
@@ -120,7 +121,7 @@ class OnnxExporter(Exporter):
             )
         if self.simplify:
             _simplify_in_place(path)
-        _prove_the_opset(path, self.opset_version)
+        _refuse_a_wrong_opset(path, self.opset_version)
         return path
 
     def load(self, path: Path) -> _OnnxSession:
@@ -135,7 +136,7 @@ class OnnxExporter(Exporter):
         return [role] if len(declared) == 1 else [f"{role}_{index}" for index in range(len(declared))]
 
 
-def _prove_the_opset(path: Path, requested: int) -> None:
+def _refuse_a_wrong_opset(path: Path, requested: int) -> None:
     """Refuse an artifact written at an operator set nobody asked for.
 
     Measured: below 18 the exporter falls back to 18 and attempts a down-conversion

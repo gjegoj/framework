@@ -9,38 +9,19 @@ import lightning as L
 import torch
 from torch.utils.data import DataLoader
 
-from src.core import Batch, Objective, OutputTopology, Task
-from src.core.entities import StepPreview, preview_of
-from src.losses import CrossEntropyCriterion
-from src.models import CompositeModel, LinearHead, TaskComponents
-from src.tasks.adapters import as_class_indices
+from src.core import Batch
 from src.training import TrainingModule
-from tests.support.fakes import Batches, FlattenBackbone
+from src.training.ports import StepPreview, preview_of
+from tests.support.entities import a_task
+from tests.support.fakes import Batches, a_composite
 from tests.support.lightning import quiet_trainer
 from tests.support.narrowing import tensor
 
 
 def module() -> TrainingModule:
-    task = Task(
-        name="label",
-        output_topology=OutputTopology.GLOBAL,
-        objective=Objective.MULTICLASS,
-        metrics={},
-        class_names=["cat", "dog"],
-    )
     return TrainingModule(
-        model=CompositeModel(
-            backbone=FlattenBackbone(dim=12),
-            components={
-                "label": TaskComponents(
-                    head=LinearHead(12, 2),
-                    criterion=CrossEntropyCriterion(),
-                    activation=lambda logits: torch.softmax(logits, dim=1),
-                    target_adapter=as_class_indices,
-                )
-            },
-        ),
-        tasks=[task],
+        model=a_composite(12),
+        tasks=[a_task(class_names=["cat", "dog"])],
         optimizer_factory=partial(torch.optim.SGD, lr=0.1),
     )
 

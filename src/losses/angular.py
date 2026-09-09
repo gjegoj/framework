@@ -17,6 +17,8 @@ from src.losses.registry import criterion_registry
 if TYPE_CHECKING:
     from torch import Tensor
 
+    from src.core.entities import TaskFacts
+
 COSINE_TOLERANCE = 1.001
 """How far past [-1, 1] a logit may sit before it is clearly not a cosine."""
 
@@ -78,7 +80,7 @@ class ArcFaceCriterion(WrappedCriterion):
 
         tasks:
           person:
-            preset: classification
+            kind: classification
             target: person_id
             head: {name: cosine}
             loss: {name: arcface, margin: 0.3}
@@ -100,7 +102,7 @@ class ProxyAngularCriterion(Criterion):
     The prototypes are part of the *criterion*, so they train and checkpoint with the run
     but never enter the exported model — an embedder (faces, retrieval) wants this; a
     classifier that needs them at inference uses a ``cosine`` head with ``arcface``.
-    ``num_classes`` and ``embedding_dim`` are offered by assembly, never written in config.
+    ``num_classes`` and ``embedding_dim`` come from the task's facts through ``sized``, never from config.
 
     Parameters:
         num_classes (int): One prototype per class of the fitted vocabulary.
@@ -109,6 +111,19 @@ class ProxyAngularCriterion(Criterion):
             builds the default ArcFace from the remaining arguments.
         **kwargs: Forwarded verbatim to the default :class:`ArcFaceCriterion`.
     """
+
+    @classmethod
+    def sized(cls, facts: TaskFacts, embedding_dim: int, **params: Any) -> ProxyAngularCriterion:
+        """Built from what the data revealed — the vocabulary sizes the prototypes, the stream their width."""
+        for fact in ("num_classes", "embedding_dim"):
+            if fact in params:
+                raise ValueError(f"arcface_proxy takes '{fact}' from the data, not from config; drop it from the loss.")
+        if facts.num_classes is None:
+            raise LookupError(
+                "arcface_proxy needs num_classes, and the task's facts carry none: "
+                "give the task a target encoder that reads a vocabulary (label), or declare its classes."
+            )
+        return cls(num_classes=facts.num_classes, embedding_dim=embedding_dim, **params)
 
     def __init__(self, num_classes: int, embedding_dim: int, inner: Criterion | None = None, **kwargs: Any) -> None:
         super().__init__()

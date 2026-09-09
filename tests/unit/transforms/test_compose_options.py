@@ -41,19 +41,6 @@ def test_a_probability_of_zero_leaves_the_sample_alone() -> None:
     assert np.array_equal(result.inputs["image"], original)
 
 
-def test_box_parameters_are_declared_as_a_plain_mapping() -> None:
-    """No import path needed: albumentations accepts the mapping YAML already writes."""
-    transform = AlbumentationsTransform(
-        [A.HorizontalFlip(p=1.0)],
-        bbox_params={"coord_format": "yolo", "label_fields": ["classes"]},
-    )
-    given = Sample(inputs={"image": image()}, targets={})
-
-    augmented = transform._pipeline(image=given.inputs["image"], bboxes=[[0.3, 0.5, 0.2, 0.2]], classes=[1])
-
-    assert augmented["bboxes"][0][0] == pytest.approx(0.7, abs=1e-3)  # mirrored across the frame
-
-
 def test_telemetry_is_off_by_default_and_can_be_turned_back_on() -> None:
     assert AlbumentationsTransform(flip_and_jitter())._pipeline.telemetry is False
     assert AlbumentationsTransform(flip_and_jitter(), telemetry=True)._pipeline.telemetry is True

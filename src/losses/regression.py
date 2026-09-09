@@ -9,11 +9,15 @@ from torch import nn
 
 from src.core.entities import Loss
 from src.core.ports import Criterion
-from src.losses.base import WrappedCriterion
+from src.losses.base import WrappedCriterion, without_channel
 from src.losses.registry import criterion_registry
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from torch import Tensor
+
+    from src.core.entities import TaskFacts
 
 
 class _RegressionCriterion(WrappedCriterion):
@@ -26,9 +30,7 @@ class _RegressionCriterion(WrappedCriterion):
 
     @override
     def _prepare(self, logits: Tensor, target: Tensor) -> tuple[Tensor, Tensor]:
-        if logits.dim() == target.dim() + 1:
-            logits = logits.squeeze(1)  # The channel dim: [B, 1] and [B, 1, H, W] alike.
-        return logits, target
+        return without_channel(logits, target), target
 
 
 @criterion_registry.register("mse")
@@ -104,22 +106,35 @@ class ExpectationCriterion(Criterion):
     an ordinary regression criterion. The companion of cross-entropy for binned targets:
     cross-entropy saturates once a prediction stops overlapping the target, this keeps a
     signal proportional to the distance; alone, any distribution with the right mean
-    satisfies it. ``class_values`` comes from the encoder that laid out the bins, via
-    assembly. The term logs as ``expectation`` whatever ``distance`` compares the numbers::
+    satisfies it. ``class_values`` comes from the encoder that laid out the bins, through
+    the task's facts. The term logs as ``expectation`` whatever ``distance`` compares the numbers::
 
         loss:
           - {name: cross_entropy}
           - {name: expectation, weight: 0.5, distance: {_target_: src.losses.HuberCriterion, delta: 0.1}}
 
     Parameters:
-        class_values (list[float]): The number each class position stands for.
+        class_values (Sequence[float]): The number each class position stands for.
         distance (Criterion | None): How the two numbers are compared; ``None`` builds ``mae``.
         **kwargs: Forwarded verbatim to the default ``mae``.
     """
 
     part_name: ClassVar[str] = "expectation"
 
-    def __init__(self, class_values: list[float], distance: Criterion | None = None, **kwargs: Any) -> None:
+    @classmethod
+    def sized(cls, facts: TaskFacts, embedding_dim: int, **params: Any) -> ExpectationCriterion:
+        """Built from the bins the encoder laid out; the stream width is not this term's business."""
+        if "class_values" in params:
+            raise ValueError(
+                "expectation takes 'class_values' from the encoder that laid out the bins; drop it from the loss."
+            )
+        if facts.class_values is None:
+            raise LookupError(
+                "expectation needs class_values: it belongs on a target encoded as bins (gaussian_bins, linear_bins)."
+            )
+        return cls(class_values=facts.class_values, **params)
+
+    def __init__(self, class_values: Sequence[float], distance: Criterion | None = None, **kwargs: Any) -> None:
         super().__init__()
         if distance is not None and kwargs:
             raise ValueError(

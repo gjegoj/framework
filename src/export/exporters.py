@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Callable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -34,9 +34,23 @@ class Exporter(ABC):
         rtol (float): Relative output error tolerated against the source model.
     """
 
+    suffix: ClassVar[str]
+    """The extension the format writes its artifact under, declared by each backend."""
+
     def __init__(self, atol: float = 1e-4, rtol: float = 1e-3) -> None:
         self.atol = atol
         self.rtol = rtol
+
+    def artifact_path(self, destination: Path) -> Path:
+        """Where the artifact goes: ``destination`` under this format's suffix, its directory made.
+
+        Appended rather than ``with_suffix``, because a destination whose name carries a dot
+        (``model.v2``) would lose it. Built here so the formats cannot drift on it — each had
+        its own copy, and only one carried the reason.
+        """
+        path = destination.parent / f"{destination.name}.{self.suffix}"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return path
 
     @abstractmethod
     def export(self, model: DeployableModel, example: tuple[Tensor, ...], destination: Path) -> Path:

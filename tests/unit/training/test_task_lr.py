@@ -7,17 +7,19 @@ from functools import partial
 
 import pytest
 import torch
+from torch import nn
 
-from src.assembly.tasks import build_tasks
 from src.config import load_config
-from src.core import DataProfile, Objective, OutputTopology, TargetFacts, Task
-from src.losses import CrossEntropyCriterion, ProxyAngularCriterion
-from src.models import CompositeModel, IdentityHead, LinearHead, TaskComponents
-from src.tasks.activations import identity, softmax_probabilities
+from src.losses import ProxyAngularCriterion
+from src.models import CompositeModel, TaskComponents
+from src.tasks import MetricLearning, Task
+from src.tasks.activations import identity
 from src.tasks.adapters import as_class_indices
 from src.training import OptimizerFactory, TrainingModule
 from src.training.module import SHARED_GROUP
-from tests.support.fakes import FlattenBackbone, LearningBackbone
+from tests.support.configs import tasks_of
+from tests.support.entities import a_task, dataset_facts
+from tests.support.fakes import FlattenBackbone, LearningBackbone, a_composite
 
 BASE_LR = 1.0e-3
 FAST_LR = 1.0e-2
@@ -25,21 +27,14 @@ FEATURES = 12
 
 
 def task(name: str, lr: float | None = None) -> Task:
-    return Task(name=name, output_topology=OutputTopology.GLOBAL, objective=Objective.MULTICLASS, metrics={}, lr=lr)
+    return a_task(name=name, lr=lr)
 
 
 def module(tasks: list[Task], factory: OptimizerFactory | None = None) -> TrainingModule:
-    components = {
-        one.name: TaskComponents(
-            head=LinearHead(FEATURES, 3),
-            criterion=CrossEntropyCriterion(),
-            activation=softmax_probabilities,
-            target_adapter=as_class_indices,
-        )
-        for one in tasks
-    }
     return TrainingModule(
-        model=CompositeModel(backbone=LearningBackbone(dim=FEATURES), components=components),
+        model=a_composite(
+            FEATURES, classes=3, tasks=tuple(one.name for one in tasks), backbone=LearningBackbone(dim=FEATURES)
+        ),
         tasks=tasks,
         optimizer_factory=factory or partial(torch.optim.SGD, lr=BASE_LR),
     )
@@ -69,16 +64,14 @@ def test_the_shared_group_follows_the_optimizer_default() -> None:
 
 def test_criterion_parameters_learn_at_their_tasks_rate() -> None:
     """A proxy's prototypes are the task's own state, like its head — not backbone."""
-    metric_task = Task(
-        name="person", output_topology=OutputTopology.GLOBAL, objective=Objective.METRIC, metrics={}, lr=FAST_LR
-    )
+    metric_task = a_task(name="person", kind=MetricLearning(), lr=FAST_LR)
     proxy = ProxyAngularCriterion(num_classes=3, embedding_dim=FEATURES)
     built = TrainingModule(
         model=CompositeModel(
             backbone=FlattenBackbone(dim=FEATURES),
             components={
                 "person": TaskComponents(
-                    head=IdentityHead(),
+                    head=nn.Identity(),
                     criterion=proxy,
                     activation=identity,
                     target_adapter=as_class_indices,
@@ -151,8 +144,11 @@ def test_every_parameter_is_assigned_exactly_once() -> None:
 
 def test_a_rate_for_a_task_without_own_parameters_is_refused() -> None:
     """A silently ignored lr is worse than none: the run would train at the wrong pace."""
-    built = module([task("label")])
-    built._tasks.append(task("ghost", lr=FAST_LR))
+    built = TrainingModule(
+        model=a_composite(FEATURES, classes=3, tasks=("label",), backbone=LearningBackbone(dim=FEATURES)),
+        tasks=[task("label"), task("ghost", lr=FAST_LR)],  # the model composes nothing under 'ghost'
+        optimizer_factory=partial(torch.optim.SGD, lr=BASE_LR),
+    )
 
     with pytest.raises(ValueError, match="ghost"):
         built.configure_optimizers()
@@ -167,15 +163,12 @@ def test_the_declared_rate_travels_from_yaml_to_the_task() -> None:
                 "inputs": {"image": {"column": "image"}},
             },
             "tasks": {
-                "label": {"preset": "classification", "target": "label", "classes": {0: "cat", 1: "dog"}, "lr": FAST_LR}
+                "label": {"kind": "classification", "target": "label", "classes": {0: "cat", 1: "dog"}, "lr": FAST_LR}
             },
             "model": {"name": "timm", "model_name": "resnet18"},
         }
     )
-    profile = DataProfile()
-    profile.record("label", TargetFacts(num_classes=3))
-
-    tasks, _ = build_tasks(config, profile, FlattenBackbone(dim=FEATURES))
+    tasks, _ = tasks_of(config, dataset_facts(label=3), FlattenBackbone(dim=FEATURES))
 
     assert tasks[0].lr == FAST_LR
 

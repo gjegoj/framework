@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import torch
 
-from src.core import AdaptedTarget
 from src.losses import MeanSquaredErrorCriterion
 from src.models import LinearHead, TaskComponents
+from src.models.composite import AdaptedTarget
 from src.tasks.activations import (
     sigmoid_probabilities,
     softmax_probabilities,

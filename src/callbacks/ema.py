@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any, override
 
 from lightning.pytorch.callbacks import EMAWeightAveraging, ModelCheckpoint
 
-from src.callbacks.moment import at_step
+from src.callbacks.moment import at_step, declared_moment, step_at
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -38,11 +38,9 @@ class EmaWeights(EMAWeightAveraging):
     def __init__(self, decay: float = 0.999, after: float = 0.0, **kwargs: Any) -> None:
         if not 0.0 < decay < 1.0:
             raise ValueError(f"EmaWeights decay must be in (0, 1), got {decay}.")
-        if not 0.0 <= after < 1.0:
-            raise ValueError(f"EmaWeights after must be a share of the run in [0, 1), got {after}.")
         super().__init__(decay=decay, **kwargs)
         self._decay = decay  # the parent folds it into avg_fn and keeps nothing to log
-        self._after = after
+        self._after = declared_moment(after, owner="EmaWeights", knob="after", role="start")
 
     @override
     def setup(self, trainer: L.Trainer, pl_module: L.LightningModule, stage: str) -> None:
@@ -63,7 +61,7 @@ class EmaWeights(EMAWeightAveraging):
                 "live weights while the metric it was chosen by came from the averaged ones. "
                 "Use ema_checkpoint instead, or set save_weights_only: false."
             )
-        self.update_starting_at_step = int(self._after * trainer.estimated_stepping_batches)
+        self.update_starting_at_step = step_at(self._after, trainer)
         log.info(
             "Averaging weights with decay %s, from %s.",
             self._decay,

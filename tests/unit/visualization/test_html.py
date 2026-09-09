@@ -57,7 +57,7 @@ def test_every_overlay_has_a_sidebar_row_with_the_same_key() -> None:
 
 
 def test_a_task_named_with_an_underscore_renders_whole() -> None:
-    """Structural field keys: the reference re-split glued strings and scrambled such tasks."""
+    """Structural field keys: re-splitting a glued string scrambles a task named with an underscore."""
     assert 'data-key="my_task::gt::ok"' in rendered()
 
 
@@ -210,10 +210,9 @@ def test_a_score_that_is_not_a_number_leaves_the_rest_of_the_page_working() -> N
 def test_a_class_keeps_its_colour_when_the_page_shows_a_different_set() -> None:
     """A palette walks the hue circle in class order, so its seed must not be the page.
 
-    Measured before the fix: `cat` was green on a two-class page and blue once a
-    third class appeared, and `dog` went blue to red. Two epochs of one run then
-    disagreed about what a class looks like — while a fixed `batch_index` exists
-    precisely so the two pages can be compared.
+    Measured: seeded by the page, `cat` was green on a two-class page and blue once a third class appeared —
+    two epochs of one run disagreeing about what a class looks like, while a fixed `batch_index` exists so
+    the two pages can be compared.
     """
     vocabulary = {"label": ["bird", "cat", "dog"]}
 
@@ -419,11 +418,10 @@ def _contrast_on_white(colour: str) -> float:
 
 
 def test_the_frame_takes_the_pictures_own_shape_so_overlays_land_on_it() -> None:
-    """A square cell cropped the picture and stretched its masks; they disagreed.
+    """A square cell crops the picture and stretches its masks, and the two disagree.
 
-    Measured before the fix: a 256x128 input showed columns 64..192 while its mask
-    stretched over all 256, so a mask on the left quarter was drawn over the middle.
-    Every future overlay — a box, a keypoint — inherits whichever this is.
+    Measured: a 256x128 input showed columns 64..192 while its mask stretched over all 256, so a mask on
+    the left quarter was drawn over the middle. Every future overlay — a box, a keypoint — inherits this.
     """
     page = rendered()
 

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from src.models.backbones.checkpoints.loading import load_arrived_weights
+from src.models.backbones.checkpoints.loading import load_checkpoint_weights
 from src.models.backbones.checkpoints.smp import (
     SMP_HEAD_PREFIXES,
     replace_last_projection,
@@ -13,7 +13,7 @@ from src.models.backbones.checkpoints.timm import classifier_prefixes, transplan
 __all__ = [
     "SMP_HEAD_PREFIXES",
     "classifier_prefixes",
-    "load_arrived_weights",
+    "load_checkpoint_weights",
     "replace_last_projection",
     "transplanted_classifier",
     "transplanted_segmentation_head",

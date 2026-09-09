@@ -6,42 +6,21 @@ import logging
 from typing import Any, override
 
 import cv2
-import pandas as pd
 import pytest
-import torch
-from torch import Tensor
 from torch.utils.data import RandomSampler, SequentialSampler
 
-from src.core import Batch, DataProfile, Stage
-from src.core.ports import DataModule
+from src.core import Batch, DatasetFacts, Stage
 from src.data import (
-    DataSchema,
-    InMemorySource,
-    InputColumn,
-    LabelTargetEncoder,
     TableDataModule,
-    TargetColumn,
-    random_split,
+    single_threaded_cv2,
 )
+from src.data.datamodules.base import DataModule
 from src.training import TrainingData
-from src.training.data import single_threaded_cv2
-
-
-def load_point(value: Any) -> Tensor:
-    return torch.tensor([float(value), 1.0])
+from tests.support.tables import in_memory_pipeline
 
 
 def make_data_module() -> TableDataModule:
-    table = pd.DataFrame({"x": [float(index) for index in range(8)], "label": ["cat", "dog"] * 4})
-    module = TableDataModule(
-        source=InMemorySource(table),
-        schema=DataSchema(
-            inputs={"point": InputColumn(column="x", loader=load_point)},
-            targets={"label": TargetColumn(column="label", encoder=LabelTargetEncoder(classes={0: "cat", 1: "dog"}))},
-        ),
-        splitter=random_split({Stage.TRAIN: 0.5, Stage.VAL: 0.25, Stage.TEST: 0.25}, seed=42),
-    )
-    module.setup(DataProfile())
+    module, _ = in_memory_pipeline(input="point")
     return module
 
 
@@ -52,7 +31,8 @@ class TrainAndValOnly(DataModule):
         self._complete = complete
 
     @override
-    def setup(self, profile: DataProfile) -> None: ...
+    def setup(self) -> DatasetFacts:
+        return {}
 
     @override
     def dataset(self, stage: Stage) -> Any:

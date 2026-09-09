@@ -2,21 +2,22 @@
 
 from __future__ import annotations
 
+import copy
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any, override
 
 from torchvision.transforms import v2
 
 from src.core.entities import Batch, require_tensor
-from src.core.taxonomy import Modality, Objective, OutputTopology
-from src.transforms.batch.labels import as_soft, class_counts
+from src.core.taxonomy import Modality, OutputTopology
+from src.transforms.batch.ports import refuse_unservable, unbound
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
 
     from torch import Tensor
 
-    from src.core.entities import DataProfile, Task
+    from src.tasks import Task
 
 PAIRED_WITH = 1
 """How far a sample is from the one it mixes with.
@@ -32,45 +33,44 @@ class LabelMix(ABC):
 
     Every task's label is rewritten from the *same* draw, because the image every task
     shares changed. Only global tasks are served: a blended image has no coherent per-pixel
-    target, and metric learning's losses break on soft labels — refused here, not an hour
-    in. The draw and geometry are torchvision's (``make_params``, ``transform``); only the
-    label mixing is ours, because torchvision's assumes one head.
+    target, and metric learning's losses break on soft labels — refused when the tasks are
+    bound (``for_tasks``), before the first batch, not an hour in. The draw and geometry
+    are torchvision's (``make_params``, ``transform``); only the label mixing is ours,
+    because torchvision's assumes one head.
 
     Parameters:
-        tasks (Sequence[Task]): Every task whose label must be rewritten.
-        profile (DataProfile): Where the class counts come from.
         alpha (float): Beta parameter; larger values mix more evenly.
         input_name (str): Which input holds the image.
     """
 
-    def __init__(
-        self,
-        tasks: Sequence[Task],
-        profile: DataProfile,
-        alpha: float = 1.0,
-        input_name: str = Modality.IMAGE,
-    ) -> None:
+    def __init__(self, alpha: float = 1.0, input_name: str = Modality.IMAGE) -> None:
         if alpha <= 0:
             raise ValueError(f"{type(self).__name__} needs a positive alpha, got {alpha}.")
-        refused = [
-            task.name
-            for task in tasks
-            # No input-axis clause: the legality map guarantees a non-SINGLE GLOBAL
-            # task is METRIC, so the METRIC test already excludes stacked inputs.
-            if task.output_topology is not OutputTopology.GLOBAL or task.objective is Objective.METRIC
-        ]
-        if refused:
-            raise ValueError(
-                f"{type(self).__name__} cannot rewrite the targets of {', '.join(refused)}: a mixed "
-                f"image has no coherent per-pixel target, and soft labels break metric learning. "
-                f"Drop the transform, or the task it cannot serve."
-            )
-        self._classes = class_counts(tasks, profile)
+        self._tasks: dict[str, Task] | None = None
         self._input_name = input_name
         self._mixer = self._build_mixer(alpha)
 
+    def for_tasks(self, tasks: Sequence[Task]) -> Callable[[Batch], Batch]:
+        """A copy bound to these tasks — the ``BatchTransform`` port.
+
+        A copy rather than a rebinding in place, so the declared transform stays what
+        config said and the unbound refusal below stays honest for it. Each task knows how
+        its own target softens and carries the facts that takes.
+        """
+        refuse_unservable(
+            self,
+            tasks,
+            {OutputTopology.GLOBAL},
+            "a mixed image has no coherent per-pixel target, and soft labels break metric learning.",
+        )
+        bound = copy.copy(self)
+        bound._tasks = {task.name: task for task in tasks}
+        return bound
+
     def __call__(self, batch: Batch) -> Batch:
         """Return a new batch; the one given is never written into."""
+        if self._tasks is None:
+            raise unbound(self)
         image = batch.inputs[self._input_name]
         # ``labels: None`` is what keeps ``transform`` from taking the image for a label;
         # it compares by identity, so any value the image is not will do.
@@ -86,13 +86,12 @@ class LabelMix(ABC):
                 **batch.targets,
                 **{
                     name: self._mix_label(
-                        as_soft(
-                            require_tensor(batch.targets[name], task=name, wanted_by="a batch transform"),
-                            self._classes[name],
+                        task.kind.soften(
+                            require_tensor(batch.targets[name], task=name, wanted_by="a batch transform"), task.facts
                         ),
                         weight,
                     )
-                    for name in self._classes
+                    for name, task in self._tasks.items()
                 },
             },
             meta=batch.meta,

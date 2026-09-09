@@ -7,8 +7,8 @@ from typing import TYPE_CHECKING, Any, ClassVar
 import torch
 from torchmetrics import ROC, ConfusionMatrix, PrecisionRecallCurve
 
-from src.core.reporting import Curve, Matrix
-from src.metrics.adapter import WrappedMetric
+from src.metrics.adapters import WrappedMetric
+from src.metrics.entities import Curve, Matrix
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -21,10 +21,11 @@ _MULTILABEL = "multilabel"
 
 
 class ClassificationArtifactMetric(WrappedMetric):
-    """A torchmetrics classification metric, sized by the facts its objective offers.
+    """A torchmetrics classification metric, sized by the facts its kind offers.
 
     The facts are *named* in this signature rather than swept into ``**kwargs``, because
-    assembly offers derived values to whatever names them, and ``**kwargs`` names nothing.
+    a metric receives them by signature (``fill_signature``, ADR-0004), and ``**kwargs``
+    names nothing.
     All three are handed on: each wrapped class dispatches on ``task`` and ignores the
     count that does not apply. Subclasses say which torchmetrics class does the arithmetic
     (``inner_type``) and what its value means (``compute``).

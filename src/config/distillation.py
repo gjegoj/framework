@@ -13,7 +13,7 @@ class TeacherConfig(BaseModel):
 
     Its heads are derived from the student's tasks, so the two models' logits match by
     construction. The field is ``backbone`` and not ``model``: a teacher can only be a
-    backbone, because distillation compares per-task logits a vendor family does not expose.
+    backbone, because distillation compares per-task logits only a composed model exposes.
     """
 
     model_config = ConfigDict(extra="forbid")

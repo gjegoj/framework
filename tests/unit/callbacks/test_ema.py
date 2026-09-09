@@ -14,10 +14,10 @@ from torch.utils.data import DataLoader, TensorDataset
 
 from src.callbacks import EmaModelCheckpoint, EmaWeights
 from src.callbacks.registry import callback_registry
+from tests.support.lightning import quiet_trainer
 
 STEPS_PER_EPOCH = 2
 INITIAL = 0.0
-from tests.support.lightning import quiet_trainer
 
 
 class Recorder(L.LightningModule):
@@ -231,3 +231,12 @@ def test_the_refusal_points_at_the_checkpoint_that_works(tmp_path: Path) -> None
 
 def test_both_are_reachable_from_config_by_name() -> None:
     assert isinstance(callback_registry.create("ema_checkpoint", save_weights_only=True), EmaModelCheckpoint)
+
+
+def test_a_whole_number_after_is_the_epoch_the_averaging_starts_at() -> None:
+    """The same grammar as every other moment: ``after: 2`` is the first step of epoch 2."""
+    ema = EmaWeights(decay=0.9, after=2)
+
+    fit(ema, epochs=3)
+
+    assert ema.update_starting_at_step == 2 * STEPS_PER_EPOCH

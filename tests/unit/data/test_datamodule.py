@@ -1,4 +1,4 @@
-"""``TableDataModule`` orchestration: source → split → fit encoders → profile → datasets."""
+"""``TableDataModule`` orchestration: source → split → fit encoders → facts → datasets."""
 
 from __future__ import annotations
 
@@ -6,16 +6,17 @@ import pandas as pd
 import pytest
 import torch
 
-from src.core import DataModule, DataProfile, Sample, Stage
+from src.core import Sample, Stage
 from src.data import (
     DataSchema,
-    InMemorySource,
+    DeclaredSource,
     InputColumn,
     LabelTargetEncoder,
     TableDataModule,
     TargetColumn,
     random_split,
 )
+from src.data.datamodules.base import DataModule
 from tests.support.tables import load_zeros
 
 
@@ -36,7 +37,7 @@ def make_module(transform_train: bool = False) -> TableDataModule:
         return sample
 
     return TableDataModule(
-        source=InMemorySource(table),
+        sources=[DeclaredSource(table)],
         schema=schema,
         splitter=random_split({Stage.TRAIN: 0.5, Stage.VAL: 0.25, Stage.TEST: 0.25}, seed=42),
         transforms={Stage.TRAIN: brighten} if transform_train else None,
@@ -47,19 +48,17 @@ def test_table_data_module_implements_the_data_module_contract() -> None:
     assert isinstance(make_module(), DataModule)
 
 
-def test_setup_profiles_the_data() -> None:
+def test_setup_returns_the_facts_the_encoders_learned() -> None:
     module = make_module()
-    profile = DataProfile()
+    facts = module.setup()
 
-    module.setup(profile)
-
-    assert profile.facts("label").num_classes == 2
-    assert profile.facts("label").class_names == ["cat", "dog"]
+    assert facts["label"].num_classes == 2
+    assert facts["label"].class_names == ("cat", "dog")
 
 
 def test_setup_builds_a_dataset_per_stage() -> None:
     module = make_module()
-    module.setup(DataProfile())
+    module.setup()
 
     sizes = {stage: len(module.dataset(stage)) for stage in Stage}
 
@@ -74,7 +73,7 @@ def test_dataset_requires_setup_first() -> None:
 
 def test_stage_transform_applies_only_to_its_stage() -> None:
     module = make_module(transform_train=True)
-    module.setup(DataProfile())
+    module.setup()
 
     train_image = module.dataset(Stage.TRAIN)[0].inputs["image"]
     val_image = module.dataset(Stage.VAL)[0].inputs["image"]
@@ -85,7 +84,7 @@ def test_stage_transform_applies_only_to_its_stage() -> None:
 
 def test_datasets_produce_raw_targets_for_transforms_and_collation() -> None:
     module = make_module()
-    module.setup(DataProfile())
+    module.setup()
 
     sample = module.dataset(Stage.TRAIN)[0]
 
@@ -106,7 +105,7 @@ def test_one_source_with_nothing_to_divide_it_is_refused() -> None:
     )
 
     with pytest.raises(ValueError, match="data.split"):
-        TableDataModule(source=InMemorySource(table), schema=schema, splitter=None)
+        TableDataModule(sources=[DeclaredSource(table)], schema=schema, splitter=None)
 
 
 def test_per_stage_sources_beside_a_split_are_refused() -> None:
@@ -121,7 +120,7 @@ def test_per_stage_sources_beside_a_split_are_refused() -> None:
 
     with pytest.raises(ValueError, match="already divided"):
         TableDataModule(
-            source={Stage.TRAIN: InMemorySource(table)},
+            sources=[DeclaredSource(table, stage=Stage.TRAIN)],
             schema=schema,
             splitter=random_split({Stage.TRAIN: 1.0}, seed=0),
         )

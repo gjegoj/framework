@@ -11,7 +11,7 @@ model:
 ```
 
 Heads are never configured here — they derive from tasks and size themselves
-from the profiled data facts.
+from the task's facts.
 
 ## Detection on a composed backbone
 
@@ -21,74 +21,43 @@ the pyramid `p3`, `p4`, `p5` (strides 8/16/32) and `features` — P5 pooled to `
 so a whole-image task sits beside the boxes on one backbone (`streams: features`).
 A `detection` task reads the pyramid the backbone declares — three levels for `yolov8n`,
 four for `yolov8n-p2`, named by stride — and the framework has no detection head of its
-own, so the backbone's `Detect` is rebuilt per task at the profile's class count
-(`native_head` is the default there, not a knob). The head returns one raw tensor
+own, so the backbone's `Detect` is rebuilt per task at the task's class count
+(`head: native` is the default there, not a knob). The head returns one raw tensor
 `[B, 4·reg_max + nc, A]` in every mode; decoding is a separate step.
 
-Every yaml ultralytics ships whose head is `Detect` is a config string (v8, 11, 12);
-`v10Detect` and RT-DETR are refused by name until their own head adapters land.
+Every yaml ultralytics ships whose head is the one-to-many `Detect` is a config string
+(v8, 11, 12); `v10Detect`, RT-DETR and the end-to-end `Detect` of yolo26 (`end2end: True`,
+`reg_max: 1`) are refused by name until their own head adapters land.
 Weights never come with the name: `checkpoint_path: runs/yolov8n.pt` grafts an
 ultralytics `.pt` — the body strictly, the head's box branch always, its class branch
 when the class count matches — and says what it transplanted. The file is a pickled
 module, read with `weights_only=False`: only a path you wrote is ever unpickled.
 
 Until stage 3 of the detection roadmap a composed detection model builds but has no
-criterion; a run declaring one is refused before any data is read, naming the stage.
+criterion; a run declaring one builds the model and is refused before training, naming
+the stage.
 
-## Vendor families
+## A model that arrives whole
 
 Everything above composes: this framework wraps a backbone, builds the heads, declares
-the criteria. A **vendor family** arrives whole instead — its head, its loss and its
-decoding are one design, and the framework drives the loop around them rather than into
-them. Detection is the first:
+the criteria. A model may instead arrive whole — its head, its loss and its decoding one
+design of its own — and it is reached like any component:
 
 ```yaml
 model:
-  name: yolo                # found in `vendor_model_registry`, so this is a vendor family
-  model_name: yolov8n.yaml  # an ultralytics architecture, or a .pt weights path
-  mosaic: 0.0               # forwarded verbatim to ultralytics' own configuration
-  box: 7.5
+  _target_: my_pkg.MyDetector   # a `Model`: step() and predict() are its own
+  num_classes: 3                # what it needs, it declares — nothing composes it
 ```
 
-That one name decides the model **and** the data pipeline, so the two cannot disagree
-about what kind of run this is: `data.source` becomes a YOLO `data.yaml` naming its own
-stages, `data.inputs` is empty, and there is no `split`. The class count is never written
-down — the descriptor declares it, the profile records it, and the head is rebuilt at that
-width, the same derived channel every head is sized through. A `.pt` file has the layers
-that fit grafted onto that head, which is what ultralytics' own trainer does when
-fine-tuning.
+`build_model` takes a built `Model` as it is; a `Backbone` is what gets heads composed
+onto it, and anything else is refused naming both. The run around it is unchanged: the
+table pipeline feeds it, the tasks' kinds judge it with their metrics, its `Loss.parts`
+log under `{stage}/{task}/{part}`, checkpoints and export work through the same ports.
 
-`model_name` also decides *which* network: measured, `yolov8n.yaml` builds a detector,
-`-seg` a segmentation model and `-pose` a pose model, so this one key covers them all
-without the config learning a second word.
-
-→ [Object detection](detection.md) is the whole run: the descriptor, the `Instances`
-currency, the loss parts, mAP, and the list of sections such a family refuses.
-
-Everything the constructor does not name is the vendor's own configuration — the loss
-gains and the augmentation knobs alike — and reaches both the model and the dataset. One
-namespace, because that is how ultralytics keeps them; splitting them across two of our
-sections would mean maintaining a table of which key belongs where, and that table would
-drift with every release.
-
-**What such a run refuses, at assembly, by name:**
-
-| Section | Why |
-|---|---|
-| `transforms` | the family augments through its own box-aware pipeline; ours is not. Put `mosaic`, `hsv_h`, `degrees` in the model section |
-| `export` | its output is not the per-task logits a graph is traced from |
-| `adapters` | adapters reparameterize a backbone this framework composed |
-| `distillation` | it compares per-task logits, which a vendor family does not expose |
-| a `batch_transform` callback | it blends targets, and these are objects rather than tensors |
-| a second task | the head is built for one; another would train nothing and report nothing |
-| `head`, `loss`, `target_encoder` on the task | its assigner, loss and decoding are one design |
-
-A per-task `lr` is refused too, by the mechanism that already exists for it: the family
-exposes no per-task parameters, so a declared rate has nothing to move.
-
-Failing here is the point. A section silently ignored is worse than a run that dies: it
-reports numbers for a recipe nobody ran, and the difference surfaces only when someone
-tries to reproduce it.
+**What such a run refuses, at build time, by name:** `adapters` (they reparameterize a
+backbone this framework composed) and `distillation` (it compares composed per-task
+logits). A per-task `lr` is refused too, by the mechanism that already exists for it:
+the model exposes no per-task parameters, so a declared rate has nothing to move.
 
 ## Arrived weights
 
@@ -129,27 +98,27 @@ model:
 
 tasks:
   tags:
-    preset: multilabel_classification
+    kind: multilabel_classification
     target: tags
-    native_head: true
+    head: native
     classes: {0: indoor, 1: outdoor, 2: people, 3: night}   # night is novel
 
 callbacks:
   - name: freeze
-    modules: [model.backbone, model.heads.tags.base]
+    modules: [backbone, heads.tags.base]
     until: 0.5              # release halfway through the run; omit to keep frozen
 ```
 
-`native_head: true` asks the backbone for its own classifier, and a timm
+`head: native` asks the backbone for its own classifier, and a timm
 backbone with a stashed checkpoint transplants it: with 3 carried rows and 4
 declared classes the head becomes two named parts — `base`, the transplanted
 `[3, D]` classifier, and `novel`, a fresh `[1, D]` block — concatenated on
-forward. The names are the freeze-path contract: `model.heads.<task>.base`
+forward. The names are the freeze-path contract: `heads.<task>.base`
 freezes the carried rows at a module boundary, which is the only honest way
 (a gradient mask would still let AdamW's weight decay move them).
 
 The declared `classes` carry the index contract: old classes must keep their
-old indices, novel ones follow — visible in the config, validated at load.
+old indices, novel ones follow — visible in the config, validated where the encoder is built.
 
 The same story holds for segmentation with the smp family — the knobs, the
 report, and the growth are identical; per-class channels of the segmentation
@@ -164,9 +133,9 @@ model:
 
 tasks:
   mask:
-    preset: segmentation
+    kind: segmentation
     target: mask_path
-    native_head: true
+    head: native
     classes: {0: background, 1: defect, 2: edge, 3: scratch}   # scratch is novel
 ```
 
@@ -201,11 +170,11 @@ verbatim.
 `target_modules` has no default, because no architecture implies one. The names
 are module-name suffixes or regexes — check them against the backbone's own
 `named_modules()`. A value matching nothing is refused while the experiment is
-assembled, since an unmatched target would silently train every weight at full
+built, since an unmatched target would silently train every weight at full
 cost.
 
 **The adapters own the backbone's freezing.** A `freeze` callback aimed at
-`model.backbone` is refused: it would hold the adapters still too, and training
+`backbone` is refused: it would hold the adapters still too, and training
 would run with nothing to learn.
 
 **The deltas fold back before anything reads the weights.** After training — and
@@ -265,12 +234,10 @@ the scaffolding, so one file works either way: warm-start distillation from a
 plain run's checkpoint, or point a later `train: false` run at a distilled one
 without re-declaring teachers it will not use.
 
-**Dot-paths gain the student.** A `freeze` callback names modules by their path
-in the training module, so in a distilled run the backbone is
-`model.student.backbone` rather than `model.backbone`. A path that misses is
-refused with the children that were actually found, and the guard that rejects
-`adapters` plus a `freeze` on the same backbone follows the same path, so it
-still fires.
+**Dot-paths do not move.** A `freeze` callback names modules relative to the model
+that ships, so in a distilled run the backbone is still `backbone` — the student's — and
+the guard that rejects `adapters` plus a `freeze` on the same backbone reads the same
+word. A path that misses is refused with the children that were actually found.
 
 **Distillation is not a callback, and cannot be.** No Lightning hook's return
 value reaches the loss, and a callback adding its own backward pass would

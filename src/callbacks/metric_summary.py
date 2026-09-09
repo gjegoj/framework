@@ -8,8 +8,8 @@ from typing import TYPE_CHECKING, Any
 import lightning as L
 
 from src.core import log_keys
-from src.core.reporting import SingleValueLogger
 from src.core.taxonomy import Stage
+from src.loggers.ports import SingleValueLogger
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -26,15 +26,15 @@ def headline_metrics(metrics: Mapping[str, Any], stage: str) -> dict[str, float]
     """
     selected: dict[str, float] = {}
     for key, value in metrics.items():
-        prefix, _, name = key.partition(log_keys.SEPARATOR)
-        if prefix != stage or not name:
+        parsed = log_keys.parse(key)
+        if parsed.stage != stage or not parsed.path:
             continue
-        segments = name.split(log_keys.SEPARATOR)
-        if len(segments) >= 3:
-            if segments[-1] != log_keys.MEAN:
+        if parsed.per_class:
+            if not parsed.is_mean:
                 continue  # a vector's per-class leaf: noise at summary altitude
-            name = log_keys.SEPARATOR.join(segments[:-1])
-        selected[name] = float(value)
+            selected[log_keys.join(*parsed.path[:-1])] = float(value)
+        else:
+            selected[parsed.rest] = float(value)
     return selected
 
 

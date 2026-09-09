@@ -14,45 +14,29 @@ from torch.utils.data import DataLoader
 
 from src.callbacks.samples import SampleGrid
 from src.config import ExperimentConfig
-from src.core import Batch, Objective, OutputTopology, Task
-from src.core.entities import preview_of
+from src.core import Batch
 from src.core.taxonomy import Stage
-from src.losses import CrossEntropyCriterion
-from src.models import CompositeModel, LinearHead, TaskComponents
-from src.tasks.adapters import as_class_indices
+from src.tasks import MetricLearning, Task
 from src.training import TrainingModule
-from tests.support.fakes import Batches, FlattenBackbone, PageLogger
+from src.training.ports import preview_of
+from tests.support.entities import a_task
+from tests.support.fakes import Batches, PageLogger, a_composite
 from tests.support.lightning import quiet_trainer
 from tests.support.narrowing import tensor
+from tests.support.pages import COLOUR, colour_batch, first_image
 
 MEAN = (0.0, 0.0, 0.0)
 STD = (1.0, 1.0, 1.0)
 
 
 def task_of() -> Task:
-    return Task(
-        name="label",
-        output_topology=OutputTopology.GLOBAL,
-        objective=Objective.MULTICLASS,
-        metrics={},
-        class_names=["cat", "dog"],
-    )
+    return a_task(class_names=["cat", "dog"])
 
 
-def module() -> TrainingModule:
+def module(tasks: list[Task] | None = None) -> TrainingModule:
     return TrainingModule(
-        model=CompositeModel(
-            backbone=FlattenBackbone(dim=12),
-            components={
-                "label": TaskComponents(
-                    head=LinearHead(12, 2),
-                    criterion=CrossEntropyCriterion(),
-                    activation=lambda logits: torch.softmax(logits, dim=1),
-                    target_adapter=as_class_indices,
-                )
-            },
-        ),
-        tasks=[task_of()],
+        model=a_composite(12),
+        tasks=tasks if tasks is not None else [task_of()],
         optimizer_factory=partial(torch.optim.SGD, lr=0.1),
     )
 
@@ -67,7 +51,6 @@ def batch(**meta: Any) -> Batch:
 
 def grid(**overrides: Any) -> SampleGrid:
     declared: dict[str, Any] = {
-        "tasks": [task_of()],  # a derived value the composition root offers
         "every_n_epochs": 1,
         "stages": ("val",),
         "mean": MEAN,
@@ -88,10 +71,9 @@ def drawn(callback: SampleGrid, trained: TrainingModule, logger: PageLogger, sam
 def test_a_step_that_returns_no_preview_is_named_not_skipped(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Only a step can show what a step returns, so this is checked at the first drawn batch.
+    """Only a step can show what a step returns, so this is checked at the first drawn batch — and said, not skipped.
 
-    The reference skipped it silently — one of six bare returns — and a run drew
-    nothing while saying nothing.
+    A run that draws nothing while saying nothing is the worst outcome a page can have.
     """
     trained = module()
     trainer = quiet_trainer(logger=(logger := PageLogger()))
@@ -114,18 +96,12 @@ def test_a_task_the_preview_does_not_carry_is_named_not_silently_lost(
     """A module that previews only some of the declared tasks loses the rest from the
     page; the loss is said once, naming the task and what the preview lacked, and the
     tasks the preview does carry are still drawn."""
-    extra = Task(
-        name="extra",
-        output_topology=OutputTopology.GLOBAL,
-        objective=Objective.MULTICLASS,
-        metrics={},
-        class_names=["a", "b"],
-    )
-    callback = grid(tasks=[task_of(), extra])
+    extra = a_task(name="extra", class_names=["a", "b"])
+    callback, trained = grid(), module([task_of(), extra])
 
     with caplog.at_level(logging.WARNING):
-        logger = drawn(callback, module(), PageLogger(), batch())
-        drawn(callback, module(), logger, batch())
+        logger = drawn(callback, trained, PageLogger(), batch())
+        drawn(callback, trained, logger, batch())
 
     assert len(logger.pages) == 2  # the page itself survives the missing task
     said = [record.message for record in caplog.records if "'extra'" in record.message]
@@ -156,19 +132,26 @@ def test_the_grid_denormalises_by_what_the_root_config_normalises_by() -> None:
     one moved, every page would be mis-coloured — and wrong colours read as a model
     problem, which is the one thing a page of samples exists to rule out.
     """
-    shipped = SampleGrid(tasks=[task_of()])
-    root = ExperimentConfig.model_fields["mean"].get_default(call_default_factory=True)
+    mean = ExperimentConfig.model_fields["mean"].get_default(call_default_factory=True)
+    std = ExperimentConfig.model_fields["std"].get_default(call_default_factory=True)
 
-    assert shipped._mean.flatten().tolist() == pytest.approx(root)
+    page = drawn(
+        SampleGrid(mean=mean, std=std, every_n_epochs=1, stages=("val",)),
+        module(),
+        PageLogger(),
+        colour_batch(mean, std),
+    )
+
+    assert first_image(page.pages[0][1])[0, 0].tolist() == pytest.approx(COLOUR, abs=1)
 
 
 def test_the_default_draws_on_every_stage_the_framework_has() -> None:
     """Derived from `Stage`, so a new member is drawable by existing rather than by an edit here."""
-    assert set(SampleGrid(tasks=[task_of()])._stages) == set(Stage)
+    assert set(SampleGrid(mean=MEAN, std=STD)._stages) == set(Stage)
 
 
 def test_an_unknown_stage_is_refused_with_the_valid_ones() -> None:
-    """At assembly, not by drawing nothing for a whole run."""
+    """At build time, not by drawing nothing for a whole run."""
     with pytest.raises(ValueError, match="train, val, test"):
         grid(stages=("validation",))
 
@@ -188,7 +171,7 @@ def test_an_unknown_stage_is_refused_with_the_valid_ones() -> None:
     ],
 )
 def test_a_value_that_could_only_draw_nothing_is_refused_by_name(declared: dict[str, Any], expected: str) -> None:
-    """Assembly is where these fail; an epoch of silence is not a diagnosis."""
+    """Build time is where these fail; an epoch of silence is not a diagnosis."""
     with pytest.raises(ValueError, match=expected):
         grid(**declared)
 
@@ -377,11 +360,9 @@ def test_the_drawn_pixels_are_the_source_image_back_again() -> None:
 def test_an_input_with_more_channels_than_mean_values_is_skipped_and_named(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """A 4-band input against a 3-value mean used to die inside the denormalisation.
+    """A 4-band input against a 3-value mean is skipped and named, and the rest of the page still draws.
 
-    A bare shape mismatch, an hour into a run, naming neither the callback nor the
-    input — and raised from a batch-end hook, so it took the run with it over a
-    picture. It is skipped and named instead, and the rest of the page still draws.
+    A bare shape mismatch from a batch-end hook would take the run with it, an hour in, over a picture.
     """
     sample = batch()
     sample.inputs["multispectral"] = torch.rand(4, 5, 2, 2)
@@ -393,3 +374,34 @@ def test_an_input_with_more_channels_than_mean_values_is_skipped_and_named(
     said = [record.message for record in caplog.records if "multispectral" in record.message]
     assert len(said) == 1
     assert "5 channels" in said[0] and "3 mean/std" in said[0]
+
+
+def test_a_task_with_nothing_to_show_is_named_once_with_its_reason(caplog: pytest.LogCaptureFixture) -> None:
+    """'Not drawn' and 'nothing to show' differ, and silence would hide which one it is."""
+    with caplog.at_level(logging.INFO):
+        grid().setup(quiet_trainer(), module([task_of(), a_task(name="emb", kind=MetricLearning())]), stage="fit")
+
+    said = [record.message for record in caplog.records if "'emb'" in record.message]
+    assert len(said) == 1
+    assert "metric learning" in said[0]
+
+
+def test_a_module_that_declares_no_tasks_is_named_once(caplog: pytest.LogCaptureFixture) -> None:
+    """A module of your own without ``tasks`` draws nothing, and the run says so rather than crashing."""
+    from types import SimpleNamespace
+    from typing import cast
+
+    callback = grid()
+    with caplog.at_level(logging.WARNING):
+        callback.setup(quiet_trainer(), cast("TrainingModule", SimpleNamespace()), stage="fit")
+        callback.setup(quiet_trainer(), cast("TrainingModule", SimpleNamespace()), stage="test")
+
+    said = [record.message for record in caplog.records if "tasks" in record.message]
+    assert len(said) == 1
+
+
+def test_the_pages_normalisation_is_the_runs_and_never_a_default_of_its_own() -> None:
+    """``mean``/``std`` reach the page as ``${mean}`` from the root; a default here would be a second
+    declaration of the same numbers, free to disagree with the one the transforms normalised by."""
+    with pytest.raises(TypeError, match="mean"):
+        SampleGrid(std=STD)  # type: ignore[call-arg]

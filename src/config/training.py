@@ -8,6 +8,13 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from src.config.components import ComponentConfig
 
+DEFAULT_BATCH_SIZE = 16
+"""One number for the root ``batch_size`` and the loader section's own: a config that omits the
+section trains at the shared size, and editing either default cannot leave the other behind."""
+
+DEFAULT_EPOCHS = 10
+"""Likewise for the root ``epochs`` and ``trainer.max_epochs``."""
+
 
 class LoaderConfig(BaseModel):
     """DataLoader knobs shared by every stage; unknown keys forward to torch.
@@ -24,7 +31,7 @@ class LoaderConfig(BaseModel):
 
     ADAPTER_OWNED: ClassVar[frozenset[str]] = frozenset({"dataset", "shuffle", "collate_fn"})
 
-    batch_size: int = Field(16, gt=0, description="Samples per batch.")
+    batch_size: int = Field(DEFAULT_BATCH_SIZE, gt=0, description="Samples per batch.")
     num_workers: int = Field(0, ge=0, description="Worker processes loading samples; 0 loads in the main process.")
     pin_memory: bool = Field(False, description="Pin host memory to speed up transfers to a GPU.")
     drop_last: bool = Field(
@@ -81,7 +88,7 @@ class TrainerConfig(BaseModel):
 
     model_config = ConfigDict(extra="allow")
 
-    max_epochs: int = Field(10, gt=0, description="Epochs to train for.")
+    max_epochs: int = Field(DEFAULT_EPOCHS, gt=0, description="Epochs to train for.")
     accelerator: str = Field("auto", description="Device family ('cpu', 'gpu', 'auto').")
     devices: int | str = Field("auto", description="How many devices, or which ones.")
     profiler: ComponentConfig | None = Field(

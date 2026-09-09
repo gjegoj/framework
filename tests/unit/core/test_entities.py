@@ -1,21 +1,11 @@
-"""Data-entity contracts: Sample/Batch, Features, Prediction, Task, DataProfile."""
+"""Data-entity contracts: Sample/Batch, Features, Prediction."""
 
 from __future__ import annotations
 
 import pytest
 import torch
 
-from src.core import (
-    AdaptedTarget,
-    Batch,
-    DataProfile,
-    Features,
-    Instances,
-    Prediction,
-    Sample,
-    TargetFacts,
-)
-from tests.support.entities import a_task
+from src.core import Batch, Features, Instances, Prediction, Sample
 from tests.support.narrowing import tensor
 
 
@@ -67,56 +57,6 @@ def test_prediction_maps_task_names_to_outputs() -> None:
 def test_a_prediction_carries_no_logits_unless_a_model_offers_them() -> None:
     """Optional and last, so a family with nothing pre-activation to show is unchanged."""
     assert Prediction(outputs={"label": torch.zeros(1)}).logits is None
-
-
-def test_absent_target_has_empty_views() -> None:
-    absent = AdaptedTarget.absent()
-
-    assert absent.for_loss.numel() == 0
-    assert absent.for_metrics.numel() == 0
-
-
-def test_adapted_target_separates_loss_and_metric_views() -> None:
-    soft = torch.tensor([[0.9, 0.1]])
-    adapted = AdaptedTarget(for_loss=soft, for_metrics=soft.argmax(dim=1))
-
-    assert adapted.for_loss.shape == (1, 2)
-    assert adapted.for_metrics.item() == 0
-
-
-def test_task_defaults_weight_to_one() -> None:
-    assert a_task().weight == 1.0
-
-
-def test_task_rejects_non_positive_weight() -> None:
-    with pytest.raises(ValueError, match="weight"):
-        a_task(weight=0.0)
-
-
-def test_task_rejects_blank_name() -> None:
-    with pytest.raises(ValueError, match="name"):
-        a_task(name="  ")
-
-
-def test_task_is_immutable() -> None:
-    task = a_task()
-
-    with pytest.raises(AttributeError):
-        task.weight = 2.0  # type: ignore[misc]
-
-
-def test_data_profile_stores_facts_inferred_from_data() -> None:
-    profile = DataProfile()
-    profile.record("label", TargetFacts(num_classes=10))
-
-    assert profile.require_num_classes("label") == 10
-
-
-def test_data_profile_explains_missing_facts() -> None:
-    profile = DataProfile()
-
-    with pytest.raises(LookupError, match="label"):
-        profile.require_num_classes("label")
 
 
 def test_ground_truth_instances_carry_no_scores() -> None:

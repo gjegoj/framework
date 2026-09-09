@@ -19,7 +19,7 @@ Three things are implied here and worth knowing:
 - the reader is inferred from the extension (`.csv` → `csv`, `.json` → `json`,
   `.jsonl` → `jsonl`, the JSON-Lines format a detection annotation file is written in);
 - the loader defaults to `image`, this being a vision framework;
-- the target encoder follows from each task's preset — see [Targets](#targets).
+- the target encoder follows from each task's kind — see [Targets](#targets).
 
 ### Where a detection annotation file comes from
 
@@ -147,32 +147,14 @@ data:
 Stages a source does not mention fall back to the global transform, so a source
 that only differs in training says only that.
 
-## A dataset that is not a table
+## Detection rows
 
-Detection does not arrive as annotation rows. It arrives as a YOLO descriptor beside
-`images/` and `labels/` directories, and the descriptor names the class list and one
-image directory per stage:
+A detection dataset is a table too: one JSON Lines row per image, with `objects` a list
+of `{box: [x1, y1, x2, y2], class: name}` in pixels, an empty list a valid negative. The
+converters in `src/data/converters/` write it from a YOLO tree or a COCO file, and the
+`detection` kind's own encoder reads it.
 
-```yaml
-data:
-  source: data/coco8/data.yaml
-  inputs: {}
-```
-
-`inputs` is empty because the descriptor names the pictures, and there is no `split`
-because it already says which images are which stage. Neither is a special case in the
-section: a rule true of a *table* — that it needs at least one input column, and that one
-source has to be divided somehow — is stated where the table is built, so a pipeline with
-no columns at all is a valid declaration rather than a forbidden one.
-
-Which pipeline reads it follows from `model:`, not from the file's extension — one name
-decides the model and the data together, so the two cannot disagree. See
-[Vendor families](models.md#vendor-families).
-
-The augmentation is the vendor's too, box-aware and driven from the model section; a
-`transforms:` section is refused rather than silently ignored.
-
-→ [Object detection](detection.md) walks one such run from the descriptor to mAP.
+→ [Object detection](detection.md) walks the rows, the encoder, the letterbox and mAP.
 
 ## Inputs
 
@@ -325,7 +307,7 @@ Every input, every auxiliary input and every geometric target of a sample passes
 through **one** pipeline call, so a mask is cropped and flipped with the image it
 belongs to, and so are a detection task's boxes. Nothing about that is written by
 hand: each value's *geometry* — `image`, `mask`, `boxes` — comes from the loader
-or encoder that reads it, and assembly derives the rest.
+or encoder that reads it, and the build derives the rest.
 
 Anything `albumentations.Compose` accepts is forwarded verbatim — `seed`, `p`,
 `is_check_shapes` (`bbox_params` is the exception: it is derived from the boxes
@@ -368,7 +350,7 @@ data:
     lesion_mask: {column: mask_path, loader: {name: mask}}
 ```
 
-The `mask` loader is the whole declaration. Assembly reads it and gives the column
+The `mask` loader is the whole declaration. `build_stage_transforms` reads it and gives the column
 mask treatment in the pipeline — nearest-neighbour geometry, untouched by
 `Normalize` — while collating it into the batch like any other input. There is no
 kind flag to keep in step with the loader, and `{name: image, grayscale: true}` is
@@ -385,23 +367,26 @@ An encoder works in two halves, on either side of the sample transforms: it
 a mask becomes pixels, so geometry has something to move) and **encodes** after
 them, on whatever value survived. That is what lets an augmentation write a
 target — see [augmentations that create supervision](transforms.md#augmentations-that-create-supervision).
+At setup an encoder **fits** on the train split alone (a binned encoder learns its
+range there) and **validates** every other split against what it holds: a label or a
+box class the vocabulary does not declare is refused then, naming the stage and the task,
+rather than by the first validation epoch that meets the row.
 
 ```yaml
 tasks:
   label:
-    preset: classification
+    kind: classification
     target: label
 ```
 
-The encoder follows from the task's axes — the output topology's *shape* first,
-the objective's *semantics* second — so declaring one is an override:
+The encoder follows from the task's kind, so declaring one is an override:
 
-| Preset | Encoder implied | Column holds |
+| Kind | Encoder implied | Column holds |
 |---|---|---|
 | `classification` | `label` | a class name or index |
 | `binary_classification`, `regression` | `scalar` | a number |
 | `multilabel_classification` | `multilabel` | `"cat,dog"` or a list |
-| `segmentation` (any objective) | `mask` | a mask file path |
+| `segmentation` and its variants | `mask` | a mask file path |
 | `detection` | `boxes` | a list of `{"box": [x1, y1, x2, y2], "class": name}` |
 
 Every target read as classes declares its *vocabulary* — see
@@ -412,7 +397,7 @@ class no row carries would silently vanish from it.
 ```yaml
 tasks:
   mask:
-    preset: segmentation
+    kind: segmentation
     target: mask_path
     classes: {0: pet, 1: background, 2: boundary}
 ```
@@ -423,17 +408,17 @@ continuous target learned as a distribution:
 ```yaml
 tasks:
   tags:
-    preset: multilabel_classification
+    kind: multilabel_classification
     target: tags
     target_encoder: {name: multilabel, separator: "|"}
 
   quality:
-    preset: regression
+    kind: regression
     target: score
     target_encoder: {name: gaussian_bins, bins: 20}   # or linear_bins
 
   mask:
-    preset: segmentation
+    kind: segmentation
     target: mask_path
     classes: {0: pet, 1: background, 2: boundary}
     target_encoder: {name: mask, root: data/masks}    # the implied encoder, with a root

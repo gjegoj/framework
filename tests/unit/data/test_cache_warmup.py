@@ -12,12 +12,12 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.core import DataProfile, Sample, Stage
+from src.core import Sample, Stage
 from src.core.ports import SampleTransform
 from src.data import (
     DataSchema,
+    DeclaredSource,
     ImageLoader,
-    InMemorySource,
     InputColumn,
     LabelTargetEncoder,
     RamCache,
@@ -48,7 +48,7 @@ def module(
         targets={"label": TargetColumn(column="label", encoder=LabelTargetEncoder(classes={0: "cat", 1: "dog"}))},
     )
     return TableDataModule(
-        source=InMemorySource(dataset(root)),
+        sources=[DeclaredSource(dataset(root))],
         schema=schema,
         splitter=random_split(FRACTIONS, seed=42),
         transforms=transforms,
@@ -63,7 +63,7 @@ def held(cache: RamCache, rows: int = 8) -> int:
 def test_train_and_val_files_are_in_memory_after_setup(tmp_path: Path) -> None:
     cache = RamCache(max_gib=1.0)
 
-    module(tmp_path, cache).setup(DataProfile())
+    module(tmp_path, cache).setup()
 
     assert held(cache) == 6
 
@@ -72,7 +72,7 @@ def test_the_test_stage_is_not_cached(tmp_path: Path) -> None:
     """It is read once; RAM spent on it buys nothing."""
     cache = RamCache(max_gib=1.0)
 
-    module(tmp_path, cache).setup(DataProfile())
+    module(tmp_path, cache).setup()
 
     assert held(cache) < 8
 
@@ -80,7 +80,7 @@ def test_the_test_stage_is_not_cached(tmp_path: Path) -> None:
 def test_a_module_without_a_cache_behaves_as_before(tmp_path: Path) -> None:
     built = module(tmp_path, None)
 
-    built.setup(DataProfile())
+    built.setup()
 
     assert len(cast("Sized", built.dataset(Stage.TRAIN))) == 4
 
@@ -89,8 +89,8 @@ def test_samples_are_identical_with_and_without_a_cache(tmp_path: Path) -> None:
     """A cache is an optimisation; it must not change a single pixel."""
     plain = module(tmp_path, None)
     warmed = module(tmp_path, RamCache(max_gib=1.0))
-    plain.setup(DataProfile())
-    warmed.setup(DataProfile())
+    plain.setup()
+    warmed.setup()
 
     for index in range(len(cast("Sized", plain.dataset(Stage.TRAIN)))):
         expected = plain.dataset(Stage.TRAIN)[index].inputs["image"]
@@ -106,7 +106,7 @@ def test_augmentation_still_varies_though_the_read_does_not(tmp_path: Path) -> N
         return sample
 
     built = module(tmp_path, RamCache(max_gib=1.0), transforms={Stage.TRAIN: jitter})
-    built.setup(DataProfile())
+    built.setup()
 
     first = built.dataset(Stage.TRAIN)[0].inputs["image"]
     second = built.dataset(Stage.TRAIN)[0].inputs["image"]
@@ -123,7 +123,7 @@ def test_a_cached_read_is_not_corrupted_by_the_transform_that_follows(tmp_path: 
 
     cache = RamCache(max_gib=1.0)
     built = module(tmp_path, cache, transforms={Stage.TRAIN: brighten})
-    built.setup(DataProfile())
+    built.setup()
     before: dict[str, np.ndarray] = {}
     for index in range(8):
         key = f"{index}.png"
@@ -145,7 +145,7 @@ def test_the_warmup_closes_with_one_summary_naming_who_took_how_much(
     """One line for the whole warm-up — not one per column per stage — and the
     breakdown carries the same stage-qualified labels the progress bars showed."""
     with caplog.at_level(logging.INFO, logger="src.data.cache"):
-        module(tmp_path, RamCache(max_gib=1.0)).setup(DataProfile())
+        module(tmp_path, RamCache(max_gib=1.0)).setup()
 
     summaries = [record.message for record in caplog.records if "Cache holds" in record.message]
     assert len(summaries) == 1
@@ -166,7 +166,7 @@ def test_a_full_budget_is_said_out_loud_with_the_count_that_was_turned_away(
     tiny = RamCache(max_gib=400 / 1024**3)
 
     with caplog.at_level(logging.INFO, logger="src.data.cache"):
-        module(tmp_path, tiny).setup(DataProfile())
+        module(tmp_path, tiny).setup()
 
     assert tiny.usage().declined == 2
     said = [record.message for record in caplog.records if "budget full" in record.message]
@@ -177,6 +177,6 @@ def test_a_full_budget_is_said_out_loud_with_the_count_that_was_turned_away(
 
 def test_a_budget_nothing_overflowed_stays_quiet(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     with caplog.at_level(logging.INFO, logger="src.data.cache"):
-        module(tmp_path, RamCache(max_gib=1.0)).setup(DataProfile())
+        module(tmp_path, RamCache(max_gib=1.0)).setup()
 
     assert not [record for record in caplog.records if "budget full" in record.message]

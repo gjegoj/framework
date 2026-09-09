@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from src.visualization.annotators import Annotator, build_annotators
+from src.visualization.annotators import Annotator, DrawingKnobs
 from src.visualization.entities import (
     KINDS,
     Classification,
@@ -16,6 +16,7 @@ from src.visualization.entities import (
     Score,
     Segmentation,
     SegmentationClass,
+    TaskView,
     Text,
     Verdict,
 )
@@ -29,6 +30,7 @@ __all__ = [
     "Annotator",
     "Classification",
     "Classifications",
+    "DrawingKnobs",
     "HtmlRenderer",
     "Image",
     "Kind",
@@ -39,7 +41,7 @@ __all__ = [
     "Score",
     "Segmentation",
     "SegmentationClass",
+    "TaskView",
     "Text",
     "Verdict",
-    "build_annotators",
 ]

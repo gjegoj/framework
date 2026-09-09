@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from src.assembly.data import build_data_schema
 from src.config.data import (
     DEFAULT_AUXILIARY_LOADER,
     DEFAULT_INPUT_LOADER,
@@ -14,12 +13,12 @@ from src.config.data import (
 from src.data import ImageLoader
 from src.data.loaders import MaskLoader
 from src.data.registry import input_loader_registry
-from tests.support.configs import DATA, paper_config
+from tests.support.configs import DATA, paper_config, schema_of
 
 
 def schema_for(inputs: dict[str, Any]) -> Any:
     """The built schema of an experiment whose inputs are the declaration under test."""
-    return build_data_schema(paper_config(data=DATA | {"inputs": inputs}))
+    return schema_of(paper_config(data=DATA | {"inputs": inputs}))
 
 
 def test_an_input_needs_nothing_but_its_column() -> None:

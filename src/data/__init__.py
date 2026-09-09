@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from src.data.cache import LoaderCache, RamCache, cached
 from src.data.collate import collate_samples
-from src.data.datamodules import SourceWithTransforms, TableDataModule, YoloDataModule
+from src.data.datamodules import DataModule, DeclaredSource, TableDataModule
 from src.data.dataset import TableDataset
 from src.data.encoders import (
     BinnedTargetEncoder,
     BoxesTargetEncoder,
+    FileTargetEncoder,
     GaussianBinsTargetEncoder,
     LabelTargetEncoder,
     LinearBinsTargetEncoder,
@@ -16,16 +17,15 @@ from src.data.encoders import (
     MultiLabelTargetEncoder,
     ScalarTargetEncoder,
     TargetEncoder,
+    VocabularyTargetEncoder,
 )
-from src.data.loaders import ImageLoader, InputLoader
+from src.data.loaders import ImageLoader, InputLoader, single_threaded_cv2
 from src.data.schema import ColumnRole, DataSchema, InputColumn, TargetColumn
 from src.data.sources import (
     CsvSource,
     FileSource,
-    InMemorySource,
     JsonLinesSource,
     JsonSource,
-    LimitedSource,
     Table,
     TableSource,
 )
@@ -36,24 +36,24 @@ __all__ = [
     "BoxesTargetEncoder",
     "ColumnRole",
     "CsvSource",
+    "DataModule",
     "DataSchema",
+    "DeclaredSource",
     "FileSource",
+    "FileTargetEncoder",
     "GaussianBinsTargetEncoder",
     "ImageLoader",
-    "InMemorySource",
     "InputColumn",
     "InputLoader",
     "JsonLinesSource",
     "JsonSource",
     "LabelTargetEncoder",
-    "LimitedSource",
     "LinearBinsTargetEncoder",
     "LoaderCache",
     "MaskTargetEncoder",
     "MultiLabelTargetEncoder",
     "RamCache",
     "ScalarTargetEncoder",
-    "SourceWithTransforms",
     "Splitter",
     "Table",
     "TableDataModule",
@@ -61,10 +61,11 @@ __all__ = [
     "TableSource",
     "TargetColumn",
     "TargetEncoder",
-    "YoloDataModule",
+    "VocabularyTargetEncoder",
     "cached",
     "collate_samples",
     "group_split",
     "random_split",
+    "single_threaded_cv2",
     "stratified_split",
 ]

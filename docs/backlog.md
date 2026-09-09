@@ -6,7 +6,7 @@ out of scope when it surfaced, kept so it does not have to be rediscovered.
 
 ## Dot-paths into the model should be relative to the model
 
-**Surfaced:** 2026-08-05, designing distillation.
+**Surfaced:** 2026-08-05, designing distillation. **Done 2026-09-07 (P1.6):** `Freeze` resolves against `without_teachers(pl_module.model)`, the old `model.` prefix is refused with the new spelling, `backbone_path` and the derived-path guard are gone.
 
 A `freeze` callback names the modules it holds by their dot-path *in the training
 module* — `model.backbone`. The leading `model.` is `TrainingModule.model`, which
@@ -16,7 +16,7 @@ noise.
 Worse, the path is knowledge about the module tree, so anything that changes that
 tree changes every path. Distillation does: it nests the student, and the backbone
 becomes `model.student.backbone`. That was handled by deriving the path
-(`backbone_path(config)` in `assembly/models.py`) rather than fixing it as a
+(`backbone_path(config)` in `build.py`) rather than fixing it as a
 constant — the guard that refuses `adapters` plus a `freeze` on the same backbone
 had silently stopped matching, and a silent guard is worse than none, because the
 failure it guards against is a loss that never moves.
@@ -49,7 +49,7 @@ same answer this entry proposes, applied where it cost no config change. `Freeze
 is the one reader left, and it is the one whose paths a user writes.
 
 **Where to look:** `src/callbacks/freeze.py` (`_resolve`),
-`src/assembly/models.py` (`backbone_path`,
+`src/build.py` (`backbone_path`,
 `_refuse_a_second_owner_of_the_backbone`), `docs/guides/callbacks.md`.
 
 ## `logger: none` does not turn the logger off
@@ -79,7 +79,7 @@ default honest instead. The second is probably right: a run that records nothing
 anywhere is a poor default, and a nameless fallback is what makes it feel like
 one.
 
-**Where to look:** `src/assembly/training.py` (`build_trainer`),
+**Where to look:** `src/build.py` (`build_trainer`),
 `configs/logger/none.yaml`, `docs/guides/logging.md`.
 
 ## `num_workers: 0` guarantees three warnings on every run
@@ -158,8 +158,12 @@ its activation (the model has to emit and keep N numbers), the metric side (a
 vector metric per component), and `RegressionAnnotator` plus one
 `render_label` registration.
 
-**Where to look:** `src/tasks/objectives.py` (`ContinuousObjective`),
+**Where to look:** `src/tasks/kinds.py` (`Regression`),
 `src/visualization/entities.py`, `src/visualization/annotators.py`.
+
+**Moved, 2026-09-06.** `ContinuousObjective` became the `Regression` kind: the three
+places are now `Regression.out_features` and its `activation`, the metric side, and
+`GlobalDrawer.label_values`.
 
 ## No text input loader ships, though text inputs are supported
 
@@ -211,9 +215,13 @@ should come from the batch, and that is the decision worth thinking about rather
 than guessing now.
 
 **Where to look:** `src/visualization/entities.py`,
-`src/visualization/annotators.py` (`DenseAnnotation.draws`),
-`src/visualization/html.py` (`render_label`),
-`src/tasks/topologies.py` (`DenseTopology.supports`).
+`src/visualization/annotators.py` (`DenseDrawer`),
+`src/visualization/html.py` (`render_label`).
+
+**Superseded, 2026-09-06.** The axes are gone, and with them the pairing to refuse:
+there is no dense × continuous cell until a `Depth` kind exists, and when it does
+it says `not_drawn` until a heatmap label lands (`docs/guides/extending.md#a-kind-of-task`).
+The `draws` refusal described above went with `DenseAnnotation`.
 
 ## Who owns what a sample looks like
 
@@ -338,7 +346,7 @@ interfaces, each carrying the typed entity a backend draws, and a media-typed
 the *second page-shaped artifact*, where the ports would start naming file formats
 rather than kinds of picture. Until then, nothing to do.
 
-**Where to look:** `src/core/ports.py`, `src/core/reporting.py`,
+**Where to look:** `src/loggers/report.py`, `src/metrics/entities.py`,
 `src/loggers/clearml.py`.
 
 ## `ultralytics` is a hard dependency, and it is AGPL-3.0
@@ -367,7 +375,7 @@ design adds beside it.
 
 ## A vendor family builds `-seg` and `-pose` networks that nothing downstream can read
 
-**Surfaced:** 2026-08-09, writing the detection guide.
+**Surfaced:** 2026-08-09, writing the detection guide. **Closed 2026-09-07:** the vendor path is retired (ADR-0002); `-seg` and `-pose` return only as head adapters of the composed family, when someone needs them.
 
 `YoloModel` never branches on what kind of network it is building: `YOLO(name)`
 picks `DetectionModel`, `SegmentationModel` or `PoseModel` from the file, and the
@@ -384,8 +392,8 @@ they are the same three for both kinds:
   instance is large, and a keypoint set has its own arity.
 - the metric. `map` compares boxes. torchmetrics computes a mask-IoU mAP from the
   same class, and pose has no equivalent in the registry at all.
-- the annotator. `Topology.INSTANCES` has no `AnnotationTopology`, so the samples
-  grid names a detection task as undrawable today, whichever kind it is.
+- the annotator. `Detection.not_drawn` says a set of objects is not drawn yet, so the
+  samples grid names a detection task as undrawable today, whichever kind it is.
 
 **Why it was not done then:** detection was the scope, and each of the three is a
 decision about a shape rather than a line of plumbing. Guessing them from the
@@ -440,7 +448,7 @@ image encoder beside a text one, and `HFTextBackbone` consumes `input_ids`; a CL
 run is a supported model shape whose export cannot work, because the second input would
 be handed a picture-shaped float tensor.
 
-Nothing is silent about it: `_prove_the_example_fits` runs the graph once before any
+Nothing is silent about it: `_refuse_a_wrong_example` runs the graph once before any
 exporter touches it and turns the resulting torch error into a sentence naming
 `image_size`, the channel count, and the fact that a non-image input cannot be exported
 yet. So this is a documented limit rather than a defect — but the backlog recorded the
@@ -453,12 +461,12 @@ dtype without reading a file. That also makes the tokenizer coupling in the text
 entry unavoidable rather than deferrable — an `input_ids` example needs a vocabulary size
 — so the two entries should be picked up together.
 
-**Where to look:** `src/assembly/export.py` (`example_inputs`,
-`_prove_the_example_fits`), `src/data/loaders.py`, `src/models/backbones/hf.py`.
+**Where to look:** `src/build.py` (`example_inputs`,
+`_refuse_a_wrong_example`), `src/data/loaders.py`, `src/models/backbones/hf.py`.
 
 ## Splitting the model section into `backbone:` and `model:`
 
-**Surfaced:** 2026-08-09, reviewing the vendor-family seam. **Considered and declined.**
+**Surfaced:** 2026-08-09, reviewing the vendor-family seam. **Considered and declined.** **Moot 2026-09-07:** one registry remains, and a model that arrives whole is any `Model` reached by `_target_` (ADR-0002).
 
 One key, `model:`, chooses between two registries: a backbone this framework composes
 heads onto, or a family that arrives whole. Which one it is decides the model, the data
@@ -484,7 +492,7 @@ a new indirection between the group's name and the key it fills.
 **And most of the benefit was available without it.** What actually reached a user was
 the error on a misspelling: `name: yolov8` fell through to the backbone registry and was
 answered with a list of backbones, from a guide that had just taught `model: {name:
-yolo}`. That is now `_refuse_a_name_from_neither_registry` in `assembly/models.py` —
+yolo}`. That is now `_refuse_a_name_from_neither_registry` in `build.py` —
 fifteen lines, naming both groups and what distinguishes them, and no schema change. The
 remaining benefit of the split is that the YAML is self-describing *before* you get it
 wrong, which is worth less than it sounds when getting it wrong is answered well.
@@ -493,9 +501,8 @@ wrong, which is worth less than it sounds when getting it wrong is answered well
 someone who hit it despite the refusal. Until both hold, the cost is a breaking change to
 the most-used key in every config for a confusion nobody is stuck in.
 
-**Where to look:** `src/config/experiment.py` (`model`), `src/assembly/vendor.py`
-(`is_vendor_family`), `src/assembly/models.py` (`_refuse_a_name_from_neither_registry`),
-`configs/model/`.
+**Where to look:** `src/config/experiment.py` (`model`), `src/build.py`
+(`is_vendor_family`, `_refuse_a_name_from_neither_registry`), `configs/model/`.
 
 ## Visualization modules that will want splitting, and when
 
@@ -506,8 +513,8 @@ Two splits were designed and deliberately not made, because a module boundary
 costs reader attention today and the growth that would repay it has not
 happened:
 
-- `annotators.py` splits along its own two axes — objectives (how an
-  `Objective` reads tensors) and topologies (how an `OutputTopology` draws readings) —
+- `annotators.py` splits along its own two halves — readers (how a kind's
+  outputs are read) and drawers (how a shape of output draws readings) —
   **when detection annotations land** and push the file past comfortable
   reading. The seam is already clean: the two ABCs, two registries, and their
   implementations interleave nothing.
@@ -538,6 +545,10 @@ one label) is the first currently-refused cell worth serving. It lands as one
 `GlobalTopology.supports` change plus a criterion that reads the stacked
 carrier; no axis reform.
 
+**Superseded, 2026-09-06.** There is no grid to unlock: supervised multiview is a
+kind stating `streams = (Stream.EMBEDDINGS,)` beside a criterion that reads the
+stacked carrier — one class in `src/tasks/kinds.py`.
+
 ## A depth encoder makes the dense default objective-aware
 
 **Surfaced:** 2026-08-17, while giving detection annotations a place in the
@@ -550,6 +561,10 @@ the declaration there reaches the mask encoder's refusal rather than one written
 for it. **When a depth encoder exists**, the dense default becomes a joint
 decision of both axes; the seam is `default_target_encoder(output_topology,
 objective)` in `src/tasks/builder.py`, which already composes the two voices.
+
+**Superseded, 2026-09-06.** The dense default is no longer a decision of two axes: a
+`Depth` kind states its `default_encoder` itself (`DenseOutput` says `mask`; `Depth`
+overrides it), so nothing has to become objective-aware.
 
 ## A second boxes target in one pipeline
 
@@ -577,9 +592,9 @@ them is wanted**, it is a second head class in `src/models/heads.py` and a branc
 
 ## `composes_head` and the stage-2 refusal
 
-**Surfaced:** 2026-08-29, in the same work.
+**Surfaced:** 2026-08-29, in the same work. **Updated 2026-09-07:** the refusal is `_refuse_what_cannot_train_yet` in `build.py`, asked of the built model rather than of the config; it goes with stage 3.
 
-`TaskTopology.composes_head` now means "the backbone's native head serves", and
+`Detection.native_by_default` (2026-09-06: what `TaskTopology.composes_head` became) means "the backbone's native head serves", `Detection.unavailable` carries the stage-2 refusal's reason, and
 `refuse_what_the_composite_family_cannot_serve` refuses a composed detection *run*
 (the model builds; no criterion trains it). Both are stage scaffolding: the roadmap's
 *Vendor-era scaffolding* section (`docs/superpowers/specs/2026-08-17-detection-roadmap-design.md`)

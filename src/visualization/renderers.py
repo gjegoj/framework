@@ -4,7 +4,7 @@ To add a kind (a heatmap, detection boxes), every step is a named place:
 
 1. the entity joins the ``Label`` union in ``entities.py``;
 2. a ``LabelRenderer`` subclass here, registered under the entity's type;
-3. an annotation objective/topology in ``annotators.py`` produces it;
+3. a reader or a drawer in ``annotators.py`` produces it, composed by a kind;
 4. ``test_renderers.py``'s exhaustiveness pin goes green again.
 """
 
@@ -231,8 +231,8 @@ class TextRenderer(MediaRenderer[Text]):
         return MediaItem(markup=strip, zone="caption")
 
 
-def render_label(label: Label, context: FieldContext) -> list[FieldItem]:
-    """One label → its overlays. The type chooses the renderer: config never does.
+def _label_renderer(label: Label) -> LabelRenderer[Any]:
+    """The renderer for this label. The type chooses it: config never does.
 
     An unregistered kind fails inside the registry, which names what *is*
     registered — no hand-written ``known:`` list to fall out of date.
@@ -241,14 +241,17 @@ def render_label(label: Label, context: FieldContext) -> list[FieldItem]:
     # the Hashable protocol on its own; the widening is the whole fix.
     key: type = type(label)
     renderer: LabelRenderer[Any] = label_renderer_registry.create(key)
-    return renderer.render(label, context)
+    return renderer
+
+
+def render_label(label: Label, context: FieldContext) -> list[FieldItem]:
+    """One label → its overlays."""
+    return _label_renderer(label).render(label, context)
 
 
 def leaves_of(label: Label) -> tuple[str, ...]:
     """The class-like names a label contributes — what a task's palette must colour."""
-    key: type = type(label)
-    renderer: LabelRenderer[Any] = label_renderer_registry.create(key)
-    return renderer.leaves(label)
+    return _label_renderer(label).leaves(label)
 
 
 def render_media(media: Media, alias: str, max_side: int | None = None) -> MediaItem:

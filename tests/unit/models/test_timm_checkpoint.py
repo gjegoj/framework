@@ -1,7 +1,8 @@
-"""``checkpoint_path`` on the timm backbone: arrived weights load with timm's own knobs."""
+"""``checkpoint_path`` on the timm backbone: the checkpoint's weights load with timm's own knobs."""
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import pytest
@@ -29,13 +30,16 @@ def test_backbone_tensors_arrive_from_the_checkpoint(tmp_path: Path) -> None:
     assert torch.equal(backbone.model.state_dict()["conv1.weight"], trained.state_dict()["conv1.weight"])
 
 
-def test_the_classifier_is_stashed_not_loaded(tmp_path: Path) -> None:
+def test_the_classifier_is_stashed_not_loaded(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    """The report counts the classifier's tensors as stashed, and none of them lands in the backbone."""
     path, trained = full_model_file(tmp_path)
+    head_tensors = sum(key.startswith("fc.") for key in trained.state_dict())
 
-    backbone = TimmBackbone(model_name=MODEL, checkpoint_path=path)
+    with caplog.at_level(logging.INFO):
+        backbone = TimmBackbone(model_name=MODEL, checkpoint_path=path)
 
-    assert backbone._carried_classifier is not None
-    assert torch.equal(backbone._carried_classifier["fc.weight"], trained.state_dict()["fc.weight"])
+    assert f"({head_tensors} head tensors stashed)" in caplog.text
+    assert not any(key.endswith("fc.weight") for key in backbone.state_dict())
 
 
 def test_the_ema_branch_wins_when_present(tmp_path: Path) -> None:

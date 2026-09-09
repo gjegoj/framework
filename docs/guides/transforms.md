@@ -18,6 +18,11 @@ transforms:
   test: *pipeline
 ```
 
+Evaluation is declared once: leave `test` out and it takes the `val` pipeline (the log
+says so), and the other way round. A section declaring only `train` is refused by name
+— evaluating on pictures that were never resized or normalised is not a measurement.
+A source's own `transforms` override only the stages they name.
+
 End with `ToTensorV2`: loaders produce raw values on purpose — a mask has to be
 croppable alongside its image — and the pipeline is where they become
 model-ready tensors.
@@ -67,8 +72,12 @@ data:
 
 Nothing in the `transforms` section says so. Each value declares its own
 **geometry** where it is read — `image` for light, `mask` for per-pixel labels,
-`boxes` for rectangles — and assembly derives the mapping from the loaders and
-encoders, so a target cannot silently fall out of step with its image.
+`boxes` for rectangles — and the build derives the mapping from the loaders and
+encoders, so a target cannot silently fall out of step with its image. The built
+transform is bound to that mapping through `with_geometry(inputs, targets,
+auxiliary_inputs)` — the `GeometryAware` port — and a wrapper such as
+`MultiViewTransform` passes it down to the pipeline it nests. A transform of your
+own that needs no geometry implements nothing and is built as declared.
 
 Inputs that are not declared — embeddings, captions, class labels — pass
 through untouched.
@@ -129,10 +138,6 @@ construction, naming both.
 `coord_format`, not `format` — albumentationsX renamed it), and a pose *target*
 geometry will arrive with the encoder that reads one.
 
-Detection runs on the native YOLO pipeline do **not** use this section at all:
-the ultralytics dataset carries its own box-aware augmentation, and `transforms`
-is not consulted for it.
-
 ## Several views of one input
 
 Contrastive training needs N independently augmented views of the same image.
@@ -161,7 +166,7 @@ annotated:
 ```yaml
 tasks:
   angle:
-    preset: classification
+    kind: classification
     target: angle          # a stub column of zeros in the annotation table
     classes: {0: "0", 1: "1", 2: "2", 3: "3"}
 
@@ -194,7 +199,7 @@ column starts as the negative class throughout:
 ```yaml
 tasks:
   crop_flag:
-    preset: classification
+    kind: classification
     target: was_cropped     # a stub column of "intact" throughout
     classes: {0: intact, 1: cropped}
 
@@ -236,7 +241,7 @@ data:
 
 tasks:
   warmth:
-    preset: regression
+    kind: regression
     target: warmth          # a stub column; the augmentation writes the real value
     target_encoder: {name: gaussian_bins, bins: 20, low: 3000, high: 4600}
 
@@ -272,8 +277,9 @@ callbacks:
     until: 0.8            # off for the last fifth, so the run ends on clean data
 ```
 
-The tasks and their class counts are not written here — assembly offers them to
-every callback, and this is one of the few that takes them.
+The tasks and their class counts are not written here — the callback reads the
+tasks off the module when the trainer sets the run up (`setup`), and binds the
+transform to them through `for_tasks`. Each task knows how its own target softens.
 
 One draw moves the image and every task's label together, so a two-head model
 cannot blend its heads one way and its picture another. A class index becomes a
@@ -292,8 +298,8 @@ callbacks:
     transform: {_target_: src.transforms.CutMix, alpha: 1.0}
 ```
 
-Both refuse, while the experiment is being assembled, any task they cannot
-rewrite: a blended image has no coherent per-pixel target, and metric learning's
+Both refuse, when the trainer sets the run up and before the first batch, any
+task they cannot rewrite: a blended image has no coherent per-pixel target, and metric learning's
 proxy and margin losses break on soft labels. Validation and test are never
 touched — the hook they listen on fires in training only.
 
@@ -320,8 +326,8 @@ one split:
 
 ```yaml
 tasks:
-  mask:  {preset: segmentation, target: mask}
-  label: {preset: classification, target: label}
+  mask:  {kind: segmentation, target: mask}
+  label: {kind: classification, target: label}
 ```
 
 Widening `split_range` towards 0 and 1 makes lopsided quadrants more likely. A

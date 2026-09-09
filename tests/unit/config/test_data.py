@@ -47,16 +47,12 @@ def test_one_source_may_still_span_several_files() -> None:
     assert source.path == ["part1.csv", "part2.csv"]
 
 
-def test_a_section_with_no_inputs_is_a_valid_declaration() -> None:
-    """A vendor pipeline reads its images from its own descriptor and declares no columns.
-
-    That a *table* needs at least one is true of the table, and is asserted where the
-    table's schema is built (`tests/unit/data/test_schema.py`). Stated here as well, it
-    would forbid a whole model family from ever being declared.
-    """
+def test_a_data_section_needs_at_least_one_input() -> None:
+    """Every pipeline reads its inputs from columns now, so a section with none is a mistake, refused by name."""
     raw = make_raw_data() | {"inputs": {}}
 
-    assert DataConfig.model_validate(raw).inputs == {}
+    with pytest.raises(ValueError, match="inputs"):
+        DataConfig.model_validate(raw)
 
 
 def test_split_fractions_must_sum_to_one() -> None:

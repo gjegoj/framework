@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import cv2
 import numpy as np
 import pytest
 
-from src.data.converters.yolo import convert
+from src.data.converters.yolo import convert, main
 
 
 def yolo_tree(root: Path) -> Path:
@@ -103,8 +104,10 @@ def test_a_dataset_under_a_parent_images_directory_keeps_its_annotations(tmp_pat
 def test_a_relative_path_in_the_descriptor_resolves_against_the_descriptor(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The reference tool resolves ``path:`` against the yaml; resolving against the
-    process's directory converted zero images from any other CWD — silently."""
+    """``path:`` resolves against the yaml, as ultralytics' own reader resolves it.
+
+    Against the process's directory, any other CWD converts zero images — silently.
+    """
     descriptor = yolo_tree(tmp_path / "ds")
     descriptor.write_text(
         "path: .\ntrain: images/train\nval: images/val\nnames:\n  0: cat\n  1: dog\n", encoding="utf-8"
@@ -170,3 +173,32 @@ def test_a_declared_stage_with_no_images_refuses_naming_key_and_directory(tmp_pa
         convert(descriptor, into=tmp_path / "canon")
 
     assert not (tmp_path / "canon" / "val.jsonl").exists()
+
+
+@pytest.mark.parametrize("declared", ["[images/train, images/extra]", "train.txt"], ids=["list", "txt"])
+def test_a_stage_declared_as_a_list_or_an_image_list_is_refused_by_form(tmp_path: Path, declared: str) -> None:
+    """Both are forms ultralytics' reader accepts; this converter reads a directory and says so.
+
+    Measured: a list spelled into a path (``root/['images/train', 'images/extra']``) was reported
+    as a resolution mistake against a directory nobody declared.
+    """
+    descriptor = yolo_tree(tmp_path)
+    descriptor.write_text(
+        descriptor.read_text(encoding="utf-8").replace("train: images/train", f"train: {declared}"), encoding="utf-8"
+    )
+
+    with pytest.raises(ValueError, match="not supported"):
+        convert(descriptor, into=tmp_path / "canon")
+
+
+def test_the_command_line_entry_writes_the_files_and_prints_the_report(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``python -m src.data.converters.yolo --data ... --into ...`` is the documented way in; it has to do what ``convert`` does and say so."""
+    descriptor = yolo_tree(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["yolo", "--data", str(descriptor), "--into", str(tmp_path / "canon")])
+
+    main()
+
+    assert capsys.readouterr().out.strip() == "3 images, 2 objects."
+    assert sorted(path.name for path in (tmp_path / "canon").iterdir()) == ["train.jsonl", "val.jsonl"]

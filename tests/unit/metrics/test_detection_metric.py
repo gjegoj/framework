@@ -7,8 +7,9 @@ from typing import Any
 import pytest
 import torch
 
-from src.core import Instances, PerClass
+from src.core import Instances
 from src.metrics.detection import DEFAULT_READINGS, MeanAveragePrecisionOverInstances
+from src.metrics.entities import PerClass
 
 
 def found(*rows: tuple[float, float, float, float, int, int, float]) -> Instances:
@@ -178,5 +179,35 @@ def test_it_refuses_a_shape_it_cannot_compare() -> None:
     """A `map` on a classification task would otherwise fail inside torchmetrics, at a
     frame naming neither the task nor the metric.
     """
-    with pytest.raises(TypeError, match="preset is 'detection'"):
+    with pytest.raises(TypeError, match="kind is 'detection'"):
         MeanAveragePrecisionOverInstances().update(torch.zeros(4, 3), torch.zeros(4))
+
+
+def test_a_class_never_annotated_is_left_out_of_the_per_class_reading() -> None:
+    """Measured on torchmetrics 1.9.0: a class predicted but absent from the ground truth reads
+    -1 in ``map_per_class``. Carried into ``PerClass`` it was averaged — a mean of 0.0 over 1.0
+    and -1 — and logged under that class's name, which the scalar rule already refuses."""
+    per_class = computed(
+        MeanAveragePrecisionOverInstances(readings=["map_per_class"]),
+        found((10, 10, 50, 50, 0, 0, 0.9), (60, 60, 90, 90, 1, 0, 0.8)),
+        truth((10, 10, 50, 50, 0, 0)),
+    )
+
+    reading = per_class["map_per_class"]
+    assert isinstance(reading, PerClass)
+    assert [(index, float(value)) for index, value in reading.pairs()] == [(0, pytest.approx(1.0))]
+
+
+def test_a_reading_about_one_class_is_still_read_per_class() -> None:
+    """Measured on torchmetrics 1.9.0: ``compute`` squeezes every tensor a metric returns, so a
+    per-class reading about a single class arrives as two 0-d tensors. Read by position it was
+    ``zip(0, ...)``: a one-class detector could not log the reading it asked for."""
+    per_class = computed(
+        MeanAveragePrecisionOverInstances(readings=["map_per_class"]),
+        found((10, 10, 50, 50, 0, 0, 0.9)),
+        truth((10, 10, 50, 50, 0, 0)),
+    )
+
+    reading = per_class["map_per_class"]
+    assert isinstance(reading, PerClass)
+    assert [(index, float(value)) for index, value in reading.pairs()] == [(0, pytest.approx(1.0))]

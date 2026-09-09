@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from src.losses.angular import ArcFaceCriterion, ProxyAngularCriterion
 from src.losses.base import WrappedCriterion
+from src.losses.build import build_criterion
 from src.losses.classification import BinaryCrossEntropyCriterion, CrossEntropyCriterion, FocalCriterion
 from src.losses.composite import WeightedSumCriterion
 from src.losses.contrastive import InfoNceCriterion, SigLipCriterion, TripletCriterion
@@ -40,4 +41,5 @@ __all__ = [
     "TverskyCriterion",
     "WeightedSumCriterion",
     "WrappedCriterion",
+    "build_criterion",
 ]

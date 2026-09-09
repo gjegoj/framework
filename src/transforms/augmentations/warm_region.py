@@ -169,7 +169,7 @@ class MaskedPlanckianJitter(A.CustomTransformsApplyMixin, A.ImageOnlyTransform):
         return warmed
 
     def apply_to_label(self, label: Any, temperature: float, **params: Any) -> float:
-        return int(temperature)
+        return temperature  # the region's mean, fraction and all — an int here sat up to a kelvin low
 
     def _field(
         self, centre: int, spread: int, roughness: float, region: np.ndarray, shape: tuple[int, int]

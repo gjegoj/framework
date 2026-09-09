@@ -5,31 +5,17 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any, override
 
-import cv2
 import lightning as L
 from torch.utils.data import DataLoader
 
 from src.core.taxonomy import Stage
-from src.data import collate_samples
+from src.data import collate_samples, single_threaded_cv2
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-
-    from src.core.entities import Batch, Sample
-    from src.core.ports import DataModule
+    from src.core.entities import Sample
+    from src.data.datamodules.base import DataModule
 
 log = logging.getLogger(__name__)
-
-
-def single_threaded_cv2(_worker_id: int) -> None:
-    """DataLoader ``worker_init_fn``: one cv2 thread per worker, measured 1.5x faster.
-
-    OpenCV's process-wide thread pool is sized to the machine, and loader workers are
-    processes, so eight workers run sixty-four decoding threads; here the workers *are* the
-    parallelism. A ``worker_init_fn`` survives every start method, and a ``num_workers: 0``
-    run keeps cv2's own parallelism.
-    """
-    cv2.setNumThreads(0)
 
 
 class TrainingData(L.LightningDataModule):
@@ -37,13 +23,10 @@ class TrainingData(L.LightningDataModule):
 
     ``shuffle`` and ``drop_last`` are stage conventions and not accepted among the options:
     training shuffles and may drop its last batch, evaluation does neither.
-    ``DataModule.setup`` runs in assembly, eagerly; this only turns stage datasets into loaders.
+    ``DataModule.setup`` runs in the composition root, eagerly; this only turns stage datasets into loaders.
 
     Parameters:
         data (DataModule): Source of per-stage datasets; ``setup`` has run.
-        collate (Callable | None): Turns samples into a ``Batch``; ``None`` takes the
-            framework's own. A pipeline with ragged targets reports its own through
-            ``DataModule.collate``.
         **loader_options (Any): Forwarded to every ``DataLoader``; ``worker_init_fn``
             defaults to :func:`single_threaded_cv2`.
     """
@@ -51,12 +34,11 @@ class TrainingData(L.LightningDataModule):
     def __init__(
         self,
         data: DataModule,
-        collate: Callable[[list[Sample]], Batch] | None = None,
         **loader_options: Any,
     ) -> None:
         super().__init__()
         self._data = data
-        self._collate = collate if collate is not None else collate_samples
+        self._collate = collate_samples
         self._drop_last = bool(loader_options.pop("drop_last", False))
         # A default, not a decree — a caller's own worker_init_fn wins. From config
         # none can arrive (YAML holds no callables), so every run gets this one.

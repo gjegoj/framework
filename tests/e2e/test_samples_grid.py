@@ -4,10 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import pytest
-
-from src.assembly import assemble, run
-from src.core.normalisation import IMAGENET_MEAN, IMAGENET_STD
+from src.build import build, run
+from src.config.experiment import IMAGENET_MEAN, IMAGENET_STD
 from tests.support.configs import disk_config
 from tests.support.fakes import PageLogger
 
@@ -18,8 +16,6 @@ MEAN, STD = list(IMAGENET_MEAN), list(IMAGENET_STD)
 """What the shared transforms normalise by, so the page draws the pixels back."""
 
 
-@pytest.mark.e2e
-@pytest.mark.slow
 def test_a_run_with_the_samples_callback_ships_a_self_contained_page(dataset_root: Path) -> None:
     """The whole path: step returned, annotated, rendered, logged — real config, real data.
 
@@ -33,10 +29,11 @@ def test_a_run_with_the_samples_callback_ships_a_self_contained_page(dataset_roo
         loader={"batch_size": 2, "drop_last": True},
         callbacks=[{"name": "samples", "every_n_epochs": 1, "stages": ["val"], "mean": MEAN, "std": STD}],
         run={"directory": str(dataset_root / "run"), "train": True, "test": False},
+        logger={"_target_": "tests.support.fakes.PageLogger"},
     )
-    experiment = assemble(config)
-    logger = PageLogger()
-    experiment.trainer._loggers = [logger]
+    experiment = build(config)
+    logger = experiment.trainer.logger
+    assert isinstance(logger, PageLogger)
 
     run(experiment, config)
 

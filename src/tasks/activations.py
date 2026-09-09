@@ -1,4 +1,4 @@
-"""Built-in activations: what the standard objectives turn logits into for metrics."""
+"""Built-in activations: what the shipped kinds turn logits into for metrics."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ if TYPE_CHECKING:
 
     from torch import Tensor
 
-    from src.core.ports import Activation
+    from src.models.composite import Activation
 
 
 def softmax_probabilities(logits: Tensor) -> Tensor:

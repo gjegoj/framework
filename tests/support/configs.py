@@ -1,8 +1,8 @@
 """The two smallest experiments a test builds on: one that validates, one that runs.
 
 ``paper_config`` touches no disk and is what a wiring test wants — which callback got
-built, which scheduler, what a vendor family refuses. ``disk_config`` names files
-``write_dataset`` wrote and is what an assembling or fitting test wants.
+built, which scheduler, what a section refuses. ``disk_config`` names files
+``write_dataset`` wrote and is what a building or fitting test wants.
 
 **A named section replaces the default whole.** That one rule covers both "use a
 different scheduler" and "use a different data section"; to *extend* a default rather
@@ -17,15 +17,27 @@ Nothing here deep-merges. A test that changes a section shows the section it cha
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Final
+from typing import TYPE_CHECKING, Any, Final, cast
 
+import yaml
+from omegaconf import OmegaConf
+
+from src.build import build_kinds, build_metrics, build_model, build_tasks
 from src.config import load_config
+from src.data.build import build_pipeline, build_schema
 from tests.support.datasets import IMAGE_SIDE, TABLE_NAME
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     from src.config import ExperimentConfig
+    from src.core.entities import DatasetFacts
+    from src.core.ports import Backbone, Model
+    from src.core.taxonomy import Stage
+    from src.data import DataSchema, LoaderCache, TableDataModule
+    from src.metrics.ports import MetricSet
+    from src.models import TaskComponents
+    from src.tasks import Task
 
 INPUTS: Final[dict[str, Any]] = {"image": {"column": "image"}}
 """One image input, read from the column ``write_dataset`` writes."""
@@ -36,7 +48,7 @@ SPLIT: Final[dict[str, Any]] = {"train": 0.5, "val": 0.25, "test": 0.25}
 DATA: Final[dict[str, Any]] = {"source": "a.csv", "inputs": INPUTS, "split": SPLIT}
 """The smallest data section that validates. Its source is never read."""
 
-TASK: Final[dict[str, Any]] = {"preset": "classification", "target": "label", "classes": {0: "cat", 1: "dog"}}
+TASK: Final[dict[str, Any]] = {"kind": "classification", "target": "label", "classes": {0: "cat", 1: "dog"}}
 """One classification task over the column ``write_dataset`` writes."""
 
 TASKS: Final[dict[str, Any]] = {"label": TASK}
@@ -84,13 +96,13 @@ def paper_config(**sections: Any) -> ExperimentConfig:
     """The smallest experiment that validates — for tests about wiring, not about data.
 
     Its ``data.source`` is a name nobody opens, which is the point: a test asking which
-    callback assembly built should not need a dataset to find out.
+    callback the composition root built should not need a dataset to find out.
     """
     return load_config({"data": DATA, "tasks": TASKS, "model": MODEL} | sections)
 
 
 def disk_config(root: Path, **sections: Any) -> ExperimentConfig:
-    """The smallest experiment that assembles and fits, over files ``write_dataset`` wrote.
+    """The smallest experiment that builds and fits, over files ``write_dataset`` wrote.
 
     Parameters:
         root (Path): The dataset root — where the table sits and what paths resolve against.
@@ -111,6 +123,44 @@ def disk_config(root: Path, **sections: Any) -> ExperimentConfig:
         "transforms": resizing_transforms(height),
     } | sections
     return load_config(declared | {"trainer": _rooted(declared)})
+
+
+def experiment_from_yaml(text: str) -> ExperimentConfig:
+    """A YAML experiment, its ``${...}`` interpolations resolved the way the CLI resolves them.
+
+    The e2e runs are written as the YAML a user writes, so the test reads like the
+    experiment file; this is the one place that turns it into the validated config,
+    with OmegaConf resolving the references exactly as ``cli.main`` does.
+    """
+    resolved = cast("dict[str, Any]", OmegaConf.to_container(OmegaConf.create(yaml.safe_load(text)), resolve=True))
+    return load_config(resolved)
+
+
+def model_of(config: ExperimentConfig, facts: DatasetFacts) -> tuple[Model, list[Task]]:
+    """``build_model`` over the kinds the root builds once — for a test about one model."""
+    return build_model(config, facts, build_kinds(config))
+
+
+def tasks_of(
+    config: ExperimentConfig, facts: DatasetFacts, backbone: Backbone
+) -> tuple[list[Task], dict[str, TaskComponents]]:
+    """``build_tasks`` over the root's kinds — for a test about one task's components."""
+    return build_tasks(config, facts, backbone, build_kinds(config))
+
+
+def metrics_of(config: ExperimentConfig, facts: DatasetFacts) -> dict[str, dict[Stage, MetricSet]]:
+    """``build_metrics`` over the root's kinds — for a test about one task's metric sets."""
+    return build_metrics(config, facts, build_kinds(config))
+
+
+def schema_of(config: ExperimentConfig, cache: LoaderCache | None = None) -> DataSchema:
+    """The schema an experiment declares, for a test about one column of it."""
+    return build_schema(config.data, config.tasks, build_kinds(config), cache)
+
+
+def pipeline_of(config: ExperimentConfig) -> TableDataModule:
+    """The table pipeline an experiment declares, for a test about what it reads."""
+    return build_pipeline(config.data, config.tasks, build_kinds(config), config.transforms)
 
 
 def _rooted(declared: dict[str, Any]) -> dict[str, Any]:

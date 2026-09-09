@@ -6,7 +6,7 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 import torch
 
@@ -103,6 +103,8 @@ class TensorRtExporter(Exporter):
         workspace_size (int | None): Builder scratch budget in bytes; ``None`` is TensorRT's default.
     """
 
+    suffix: ClassVar[str] = "plan"
+
     def __init__(
         self,
         precision: Precision = "fp16",
@@ -137,8 +139,7 @@ class TensorRtExporter(Exporter):
                 "TensorRT-version specific, so one built elsewhere would not load anyway."
             )
         trt = require_tensorrt()
-        path = destination.parent / f"{destination.name}.plan"
-        path.parent.mkdir(parents=True, exist_ok=True)
+        path = self.artifact_path(destination)
         with TemporaryDirectory() as staging:
             # The intermediate is ours, not the run's: a target that asked for an engine
             # did not ask for an ONNX file beside it.

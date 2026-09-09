@@ -8,34 +8,8 @@ import pytest
 import torch
 from torch import Tensor
 
-from src.core import Batch, Prediction
-from src.export import DeployableModel, ExportedArtifact, Exporter, Parity, Runnable, render_report, verify
-from tests.support.fakes import PredictOnlyModel
-
-
-class DoublingModel(PredictOnlyModel):
-    """Doubles the 'image' input into task 'label'."""
-
-    def predict(self, batch: Batch) -> Prediction:
-        return Prediction(outputs={"label": batch.inputs["image"] * 2})
-
-
-class FakeExporter(Exporter):
-    """Writes nothing and loads back whatever the test says the artifact does.
-
-    Verification's job is to compare a runnable against a model; a fake runnable
-    is how a test states the drift it wants compared.
-    """
-
-    def __init__(self, runnable: Runnable) -> None:
-        super().__init__()
-        self._runnable = runnable
-
-    def export(self, model: DeployableModel, example: tuple[Tensor, ...], destination: Path) -> Path:
-        return destination
-
-    def load(self, path: Path) -> Runnable:
-        return self._runnable
+from src.export import DeployableModel, ExportedArtifact, Parity, render_report, verify
+from tests.support.fakes import DoublingModel, FakeExporter
 
 
 def graph() -> DeployableModel:

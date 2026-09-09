@@ -18,11 +18,13 @@ from typing import Any, cast
 
 import torch
 
-from src.assembly.metrics import build_metric_sets
 from src.config import MetricConfig
-from src.core import Curve, Matrix, Objective, Stage, TargetFacts
+from src.core import Stage, TaskFacts
 from src.metrics import WrappedMetricSet
+from src.metrics.build import build_metric_sets
 from src.metrics.classification import ConfusionMatrixMetric, PrecisionRecallMetric, RocMetric
+from src.metrics.entities import Curve, Matrix
+from src.tasks import Classification, MultilabelClassification
 
 
 def _updated(sets: WrappedMetricSet) -> WrappedMetricSet:
@@ -36,8 +38,8 @@ def _multiclass(name: str, **params: Any) -> WrappedMetricSet:
     Extra keys become constructor arguments, exactly as they do in YAML.
     """
     sets = build_metric_sets(
-        Objective.MULTICLASS,
-        facts=TargetFacts(num_classes=3),
+        Classification(),
+        facts=TaskFacts(num_classes=3),
         metrics={name: MetricConfig(name=name, **params)},
     )
     return cast("WrappedMetricSet", sets[Stage.VAL])
@@ -91,10 +93,11 @@ def test_a_multilabel_confusion_matrix_publishes_nothing() -> None:
 def test_the_facts_an_objective_offers_reach_a_wrapped_metric() -> None:
     """A wrapper names ``task`` and the class counts, and that is load-bearing.
 
-    Assembly offers derived values to whatever *names* them, so a constructor of
-    ``**kwargs`` alone receives none of them. Written that way first, every wrapped
+    A torchmetrics wrapper receives the kind's facts by signature (the one exception
+    kept for constructors that are not ours), so a constructor of ``**kwargs`` alone
+    receives none of them. Written that way first, every wrapped
     metric was built with no task mode and no class count, and died inside torchmetrics
-    about an argument no config had mentioned. Measured: 27 tests across assembly.
+    about an argument no config had mentioned. Measured: 27 tests, then under ``tests/unit/assembly/``.
     """
     computed = _updated(_multiclass("roc")).compute()["roc"]
 
@@ -125,8 +128,8 @@ def test_iou_computes_as_a_per_class_vector_not_a_matrix() -> None:
 
 def test_multilabel_iou_is_not_swallowed_by_the_confusion_matrix() -> None:
     sets = build_metric_sets(
-        Objective.MULTILABEL,
-        facts=TargetFacts(num_classes=3),
+        MultilabelClassification(),
+        facts=TaskFacts(num_classes=3),
         metrics={"iou": MetricConfig(name="iou")},
     )[Stage.VAL]
     sets.update(torch.rand(8, 3), torch.randint(0, 2, (8, 3)))

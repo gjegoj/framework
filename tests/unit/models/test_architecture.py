@@ -31,7 +31,7 @@ class Nameless(Backbone):
         return {Stream.FEATURES: 4}
 
 
-class Vendor(Model):
+class Whole(Model):
     """A family owning its own head and loss, so it has no backbone to ask."""
 
     def step(self, batch: Batch) -> StepResult:
@@ -66,7 +66,7 @@ def test_smp_answers_with_the_declaration_because_its_own_name_abbreviates() -> 
 
 
 def test_a_composite_backbone_joins_what_it_holds() -> None:
-    """This is the case the reference dropped: a config interpolation has no key to reach here."""
+    """A config interpolation has no key to reach here, so the composite joins the names itself."""
     encoders = {
         "image": TimmBackbone("resnet18", pretrained=False),
         "other": TimmBackbone("resnet34", pretrained=False),
@@ -102,6 +102,6 @@ def test_a_distilled_run_is_filed_under_the_student() -> None:
     assert distilled.architecture == "resnet18"
 
 
-def test_a_family_with_no_backbone_answers_for_itself() -> None:
-    """A vendor model owns its own head and loss, and its class name is the only honest answer."""
-    assert Vendor().architecture == "Vendor"
+def test_a_model_with_no_backbone_answers_for_itself() -> None:
+    """A model that arrives whole owns its own head and loss, and its class name is the only honest answer."""
+    assert Whole().architecture == "Whole"

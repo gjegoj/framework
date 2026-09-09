@@ -16,8 +16,8 @@ from rich.text import Text
 
 from src.console import HEADER_STYLE
 from src.core import log_keys
-from src.core.ports import DeclaresMetricDirections
 from src.core.taxonomy import Stage
+from src.training.ports import DeclaresMetricDirections
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -38,14 +38,13 @@ def row_key(logged: str) -> str | None:
     plain key (the row shows the aggregate); per-class leaves and stage-less
     keys (``epoch``) are noise at table altitude.
     """
-    stage, separator, rest = logged.partition(log_keys.SEPARATOR)
-    if not separator or stage not in log_keys.STAGES:
+    parsed = log_keys.parse(logged)
+    if parsed.stage is None:
         return None
-    segments = rest.split(log_keys.SEPARATOR)
-    if len(segments) < 3:
+    if not parsed.per_class:
         return logged
-    if len(segments) == 3 and segments[-1] == log_keys.MEAN:
-        return logged.rsplit(log_keys.SEPARATOR, 1)[0]
+    if len(parsed.path) == log_keys.PER_CLASS_SEGMENTS and parsed.is_mean:
+        return parsed.family
     return None
 
 
@@ -141,7 +140,7 @@ class MetricsProgressBar(RichProgressBar):
             console=self._console,
         )
         self._live = Live(
-            Group(self.progress, self._build_table()),
+            Group(self.progress, self.table()),
             refresh_per_second=_REFRESH_RATE,
             console=self._console,
         )
@@ -175,9 +174,14 @@ class MetricsProgressBar(RichProgressBar):
             except (TypeError, ValueError):
                 continue
             self._history.observe(key, value)
-        self._live.update(Group(self.progress, self._build_table()))
+        self._live.update(Group(self.progress, self.table()))
 
-    def _build_table(self) -> Table:
+    @property
+    def history(self) -> MetricHistory:
+        """What the bar has seen so far — for whoever wants the numbers without a terminal to read them off."""
+        return self._history
+
+    def table(self) -> Table:
         """Assemble the Metric x Train/Best/Val/Best/Test table from everything seen so far.
 
         Read from the history rather than from the values of this one refresh:
@@ -195,13 +199,16 @@ class MetricsProgressBar(RichProgressBar):
 
         rows: dict[str, dict[str, Text]] = {}
         for key, value in self._history.current.items():
-            stage, _, series = key.partition(log_keys.SEPARATOR)
-            rows.setdefault(series, {})[stage] = self._cell(key, value, self._history.step_deltas)
+            parsed = log_keys.parse(key)
+            if parsed.stage is None:
+                continue  # no stage, no series: `epoch` and its like are not rows
+            rows.setdefault(parsed.rest, {})[parsed.stage] = self._cell(key, value, self._history.step_deltas)
         for key, best in self._history.best.items():
-            stage, _, series = key.partition(log_keys.SEPARATOR)
-            if stage not in _BEST_STAGES:
+            parsed = log_keys.parse(key)
+            if parsed.stage not in _BEST_STAGES:
                 continue
-            rows.setdefault(series, {})[f"{stage}_best"] = self._cell(key, best, self._history.best_deltas)
+            column = f"{parsed.stage}_best"
+            rows.setdefault(parsed.rest, {})[column] = self._cell(key, best, self._history.best_deltas)
 
         for series in sorted(rows):
             row = rows[series]

@@ -5,16 +5,15 @@ from __future__ import annotations
 import pytest
 import torch
 
-from src.assembly import instantiate
-from src.config import ComponentConfig
+from src.config.tasks import LossConfig
+from src.core import TaskFacts
 from src.losses import (
     CrossEntropyCriterion,
     ExpectationCriterion,
-    HuberCriterion,
     MeanSquaredErrorCriterion,
     WeightedSumCriterion,
 )
-from src.losses.registry import criterion_registry
+from src.losses.build import build_criterion
 
 VALUES = [0.0, 1.0, 2.0, 3.0]
 
@@ -120,19 +119,17 @@ def test_any_torch_loss_can_compare_the_two_numbers_instead() -> None:
 
 
 def test_a_declared_comparison_reaches_the_criterion_through_config() -> None:
-    criterion = instantiate(
-        ComponentConfig.model_validate(
-            {
-                "name": "expectation",
-                "distance": {"_target_": "src.losses.HuberCriterion", "delta": 0.5},
-            }
-        ),
-        criterion_registry,
-        class_values=VALUES,
+    """The nested slot is built from its own declaration; the bin values come from the task's facts, through ``sized``."""
+    declared = LossConfig.model_validate(
+        {"name": "expectation", "distance": {"_target_": "src.losses.HuberCriterion", "delta": 0.5}}
     )
 
-    assert isinstance(criterion._distance, HuberCriterion)
-    assert criterion._distance._loss.delta == 0.5  # the knob reached torch untouched
+    criterion = build_criterion(declared, facts=TaskFacts(class_values=tuple(VALUES)), embedding_dim=1)
+
+    loss = criterion(torch.tensor([[0.0, 100.0, 0.0, 0.0]]), one_hot(3))
+
+    assert isinstance(criterion, ExpectationCriterion)
+    assert loss.total.item() == pytest.approx(0.875, abs=1e-4)  # Huber at delta 0.5 of |1 - 3|: 0.5 * (2 - 0.25)
 
 
 def test_arguments_for_two_different_comparisons_are_refused() -> None:

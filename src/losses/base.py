@@ -39,7 +39,7 @@ class WrappedCriterion(Criterion):
         super().__init__()
         # Checked here rather than left to the annotation: a subclass that forgot it used
         # to surface as an AttributeError inside the first `forward`, a thousand steps into
-        # a run, reading as a torch problem. Built from config, this fires at assembly.
+        # a run, reading as a torch problem. Built from config, this fires at build time.
         # An abstract intermediate sharing a `_prepare` names no part and is never built.
         if not hasattr(type(self), "part_name"):
             raise TypeError(
@@ -56,3 +56,12 @@ class WrappedCriterion(Criterion):
     def _prepare(self, logits: Tensor, target: Tensor) -> tuple[Tensor, Tensor]:
         """Shape/type hook applied before the wrapped loss; identity by default."""
         return logits, target
+
+
+def without_channel(logits: Tensor, target: Tensor) -> Tensor:
+    """``logits`` with its single channel dropped where ``target`` carries none.
+
+    ``[B, 1]`` against ``[B]``, dense ``[B, 1, H, W]`` against ``[B, H, W]``: the channel is
+    squeezed so a silent broadcast cannot happen; matching shapes pass through.
+    """
+    return logits.squeeze(1) if logits.dim() == target.dim() + 1 else logits

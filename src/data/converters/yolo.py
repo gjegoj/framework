@@ -35,7 +35,7 @@ IMAGE_SUFFIXES = frozenset(
 """What counts as a picture in a stage directory.
 
 Copied from the reference tool's ``IMG_FORMATS`` rather than imported — ultralytics is
-AGPL-3.0 and quarantined behind the vendor adapters; these offline converters must not
+AGPL-3.0 and quarantined behind the detection family's adapters; these offline converters must not
 become a second doorway into it. Anything else beside the pictures (.DS_Store, the
 reference tool's own ``*.cache``) is detritus, not a lost annotation, and is skipped:
 measured, opening .DS_Store as a picture raised ``UnidentifiedImageError`` naming
@@ -66,6 +66,12 @@ def convert(data_yaml: Path | str, *, into: Path | str) -> ConversionReport:
         declared = descriptor.get(stage)
         if not declared:
             continue
+        if not isinstance(declared, str) or declared.endswith(".txt"):
+            raise ValueError(
+                f"Stage '{stage}' in {descriptor_path.name} is declared as {declared!r:.80}. This converter reads "
+                f"a stage as one image directory; a list of directories or a .txt image list is not supported. "
+                f"Point the stage at a directory."
+            )
         records = [_record(image, root, names, report) for image in _images_of(root / str(declared))]
         if not records:
             raise ValueError(
@@ -100,7 +106,7 @@ def _labels_dir(images: Path) -> Path:
 
     The last, not every one — the reference implementation replaces the final
     ``/images/`` occurrence (read from ``ultralytics.data.utils.img2label_paths``, not
-    imported: ultralytics is AGPL-3.0 and quarantined behind the vendor adapters).
+    imported: ultralytics is AGPL-3.0 and quarantined behind the detection family's adapters).
     Measured on the every-segment spelling: a dataset under a parent directory named
     ``images`` had its labels looked up in a directory that does not exist, and every
     row converted as a negative. No ``images`` segment at all means the labels sit

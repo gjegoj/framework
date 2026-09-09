@@ -52,7 +52,7 @@ leaves behind:
 callbacks:
   - name: ema
     decay: 0.9999    # how much of the average survives each update
-    after: 0.1       # train a tenth of the run first, so it starts from something
+    after: 0.1       # train a tenth of the run first, so it starts from something; a whole number is an epoch index
 ```
 
 `decay` nearer 1 averages over a longer stretch — 0.9999 suits a long run, 0.99
@@ -103,7 +103,7 @@ callbacks:
     start: 0.2
     end: 0.0
     schedule: cosine   # or linear
-    over: 0.5          # reach `end` halfway through the run, then hold
+    over: 0.5          # reach `end` halfway through the run, then hold; a whole number is a count of epochs
 ```
 
 `start` overrides the constructed value from epoch 0, so the schedule is the
@@ -122,12 +122,15 @@ loss carry the same name, say which one with the part's logging name:
 ```yaml
 callbacks:
   - name: freeze
-    modules: [model.backbone]
+    modules: [backbone]
     until: 0.3            # held for the first 30% of the run; a whole number is an epoch index
     train_bn: true        # normalisation keeps learning *this* dataset's statistics
 ```
 
-`modules` are dot-paths from the training module. Built on Lightning's
+`modules` are dot-paths relative to the model that ships — `backbone`,
+`heads.tags.base` — so no scaffolding around it moves a path: in a distilled run
+`backbone` is the student's. A path written the old way, from the training module
+(`model.backbone`), is refused with the new spelling. Built on Lightning's
 `BaseFinetuning` rather than on `requires_grad`, because unfreezing has to
 return the parameters to the optimizer's groups — the step hand-rolled freezing
 usually misses, where the weights thaw but never move. Leave `until` out and
@@ -144,11 +147,12 @@ does to a target:
 callbacks:
   - name: batch_transform
     transform: {_target_: src.transforms.MixUp, alpha: 0.4}
-    until: 0.8      # off for the last fifth, so the run ends on clean data
+    until: 0.8      # off for the last fifth, so the run ends on clean data; a whole number is an epoch index
 ```
 
-The tasks and their class counts are not written here: assembly offers them to
-every callback, and this is one of the few that takes them.
+The tasks and their class counts are not written here: the callback reads the
+tasks off the module when the trainer sets the run up, and binds the transform to
+them before the first batch.
 
 ## The final numbers at a glance
 

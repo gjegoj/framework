@@ -3,15 +3,19 @@
 from __future__ import annotations
 
 import warnings
+from io import StringIO
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 import pytest
+from hydra import compose, initialize_config_dir
 from lightning.fabric.utilities.warnings import PossibleUserWarning
 from omegaconf import OmegaConf
 from pydantic import ValidationError
+from rich.console import Console
 
 from src.cli import CONFIG_DIRECTORY, main, show_config, silence_third_party_notices
+from tests.support.datasets import TABLE_NAME
 
 if TYPE_CHECKING:
     from omegaconf import DictConfig
@@ -89,6 +93,42 @@ def test_a_config_that_is_refused_is_shown_anyway(capsys: pytest.CaptureFixture[
     assert "lr: 0.0003" in capsys.readouterr().out
 
 
+def test_main_runs_the_composed_experiment_through_fit_and_test(dataset_root: Path) -> None:
+    """Past the shown config: the shipped groups compose into a run that trains, tests and logs under the run's home.
+
+    The overrides are the ones a user types — a source, a task, a size, a home — and nothing
+    below ``main`` is stubbed, so this is the path ``uv run main.py`` takes.
+    """
+    home = dataset_root / "run"
+    with initialize_config_dir(version_base=None, config_dir=CONFIG_DIRECTORY):
+        composed = compose(
+            config_name="config",
+            overrides=[
+                f"data.source={dataset_root / TABLE_NAME}",
+                f"+data.inputs.image.loader.root={dataset_root}",
+                "data.split={train:0.5,val:0.25,test:0.25}",
+                "+tasks.label.kind=classification",
+                "+tasks.label.target=label",
+                "+tasks.label.classes={0:cat,1:dog}",
+                "model.pretrained=false",
+                "epochs=1",
+                "batch_size=2",
+                "image_size=[16,16]",
+                f"run.directory={home}",
+                "trainer.accelerator=cpu",
+                "trainer.devices=1",
+                "+trainer.enable_progress_bar=false",
+                "+trainer.enable_model_summary=false",
+            ],
+        )
+
+    main.__wrapped__(composed)
+
+    logged = list(home.rglob("metrics.csv"))
+    assert logged, "Lightning's own logger writes the run's metrics under the run's home"
+    assert "test/label/ce" in logged[0].read_text()  # the loss part every classification run logs at test
+
+
 def raised(*notices: tuple[str, type[Warning]]) -> list[str]:
     """The notices that survive the filter, raised inside a scope that restores it after."""
     with warnings.catch_warnings(record=True) as caught:
@@ -126,3 +166,14 @@ def test_the_tips_about_this_runs_own_choices_still_arrive() -> None:
     )
 
     assert len(survivors) == 2
+
+
+def test_the_shown_config_goes_through_the_frameworks_one_console(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Rich reads the terminal once per console; a second one opened just for the banner can disagree
+    about the width with everything the run prints after it."""
+    drawn = StringIO()
+    monkeypatch.setattr("src.cli.console", lambda: Console(file=drawn, width=80))
+
+    show_config({"model": {"name": "timm"}})
+
+    assert "name: timm" in drawn.getvalue()

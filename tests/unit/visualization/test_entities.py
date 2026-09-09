@@ -17,7 +17,7 @@ from src.visualization import (
 
 
 def test_fields_are_keyed_structurally_not_by_glued_strings() -> None:
-    """A task named with an underscore broke the reference's rpartition round-trip."""
+    """A task named with an underscore survives the round trip; splitting a glued string on it would not."""
     view = SampleView()
 
     view.fields[("my_task", "gt")] = Classification(label="cat")

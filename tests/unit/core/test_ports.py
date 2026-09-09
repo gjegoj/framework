@@ -14,21 +14,9 @@ import pytest
 import torch
 from torch import Tensor, nn
 
-from src.core import (
-    AdaptedTarget,
-    Backbone,
-    Batch,
-    Criterion,
-    DataModule,
-    Features,
-    Head,
-    Loss,
-    MetricSet,
-    Model,
-    TargetAdapter,
-    TaskOutput,
-    require_tensor,
-)
+from src.core import Backbone, Batch, Criterion, Features, Loss, Model, TaskOutput, require_tensor
+from src.metrics.ports import MetricSet
+from src.models.composite import AdaptedTarget, TargetAdapter
 from tests.support.narrowing import tensor
 
 
@@ -46,7 +34,7 @@ class FlattenBackbone(Backbone):
         return {"features": self._dim}
 
 
-class LinearHead(Head):
+class LinearHead(nn.Module):
     def __init__(self, in_features: int, out_features: int) -> None:
         super().__init__()
         self._linear = nn.Linear(in_features, out_features)
@@ -79,7 +67,7 @@ class CountingMetricSet(MetricSet):
         return {"seen": None}
 
 
-@pytest.mark.parametrize("port", [Backbone, Head, Criterion, MetricSet, DataModule, Model])
+@pytest.mark.parametrize("port", [Backbone, Criterion, MetricSet, Model])
 def test_every_port_is_abstract(port: type[Any]) -> None:
     with pytest.raises(TypeError):
         port()

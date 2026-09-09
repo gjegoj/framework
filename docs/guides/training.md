@@ -46,7 +46,7 @@ what `lr_monitor` draws one line each for. Measured, five AdamW steps through on
 group and through three move every parameter to the same value, so the split
 costs a run nothing.
 
-A task that owns no parameters at all — a vendor family builds its own head —
+A task that owns no parameters at all — a model that arrives whole builds its own head —
 gets no group, and a rate declared against it is refused by name rather than
 silently ignored.
 
@@ -58,8 +58,8 @@ optimizer's:
 ```yaml
 lr: 3.0e-4                  # the base rate
 tasks:
-  label: {preset: classification, target: species, lr: 1.0e-2}
-  age:   {preset: regression, target: age}
+  label: {kind: classification, target: species, lr: 1.0e-2}
+  age:   {kind: regression, target: age}
 ```
 
 The graph then carries `backbone`, `label` and `age`, with the last two identical

@@ -30,7 +30,7 @@ callbacks:
   # Held for the first third, then released back into the optimizer's groups.
   # `until` is a share of the run, so it means the same at 3 epochs and at 300.
   - name: freeze
-    modules: [model.backbone]
+    modules: [backbone]
     until: 0.34
     train_bn: true
 
@@ -86,11 +86,11 @@ callbacks:
 
 tasks:
   label:
-    preset: classification
+    kind: classification
     target: species
     classes: {0: cat, 1: dog}
     lr: 0.01
 
   age:
-    preset: regression
+    kind: regression
     target: random_age

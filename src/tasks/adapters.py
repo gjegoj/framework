@@ -6,14 +6,14 @@ from typing import TYPE_CHECKING
 
 import torch
 
-from src.core.entities import AdaptedTarget
+from src.models.composite import AdaptedTarget
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from torch import Tensor
 
-    from src.core.ports import TargetAdapter
+    from src.models.composite import TargetAdapter
 
 CLASS_DIM = 1
 """Where the classes sit in a soft target — a mix is per sample, never per pixel."""

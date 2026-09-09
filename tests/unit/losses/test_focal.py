@@ -6,11 +6,12 @@ import pytest
 import torch
 from torch.nn.functional import one_hot
 
-from src.core import Batch, DataProfile, Objective, OutputTopology, TargetFacts, Task
+from src.core import Batch, TaskFacts
 from src.losses import CrossEntropyCriterion, FocalCriterion
 from src.losses.classification import FocalLoss
 from src.losses.registry import criterion_registry
 from src.transforms.batch import MixUp
+from tests.support.entities import a_task
 from tests.support.narrowing import tensor
 
 LOGITS = torch.tensor([[4.0, 0.0, 0.0], [0.5, 0.4, 0.3]])  # one easy sample, one hard
@@ -64,11 +65,9 @@ def test_a_one_hot_soft_target_matches_the_hard_one_exactly() -> None:
 def test_a_mixed_batch_reaches_the_loss_and_trains() -> None:
     """MixUp hands multiclass losses a distribution; focal must take it as CE does."""
     torch.manual_seed(0)
-    profile = DataProfile()
-    profile.record("label", TargetFacts(num_classes=3))
-    task = Task(name="label", output_topology=OutputTopology.GLOBAL, objective=Objective.MULTICLASS, metrics={})
+    task = a_task(facts=TaskFacts(num_classes=3))
     batch = Batch(inputs={"image": torch.randn(4, 3, 4, 4)}, targets={"label": torch.tensor([0, 1, 2, 0])})
-    mixed = MixUp([task], profile)(batch)
+    mixed = MixUp().for_tasks([task])(batch)
     logits = torch.randn(4, 3, requires_grad=True)
 
     loss = FocalCriterion(gamma=2.0)(logits, tensor(mixed.targets["label"]))

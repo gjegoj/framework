@@ -7,7 +7,7 @@
 # overhead and its weights are named exactly as a plain run's.
 #
 # `target_modules` has no safe default: check the names against the backbone's
-# own `named_modules()`, and a value that matches nothing is refused at assembly.
+# own `named_modules()`, and a value that matches nothing is refused at build time.
 adapters:
   name: lora
   target_modules: [qkv, proj, fc1, fc2]

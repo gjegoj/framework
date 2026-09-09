@@ -16,7 +16,10 @@ loss: {_target_: my_pkg.losses.FocalTversky, alpha: 0.7}   # an import path — 
 Both reach the same constructor by the same path, and every key beyond
 `name` / `_target_` becomes a constructor argument. `_target_` needs no
 registration at all, which makes it the right answer for a one-off; a registry
-key is worth it when several configs will name the thing.
+key is worth it when several configs will name the thing. What it builds still
+has to be the kind of thing the slot takes: a raw torch loss under `loss:` is
+refused at build time, because a criterion returns a `Loss` with a named part and
+`nn.MSELoss` returns a tensor — wrap it (see [losses](losses.md)).
 
 > A **nested** component builds from `_target_` only. A nested position has no
 > registry context, so the short form has nothing to look the name up in.
@@ -30,13 +33,10 @@ One per capability, in `<package>/registry.py`, named `<singular>_registry`:
 | `criterion_registry` | `losses` | Losses, keyed by the part they log under |
 | `metric_registry` | `metrics` | Metrics under DS names — torchmetrics' own class where the value is a number, one of ours where it is an artifact |
 | `backbone_registry` | `models` | Feature producers the framework composes with |
-| `vendor_model_registry` | `models` | Whole model families the framework delegates to |
 | `head_registry` | `models` | Kinds of head |
 | `adapter_registry` | `models` | Reparameterizations of a built model (LoRA) |
-| `objective_registry`, `topology_registry` | `tasks` | Behaviour of one axis member |
-| `task_preset_registry` | `config` | Familiar names for a point on the axes |
+| `task_kind_registry` | `tasks` | The familiar kinds of task, by the name config spells them |
 | `table_source_registry`, `input_loader_registry`, `target_encoder_registry`, `cache_registry` | `data` | The data pipeline's replaceable parts |
-| `vendor_data_module_registry` | `data` | The pipeline a whole model family reads with, under that family's own key in `vendor_model_registry` |
 | `callback_registry` | `callbacks` | What a run does around its steps |
 | `logger_registry` | `loggers` | Experiment trackers |
 | `optimizer_registry`, `scheduler_registry`, `profiler_registry` | `training` | torch's and Lightning's, by name |
@@ -52,15 +52,16 @@ reachable by `_target_` without being registered first.
 
 **A registry holds what a declaration names**, which is a smaller set than "every
 implementation of the port". Everything a registered class needs comes from its own
-declaration — values, the derived facts assembly offers, and nested components filled
-with `_target_`. What a declaration only *implies* has no name to be registered under:
+declaration — values and nested components filled with `_target_` — plus the facts
+the piece of the composition root building it passes explicitly (a head's sizes, a criterion's
+`sized` facts). What a declaration only *implies* has no name to be registered under:
 `CompositeModel` is what `model:` naming a **backbone** implies, `DistilledModel` is what
 `distillation:` being present implies, and `WeightedSumCriterion` is what `loss:` being a
 **list** implies. All three are `Model`s or `Criterion`s; none is registered.
 
 The line is not whether the constructor takes a built object — `ExpectationCriterion`
 takes a whole `Criterion` in its `distance` slot and *is* registered, because the user
-wrote that slot. It is whether a name in the declaration builds it, or the assembler does
+wrote that slot. It is whether a name in the declaration builds it, or the composition root does
 from the declaration's shape.
 
 ### Registries are not the only way something is chosen
@@ -72,8 +73,8 @@ worth knowing they answer different questions rather than the same one four ways
 | Mechanism | Where | The question it answers |
 |---|---|---|
 | `Registry` | 25 of them, `<package>/registry.py` | Which component does this **key** mean? Usually a config name; `visualization`'s renderer registries and `dataset_summary`'s reporter registry key by entity *type* — data chooses, config never does |
-| `match` over reading kinds | `visualization/annotators.py` | Which labeller of this topology draws that kind of reading? |
-| `isinstance` chain | `core/reporting.py` | What is this value's **geometry** — which is type *and* shape (a 2-D tensor is not a scalar one), and so not expressible as type dispatch |
+| `match` over reading kinds | `visualization/annotators.py` | Which labeller of this drawer draws that kind of reading? |
+| `match` with shape guards | `loggers/report.py` | What is this value's **geometry** — which is type *and* shape (a 2-D tensor is not a scalar one), and so not expressible as type dispatch |
 
 Extending the framework almost always means adding to a registry. The other three are
 internal, and each is where it is because the question it answers is not "which key".
@@ -115,7 +116,7 @@ class FocalTverskyCriterion(WrappedCriterion):
 ```yaml
 tasks:
   mask:
-    preset: segmentation
+    kind: segmentation
     target: mask_path
     loss: {name: focal_tversky, gamma: 0.5}
 ```
@@ -141,7 +142,7 @@ metric_registry.register("kappa")(CohenKappa)
 ```yaml
 tasks:
   label:
-    preset: classification
+    kind: classification
     target: species
     metrics:
       kappa: {name: kappa, weights: quadratic}
@@ -156,9 +157,10 @@ so two flavours of one metric can stand side by side:
       f1_per_class: {name: f1, average: none}
 ```
 
-The objective's own arguments (`task`, `num_classes` / `num_labels`) are offered
-to every metric and reach the ones that name them, so `mae` beside `accuracy` is
-not handed a `task` it would refuse.
+The kind's own arguments (`task`, `num_classes` / `num_labels`) reach the
+metrics that name them in their signature — the one exception kept for
+torchmetrics' constructors — so `mae` beside `accuracy` is not handed a `task`
+it would refuse, and `num_classes` written on a metric is refused by name.
 
 That one line is the whole of it for a metric computing a **number**. One returning
 something else — a curve, a matrix — says what its value *means* by wrapping the metric
@@ -200,17 +202,18 @@ callbacks:
 Callbacks are a **list**, because order is the semantics: one that changes the
 weights belongs before one that saves them.
 
-A callback that needs a fact only assembly knows takes it as a parameter —
-`instantiate` offers its derived values to whatever names them:
+A callback that needs the run's tasks reads them off the module in `setup`, the
+way any Lightning callback reads the module — nothing is handed to it by name at
+build time:
 
 ```python
-def __init__(self, tasks: Sequence[Task], num_classes: int) -> None: ...
+def setup(self, trainer: L.Trainer, pl_module: L.LightningModule, stage: str) -> None:
+    self._tasks = tuple(pl_module.tasks)  # TrainingModule publishes them
 ```
 
-A value config already holds is *not* one of those. `${lr}`, `${epochs}`,
-`${mean}` and `${run.directory}` reach a callback by interpolation on the
-declaration, because the derived channel outranks config and a user who declares
-such a value would have it silently ignored.
+A value config already holds reaches a callback by interpolation on the
+declaration — `${lr}`, `${epochs}`, `${mean}`, `${run.directory}` — so one
+declaration serves every reader.
 
 ## A backbone
 
@@ -240,53 +243,58 @@ stream you do not have is refused by name, listing the ones you do. Override
 `native_head` to expose the source library's own head, and `architecture` to say
 what a run should be filed under in a tracker.
 
-## A model family
+## A model that arrives whole
 
-A model that owns its head, loss and decoding implements the `Model` port and
-registers in `vendor_model_registry` — that is what tells assembly to take the short
-path:
+A model that owns its head, loss and decoding implements the `Model` port and is reached
+by `_target_` — no registry to join, no edit to `build.py`:
 
 ```python
-@vendor_model_registry.register("detr")
 class DetrModel(Model):
     def step(self, batch: Batch) -> StepResult: ...
     def predict(self, batch: Batch) -> Prediction: ...
 ```
 
-Assembly recognises it by the name in `config.model`, skips the composite
-family's head-and-criterion building entirely, and refuses the sections such a
-family cannot serve. See [detection](detection.md#what-a-vendor-family-is) for
-what that costs and what it buys.
+```yaml
+model: {_target_: my_pkg.DetrModel, num_queries: 100}
+```
+
+`build_model` takes it as it is, skipping the composite family's head-and-criterion
+building; the sections that need a composed model (`adapters`, `distillation`) refuse
+it by name. See [models](models.md#a-model-that-arrives-whole).
 
 ## A kind of task
 
-A preset is a registered value, not a code branch:
+A kind is a class, not a table entry. Subclass the shipped kind closest to yours
+and override what differs; the pieces kinds are made of — `MulticlassLabels`,
+`BinaryLabels`, `MultilabelLabels` for the label semantics, `DenseOutput` for the
+per-pixel shape — are importable too:
 
 ```python
-from src.config.presets import TaskPreset, task_preset_registry
-from src.config.components import MetricConfig
-from src.core.taxonomy import Objective, OutputTopology
+from src.tasks import DenseOutput, Regression
 
 
-@task_preset_registry.register_instance("depth")
-class Depth(TaskPreset):
-    output_topology: OutputTopology = OutputTopology.DENSE
-    objective: Objective = Objective.CONTINUOUS
-    metrics: dict[str, MetricConfig] | None = {"mae": MetricConfig(name="mae")}
+class Depth(DenseOutput, Regression):
+    """A number per pixel: the dense shape over regression semantics."""
+
+    default_encoder = "depth"  # an encoder you register, as below
+    default_metrics = {"mae": {"name": "mae"}}
+    not_drawn = "a field of numbers has no label kind in the page yet"
 ```
 
 ```yaml
 tasks:
-  depth: {preset: depth, target: depth_map}
+  depth: {kind: {_target_: my_pkg.Depth}, target: depth_map}
 ```
 
-A preset carries a point on the axes and the metrics that kind is customarily
-evaluated by — never a loss, since a loss default follows from one axis alone.
-
-New *behaviour* on an axis is a class plus one `register_instance` in
-`objective_registry` or `topology_registry`; a `TaskTopology` also declares
-`supports(objective, input_topology)`, so an impossible pairing fails at assembly
-naming every axis.
+Everything a kind can state is an attribute or a method of `TaskKind`
+(`src/tasks/kinds.py`): the encoder its target starts from, the streams its head
+reads and the head itself, `loss`, `activation`, `target_adapter`, the facts it
+offers metrics (`metric_kwargs`), its `default_metrics`, whether a batch transform
+may soften its target (`mixable`), and how a sample of it is read and drawn
+(`reader`, `drawer`). A name in the registry is one line more —
+`task_kind_registry.register("depth")` — after which `kind: depth` works too, as
+long as the module registering it is imported before the experiment is built. `_target_` needs
+no such line.
 
 ## A data source, loader or encoder
 
@@ -307,9 +315,9 @@ report then names the task rather than dropping it.
 Encoders live in `src/data/encoders/`, one module per family (`label`,
 `continuous`, `mask`, `boxes`) over `base.py`; a new family is a new module,
 imported from the package's `__init__` so its registration runs with the rest.
-An encoder whose values are classes takes `classes` as a required constructor
-argument — assembly reads that off the signature and refuses a task that
-declared none, before any row is read.
+An encoder whose values are classes subclasses `VocabularyTargetEncoder` and takes
+`classes` as a constructor argument — `data/build.py` reads that off the base, hands
+it the task's `classes` and refuses a task that declared none, before any row is read.
 
 ## An exporter
 
@@ -329,7 +337,7 @@ on some platforms must not break importing the package.
 
 A decorator only runs when its module does. Registering from a package the
 framework does not import means importing it yourself once — in a notebook, in a
-`conftest.py`, or in the script that calls `assemble`. If that feels like a
+`conftest.py`, or in the script that calls `build`. If that feels like a
 detail to remember, use `_target_` instead: an import path resolves itself.
 
 ## Where the depth is

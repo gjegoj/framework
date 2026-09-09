@@ -1,20 +1,31 @@
 """Fixtures every folder can reach — the ones a test would otherwise write for itself.
 
-At the root rather than beside one package, because the same dataset serves an assembly
+At the root rather than beside one package, because the same dataset serves a build
 test and an end-to-end run alike, and a helper only one folder can see is what made eight
 copies of it.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import pytest
 
 from tests.support.datasets import write_dataset
 
-if TYPE_CHECKING:
-    from pathlib import Path
+E2E_FOLDER = Path(__file__).parent / "e2e"
+
+
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    """Every test under ``tests/e2e/`` carries the ``e2e`` marker, by where it lives.
+
+    A marker applied by hand is a marker one file forgets — measured, one sat on a
+    helper rather than its test — so the folder is the declaration and this is the
+    only place that reads it.
+    """
+    for item in items:
+        if E2E_FOLDER in item.path.parents:
+            item.add_marker(pytest.mark.e2e)
 
 
 @pytest.fixture

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Final
+
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from src.config.components import ComponentConfig, ModelConfig, TransformConfig
@@ -9,8 +11,14 @@ from src.config.data import DataConfig
 from src.config.distillation import DistillationConfig
 from src.config.run import RunConfig
 from src.config.tasks import TaskConfig
-from src.config.training import LoaderConfig, OptimizerConfig, SchedulerConfig, TrainerConfig
-from src.core.normalisation import IMAGENET_MEAN, IMAGENET_STD
+from src.config.training import (
+    DEFAULT_BATCH_SIZE,
+    DEFAULT_EPOCHS,
+    LoaderConfig,
+    OptimizerConfig,
+    SchedulerConfig,
+    TrainerConfig,
+)
 from src.core.taxonomy import Stage
 
 CallbackConfig = ComponentConfig
@@ -24,6 +32,21 @@ ExporterConfig = ComponentConfig
 
 AdaptersConfig = ComponentConfig
 """A parameter-efficient technique to apply to the backbone ('lora'), plus its arguments."""
+
+
+IMAGENET_MEAN: Final = (0.485, 0.456, 0.406)
+"""Per-channel mean of ImageNet, which every pretrained backbone here was fitted on.
+
+Named once because two readers have to agree: the transforms that normalise, and the
+samples grid that undoes the normalisation to draw the pixels back. Different numbers
+on the two sides make a picture that looks like a model problem.
+
+A default, not an assumption — a run that normalises differently says so at the root,
+and both readers follow it through ``${mean}`` and ``${std}``.
+"""
+
+IMAGENET_STD: Final = (0.229, 0.224, 0.225)
+"""The matching per-channel standard deviation."""
 
 
 class ExperimentConfig(BaseModel):
@@ -46,8 +69,8 @@ class ExperimentConfig(BaseModel):
         ),
     )
     lr: float = Field(1.0e-3, gt=0, description="Shared learning rate; reach it with ${lr} wherever it belongs.")
-    epochs: int = Field(10, gt=0, description="Shared epoch count; reach it with ${epochs}.")
-    batch_size: int = Field(16, gt=0, description="Shared batch size; reach it with ${batch_size}.")
+    epochs: int = Field(DEFAULT_EPOCHS, gt=0, description="Shared epoch count; reach it with ${epochs}.")
+    batch_size: int = Field(DEFAULT_BATCH_SIZE, gt=0, description="Shared batch size; reach it with ${batch_size}.")
     image_size: tuple[int, int] = Field((224, 224), description="Shared (height, width); reach it with ${image_size}.")
     mean: list[float] = Field(
         default_factory=lambda: list(IMAGENET_MEAN),
@@ -60,7 +83,7 @@ class ExperimentConfig(BaseModel):
 
     data: DataConfig = Field(description="Where the annotation rows come from and how they feed the model.")
     tasks: dict[str, TaskConfig] = Field(
-        description="Learned objectives by name; the name prefixes every loss and metric this task logs.",
+        description="Tasks by name; the name prefixes every loss and metric a task logs.",
     )
     model: ModelConfig = Field(
         description="The model to build: a registry name ('timm', 'smp') or an import path, plus its arguments.",

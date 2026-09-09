@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Hashable, Iterable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from threading import Lock
@@ -21,9 +21,6 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 BYTES_PER_GIB = 1024**3
-
-NAMESPACE_SEPARATOR = "\0"
-"""Divides a namespace from the cell value — the one byte a filename cannot hold."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,11 +47,11 @@ class LoaderCache(ABC):
     """
 
     @abstractmethod
-    def get(self, key: str) -> Any | None:
+    def get(self, key: Hashable) -> Any | None:
         """The cached value for ``key``, or ``None`` when it is not held."""
 
     @abstractmethod
-    def put(self, key: str, value: Any) -> None:
+    def put(self, key: Hashable, value: Any) -> None:
         """Offer a value for caching.
 
         A hint, not an instruction: an implementation may decline anything — a
@@ -86,12 +83,14 @@ class LoaderCache(ABC):
         breakdown and their formatting never leave the module that produces them.
         """
 
-    def scoped(self, namespace: str) -> LoaderCache:
-        """A view of this cache whose keys are private to ``namespace``.
+    def scoped(self, *namespace: str) -> LoaderCache:
+        """A view of this cache whose keys are private to ``namespace`` — a role and a column name.
 
         One cache serves every column so they share one budget, but a cell value alone does not
         say which column it came from — an image and a mask column holding the same filename
-        would serve each other's arrays. The view carries the store and the identity together.
+        would serve each other's arrays. The view carries the store and the identity together;
+        the key is the tuple ``(*namespace, cell)``, so no separator has to be a byte a filename
+        cannot hold.
         """
         return _ScopedCache(self, namespace)
 
@@ -99,16 +98,16 @@ class LoaderCache(ABC):
 class _ScopedCache(LoaderCache):
     """The keys of one namespace, held in the cache every namespace shares."""
 
-    def __init__(self, inner: LoaderCache, namespace: str) -> None:
+    def __init__(self, inner: LoaderCache, namespace: tuple[str, ...]) -> None:
         self._inner = inner
         self._namespace = namespace
 
     @override
-    def get(self, key: str) -> Any | None:
+    def get(self, key: Hashable) -> Any | None:
         return self._inner.get(self._scoped(key))
 
     @override
-    def put(self, key: str, value: Any) -> None:
+    def put(self, key: Hashable, value: Any) -> None:
         self._inner.put(self._scoped(key), value)
 
     @override
@@ -128,8 +127,8 @@ class _ScopedCache(LoaderCache):
     def summarize(self) -> None:
         self._inner.summarize()
 
-    def _scoped(self, key: str) -> str:
-        return f"{self._namespace}{NAMESPACE_SEPARATOR}{key}"
+    def _scoped(self, key: Hashable) -> tuple[Hashable, ...]:
+        return (*self._namespace, key)
 
 
 @cache_registry.register("ram")
@@ -154,20 +153,20 @@ class RamCache(LoaderCache):
             raise ValueError(f"A ram cache needs at least one worker, got {workers}.")
         self._max_bytes = int(max_gib * BYTES_PER_GIB)
         self._workers = workers
-        self._store: dict[str, np.ndarray] = {}
+        self._store: dict[Hashable, np.ndarray] = {}
         self._bytes = 0
         self._declined = 0
         self._full = False
         self._filling = False
-        self._taken: dict[str, int] = {}
+        self._taken: dict[Hashable, int] = {}
         self._lock = Lock()
 
     @override
-    def get(self, key: str) -> Any | None:
+    def get(self, key: Hashable) -> Any | None:
         return self._store.get(key)
 
     @override
-    def put(self, key: str, value: Any) -> None:
+    def put(self, key: Hashable, value: Any) -> None:
         if not self._filling or not isinstance(value, np.ndarray):
             return
         with self._lock:

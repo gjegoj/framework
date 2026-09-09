@@ -9,7 +9,7 @@ from src.models.registry import head_registry
 
 
 def test_built_in_heads_are_registered() -> None:
-    assert set(head_registry) == {"linear", "identity", "conv", "cosine"}
+    assert set(head_registry) == {"linear", "conv", "cosine"}
 
 
 def test_create_builds_a_sized_head() -> None:

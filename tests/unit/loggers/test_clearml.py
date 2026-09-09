@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import sys
-from importlib.machinery import ModuleSpec
 from types import SimpleNamespace
 from typing import Any
 
@@ -11,76 +9,19 @@ import pytest
 import torch
 from lightning.pytorch.utilities.rank_zero import rank_zero_only
 
-from src.core import Curve, Matrix
-from src.core.entities import ValueDistribution
-from src.core.reporting import Bars, BoxPlot, CurveLogger, MatrixLogger
+from src.data.statistics import Bars, BoxPlot, ValueDistribution
 
 # The class itself needs no backend — `clearml` is imported inside `__init__`.
 from src.loggers import ClearMLLogger
+from src.loggers.ports import CurveLogger, MatrixLogger
+from src.metrics.entities import Curve, Matrix
+from tests.support.fakes import clearml_stub as stub_clearml
 
 
 @pytest.fixture
 def clearml_stub(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
-    recorded = SimpleNamespace(
-        scalars=[],
-        matrices=[],
-        curves=[],
-        single_values=[],
-        media=[],
-        histograms=[],
-        figures=[],
-        flushed=0,
-        init_kwargs=None,
-        connected=None,
-    )
-
-    class _Backend:
-        def report_scalar(self, title: str, series: str, value: float, iteration: int) -> None:
-            recorded.scalars.append((title, series, value, iteration))
-
-        def report_single_value(self, name: str, value: float) -> None:
-            recorded.single_values.append((name, value))
-
-        def report_confusion_matrix(self, **kwargs: Any) -> None:
-            recorded.matrices.append(kwargs)
-
-        def report_scatter2d(self, **kwargs: Any) -> None:
-            recorded.curves.append(kwargs)
-
-        def report_media(self, **kwargs: Any) -> None:
-            recorded.media.append(kwargs)
-
-        def report_histogram(self, **kwargs: Any) -> None:
-            recorded.histograms.append(kwargs)
-
-        def report_plotly(self, **kwargs: Any) -> None:
-            recorded.figures.append(kwargs)
-
-    class _Task:
-        name = "run"
-        id = "abc123"
-
-        @classmethod
-        def init(cls, **kwargs: Any) -> _Task:
-            recorded.init_kwargs = kwargs
-            return cls()
-
-        def get_logger(self) -> _Backend:
-            return _Backend()
-
-        def connect(self, mapping: dict[str, Any]) -> None:
-            recorded.connected = mapping
-
-        def flush(self) -> None:
-            recorded.flushed += 1
-
-    # A real spec, because a stub without one is not merely incomplete: `accelerate`
-    # probes for clearml with `importlib.util.find_spec`, which raises rather than
-    # answering "no" when a module in `sys.modules` has none. Whether it raised
-    # depended on whether something else had imported accelerate first.
-    stub = SimpleNamespace(Task=_Task, __spec__=ModuleSpec("clearml", loader=None))
-    monkeypatch.setitem(sys.modules, "clearml", stub)
-    return recorded
+    """The shared stub, as a fixture because forty tests here name it."""
+    return stub_clearml(monkeypatch)
 
 
 def build_logger(**kwargs: Any) -> Any:
@@ -261,7 +202,7 @@ def test_finalize_flushes_and_swallows_backend_failures(clearml_stub: SimpleName
     logger.finalize("success")
     assert clearml_stub.flushed == 1
 
-    logger._task.flush = _raise
+    clearml_stub.task.flush = _raise
     logger.finalize("success")  # must not raise
 
 
@@ -301,26 +242,28 @@ def test_single_values_round_for_the_summary_table(clearml_stub: SimpleNamespace
 def test_the_architecture_joins_the_declared_tags(clearml_stub: SimpleNamespace) -> None:
     """Config cannot supply this one: the key naming an architecture differs per backbone family.
 
-    So assembly asks the model and offers the answer here, where it becomes the tag
-    a run is found by whatever built it.
+    So the composition root asks the model and tags the run afterwards, through the port a logger
+    implements when it can be tagged — the constructor never learns of it.
     """
-    build_logger(tags=["timm", "adamw"], architecture="unet-resnet34")
+    build_logger(tags=["timm", "adamw"]).tag_run("unet-resnet34")
 
-    assert clearml_stub.init_kwargs["tags"] == ["timm", "adamw", "unet-resnet34"]
+    assert clearml_stub.init_kwargs["tags"] == ["timm", "adamw"]
+    assert clearml_stub.added_tags == ["unet-resnet34"]
 
 
 def test_a_tag_that_resolved_to_nothing_is_dropped(clearml_stub: SimpleNamespace) -> None:
     """Tags are written as interpolations, and a group that is off leaves an empty string behind."""
-    build_logger(tags=["timm", "", "lr=0.001", ""], architecture=None)
+    build_logger(tags=["timm", "", "lr=0.001", ""]).tag_run(None)
 
     assert clearml_stub.init_kwargs["tags"] == ["timm", "lr=0.001"]
+    assert clearml_stub.added_tags == []
 
 
 def test_a_tag_declared_twice_appears_once(clearml_stub: SimpleNamespace) -> None:
     """A timm run names its family and its architecture the same on a bare backbone."""
-    build_logger(tags=["resnet18", "adamw"], architecture="resnet18")
+    build_logger(tags=["resnet18", "adamw"]).tag_run("resnet18")
 
-    assert clearml_stub.init_kwargs["tags"] == ["resnet18", "adamw"]
+    assert clearml_stub.added_tags == []
 
 
 def test_a_page_ships_as_media_because_that_is_what_clearml_embeds(

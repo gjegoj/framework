@@ -2,25 +2,26 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any, ClassVar, Final, override
 
 import lightning as L
 from torch import nn
 
 from src.core import log_keys
-from src.core.entities import LightningStepOutput, StepPreview
-from src.core.ports import AwaitsPreview
-from src.core.reporting import report_metric
 from src.core.taxonomy import Stage
+from src.loggers.report import report_metric
 from src.training.optim import FitProfile
+from src.training.ports import AwaitsPreview, LightningStepOutput, StepPreview
 
 if TYPE_CHECKING:
     from lightning.pytorch.utilities.types import OptimizerLRSchedulerConfig
     from torch.optim import Optimizer
 
-    from src.core.entities import Batch, Loss, StepResult, Task
+    from src.core.entities import Batch, Loss, StepResult
     from src.core.ports import Model
+    from src.metrics.ports import MetricSet
+    from src.tasks import Task
     from src.training.optim import OptimizerFactory, SchedulerFactory
 
 SHARED_GROUP: Final = "backbone"
@@ -39,9 +40,10 @@ class TrainingModule(L.LightningModule):
     """Runs any ``Model`` through Lightning: one class for every family.
 
     The unified ``Model.step`` contract keeps this module family-agnostic —
-    composite, vendor-native, and decorated models all train through the same
-    code path. Metric containers from the tasks are registered as submodules
-    so Lightning moves them across devices with the model.
+    composite, whole, and decorated models all train through the same
+    code path. The metric sets are built by the composition root, per task and stage, and
+    registered here as submodules so Lightning moves them across devices with
+    the model.
 
     Log keys follow ``{stage}/...``: the total as ``{stage}/loss``, loss parts
     as ``{stage}/{task}/{part}``, metrics as ``{stage}/{task}/{metric}``.
@@ -62,15 +64,29 @@ class TrainingModule(L.LightningModule):
         tasks: Sequence[Task],
         optimizer_factory: OptimizerFactory,
         scheduler_factory: SchedulerFactory | None = None,
+        metrics: Mapping[str, Mapping[Stage, MetricSet]] | None = None,
     ) -> None:
         super().__init__()
         # Public, unlike this module's other state: a config freezing part of a model
         # names it by dot-path, so the attribute is part of the contract.
         self.model = model
-        self._tasks = list(tasks)
+        self._tasks = tuple(tasks)
         self._optimizer_factory = optimizer_factory
         self._scheduler_factory = scheduler_factory
-        self._metric_containers = nn.ModuleList(metric_set for task in tasks for metric_set in task.metrics.values())
+        self._metrics = {name: dict(sets) for name, sets in (metrics or {}).items()}
+        self._answered: dict[Stage, set[str]] = {stage: set() for stage in Stage}
+        self._metric_containers = nn.ModuleList(
+            metric_set for sets in self._metrics.values() for metric_set in sets.values()
+        )
+
+    @property
+    def tasks(self) -> Sequence[Task]:
+        """The tasks this module trains, for the callbacks that need them.
+
+        Published for the callbacks: Lightning hands them the module and nothing else, and
+        reading the tasks here in ``setup`` leaves one declaration of them (ADR-0004).
+        """
+        return self._tasks
 
     @override
     def training_step(self, batch: Batch, batch_index: int) -> LightningStepOutput:
@@ -145,9 +161,9 @@ class TrainingModule(L.LightningModule):
         to be announced.
         """
         return {
-            log_keys.join(stage, task.name, name): flag
-            for task in self._tasks
-            for stage, metric_set in task.metrics.items()
+            log_keys.join(stage, task_name, name): flag
+            for task_name, sets in self._metrics.items()
+            for stage, metric_set in sets.items()
             for name, flag in metric_set.directions().items()
         }
 
@@ -158,20 +174,19 @@ class TrainingModule(L.LightningModule):
         value Lightning guarantees at this point (``num_training_batches`` is
         still infinite until the loops are set up).
         """
-        return FitProfile(
-            total_steps=int(self.trainer.estimated_stepping_batches),
-            epochs=max(int(self.trainer.max_epochs or 0), 1),
-        )
+        return FitProfile.of(self.trainer)
 
     def _shared_step(self, batch: Batch, stage: Stage) -> LightningStepOutput:
         result = self.model.step(batch)
         self._log_losses(result.loss, stage, self._batch_size(batch))
         for task in self._tasks:
-            metric_set = task.metrics.get(stage)
+            metric_set = self._metrics.get(task.name, {}).get(stage)
             predicted = result.prediction.outputs.get(task.name)
             # Absent rather than empty is a real answer: a family whose head only assembles
             # a decodable output in eval mode produced nothing to evaluate on a training step,
             # and a metric fed a fabricated blank would report that as a score.
+            if predicted is not None:
+                self._answered[stage].add(task.name)
             if metric_set is not None and predicted is not None:
                 metric_set.update(predicted, result.targets[task.name])
         # Returned, not remembered: Lightning hands a step's return value to every
@@ -225,8 +240,9 @@ class TrainingModule(L.LightningModule):
         return any(isinstance(consumer, AwaitsPreview) and consumer.awaiting_preview for consumer in registered)
 
     def _shared_epoch_end(self, stage: Stage) -> None:
+        self._refuse_a_silent_task(stage)
         for task in self._tasks:
-            metric_set = task.metrics.get(stage)
+            metric_set = self._metrics.get(task.name, {}).get(stage)
             if metric_set is None:
                 continue
             for name, value in metric_set.compute().items():
@@ -236,9 +252,33 @@ class TrainingModule(L.LightningModule):
                     scalar_log=self.log,
                     loggers=self.loggers,
                     step=self.current_epoch,
-                    class_names=task.class_names,
+                    class_names=task.facts.class_names,
                 )
             metric_set.reset()
+
+    def _refuse_a_silent_task(self, stage: Stage) -> None:
+        """An evaluation epoch that ended without one output for a task with metrics is an integration slip.
+
+        A training step may legitimately produce nothing to evaluate — a head that only decodes in eval
+        mode — so a missing output is skipped there. In ``val`` and ``test`` a task the model never
+        answered for would have its metrics computed on nothing and reported under an honest name,
+        which is the silent failure this refusal replaces.
+        """
+        answered = self._answered[stage]
+        self._answered[stage] = set()
+        if stage is Stage.TRAIN:
+            return
+        silent = [
+            task.name
+            for task in self._tasks
+            if self._metrics.get(task.name, {}).get(stage) and task.name not in answered
+        ]
+        if silent:
+            raise ValueError(
+                f"Task '{silent[0]}' produced no output in a whole {stage} epoch, and its metrics would report on "
+                f"nothing: the model's outputs must carry every task the run declares. Declared: "
+                f"{', '.join(task.name for task in self._tasks)}; answered: {', '.join(sorted(answered)) or 'none'}."
+            )
 
     @staticmethod
     def _batch_size(batch: Batch) -> int:

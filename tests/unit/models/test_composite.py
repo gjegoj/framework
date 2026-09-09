@@ -8,8 +8,9 @@ import pytest
 import torch
 from torch import Tensor, nn
 
-from src.core import AdaptedTarget, Backbone, Batch, Criterion, Features, Head, Loss, Model
+from src.core import Backbone, Batch, Criterion, Features, Loss, Model
 from src.models import CompositeModel, LinearHead, TaskComponents
+from src.models.composite import AdaptedTarget
 from tests.support.fakes import FlattenBackbone
 from tests.support.narrowing import tensor
 
@@ -250,7 +251,7 @@ def test_a_step_reports_the_same_logits_it_scored() -> None:
 def test_a_multi_stream_component_is_handed_a_mapping_in_its_streams_order() -> None:
     seen: list[list[str]] = []
 
-    class RecordingHead(Head):
+    class RecordingHead(nn.Module):
         def forward(self, features: Tensor | Mapping[str, Tensor]) -> Tensor:
             assert not isinstance(features, Tensor)
             seen.append(list(features))
@@ -279,3 +280,18 @@ def test_a_multi_stream_component_is_handed_a_mapping_in_its_streams_order() -> 
     model.predict(batch)
 
     assert seen == [["a", "b"]]
+
+
+def test_absent_target_has_empty_views() -> None:
+    absent = AdaptedTarget.absent()
+
+    assert absent.for_loss.numel() == 0
+    assert absent.for_metrics.numel() == 0
+
+
+def test_adapted_target_separates_loss_and_metric_views() -> None:
+    soft = torch.tensor([[0.9, 0.1]])
+    adapted = AdaptedTarget(for_loss=soft, for_metrics=soft.argmax(dim=1))
+
+    assert adapted.for_loss.shape == (1, 2)
+    assert adapted.for_metrics.item() == 0

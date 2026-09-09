@@ -154,7 +154,8 @@ def test_a_value_far_outside_the_range_lands_in_the_nearest_bin() -> None:
 
 
 def test_encoding_before_fitting_is_reported() -> None:
-    with pytest.raises(RuntimeError, match="not fitted"):
+    """Nothing a config can cause: the pipeline fits before any dataset exists, so this is an invariant."""
+    with pytest.raises(AssertionError, match="not fitted"):
         GaussianBinsTargetEncoder().encode(1.0)
 
 

@@ -4,34 +4,21 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable, Mapping
-from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, cast, runtime_checkable
 
 from torch import Tensor, nn
 
-# At runtime, not under TYPE_CHECKING: `DataModule.statistics` builds one as its default.
-from src.core.entities import DatasetStatistics
-
 if TYPE_CHECKING:
-    from torch.utils.data import Dataset
-
     from src.core.entities import (
-        AdaptedTarget,
         Batch,
-        DataProfile,
         Features,
         Loss,
         Prediction,
         Sample,
         StepResult,
-        TaskOutput,
     )
-    from src.core.taxonomy import Stage
+    from src.core.taxonomy import Geometry
 
-type Activation = Callable[[Tensor], Tensor]
-"""Maps raw logits to predictions for metrics and inference — never for the loss."""
-
-type TargetAdapter = Callable[[Tensor], AdaptedTarget]
-"""Shapes one raw batched target into its loss and metric views."""
 
 type SampleTransform = Callable[[Sample], Sample]
 """Transforms one loaded sample — the augmentation seam of the data pipeline.
@@ -41,27 +28,41 @@ augmentation is joint: the crop applied to an image must be the same crop
 applied to its masks.
 
 **May write into the sample it is given**, and both shipped implementations do —
-unlike ``BatchTransform`` below, which promises a new ``Batch``. The asymmetry is
-deliberate and worth stating rather than discovering: a sample has exactly one
-owner, the worker that just loaded it, so copying per item would buy nothing;
-a batch is written into by a callback while other readers hold it.
+unlike a batch transform (``src.transforms.BatchTransform``), which promises a new
+``Batch``. The asymmetry is deliberate and worth stating rather than discovering: a
+sample has exactly one owner, the worker that just loaded it, so copying per item
+would buy nothing; a batch is written into by a callback while other readers hold it.
 """
 
-type BatchTransform = Callable[[Batch], Batch]
-"""Transforms one collated batch — the seam for augmentations that mix samples.
 
-A ``SampleTransform`` cannot do this: while one sample is being loaded, the
-samples it would mix with do not exist yet. Returns a new ``Batch`` rather than
-mutating, because the callback that applies one is the single place a batch is
-written into.
-"""
+@runtime_checkable
+class GeometryAware(Protocol):
+    """A sample transform that carries arrays by their geometry, and is told which.
+
+    Which inputs and targets travel through an augmentation, and as what — an image, a
+    mask, boxes — is derived from the loaders and encoders as the pipeline is built, never in
+    config. A transform is built from its declaration first and bound to that geometry
+    afterwards, through this port, so the binding is one explicit call rather than a value
+    slipped into a constructor by name — and a wrapper (``MultiViewTransform``) can pass
+    it down to the pipeline it nests, which the composition root never sees. Structural:
+    a transform of your own that needs no geometry implements nothing.
+    """
+
+    def with_geometry(
+        self,
+        inputs: Mapping[str, Geometry],
+        targets: Mapping[str, Geometry],
+        auxiliary_inputs: Mapping[str, Geometry],
+    ) -> SampleTransform:
+        """The same transform bound to these arrays; ``NONE`` geometries are never offered."""
+        ...
 
 
 class Model(nn.Module, ABC):
     """The trainable unit the training loop consumes — however it is built inside.
 
-    One contract for every family: composed backbone-plus-heads, a vendor self-contained
-    model, or a decorator over another model. Implementations branch on ``self.training``,
+    One contract for every family: composed backbone-plus-heads, a model that arrives whole,
+    or a decorator over another model. Implementations branch on ``self.training``,
     never on a stage argument.
     """
 
@@ -90,7 +91,8 @@ class Model(nn.Module, ABC):
 
         Asked here rather than read off an attribute so the answer follows the model wherever it
         is nested — a schedule moving a loss's number has to reach one task's criterion without
-        knowing how the family is built. ``None`` is the honest answer from a vendor family.
+        knowing how the family is built. ``None`` is the honest answer from a model that arrives
+        whole and owns its loss.
 
         Raises:
             LookupError: From a family that composes criteria but has none under this name.
@@ -102,7 +104,7 @@ class Model(nn.Module, ABC):
         """What this model is, in one token a run can be found by in a tracker.
 
         The composite family answers from its backbone, a decorator from what it wraps; a
-        vendor family keeps this default and is filed under its own class name.
+        model that arrives whole keeps this default and is filed under its own class name.
         """
         return type(self).__name__
 
@@ -166,34 +168,23 @@ class Backbone(nn.Module, ABC):
         """Return the architecture's own head for ``streams``, or ``None``.
 
         ``None`` means the framework builds its own head; the builder consults this when a
-        task prefers the native head, or when the topology composes none of its own.
+        task prefers the native head, or when the kind takes the native one by default.
         """
         return None
-
-
-class Head(nn.Module, ABC):
-    """Maps a feature stream — or several, handed as a mapping — to a task's raw logits."""
-
-    @abstractmethod
-    def forward(self, features: Tensor | Mapping[str, Tensor]) -> Tensor:
-        """Project ``features`` to logits for one task."""
-
-    def __call__(self, features: Tensor | Mapping[str, Tensor]) -> Tensor:
-        """Typed delegate to ``nn.Module.__call__``, so hooks run and the type survives."""
-        return cast("Tensor", super().__call__(features))
 
 
 def one_stream(features: Tensor | Mapping[str, Tensor], *, head: str) -> Tensor:
     """The single stream a head reads, refused by name when it was handed several.
 
-    A single-stream head on a multi-stream topology is a declaration error, not a shape
-    to guess at.
+    A head is any ``nn.Module`` taking a stream — or the pyramid, as a mapping — and
+    returning a task's raw logits; a single-stream head on a multi-stream kind is a
+    declaration error, not a shape to guess at.
     """
     if isinstance(features, Tensor):
         return features
     raise TypeError(
         f"{head} reads one stream, but was handed {len(features)}: {', '.join(features)}. "
-        f"A head over several streams is declared by its topology or its backbone."
+        f"A head over several streams is declared by its kind or its backbone."
     )
 
 
@@ -212,134 +203,3 @@ class Criterion(nn.Module, ABC):
     def __call__(self, logits: Tensor, target: Tensor) -> Loss:
         """Typed delegate to ``nn.Module.__call__``, so hooks run and the type survives."""
         return cast("Loss", super().__call__(logits, target))
-
-
-class DataModule(ABC):
-    """The data side of an experiment: per-stage datasets plus inferred facts.
-
-    The one data port in the core, because it is the data ↔ training boundary; the ports
-    that would drag an I/O library in (sources, encoders, trackers) stay with their packages.
-    """
-
-    @abstractmethod
-    def setup(self, profile: DataProfile) -> None:
-        """Prepare datasets and record inferred facts into ``profile``.
-
-        Runs before tasks and heads are assembled — the ordering that lets
-        output sizes come from data instead of config.
-        """
-
-    @abstractmethod
-    def dataset(self, stage: Stage) -> Dataset[Sample]:
-        """Return the dataset for ``stage``; ``setup`` must have run first.
-
-        Raises ``LookupError`` naming the stages it does have when it has none for this one —
-        an answer, not a failure: a pipeline may legitimately carry no test data, and the
-        consumer says what it does instead.
-        """
-
-    def statistics(self) -> DatasetStatistics:
-        """What this pipeline is about to serve, for the report drawn before epoch one.
-
-        Concrete with an empty default, as ``collate`` is: a pipeline that cannot describe its
-        data (a vendor-native loader) answers with nothing, and the report still names it.
-        """
-        return DatasetStatistics()
-
-    @property
-    def collate(self) -> Callable[[list[Sample]], Batch] | None:
-        """How this pipeline's samples become one batch; ``None`` takes the default.
-
-        Batching belongs to the data: detection targets are ragged, so a vendor pipeline stacks
-        them its own way and says so here. ``None`` rather than the framework's own function
-        because this package may not import the one that implements it.
-        """
-        return None
-
-
-def require_stage[T](datasets: Mapping[Stage, T] | None, stage: Stage, owner: str) -> T:
-    """One stage's dataset, or the two refusals :meth:`DataModule.dataset` documents.
-
-    A free function rather than a template method, so a lazy or streaming pipeline that holds
-    no dict of stages is not forced to have one.
-
-    Parameters:
-        datasets (Mapping[Stage, T] | None): What ``setup`` built, or ``None`` before it ran.
-        stage (Stage): The stage being asked for.
-        owner (str): The pipeline's own name, for the message.
-    """
-    if datasets is None:
-        raise RuntimeError(f"{owner}.setup(profile) must run before requesting datasets.")
-    try:
-        return datasets[stage]
-    except KeyError:
-        available = ", ".join(datasets) or "none"
-        raise LookupError(f"No dataset for stage '{stage}'. Available stages: {available}.") from None
-
-
-class MetricSet(nn.Module, ABC):
-    """A stateful collection of metrics for one task and stage.
-
-    Accumulates over batches, computes at epoch end, then resets. Keys
-    returned by ``compute`` and ``directions`` match.
-    """
-
-    @abstractmethod
-    def update(self, predictions: TaskOutput, target: TaskOutput) -> None:
-        """Accumulate one batch of activated predictions against targets.
-
-        Both sides are whatever the task's shape is — a tensor, or a set of objects. A metric
-        given a shape it cannot compare refuses by name.
-        """
-
-    @abstractmethod
-    def compute(self) -> dict[str, Any]:
-        """Return computed values keyed by metric name."""
-
-    @abstractmethod
-    def reset(self) -> None:
-        """Clear accumulated state."""
-
-    @abstractmethod
-    def directions(self) -> dict[str, bool | None]:
-        """Return each metric's ``higher_is_better`` flag, ``None`` when directionless.
-
-        Lets consumers (checkpoint monitors, progress displays) rank values
-        without re-deriving semantics from metric names.
-        """
-
-
-@runtime_checkable
-class MultiReadingMetric(Protocol):
-    """A metric whose computed value is several named readings rather than one number.
-
-    Structural: a consumer that needs the list (a checkpoint monitor asking which keys
-    exist) reads it without the metric inheriting anything.
-    """
-
-    readings: tuple[str, ...]
-
-
-@runtime_checkable
-class AwaitsPreview(Protocol):
-    """Something that reads a step's preview, and says beforehand whether it wants this one.
-
-    Lightning keeps a step's return value alive through the optimizer step, so an
-    unconditional preview pins the activated outputs across ``backward()`` — measured: 352 MB
-    for a ``[16, 21, 512, 512]`` segmentation batch. Asked in ``on_*_batch_start``, a run with
-    no consumer builds nothing. Argument-free: the consumer owns the whole decision.
-    """
-
-    @property
-    def awaiting_preview(self) -> bool: ...
-
-
-@runtime_checkable
-class DeclaresMetricDirections(Protocol):
-    """A training module that reports its metrics' optimization directions.
-
-    Keys match the logged scalar keys (``{stage}/{task}/{label}``); values are
-    ``higher_is_better`` flags, ``None`` when directionless.
-    """
-
-    def metric_directions(self) -> dict[str, bool | None]: ...

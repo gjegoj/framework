@@ -69,8 +69,7 @@ def test_a_segmentation_is_one_cover_layer_per_class() -> None:
 
 
 def test_leaves_and_render_agree_on_the_names() -> None:
-    """The two halves of one renderer speak of the same classes — the property
-    that used to depend on two dispatch tables staying in step by hand."""
+    """The two halves of one renderer speak of the same classes — one table, not two kept in step by hand."""
     label = Classifications(classifications=(Classification("cat"), Classification("dog")))
 
     assert leaves_of(label) == ("cat", "dog")

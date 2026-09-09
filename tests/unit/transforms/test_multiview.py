@@ -98,3 +98,17 @@ def test_each_view_reads_the_original_auxiliary_input() -> None:
     )
 
     assert len(seen) == 2
+
+
+def test_geometry_reaches_the_base_through_the_wrapper() -> None:
+    """A nested pipeline is bound by the wrapper the builder holds, never handed facts by name."""
+    from src.core import Geometry
+
+    wrapped = MultiViewTransform(views=2, base=AlbumentationsTransform([A.HorizontalFlip(p=1.0)]), input_name="left")
+    sample = Sample(inputs={"left": np.zeros((8, 8, 3), np.uint8)}, targets={})
+
+    with pytest.raises(KeyError, match="image"):  # the base's default geometry names an input this sample lacks
+        wrapped(Sample(inputs={"left": np.zeros((8, 8, 3), np.uint8)}, targets={}))
+    bound = wrapped.with_geometry(inputs={"left": Geometry.IMAGE}, targets={}, auxiliary_inputs={})
+
+    assert bound(sample).inputs["left"].shape[0] == 2

@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from src.data.datamodules.table import SourceForm, SourceWithTransforms, StageDataset, TableDataModule
-from src.data.datamodules.yolo import YoloDataModule
+from src.data.datamodules.base import DataModule, require_stage
+from src.data.datamodules.table import DeclaredSource, StageDataset, TableDataModule
 
 __all__ = [
-    "SourceForm",
-    "SourceWithTransforms",
+    "DataModule",
+    "DeclaredSource",
     "StageDataset",
     "TableDataModule",
-    "YoloDataModule",
+    "require_stage",
 ]

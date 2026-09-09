@@ -1,4 +1,4 @@
-"""Family-agnostic mechanics of arrived weights: load, stash, report."""
+"""Family-agnostic mechanics of a checkpoint's weights: load, stash, report."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 
-def load_arrived_weights(
+def load_checkpoint_weights(
     model: nn.Module,
     model_name: str,
     path: str | Path,
@@ -76,4 +76,4 @@ def load_arrived_weights(
     return stash
 
 
-__all__ = ["load_arrived_weights"]
+__all__ = ["load_checkpoint_weights"]

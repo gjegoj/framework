@@ -33,7 +33,9 @@ The example fed to the tracer is synthesized from the run's own `image_size` and
 `Normalize`, so it is the shape the model receives. Export therefore needs no
 dataset and works from a checkpoint on a machine that has none. A model that
 refuses that shape fails immediately, naming the shape and the two fields it came
-from.
+from. The example describes a *picture*: an input whose loader declares another geometry — a
+vector, text — has no shape those two fields can name, and export refuses it by the input's
+name rather than tracing a graph the model never sees.
 
 ## Verification is not optional
 
@@ -86,7 +88,7 @@ import torch
 
 model = torch.jit.load("runs/my-project/2026-08-05/12-00-00/export/model.pt")
 model.eval()
-label = model(torch.randn(1, 3, 224, 224))   # a tuple, when the run has several tasks
+label = model(torch.randn(1, 3, 224, 224))  # a tuple, when the run has several tasks
 ```
 
 ### Artifacts that cannot leave the trace device
@@ -211,9 +213,10 @@ file beyond the one that names it:
 ```python
 @exporter_registry.register("onnx")
 class OnnxExporter(Exporter):
-    def __init__(self, opset_version: int = 17, atol: float = 1e-4, rtol: float = 1e-3) -> None:
+    def __init__(self, opset_version: int = 18, atol: float = 1e-4, rtol: float = 1e-3) -> None:
         super().__init__(atol=atol, rtol=rtol)
-        import onnxruntime  # noqa: F401 — a missing runtime must fail at assembly, not after training
+        import onnxruntime  # noqa: F401 — a missing runtime must fail at build time, not after training
+
         self.opset_version = opset_version
 
     def export(self, model: DeployableModel, example: tuple[Tensor, ...], destination: Path) -> Path: ...
@@ -223,5 +226,5 @@ class OnnxExporter(Exporter):
 
 `load` is abstract on purpose: a format nobody can read back leaves "the export
 succeeded" unprovable. Importing the third-party runtime in `__init__` is what
-makes a missing dependency fail while the experiment is being assembled, rather
+makes a missing dependency fail while the experiment is being built, rather
 than an hour into training.

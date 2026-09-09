@@ -1,7 +1,8 @@
-"""``checkpoint_path`` on the smp backbone: arrived weights load, the head transplants."""
+"""``checkpoint_path`` on the smp backbone: the checkpoint's weights load, the head transplants."""
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import pytest
@@ -28,20 +29,22 @@ def test_encoder_and_decoder_tensors_arrive_from_the_checkpoint(tmp_path: Path) 
 
     backbone = build_backbone(checkpoint_path=path)
 
-    assert torch.equal(backbone._encoder.state_dict()["conv1.weight"], trained.state_dict()["encoder.conv1.weight"])
-    decoder_key = next(iter(backbone._decoder.state_dict()))
-    assert torch.equal(backbone._decoder.state_dict()[decoder_key], trained.state_dict()[f"decoder.{decoder_key}"])
+    state = backbone.state_dict()
+    assert torch.equal(state["_encoder.conv1.weight"], trained.state_dict()["encoder.conv1.weight"])
+    decoder_key = next(key for key in state if key.startswith("_decoder."))
+    assert torch.equal(state[decoder_key], trained.state_dict()[decoder_key.replace("_decoder.", "decoder.", 1)])
 
 
-def test_the_segmentation_head_is_stashed_not_loaded(tmp_path: Path) -> None:
+def test_the_segmentation_head_is_stashed_not_loaded(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    """The report counts the head's tensors as stashed, and none of them lands in the backbone."""
     path, trained = full_model_file(tmp_path)
+    head_tensors = sum(key.startswith("segmentation_head.") for key in trained.state_dict())
 
-    backbone = build_backbone(checkpoint_path=path)
+    with caplog.at_level(logging.INFO):
+        backbone = build_backbone(checkpoint_path=path)
 
-    assert backbone._carried_head is not None
-    assert torch.equal(
-        backbone._carried_head["segmentation_head.0.weight"], trained.state_dict()["segmentation_head.0.weight"]
-    )
+    assert f"({head_tensors} head tensors stashed)" in caplog.text
+    assert not any("segmentation_head" in key for key in backbone.state_dict())
 
 
 def test_equal_class_counts_transplant_the_whole_head(tmp_path: Path) -> None:

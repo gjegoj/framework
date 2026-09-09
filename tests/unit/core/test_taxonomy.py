@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from src.core import Geometry, InputTopology, Modality, Objective, OutputTopology, Stage, Stream
+from src.core import Geometry, Modality, OutputTopology, Stage, Stream
 
 
 def test_stage_members_cover_the_training_lifecycle() -> None:
@@ -18,24 +18,6 @@ def test_output_topology_members_cover_output_structures() -> None:
         "global",
         "dense",
         "instances",
-    }
-
-
-def test_input_topology_members_cover_input_arrangements() -> None:
-    assert {topology.value for topology in InputTopology} == {
-        "single",
-        "multiview",
-        "multistream",
-    }
-
-
-def test_objective_members_cover_label_semantics() -> None:
-    assert {objective.value for objective in Objective} == {
-        "multiclass",
-        "binary",
-        "multilabel",
-        "continuous",
-        "metric",
     }
 
 

@@ -5,8 +5,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Final, cast
 
 from src.core.entities import Instances
-from src.core.reporting import PerClass
-from src.metrics.adapter import WrappedMetric
+from src.metrics.adapters import WrappedMetric
+from src.metrics.entities import PerClass
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -77,7 +77,7 @@ class MeanAveragePrecisionOverInstances(WrappedMetric):
         if not isinstance(predictions, Instances) or not isinstance(target, Instances):
             raise TypeError(
                 f"'map' compares detected objects, but was given {type(predictions).__name__} "
-                f"against {type(target).__name__}. It belongs on a task whose preset is 'detection'."
+                f"against {type(target).__name__}. It belongs on a task whose kind is 'detection'."
             )
         # Over the images either side mentions, not each side's own count: a model that
         # found nothing carries no `sample_index` at all, and torchmetrics compares two
@@ -93,9 +93,14 @@ class MeanAveragePrecisionOverInstances(WrappedMetric):
         published: dict[str, Tensor | PerClass] = {}
         for reading in self.readings:
             value = found[reading]
-            if value.ndim == 0 and float(value) == _NOT_APPLICABLE:
-                continue
-            published[reading] = PerClass(value, classes) if reading in PER_CLASS_READINGS else value
+            if reading in PER_CLASS_READINGS:
+                # Measured on torchmetrics 1.9.0: a class predicted but never annotated reads -1 here,
+                # the same non-measurement the scalar rule below drops — left in, it would be averaged.
+                measured = value.reshape(-1) != _NOT_APPLICABLE
+                if measured.any():
+                    published[reading] = PerClass(value.reshape(-1)[measured], classes.reshape(-1)[measured])
+            elif float(value) != _NOT_APPLICABLE:
+                published[reading] = value
         return published
 
     def _refuse_unknown_readings(self) -> None:
@@ -128,7 +133,7 @@ _COMPUTED_READINGS: Final = frozenset(
 """Every reading ``MeanAveragePrecision.compute`` returns, minus its class index.
 
 Listed rather than read off a computed value, because a misspelt name has to be refused
-while the run is being assembled — at which point nothing has been computed yet.
+while the run is being built — at which point nothing has been computed yet.
 """
 
 

@@ -1,4 +1,4 @@
-"""Domain vocabulary: the task axes ``OutputTopology`` x ``InputTopology`` x ``Objective`` x ``Modality``, and the data path's names."""
+"""Domain vocabulary: stages, the shape of a prediction, feature streams, geometry and the names of inputs."""
 
 from __future__ import annotations
 
@@ -16,8 +16,9 @@ class Stage(StrEnum):
 class OutputTopology(StrEnum):
     """Output structure of a task — what one prediction looks like.
 
-    A closed set: outer layers interpret each member by key, so a new member changes what the
-    framework can express.
+    A closed set: readers that branch on the shape of an output — a batch transform, a
+    page — ask this, so a new member changes what the framework can express. What a task
+    *learns* is its kind's business, not a second axis here.
 
     Attributes:
         GLOBAL: One prediction vector per sample (classification, regression, embeddings).
@@ -31,41 +32,6 @@ class OutputTopology(StrEnum):
     INSTANCES = "instances"
 
 
-class InputTopology(StrEnum):
-    """Input structure of a task — how many inputs feed one prediction, and how.
-
-    ``SINGLE`` is the default wherever the axis is not named; only the paired kinds write it.
-
-    Attributes:
-        SINGLE: One input per sample; the ordinary case.
-        MULTIVIEW: N views of each sample through one shared encoder (Siamese setups).
-        MULTISTREAM: A separate encoder per input stream (CLIP-style dual encoders).
-    """
-
-    SINGLE = "single"
-    MULTIVIEW = "multiview"
-    MULTISTREAM = "multistream"
-
-
-class Objective(StrEnum):
-    """Label semantics of a task — how targets supervise the output.
-
-    Attributes:
-        MULTICLASS: Exactly one class per prediction.
-        BINARY: A single yes/no probability per prediction.
-        MULTILABEL: Independent per-class probabilities.
-        CONTINUOUS: Real-valued targets (regression).
-        METRIC: No explicit target values — supervision comes from pair or
-            triplet structure, or from the in-batch diagonal (metric learning).
-    """
-
-    MULTICLASS = "multiclass"
-    BINARY = "binary"
-    MULTILABEL = "multilabel"
-    CONTINUOUS = "continuous"
-    METRIC = "metric"
-
-
 class Stream(StrEnum):
     """Standard names of backbone feature streams.
 
@@ -75,7 +41,7 @@ class Stream(StrEnum):
     Attributes:
         FEATURES: ``[B, D]`` — the pooled per-sample vector; what GLOBAL heads read.
         ENCODER: ``[B, D, H', W']`` — the encoder's last spatial feature map.
-        DECODER: ``[B, D, H, W]`` — the decoder's dense map; what DENSE topologies read.
+        DECODER: ``[B, D, H, W]`` — the decoder's dense map; what dense kinds read.
         LOGITS: Task-shaped final outputs of a fused network, consumed through an identity head.
         EMBEDDINGS: ``[B, N, D]`` — aligned per-view embeddings; what contrastive criteria read.
     """
@@ -91,7 +57,7 @@ class Geometry(StrEnum):
     """How a value is transformed with the image during augmentation.
 
     Declared as a class-level fact by input loaders and target encoders, derived into the
-    transform seam by assembly. ``BOXES`` also fixes the value's shape between ``load`` and
+    transform seam as the pipeline is built. ``BOXES`` also fixes the value's shape between ``load`` and
     ``encode``: ``(float32 [N, 4] xyxy-pixel array, list of class names)``. Measured on
     albumentationsx 2.3.7: oriented boxes and keypoints each have their own params there, so
     a future member is one entry here plus one in the seam.
@@ -110,9 +76,10 @@ class Geometry(StrEnum):
 
 
 class Modality(StrEnum):
-    """Standard names of model inputs — the input-side task axis.
+    """Standard names of model inputs, and the modalities they carry.
 
-    Open, like ``Stream``: an experiment with an extra input names it freely.
+    Open, like ``Stream``: an experiment with an extra input names it freely, and a new
+    modality is a new member here before it is anything else.
 
     Attributes:
         IMAGE: Pixel input, the default vision modality.

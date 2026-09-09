@@ -49,3 +49,9 @@ def test_hydra_meta_keys_are_rejected_instead_of_ignored() -> None:
 def test_the_rejection_message_names_every_reserved_key() -> None:
     with pytest.raises(ValidationError, match="_convert_, _recursive_"):
         ComponentConfig.model_validate({"_target_": "torch.optim.AdamW", "_recursive_": False, "_convert_": "all"})
+
+
+def test_a_declaration_is_spelled_the_way_it_was_written() -> None:
+    """A message names the component as the user wrote it — the registry name, or the import path."""
+    assert ComponentConfig.model_validate("cosine").spelled == "cosine"
+    assert ComponentConfig.model_validate({"_target_": "my_pkg.Head"}).spelled == "my_pkg.Head"

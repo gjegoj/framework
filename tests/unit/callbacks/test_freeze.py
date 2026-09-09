@@ -13,12 +13,9 @@ from torch import nn
 
 from src.callbacks import Freeze
 from src.callbacks.registry import callback_registry
-from src.losses import CrossEntropyCriterion
-from src.models import CompositeModel, LinearHead, TaskComponents
-from src.tasks.activations import softmax_probabilities
-from src.tasks.adapters import as_class_indices
+from src.models import DistilledModel
 from src.training import TrainingModule
-from tests.support.fakes import FlattenBackbone
+from tests.support.fakes import FlattenBackbone, a_composite
 from tests.support.lightning import quiet_trainer
 
 
@@ -31,13 +28,26 @@ class BackboneAndHead(nn.Module):
         self.head = nn.Linear(4, 2)
 
 
-def module(inner: nn.Module) -> L.LightningModule:
-    """The callback takes a LightningModule; only attribute lookup is exercised here."""
-    return cast("L.LightningModule", inner)
+def module(model: nn.Module) -> L.LightningModule:
+    """A stand-in for the training module: the callback reads ``pl_module.model`` and walks from there."""
+    root = nn.Module()
+    root.add_module("model", model)
+    return cast("L.LightningModule", root)
 
 
 def frozen(part: nn.Module) -> bool:
     return not any(parameter.requires_grad for parameter in part.parameters())
+
+
+class _Parts(nn.Module):
+    """A model with the one part a transfer-learning run holds still."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.backbone = nn.Linear(4, 4)
+
+    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+        return cast("torch.Tensor", self.backbone(inputs))
 
 
 class _Trainable(L.LightningModule):
@@ -45,7 +55,7 @@ class _Trainable(L.LightningModule):
 
     def __init__(self) -> None:
         super().__init__()
-        self.model = nn.Linear(4, 4)  # the part held still
+        self.model = _Parts()  # its backbone is the part held still
         self.head = nn.Linear(4, 2)  # so the step still has a gradient to take
 
     def training_step(self, batch: Any, batch_index: int) -> torch.Tensor:
@@ -68,13 +78,43 @@ def test_the_named_module_is_frozen_before_training() -> None:
     assert not frozen(parts.head)
 
 
+class Deep(nn.Module):
+    """A backbone of two layers, so a path can name one of them."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.backbone = nn.Sequential(nn.Linear(4, 4), nn.Linear(4, 4))
+
+
 def test_a_path_reaches_into_nested_modules() -> None:
-    root = nn.Module()
-    root.add_module("model", BackboneAndHead())
+    parts = Deep()
 
-    Freeze(modules=["model.backbone"]).freeze_before_training(module(root))
+    Freeze(modules=["backbone.1"]).freeze_before_training(module(parts))
 
-    assert frozen(cast("Any", root).model.backbone)
+    assert frozen(parts.backbone[1])
+    assert not frozen(parts.backbone[0])
+
+
+def test_the_old_training_module_prefix_is_refused_with_the_new_spelling() -> None:
+    """A config whose paths start at the training module is told what to write instead, not left to match nothing."""
+    with pytest.raises(LookupError, match=r"relative to the model.*'backbone'"):
+        Freeze(modules=["model.backbone"]).freeze_before_training(module(BackboneAndHead()))
+
+
+def test_in_a_distilled_run_the_paths_resolve_against_the_student() -> None:
+    """Distillation nests the student, and a path must not move with the scaffolding around the model that ships."""
+    student_backbone = FlattenBackbone(dim=4)
+    student = a_composite(4, backbone=student_backbone)
+    distilled = DistilledModel(
+        student=student,
+        teachers=[a_composite(4, backbone=FlattenBackbone(dim=4))],
+        criterion=nn.Identity(),  # type: ignore[arg-type]
+    )
+
+    Freeze(modules=["backbone"]).freeze_before_training(module(distilled))
+
+    assert frozen(student_backbone)
+    assert not frozen(student.heads)
 
 
 def test_an_empty_target_list_is_refused() -> None:
@@ -117,28 +157,18 @@ def test_it_is_reachable_from_config_by_name() -> None:
 def test_the_documented_path_resolves_against_a_real_training_module() -> None:
     """The other tests build a stand-in named ``model``, so they cannot see this.
 
-    ``targets: [model.backbone]`` is what the guide and this callback's own
-    docstring tell a user to write, and it only works if the training module
-    really exposes its model under that name.
+    ``modules: [backbone]`` is what the guide and this callback's own docstring
+    tell a user to write, and it only works if the training module really
+    exposes the model the paths are relative to.
     """
     backbone = FlattenBackbone(dim=4)
     built = TrainingModule(
-        model=CompositeModel(
-            backbone=backbone,
-            components={
-                "label": TaskComponents(
-                    head=LinearHead(4, 2),
-                    criterion=CrossEntropyCriterion(),
-                    activation=softmax_probabilities,
-                    target_adapter=as_class_indices,
-                )
-            },
-        ),
+        model=a_composite(4, backbone=backbone),
         tasks=[],
         optimizer_factory=partial(torch.optim.SGD, lr=0.1),
     )
 
-    Freeze(modules=["model.backbone"]).freeze_before_training(built)
+    Freeze(modules=["backbone"]).freeze_before_training(built)
 
     assert frozen(backbone)
 
@@ -164,11 +194,11 @@ def test_the_hold_is_announced_once_for_a_fit_and_not_again_for_the_test_pass(
         torch.utils.data.TensorDataset(torch.randn(4, 4), torch.tensor([0, 1, 0, 1])), batch_size=2
     )
     trained = _Trainable()
-    trainer = quiet_trainer(max_epochs=2, callbacks=[Freeze(modules=["model"], until=1.0)])
+    trainer = quiet_trainer(max_epochs=2, callbacks=[Freeze(modules=["backbone"], until=1.0)])
 
     with caplog.at_level(logging.INFO):
         trainer.fit(trained, data)
         trainer.test(trained, data, verbose=False)
 
     said = [record.getMessage() for record in caplog.records if "Frozen until" in record.getMessage()]
-    assert said == ["Frozen until epoch 2 (step 4): model"]
+    assert said == ["Frozen until epoch 2 (step 4): backbone"]

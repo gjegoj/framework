@@ -3,15 +3,18 @@
 from __future__ import annotations
 
 from src.models.adapters import LoraAdapters, merge_adapters
-from src.models.backbones.hf import HFTextBackbone
-from src.models.backbones.multi import MultiEncoderBackbone, MultiViewBackbone
-from src.models.backbones.smp import SmpBackbone
-from src.models.backbones.timm import TimmBackbone
-from src.models.backbones.ultralytics import UltralyticsBackbone
+from src.models.backbones import (
+    HFTextBackbone,
+    MultiEncoderBackbone,
+    MultiViewBackbone,
+    SmpBackbone,
+    TimmBackbone,
+    UltralyticsBackbone,
+)
+from src.models.checkpoints import load_weights
 from src.models.composite import CompositeModel, TaskComponents
 from src.models.distillation import DistilledModel, without_teachers
-from src.models.heads import ConvHead, CosineHead, DetectHead, ExpandedHead, IdentityHead, LinearHead, WrappedHead
-from src.models.yolo import YoloModel
+from src.models.heads import ConvHead, CosineHead, DetectHead, ExpandedHead, LinearHead
 
 __all__ = [
     "CompositeModel",
@@ -21,7 +24,6 @@ __all__ = [
     "DistilledModel",
     "ExpandedHead",
     "HFTextBackbone",
-    "IdentityHead",
     "LinearHead",
     "LoraAdapters",
     "MultiEncoderBackbone",
@@ -30,8 +32,7 @@ __all__ = [
     "TaskComponents",
     "TimmBackbone",
     "UltralyticsBackbone",
-    "WrappedHead",
-    "YoloModel",
+    "load_weights",
     "merge_adapters",
     "without_teachers",
 ]

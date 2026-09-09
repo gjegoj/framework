@@ -9,9 +9,9 @@ make install                       # uv sync
 uv run pytest                      # full suite
 uv run pytest tests/unit/data/test_cache.py -q            # one file
 uv run pytest tests/unit/data/test_cache.py::test_name    # one test
-make test-unit                     # tests/unit -m "not slow" — the pre-commit gate
+make test-gate                     # the whole suite minus the hub tests — the pre-commit gate
 make typecheck                     # mypy --strict over src and tests
-uv run pre-commit run --files <changed files>             # runs mypy + test-unit + linters
+uv run pre-commit run --files <changed files>             # runs mypy + test-gate + linters
 make test-run                      # fetches Oxford-IIIT Pet once, trains the multitask example
 
 uv run main.py experiment=examples/classification lr=3e-4 epochs=50
@@ -59,9 +59,11 @@ The mechanics live in `README.md` and `docs/`; read them when a detail matters.
 What follows is the *design stance* every change is measured against.
 
 - **Arrows point down only.** Thin `core/` (torch and stdlib), capability packages
-  around it, one composition root (`cli.py + assembly/`) that alone reads config.
+  around it, one composition root (`cli.py + build.py`) that alone reads the whole
+  config — a package reads only its own section, through its `build.py`.
   Third-party stacks are quarantined — Lightning in `training/`, pydantic in
-  `config/`, Hydra in `cli.py`, albumentations behind a seam. New code first
+  `config/`, Hydra's composition in `cli.py` (its `get_object` resolves `_target_`, in
+  `config/instantiate.py`), albumentations behind a seam. New code first
   answers: *which layer does this knowledge belong to?* A fact about processes
   belongs where processes are made; presentation belongs to the driver, not the
   component that knows the numbers.
@@ -73,11 +75,13 @@ What follows is the *design stance* every change is measured against.
   does — a parameter with one correct value is not a parameter, it is code. Every
   component speaks one grammar (`name` from a registry or `_target_`, the rest
   constructor arguments), so extension is one new class plus one config line, with
-  no edit to existing code. Vendor models come through adapters to narrow ports;
-  the ports never bend toward a vendor's signatures.
-- **A task is a composition, not a type** — `output topology × input topology × objective × modality`, with
-  presets as thin names over familiar combinations. New capability usually means a
-  new point in that space, not a new subsystem.
+  no edit to existing code. Third-party models come through adapters to narrow ports;
+  the ports never bend toward a library's signatures.
+- **A task is a kind.** One class states what a task needs — encoder, head, loss,
+  activation, metrics, drawing; familiar kinds are registered under the name config
+  spells, a new one is a subclass reachable by `_target_`, and sizes come from the
+  task's facts. New capability usually means a new kind or an override on one, not
+  a new subsystem.
 - **Fail at construction, by name.** A bad declaration dies while the experiment is
   built, with a message that names the declaration and the fix — never mid-epoch,
   never by one value silently winning over another. Silent fallback is a defect;

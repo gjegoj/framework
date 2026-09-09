@@ -2,17 +2,24 @@
 
 from __future__ import annotations
 
+from functools import partial
+from pathlib import Path
 from typing import get_args
 
 import pytest
+import torch
 from rich.console import Console
 
-from src.callbacks.dataset_summary import distribution_reporter_registry, draw, table_for
+from src.callbacks.dataset_summary import DatasetSummary, distribution_reporter_registry, draw, table_for
 from src.callbacks.registry import callback_registry
 from src.console import HEADER_STYLE, TITLE_STYLE
 from src.core import Stage
-from src.core.entities import ClassDistribution, Distribution, ValueDistribution
-from src.core.reporting import Bars, BoxPlot
+from src.data.statistics import Bars, BoxPlot, ClassDistribution, Distribution, ValueDistribution
+from src.training import TrainingData, TrainingModule
+from tests.support.entities import a_task
+from tests.support.fakes import PageLogger, a_composite
+from tests.support.lightning import quiet_trainer
+from tests.support.tables import in_memory_pipeline
 
 
 def drawn(table: object) -> str:
@@ -133,11 +140,7 @@ def test_a_class_balance_reaches_the_bars_port_and_not_the_other_one() -> None:
 
 
 def test_a_value_spread_reaches_the_box_plot_port_carrying_the_summary_itself() -> None:
-    """The box *is* the five-number summary, so `BoxPlot` holds it rather than a copy.
-
-    The reference kept a parallel `BoxStats` whose docstring admitted it mirrored
-    the distribution field for field — two records to keep in step by hand.
-    """
+    """The box *is* the five-number summary, so `BoxPlot` holds it rather than a copy kept in step field for field."""
     bars, boxes = OnlyBars(), OnlySpread()
 
     draw("dataset/age", spread(), [bars, boxes])
@@ -197,3 +200,34 @@ def test_both_tables_are_dressed_like_every_other_table_this_framework_prints() 
 
 def test_it_is_reachable_from_config_by_name() -> None:
     assert "dataset_summary" in callback_registry
+
+
+class BarsPage(PageLogger):
+    """A run's logger that can also draw bars — what the callback looks for among ``trainer.loggers``."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.bars: list[tuple[str, Bars]] = []
+
+    def log_bars(self, title: str, bars: Bars, iteration: int) -> None:
+        self.bars.append((title, bars))
+
+
+def test_under_a_fit_the_callback_reports_the_runs_pipeline_once(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """It reads the pipeline off the trainer, prints the table and charts through the run's loggers — at fit, not again at test."""
+    pipeline, _ = in_memory_pipeline()
+    module = TrainingModule(model=a_composite(2), tasks=[a_task()], optimizer_factory=partial(torch.optim.SGD, lr=0.1))
+    tracker = BarsPage()
+    trainer = quiet_trainer(callbacks=[DatasetSummary(title="dataset")], logger=tracker, default_root_dir=tmp_path)
+    data = TrainingData(pipeline, batch_size=2)
+
+    trainer.fit(module, datamodule=data)
+    printed = capsys.readouterr().out
+    trainer.test(module, datamodule=data)
+
+    assert "class balance" in printed
+    assert "cat" in printed
+    assert [title for title, _ in tracker.bars] == ["dataset/label"]
+    assert "class balance" not in capsys.readouterr().out  # said at fit, not again at test

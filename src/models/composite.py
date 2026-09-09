@@ -2,34 +2,59 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, ClassVar, override
 
-from torch import nn
+import torch
+from torch import Tensor, nn
 
-from src.core.entities import AdaptedTarget, Loss, Prediction, StepResult, TaskOutput, require_tensor
+from src.core.entities import Loss, Prediction, StepResult, TaskOutput, require_tensor
 from src.core.ports import Model
 from src.core.taxonomy import Stream
 
 if TYPE_CHECKING:
-    from torch import Tensor
-
     from src.core.entities import Batch, Features
-    from src.core.ports import Activation, Backbone, Criterion, Head, TargetAdapter
+    from src.core.ports import Backbone, Criterion
+
+
+type Activation = Callable[[Tensor], Tensor]
+"""Maps raw logits to predictions for metrics and inference — never for the loss."""
+
+type TargetAdapter = Callable[[Tensor], AdaptedTarget]
+"""Shapes one raw batched target into its loss and metric views."""
+
+
+@dataclass(frozen=True, slots=True)
+class AdaptedTarget:
+    """One raw target shaped into the two views a task consumes.
+
+    The split exists because loss and metrics may need different encodings of
+    the same target — e.g. MixUp trains against soft labels while metrics
+    compare against hard class indices.
+    """
+
+    for_loss: Tensor
+    for_metrics: Tensor
+
+    @classmethod
+    def absent(cls) -> AdaptedTarget:
+        """The adapted target of a structure-supervised task (metric learning): both views empty."""
+        return cls(for_loss=torch.empty(0), for_metrics=torch.empty(0))
 
 
 @dataclass(frozen=True, slots=True, eq=False)
 class TaskComponents:
     """How the composite family serves one ``Task``: the components behind its predictions.
 
-    ``Task`` *declares* a learned objective; ``TaskComponents`` *materializes* it for the
+    ``Task`` *declares* what is learned; ``TaskComponents`` *materializes* it for the
     composite model — the head, criterion, activation and target adapter that
-    ``build_task_components`` derives from the task, the data facts and the backbone.
-    ``weight`` is copied in; ``Task.weight`` stays the source of truth.
+    a kind derives from the task's facts and the backbone (``TaskKind.components``).
+    ``weight`` is the task's, snapshotted when the kind compiles these: the model reads it every
+    step and never holds the task, so the two are one number at build and never written after.
     """
 
-    head: Head
+    head: nn.Module
     criterion: Criterion
     activation: Activation
     target_adapter: TargetAdapter | None
@@ -57,11 +82,11 @@ class CompositeModel(Model):
     """
 
     BACKBONE: ClassVar[str] = "backbone"
-    """The attribute the shared backbone sits under, and so the tail of the dot-path naming it.
+    """The attribute the shared backbone sits under, and so the path a config names it by.
 
-    Published rather than spelled out where it is read: a freeze callback names
-    this module in config, and assembly builds that path by joining the segment
-    each owner publishes. A rename here reaches the config addressing it.
+    Published rather than spelled out where it is read: a freeze callback names this
+    module in config, and the guard against freezing an adapted backbone compares
+    against it. A rename here reaches the config addressing it.
     """
 
     def __init__(self, backbone: Backbone, components: Mapping[str, TaskComponents]) -> None:
@@ -76,17 +101,16 @@ class CompositeModel(Model):
     @override
     def step(self, batch: Batch) -> StepResult:
         features = self.backbone(batch.inputs)
+        raw = self._logits(features)
         outputs: dict[str, TaskOutput] = {}
-        raw: dict[str, Tensor] = {}
         metric_targets: dict[str, TaskOutput] = {}
         losses: list[Loss] = []
         for name, component in self._components.items():
-            logits = component.head(_read(features, component.streams))
+            logits = raw[name]
             adapted = self._adapt_target(batch, name, component)
             task_loss = component.criterion(logits, adapted.for_loss).scoped(name)
             losses.append(component.weight * task_loss)
             outputs[name] = component.activation(logits)
-            raw[name] = logits
             metric_targets[name] = adapted.for_metrics
         return StepResult(
             loss=Loss.sum(losses),
@@ -97,16 +121,22 @@ class CompositeModel(Model):
     @override
     def predict(self, batch: Batch) -> Prediction:
         features = self.backbone(batch.inputs)
-        raw = {name: component.head(_read(features, component.streams)) for name, component in self._components.items()}
+        raw = self._logits(features)
         outputs: dict[str, TaskOutput] = {
             name: self._components[name].activation(logits) for name, logits in raw.items()
         }
         return Prediction(outputs=outputs, features=features, logits=raw)
 
+    def _logits(self, features: Features) -> dict[str, Tensor]:
+        """Every head's raw output, each read from the streams its component declares."""
+        return {
+            name: component.head(_read(features, component.streams)) for name, component in self._components.items()
+        }
+
     def _adapt_target(self, batch: Batch, task_name: str, component: TaskComponents) -> AdaptedTarget:
         """Look up and shape the task's target; raw when there is nothing to shape.
 
-        No adapter means the objective has nothing to *shape* — not necessarily
+        No adapter means the kind has nothing to *shape* — not necessarily
         nothing to deliver: a ranking task's per-pair preference arrives as the
         number it already is. ``absent`` is only for a target that truly is —
         structure-supervised tasks whose batch carries no column.

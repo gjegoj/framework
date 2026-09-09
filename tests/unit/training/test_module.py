@@ -3,77 +3,35 @@
 from __future__ import annotations
 
 from functools import partial
-from typing import Any
 
-import pandas as pd
 import torch
 from lightning.pytorch.utilities.types import LRSchedulerConfigType
-from torch import Tensor
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import StepLR
 
-from src.core import Batch, DataProfile, Loss, Objective, OutputTopology, Prediction, Stage, StepResult, Task
+from src.core import Batch, Loss, Prediction, Stage, StepResult
 from src.core.ports import Model
-from src.data import (
-    DataSchema,
-    InMemorySource,
-    InputColumn,
-    LabelTargetEncoder,
-    TableDataModule,
-    TargetColumn,
-    random_split,
-)
-from src.losses import CrossEntropyCriterion
-from src.models import CompositeModel, LinearHead, TaskComponents
 from src.training import FitProfile, SchedulerFactory, TrainingData, TrainingModule
-from tests.support.entities import as_is
-from tests.support.fakes import CountingMetricSet, FlattenBackbone
+from tests.support.entities import a_task
+from tests.support.fakes import CountingMetricSet, a_composite
 from tests.support.lightning import quiet_trainer
+from tests.support.tables import in_memory_pipeline
 
 
 def make_module(scheduler_factory: SchedulerFactory | None = None) -> tuple[TrainingModule, CountingMetricSet]:
     metrics = CountingMetricSet()
-    task = Task(
-        name="label",
-        output_topology=OutputTopology.GLOBAL,
-        objective=Objective.MULTICLASS,
-        metrics={Stage.TRAIN: metrics},
-    )
-    model = CompositeModel(
-        backbone=FlattenBackbone(dim=2),
-        components={
-            "label": TaskComponents(
-                head=LinearHead(2, 2),
-                criterion=CrossEntropyCriterion(),
-                activation=lambda logits: logits,
-                target_adapter=as_is,
-            )
-        },
-    )
     module = TrainingModule(
-        model=model,
-        tasks=[task],
+        model=a_composite(2),
+        tasks=[a_task()],
+        metrics={"label": {Stage.TRAIN: metrics}},
         optimizer_factory=partial(torch.optim.SGD, lr=0.1),
         scheduler_factory=scheduler_factory,
     )
     return module, metrics
 
 
-def load_pair(value: Any) -> Tensor:
-    return torch.tensor([float(value), 1.0])
-
-
 def make_training_data() -> TrainingData:
-    table = pd.DataFrame({"x": [float(index) for index in range(8)], "label": ["cat", "dog"] * 4})
-    data_module = TableDataModule(
-        source=InMemorySource(table),
-        schema=DataSchema(
-            inputs={"image": InputColumn(column="x", loader=load_pair)},
-            targets={"label": TargetColumn(column="label", encoder=LabelTargetEncoder(classes={0: "cat", 1: "dog"}))},
-        ),
-        splitter=random_split({Stage.TRAIN: 0.5, Stage.VAL: 0.25, Stage.TEST: 0.25}, seed=42),
-    )
-    data_module.setup(DataProfile())
+    data_module, _ = in_memory_pipeline()
     return TrainingData(data_module, batch_size=2)
 
 
@@ -122,7 +80,7 @@ def test_a_scheduler_factory_receives_facts_only_the_trainer_knows() -> None:
 def test_a_task_a_step_produced_nothing_for_contributes_no_metric() -> None:
     """Absent is a real answer, and it is not the same answer as empty.
 
-    A vendor head assembles its decodable output only in eval mode, so a training step
+    A detection head assembles its decodable output only in eval mode, so a training step
     genuinely has no prediction to judge. Handing the metric a fabricated blank would
     make it report a score for a measurement nobody took — a zero that reads as a broken
     model rather than as an epoch with no train-stage numbers.
@@ -148,3 +106,10 @@ class _ModelWithNoPrediction(Model):
 
     def predict(self, batch: Batch) -> Prediction:
         return Prediction(outputs={})
+
+
+def test_the_module_publishes_its_tasks_for_callbacks() -> None:
+    """Lightning hands every callback the module; a callback that needs the tasks reads them there."""
+    module, _ = make_module()
+
+    assert [task.name for task in module.tasks] == ["label"]

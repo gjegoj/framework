@@ -75,11 +75,25 @@ def batch() -> Batch:
     return Batch(inputs={"image": torch.ones(2, 4)}, targets={"label": torch.zeros(2, dtype=torch.long)})
 
 
-def distilled(teachers: int = 1, student: Model | None = None, soft: float = 3.0) -> DistilledModel:
+class Recording(nn.Module):
+    """A criterion that keeps the soft targets it was handed — the teachers' guidance, as the loss sees it."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.soft_targets: list[Tensor] = []
+
+    def forward(self, logits: Tensor, target: Tensor) -> Loss:
+        self.soft_targets.append(target)
+        return Loss.part("kl", torch.tensor(0.0))
+
+
+def distilled(
+    teachers: int = 1, student: Model | None = None, soft: float = 3.0, criterion: nn.Module | None = None
+) -> DistilledModel:
     return DistilledModel(
         student=student or Student(),
         teachers=[Teacher(float(index)) for index in range(teachers)],
-        criterion=Constant(soft),  # type: ignore[arg-type]
+        criterion=criterion if criterion is not None else Constant(soft),  # type: ignore[arg-type]
     )
 
 
@@ -117,16 +131,18 @@ def test_off_training_the_teachers_are_not_even_asked() -> None:
 
 def test_several_teachers_are_averaged_and_one_teacher_is_that_teacher() -> None:
     """Their logits are one soft target; averaging is what makes an ensemble of them."""
-    ensemble = distilled(teachers=3)
+    guidance_of_three, guidance_of_one = Recording(), Recording()
+    ensemble = distilled(teachers=3, criterion=guidance_of_three)
     ensemble.train()
-    alone = distilled(teachers=1)
+    alone = distilled(teachers=1, criterion=guidance_of_one)
     alone.train()
 
     ensemble.step(batch())
+    alone.step(batch())
 
     assert all(teacher.asked == 1 for teacher in ensemble.teachers)
-    assert torch.allclose(ensemble._guidance(batch())["label"], torch.full((2, 4), 1.0))
-    assert torch.allclose(alone._guidance(batch())["label"], torch.zeros(2, 4))
+    assert torch.allclose(guidance_of_three.soft_targets[0], torch.full((2, 4), 1.0))  # the mean of 0, 1 and 2
+    assert torch.allclose(guidance_of_one.soft_targets[0], torch.zeros(2, 4))
 
 
 def test_prediction_and_task_parameters_are_the_students() -> None:

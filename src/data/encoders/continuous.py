@@ -4,14 +4,13 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterable
-from typing import Any, ClassVar, override
+from typing import Any, ClassVar, Self, override
 
 import numpy as np
 
-from src.core.entities import Distribution
 from src.data.encoders.base import TargetEncoder
 from src.data.registry import target_encoder_registry
-from src.data.statistics import measured
+from src.data.statistics import Distribution, measured
 
 log = logging.getLogger(__name__)
 
@@ -74,9 +73,10 @@ class BinnedTargetEncoder(TargetEncoder):
         """
         return measured(values)
 
-    def fit(self, values: Iterable[Any]) -> None:
+    @override
+    def fit(self, values: Iterable[Any]) -> Self:
         if self._declared:
-            return
+            return self
         numbers = np.asarray([float(value) for value in values], dtype=np.float64)
         if numbers.size == 0:
             raise ValueError(f"{type(self).__name__} cannot learn a range from an empty training split.")
@@ -90,6 +90,7 @@ class BinnedTargetEncoder(TargetEncoder):
             high,
         )
         self._lay_out_bins(low, high)
+        return self
 
     def _lay_out_bins(self, low: float, high: float) -> None:
         """Place the bin centres, which are the midpoints of evenly spaced edges."""
@@ -102,8 +103,9 @@ class BinnedTargetEncoder(TargetEncoder):
         return 0.0
 
     def _require_centers(self) -> np.ndarray:
-        if self._centers is None:
-            raise RuntimeError(f"{type(self).__name__} is not fitted; call fit(train_values) first.")
+        # An invariant, not a refusal: the pipeline fits every encoder before a dataset exists,
+        # and no declaration can reorder that — so a miss here is a programming error.
+        assert self._centers is not None, f"{type(self).__name__} is not fitted; fit(train_values) runs in setup."
         return self._centers
 
     @property

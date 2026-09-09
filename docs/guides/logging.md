@@ -7,8 +7,10 @@ request, a report of where its wall clock went.
 ## The key grammar
 
 Every logged value is keyed `{stage}/{task}/{leaf}` — `val/label/f1`,
-`train/loss` — and `core.log_keys` is the grammar's one owner; nobody
-re-splits strings by hand. A tracker shows a key as *title* and *series*, and
+`train/loss` — and `core.log_keys` is the grammar's one owner: keys are composed
+with `join` and taken apart with `parse`, once, so nobody re-splits strings by
+hand — the summary, the progress table and the tracker all ask the parsed key
+what it is. A tracker shows a key as *title* and *series*, and
 the stage splits off as the series: `train/loss` and `val/loss` are two lines
 on the one `loss` graph, `val/label/f1` sits beside `train/label/f1` — losses
 and metrics alike, no special case.
@@ -94,10 +96,11 @@ returning `None` means "identified, draws as nothing" — the value is
 dropped quietly (the multilabel confusion matrix, `[L, 2, 2]`, is the
 built-in example).
 
-> **Name the facts you need.** `task`, `num_classes` and `num_labels` are
-> *offered* by the objective and reach whatever **names** them, so a
-> constructor of `**kwargs` alone receives none of them and fails inside the
-> upstream library about an argument no config mentioned.
+> **Name the facts you need.** `task`, `num_classes` and `num_labels` come
+> from the kind and reach a metric by **signature** — the one exception kept
+> for torchmetrics' constructors — so a constructor of `**kwargs` alone
+> receives none of them and fails inside the upstream library about an
+> argument no config mentioned.
 > `ClassificationArtifactMetric` writes that signature once for the three
 > shipped curves; subclass it and you inherit it.
 
@@ -166,8 +169,9 @@ empty and repeated tags are dropped rather than shown as blank chips.
 **The architecture is not written here**, and cannot be: the key naming one
 differs per backbone family — `model_name` for timm and Hugging Face, `arch`
 plus `encoder_name` for smp — and a composite backbone has no such key at all.
-So the model is asked instead, through `Model.architecture`, and the answer joins
-the tags as a derived fact the way `num_classes` reaches a head.
+So the model is asked instead, through `Model.architecture`, and the trainer
+builder tags the logger with the answer after construction (`tag_run`, the
+`TagsRuns` port); a logger without the port is left alone.
 
 Each backbone answers in the way that is honest for it, which is why this is not
 one rule applied centrally:
@@ -190,13 +194,14 @@ Subclass Lightning's `Logger` and register it:
 ```python
 from src.loggers import logger_registry
 
+
 @logger_registry.register("wandb")
 class WandbLogger(Logger): ...
 ```
 
 Matrices and curves are structural: implement `log_matrix(title, matrix,
-iteration)` / `log_curve(title, curve, iteration)` (entities and protocols
-alike in `core.reporting`) and the run's artifacts arrive — no inheritance
+iteration)` / `log_curve(title, curve, iteration)` (entities in `metrics.entities`,
+protocols in `loggers.ports`) and the run's artifacts arrive — no inheritance
 beyond Lightning's own base, and a backend without them simply keeps its
 scalars. The artifact crosses whole, so a new field on `Curve` or `Matrix`
 never changes a port signature.

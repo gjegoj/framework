@@ -11,15 +11,15 @@ from collections.abc import Mapping
 from pathlib import Path
 
 import albumentations as A
-import pytest
 import torch
 from albumentations.pytorch import ToTensorV2
 from torch import Tensor, nn
 
-from src.core import Backbone, DataProfile, Features, Geometry, Objective, OutputTopology, Stage, Stream, Task
+from src.core import Backbone, Features, Geometry, Stage, Stream
 from src.data import (
     CsvSource,
     DataSchema,
+    DeclaredSource,
     ImageLoader,
     InputColumn,
     MaskTargetEncoder,
@@ -29,9 +29,10 @@ from src.data import (
     random_split,
 )
 from src.models import CompositeModel
-from src.tasks import build_task_components
+from src.tasks import Segmentation
 from src.transforms import AlbumentationsTransform
 from tests.support.datasets import write_dataset
+from tests.support.entities import a_task
 from tests.support.narrowing import tensor
 
 CLASSES = 3
@@ -53,11 +54,10 @@ class TinyDecoderBackbone(Backbone):
         return {Stream.DECODER: self._width}
 
 
-@pytest.mark.e2e
 def test_masks_travel_from_files_through_augmentation_into_a_dense_loss(tmp_path: Path) -> None:
     table_path = write_dataset(tmp_path, rows=SAMPLES, side=12, masks=True, mask_classes=CLASSES)
     data_module = TableDataModule(
-        source=CsvSource(table_path),
+        sources=[DeclaredSource(CsvSource(table_path))],
         schema=DataSchema(
             inputs={"image": InputColumn(column="image", loader=ImageLoader(root=tmp_path))},
             targets={
@@ -78,21 +78,20 @@ def test_masks_travel_from_files_through_augmentation_into_a_dense_loss(tmp_path
             ),
         ),
     )
-    profile = DataProfile()
-    data_module.setup(profile)
+    facts = data_module.setup()
 
     dataset = data_module.dataset(Stage.TRAIN)
     batch = collate_samples([dataset[index] for index in range(len(dataset))])
 
     assert batch.inputs["image"].shape == (4, 3, 8, 8)
     assert tensor(batch.targets["mask"]).shape == (4, 8, 8)
-    assert profile.require_num_classes("mask") == CLASSES
+    assert facts["mask"].num_classes == CLASSES
 
-    task = Task(name="mask", output_topology=OutputTopology.DENSE, objective=Objective.MULTICLASS, metrics={})
+    task = a_task(name="mask", kind=Segmentation(), facts=facts["mask"])
     backbone = TinyDecoderBackbone()
     model = CompositeModel(
         backbone=backbone,
-        components={task.name: build_task_components(task, profile, backbone)},
+        components={task.name: task.kind.components(task, backbone)},
     )
 
     loss, prediction, targets = model.step(batch)

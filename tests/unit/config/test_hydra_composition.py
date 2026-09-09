@@ -9,11 +9,24 @@ import pytest
 from hydra import compose, initialize_config_dir
 from omegaconf import OmegaConf
 
-from src.assembly.callbacks import build_callbacks
+from src.build import build_callbacks
 from src.callbacks.samples import SampleGrid
 from src.config import ExperimentConfig
-from src.core.entities import Task
-from src.core.taxonomy import Objective, OutputTopology
+from src.tasks import Task
+from src.training import TrainingModule
+from tests.support.entities import a_task
+from tests.support.fakes import PageLogger, a_composite
+from tests.support.lightning import quiet_trainer
+from tests.support.pages import COLOUR, colour_batch, first_image
+
+
+def module(*tasks: Task) -> TrainingModule:
+    from functools import partial
+
+    import torch
+
+    return TrainingModule(model=a_composite(12), tasks=tasks, optimizer_factory=partial(torch.optim.SGD, lr=0.1))
+
 
 CONFIGS = Path(__file__).parents[3] / "configs"
 
@@ -57,19 +70,24 @@ def test_the_samples_group_builds_a_grid_that_undoes_the_runs_own_normalisation(
             overrides=[
                 "callbacks=samples",
                 "run.directory=.",  # reads the live Hydra run dir, which exists only in an app
-                "+tasks.label.preset=classification",
+                "+tasks.label.kind=classification",
                 "+tasks.label.target=species",
                 "+data.source=table.csv",
             ],
         )
     raw = cast("dict[str, Any]", OmegaConf.to_container(composed, resolve=True))
-    task = Task(name="label", output_topology=OutputTopology.GLOBAL, objective=Objective.MULTICLASS, metrics={})
-
-    built = build_callbacks(ExperimentConfig(**raw), tasks=[task])
+    built = build_callbacks(ExperimentConfig(**raw))
 
     grid = next(callback for callback in built if isinstance(callback, SampleGrid))
-    assert grid._mean.flatten().tolist() == pytest.approx(raw["mean"])
-    assert "label" in grid._annotators
+    trainer = quiet_trainer(logger=(logger := PageLogger()))
+    trained = module(a_task(class_names=["cat", "dog"]))
+    grid.setup(trainer, trained, stage="fit")
+    sample = colour_batch(raw["mean"], raw["std"])
+    grid.on_validation_batch_end(trainer, trained, trained.validation_step(sample, 0), sample, 0)
+
+    _, page, _ = logger.pages[0]
+    assert first_image(page)[0, 0].tolist() == pytest.approx(COLOUR, abs=1)  # the run's own numbers undone
+    assert "label::gt::" in page  # and the run's own task drawn
 
 
 def test_both_logging_configs_speak_rich() -> None:

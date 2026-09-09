@@ -8,6 +8,7 @@ from typing import Any, cast
 import lightning as L
 import pytest
 import torch
+import torch.nn.functional as F
 from torch import nn
 
 from src.callbacks import AnnealCriterion
@@ -15,26 +16,14 @@ from src.callbacks.anneal import SCHEDULES, scheduled_value
 from src.callbacks.registry import callback_registry
 from src.core import Batch, Criterion, Loss, Model, Prediction, StepResult
 from src.losses import CrossEntropyCriterion, KLDivergenceCriterion, WeightedSumCriterion
-from src.models import CompositeModel, DistilledModel, LinearHead, TaskComponents, without_teachers
-from src.tasks.activations import softmax_probabilities
-from src.tasks.adapters import as_class_indices
-from tests.support.fakes import FlattenBackbone
+from src.models import CompositeModel, DistilledModel, without_teachers
+from tests.support.fakes import a_composite
 from tests.support.lightning import quiet_trainer
 
 
 def composed(criterion: Criterion) -> CompositeModel:
-    """One classification task on one backbone — what ``build_model`` assembles."""
-    return CompositeModel(
-        backbone=FlattenBackbone(dim=4),
-        components={
-            "label": TaskComponents(
-                head=LinearHead(4, 3),
-                criterion=criterion,
-                activation=softmax_probabilities,
-                target_adapter=as_class_indices,
-            )
-        },
-    )
+    """One classification task on one backbone — what ``build_model`` composes."""
+    return a_composite(4, classes=3, criterion=criterion)
 
 
 class _WholeModel(Model):
@@ -95,12 +84,22 @@ def fit(callback: AnnealCriterion, criterion: Criterion, epochs: int = 4, distil
     quiet_trainer(max_epochs=epochs, callbacks=[callback]).fit(AnnealedRun(criterion, distilled), data)
 
 
+LOGITS = torch.tensor([[2.0, 0.5], [0.1, 1.0]])
+TARGET = torch.tensor([0, 1])
+
+
+def smoothed_by(criterion: Criterion, smoothing: float) -> bool:
+    """Whether the criterion now computes cross-entropy at this smoothing — read off the number, not the knob."""
+    reference = F.cross_entropy(LOGITS, TARGET, label_smoothing=smoothing).item()
+    return criterion(LOGITS, TARGET).total.item() == pytest.approx(reference, abs=1e-6)
+
+
 def test_the_number_moves_from_start_to_end_over_the_run() -> None:
-    criterion = CrossEntropyCriterion(label_smoothing=0.0)
+    criterion = CrossEntropyCriterion(label_smoothing=0.5)  # neither the start nor the end: the run has to write
 
     fit(AnnealCriterion(task="label", parameter="label_smoothing", start=0.2, end=0.0), criterion)
 
-    assert criterion._loss.label_smoothing == pytest.approx(0.0)
+    assert smoothed_by(criterion, 0.0)
 
 
 def test_start_overrides_the_constructed_value_at_epoch_zero() -> None:
@@ -118,7 +117,7 @@ def test_a_part_prefix_picks_one_criterion_of_a_composite() -> None:
 
     fit(AnnealCriterion(task="label", parameter="ce.label_smoothing", start=0.3, end=0.3), composite)
 
-    assert ce._loss.label_smoothing == pytest.approx(0.3)
+    assert smoothed_by(ce, 0.3)
 
 
 def test_a_distilled_run_still_reaches_the_criterion_of_its_task() -> None:
@@ -129,8 +128,8 @@ def test_a_distilled_run_still_reaches_the_criterion_of_its_task() -> None:
     run declaring both died at ``on_fit_start`` — before a single batch, with a message
     about a model that "exposes none" rather than about the two features not composing.
 
-    ``backbone_path`` in assembly already accounts for exactly this nesting, so the
-    knowledge existed in the codebase; this reader simply did not have it.
+    ``without_teachers`` already answers for exactly this nesting, so the knowledge
+    existed in the codebase; this reader simply did not have it.
     """
     criterion = CrossEntropyCriterion(label_smoothing=0.9)
 
@@ -140,7 +139,7 @@ def test_a_distilled_run_still_reaches_the_criterion_of_its_task() -> None:
         distilled=True,
     )
 
-    assert criterion._loss.label_smoothing == pytest.approx(0.0)
+    assert smoothed_by(criterion, 0.0)
 
 
 def test_an_ambiguous_name_lists_the_parts_that_carry_it() -> None:
@@ -187,7 +186,7 @@ def test_an_unknown_task_lists_the_configured_ones() -> None:
 
 
 def test_a_family_that_composes_no_criterion_is_told_so_by_name() -> None:
-    """A vendor family owns its loss internally, so there is no per-task brick to move.
+    """A model that arrives whole owns its loss internally, so there is no per-task brick to move.
 
     The port's default answer is ``None``, and the schedule turns that into a sentence
     naming the family — rather than the ``AttributeError`` a tree walk would have raised.

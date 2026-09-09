@@ -1,6 +1,6 @@
 """End-to-end: a finished run leaves a TorchScript file that still is the model.
 
-Every layer participates — config, data, model assembly, Lightning fit, weight
+Every layer participates — config, data, model build, Lightning fit, weight
 restoration, the export phase and its verification.
 """
 
@@ -8,16 +8,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
 import torch
 
-from src.assembly import assemble, run
+from src.build import build, run
 from src.core import Batch
 from tests.support.configs import disk_config
 from tests.support.narrowing import tensor
 
 
-@pytest.mark.e2e
 def test_a_finished_run_leaves_a_loadable_artifact_that_matches_the_model(dataset_root: Path, tmp_path: Path) -> None:
     """An export nobody can load, or that computes something else, is not a deliverable."""
     config = disk_config(
@@ -26,7 +24,7 @@ def test_a_finished_run_leaves_a_loadable_artifact_that_matches_the_model(datase
         run={"directory": str(tmp_path / "run"), "test": False},
     )
 
-    experiment = assemble(config)
+    experiment = build(config)
     run(experiment, config)
 
     artifact = tmp_path / "run" / "export" / "model.pt"

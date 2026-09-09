@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 logger_registry: Registry[Logger] = Registry("logger")
 """Lightning ``Logger`` subclasses by config-facing name.
 
-Assembly builds the declared one through ``instantiate``, so every constructor knob is
+The composition root builds the declared one through ``instantiate``, so every knob is
 reachable from config. An adapter imports its third-party client lazily: a registered
 backend must not require its package until it is actually built.
 """

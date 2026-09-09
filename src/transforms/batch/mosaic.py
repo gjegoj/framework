@@ -2,20 +2,21 @@
 
 from __future__ import annotations
 
+import copy
 from typing import TYPE_CHECKING
 
 import torch
 
 from src.core.entities import Batch, require_tensor
-from src.core.taxonomy import Modality, Objective, OutputTopology
-from src.transforms.batch.labels import as_soft, class_counts
+from src.core.taxonomy import Modality, OutputTopology
+from src.transforms.batch.ports import refuse_unservable, unbound
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
 
     from torch import Tensor
 
-    from src.core.entities import DataProfile, Task
+    from src.tasks import Task
 
 
 class Mosaic:
@@ -24,48 +25,48 @@ class Mosaic:
     Quadrant *k* takes its pixels from the batch rolled by *k* — no resize, so every pixel
     comes from exactly one source and a segmentation mask composes by the same swap. A
     global label takes the four quadrant areas as its weights. A batch shorter than four
-    wraps around, which costs variety but stays correct.
+    wraps around, which costs variety but stays correct. A task it cannot serve is refused
+    when the tasks are bound (``for_tasks``), before the first batch.
 
     Parameters:
-        tasks (Sequence[Task]): Every task whose target must be rewritten.
-        profile (DataProfile): Where the class counts come from.
         input_name (str): Which input holds the image.
         split_range (tuple[float, float]): Where the split may fall, as a fraction of height
             and width; sampled once per batch, separately per axis.
     """
 
-    def __init__(
-        self,
-        tasks: Sequence[Task],
-        profile: DataProfile,
-        input_name: str = Modality.IMAGE,
-        split_range: tuple[float, float] = (0.3, 0.7),
-    ) -> None:
+    def __init__(self, input_name: str = Modality.IMAGE, split_range: tuple[float, float] = (0.3, 0.7)) -> None:
         low, high = split_range
         if not 0.0 < low <= high < 1.0:
             raise ValueError(f"Mosaic needs 0 < low <= high < 1 for split_range, got {split_range}.")
-        refused = [
-            task.name
-            for task in tasks
-            # No input-axis clause: the legality map guarantees a non-SINGLE GLOBAL
-            # task is METRIC, so the METRIC test already excludes stacked inputs.
-            if task.output_topology not in {OutputTopology.GLOBAL, OutputTopology.DENSE}
-            or task.objective is Objective.METRIC
-        ]
-        if refused:
-            raise ValueError(
-                f"Mosaic cannot rewrite the targets of {', '.join(refused)}: it composes a picture and "
-                f"whatever is laid over it, so a task without one has nothing to compose, and soft "
-                f"labels break metric learning. Drop the transform, or the task it cannot serve."
-            )
-        # A mask is swapped like the picture; a label is weighted by the four areas.
-        self._masks = [task.name for task in tasks if task.output_topology is OutputTopology.DENSE]
-        self._classes = class_counts([task for task in tasks if task.output_topology is OutputTopology.GLOBAL], profile)
+        self._masks: list[str] | None = None
+        self._labels: dict[str, Task] = {}
         self._input_name = input_name
         self._split_range = split_range
 
+    def for_tasks(self, tasks: Sequence[Task]) -> Callable[[Batch], Batch]:
+        """A copy bound to these tasks — the ``BatchTransform`` port.
+
+        A copy rather than a rebinding in place, so the declared transform stays what
+        config said and the unbound refusal below stays honest for it. Each task knows how
+        its own target softens and carries the facts that takes.
+        """
+        refuse_unservable(
+            self,
+            tasks,
+            {OutputTopology.GLOBAL, OutputTopology.DENSE},
+            "it composes a picture and whatever is laid over it, so a task without one has nothing to "
+            "compose, and soft labels break metric learning.",
+        )
+        bound = copy.copy(self)
+        # A mask is swapped like the picture; a label is weighted by the four areas.
+        bound._masks = [task.name for task in tasks if task.kind.shape is OutputTopology.DENSE]
+        bound._labels = {task.name: task for task in tasks if task.kind.shape is OutputTopology.GLOBAL}
+        return bound
+
     def __call__(self, batch: Batch) -> Batch:
         """Return a new batch; the one given is never written into."""
+        if self._masks is None:
+            raise unbound(self)
         image = batch.inputs[self._input_name]
         height, width = image.shape[-2:]
         split_y, split_x = self._split(height), self._split(width)
@@ -83,9 +84,9 @@ class Mosaic:
                 },
                 **{
                     name: self._weigh(
-                        require_tensor(batch.targets[name], task=name, wanted_by="a batch transform"), name, shares
+                        require_tensor(batch.targets[name], task=name, wanted_by="a batch transform"), task, shares
                     )
-                    for name in self._classes
+                    for name, task in self._labels.items()
                 },
             },
             meta=batch.meta,
@@ -96,8 +97,8 @@ class Mosaic:
         high = max(low + 1, int(self._split_range[1] * size))
         return int(torch.randint(low, high, (1,)).item())
 
-    def _weigh(self, label: Tensor, name: str, shares: Sequence[float]) -> Tensor:
-        soft = as_soft(label, self._classes[name])
+    def _weigh(self, label: Tensor, task: Task, shares: Sequence[float]) -> Tensor:
+        soft = task.kind.soften(label, task.facts)
         return sum((share * soft.roll(k, 0) for k, share in enumerate(shares)), start=torch.zeros_like(soft))
 
 

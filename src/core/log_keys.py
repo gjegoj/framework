@@ -1,8 +1,8 @@
-"""The single owner of the log-key grammar ``{stage}/{task}/{leaf}``: composed here, parsed here."""
+"""The single owner of the log-key grammar ``{stage}/{task}/{leaf}``: composed here, parsed here, once."""
 
 from __future__ import annotations
 
-from typing import Final
+from typing import Final, NamedTuple
 
 from src.core.taxonomy import Stage
 
@@ -15,7 +15,7 @@ TOTAL_LOSS: Final = "loss"
 MEAN: Final = "mean"
 """Leaf of a vector metric's average, beside its per-class leaves."""
 
-_PER_CLASS_SEGMENTS: Final = 3
+PER_CLASS_SEGMENTS: Final = 3
 """Segments after the stage once a metric has per-class leaves: ``{task}/{metric}/{class}``.
 
 A scalar metric and a loss part have two (``{task}/{leaf}``) and a total has one,
@@ -41,22 +41,45 @@ def total_loss(stage: Stage) -> str:
     return join(stage, TOTAL_LOSS)
 
 
-def split_for_tracker(key: str) -> tuple[str, str]:
-    """A key as a tracker's ``(title, series)`` — one graph per title, one line per series.
+class LogKey(NamedTuple):
+    """A log key taken apart once: its stage, when it starts with one, and the segments after it.
 
-    - ``train/label/ce`` → ``("label/ce", "train")``: stages of one number share a graph.
-    - ``val/label/f1/cat`` → ``("val/label/f1", "cat")``: a per-class family compares its
-      classes on one graph, at the cost of train and val means sitting apart.
-    - ``lr/backbone`` → ``("lr", "backbone")``: no stage, so the leaves are the comparison.
-    - ``epoch`` → ``("epoch", "value")``.
+    The one place the grammar is read back, so no consumer splits a string by hand: a
+    tracker's title and series, a summary's headline names and a progress table's rows
+    all ask this value what a key is.
     """
-    stage, separator, rest = key.partition(SEPARATOR)
-    if not separator:
-        return key, "value"
-    if stage not in STAGES:
-        family, _, leaf = key.rpartition(SEPARATOR)
-        return family, leaf
-    if len(rest.split(SEPARATOR)) >= _PER_CLASS_SEGMENTS:
-        graph, _, leaf = key.rpartition(SEPARATOR)
-        return graph, leaf
-    return rest, stage
+
+    stage: Stage | None
+    path: tuple[str, ...]
+
+    @property
+    def per_class(self) -> bool:
+        """Whether the key is a vector metric's leaf — ``{task}/{metric}/{class}`` after the stage."""
+        return self.stage is not None and len(self.path) >= PER_CLASS_SEGMENTS
+
+    @property
+    def leaf(self) -> str:
+        return self.path[-1]
+
+    @property
+    def is_mean(self) -> bool:
+        return self.path[-1] == MEAN
+
+    @property
+    def family(self) -> str:
+        """The key without its leaf — what a per-class leaf's siblings share."""
+        prefix = () if self.stage is None else (str(self.stage),)
+        return join(*prefix, *self.path[:-1])
+
+    @property
+    def rest(self) -> str:
+        """The key without its stage."""
+        return join(*self.path)
+
+
+def parse(key: str) -> LogKey:
+    """Take a key apart: a first segment that is a stage is the stage, everything else is the path."""
+    first, _, tail = key.partition(SEPARATOR)
+    if first in STAGES:
+        return LogKey(Stage(first), tuple(tail.split(SEPARATOR)) if tail else ())
+    return LogKey(None, tuple(key.split(SEPARATOR)))

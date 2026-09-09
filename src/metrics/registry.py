@@ -29,7 +29,7 @@ number needs nothing from us. The few that compute an **artifact** — a curve, 
 are classes of ours instead, since what a value means is knowledge torchmetrics has no
 place for. That is the whole of the distinction; see ``WrappedMetric``.
 
-An objective's own ``metric_kwargs`` (``task``, ``num_classes`` / ``num_labels``) merge
+A kind's own ``metric_kwargs`` (``task``, ``num_classes`` / ``num_labels``) merge
 with each entry's declared params when the sets are built.
 """
 

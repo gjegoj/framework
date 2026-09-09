@@ -13,6 +13,7 @@ from sklearn.model_selection import train_test_split
 from skmultilearn.model_selection import IterativeStratification
 
 from src.core.taxonomy import Stage
+from src.data.encoders.label import labels_in
 from src.data.sources import Table
 
 log = logging.getLogger(__name__)
@@ -31,7 +32,7 @@ def random_split(fractions: Mapping[Stage, float], seed: int) -> Splitter:
         fractions (Mapping[Stage, float]): Per-stage share of rows, summing to 1.
         seed (int): Shuffle seed; the same seed always yields the same split.
     """
-    _validate_fractions(fractions, caller="random_split")
+    _refuse_bad_fractions(fractions, caller="random_split")
 
     def split(table: Table) -> dict[Stage, Table]:
         shuffled = table.sample(frac=1, random_state=seed).reset_index(drop=True)
@@ -43,6 +44,7 @@ def random_split(fractions: Mapping[Stage, float], seed: int) -> Splitter:
             end = len(shuffled) if is_last else start + int(len(shuffled) * fractions[stage])
             parts[stage] = shuffled.iloc[start:end].reset_index(drop=True)
             start = end
+        _refuse_empty_stages(parts, f"{len(shuffled)} rows do not stretch across the requested fractions.")
         return parts
 
     return split
@@ -70,7 +72,7 @@ def stratified_split(
         bins (int): Quantile count used for continuous columns.
         separator (str): Separator splitting a multi-label cell into labels.
     """
-    _validate_fractions(fractions, caller="stratified_split")
+    _refuse_bad_fractions(fractions, caller="stratified_split")
     if bins < 2:
         raise ValueError(f"stratified_split needs at least 2 bins, got {bins}.")
 
@@ -107,7 +109,7 @@ def group_split(fractions: Mapping[Stage, float], by: str, seed: int) -> Splitte
         by (str): Column identifying the group a row belongs to.
         seed (int): Split seed; the same seed always yields the same split.
     """
-    _validate_fractions(fractions, caller="group_split")
+    _refuse_bad_fractions(fractions, caller="group_split")
 
     def split(table: Table) -> dict[Stage, Table]:
         rows = _rows_with_column(table, by, purpose="group")
@@ -125,12 +127,11 @@ def group_split(fractions: Mapping[Stage, float], by: str, seed: int) -> Splitte
             filled[stage] += int(size)
 
         parts = {stage: rows[rows[by].isin(groups)].reset_index(drop=True) for stage, groups in members.items()}
-        if empty := [str(stage) for stage, part in parts.items() if part.empty]:
-            raise ValueError(
-                f"The split left {', '.join(empty)} without a single row: whole groups move "
-                f"together, and '{by}' has only {len(sizes)} of them. Use a finer grouping column, "
-                f"or drop 'group_by' if the rows are independent."
-            )
+        _refuse_empty_stages(
+            parts,
+            f"whole groups move together, and '{by}' has only {len(sizes)} of them. Use a finer grouping "
+            f"column, or drop 'group_by' if the rows are independent.",
+        )
         return parts
 
     return split
@@ -160,16 +161,24 @@ def _divide(
         parts[stage] = taken.reset_index(drop=True)
         remaining_share -= fractions[stage]
     parts[stages[-1]] = remaining.reset_index(drop=True)
-
-    if empty := [str(stage) for stage, part in parts.items() if part.empty]:
-        raise ValueError(
-            f"The split left {', '.join(empty)} without a single row, so those stages would report "
-            f"nothing. {len(rows)} rows do not stretch across the requested fractions."
-        )
+    _refuse_empty_stages(parts, f"{len(rows)} rows do not stretch across the requested fractions.")
     return parts
 
 
-def _validate_fractions(fractions: Mapping[Stage, float], caller: str) -> None:
+def _refuse_empty_stages(parts: Mapping[Stage, Table], because: str) -> None:
+    """A stage with no rows would report nothing under a stage's name, so every splitter refuses it here.
+
+    One place for the three splitters, because the random one had none: floored cuts over a
+    handful of rows left ``val`` empty (measured: 3 rows over 0.7/0.15/0.15 split 2/0/1) and
+    the run went on to evaluate on nothing.
+    """
+    if empty := [str(stage) for stage, part in parts.items() if part.empty]:
+        raise ValueError(
+            f"The split left {', '.join(empty)} without a single row, so those stages would report nothing: {because}"
+        )
+
+
+def _refuse_bad_fractions(fractions: Mapping[Stage, float], caller: str) -> None:
     if not fractions:
         raise ValueError(f"{caller} needs a non-empty fractions mapping.")
     total = sum(fractions.values())
@@ -183,7 +192,7 @@ def _label_indicators(column: pd.Series, separator: str) -> Table | None:
     ``None`` means one label per row at most, where balancing the values
     themselves is exact and no approximation is called for.
     """
-    parsed = [_labels_in(value, separator) for value in column]
+    parsed = [labels_in(value, separator) for value in column]
     if all(len(labels) <= 1 for labels in parsed):
         return None
     vocabulary = sorted({label for labels in parsed for label in labels})
@@ -197,15 +206,6 @@ def _label_indicators(column: pd.Series, separator: str) -> Table | None:
         index=column.index,
         dtype=int,
     )
-
-
-def _labels_in(value: Any, separator: str) -> set[str]:
-    """The labels one cell carries, in either of the two forms a table stores them."""
-    if isinstance(value, list | tuple | set):
-        return {str(item).strip() for item in value if str(item).strip()}
-    if value is None or (isinstance(value, float) and math.isnan(value)):
-        return set()
-    return {part.strip() for part in str(value).split(separator) if part.strip()}
 
 
 def _take_iterative(rows: Table, indicators: Table, share: float, seed: int) -> tuple[Table, Table]:

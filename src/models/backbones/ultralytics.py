@@ -26,10 +26,12 @@ class UltralyticsBackbone(Backbone):
     """Everything before ``Detect`` in an ultralytics yaml, as a pyramid backbone.
 
     The head leaves the forward path and is rebuilt per task through ``native_head``, sized
-    from the profile like every head. The pyramid — how many levels, at which strides — is
+    from the task's facts like every head. The pyramid — how many levels, at which strides — is
     read off the graph and named by stride (``p2`` … ``p6``), so a ``-p2`` yaml declares four
     levels with no config. ``ultralytics`` is imported inside the methods that need it.
-    Serves the ``Detect`` line (v8/11/12); other heads are refused by name.
+    Serves the one-to-many
+    ``Detect`` line (v8/11/12); other heads, and the end-to-end ``Detect`` of yolo26, are
+    refused by name.
 
     Parameters:
         model_name (str): An architecture yaml ultralytics ships (``yolov8n.yaml`` …
@@ -57,9 +59,10 @@ class UltralyticsBackbone(Backbone):
         from ultralytics.nn.modules import Detect
         from ultralytics.nn.tasks import DetectionModel
 
-        # nc is a placeholder: the head is rebuilt per task. Any, as every vendor object here:
-        # nn.Module types each attribute as Tensor | Module, and this graph is walked by attribute.
-        graph: Any = DetectionModel(model_name, nc=1, verbose=False)
+        # Any, as every ultralytics object here: nn.Module types each attribute as Tensor | Module,
+        # and this graph is walked by attribute. The yaml's nc is left alone — the head it sizes
+        # is dropped from the forward path, and overriding it only made ultralytics say so.
+        graph: Any = DetectionModel(model_name, verbose=False)
         if type(graph.model[-1]) is not Detect:
             found = type(graph.model[-1]).__name__
             raise ValueError(
@@ -67,6 +70,13 @@ class UltralyticsBackbone(Backbone):
                 f"and {found} needs a head adapter of its own."
             )
         head: Any = graph.model[-1]
+        if head.end2end:
+            # yolo26's head is a Detect too: end2end=True, reg_max=1. Rebuilt at the defaults it was
+            # silently another head (measured: 7 channels expected, 67 produced).
+            raise ValueError(
+                f"'{model_name}' declares an end-to-end (NMS-free) Detect; this family serves the one-to-many "
+                f"Detect line (v8/11/12), and the end-to-end line needs a head adapter of its own."
+            )
         self._architecture = Path(model_name).stem
         self._input_name = input_name
         # Named `model` so the state-dict keys are the checkpoint's own: model.0.* … model.{n-1}.*.
@@ -123,7 +133,7 @@ class UltralyticsBackbone(Backbone):
             return None
         from ultralytics.nn.modules import Detect
 
-        detect = Detect(nc=out_features, ch=in_features)
+        detect = Detect(nc=out_features, reg_max=self._reg_max, ch=in_features)
         detect.stride = self._template[0].stride
         detect.bias_init()  # ultralytics' own prior, which needs the strides
         if self._carried_head is not None:

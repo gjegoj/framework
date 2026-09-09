@@ -94,3 +94,26 @@ def write_dataset(
         for record, mask in zip(records, write_masks(root, rows, mask_classes, side), strict=True):
             record["mask"] = mask
     return write_table(root, records)
+
+
+def write_pet_like(root: Path, rows: int = 20, side: int = IMAGE_SIDE) -> Path:
+    """A table shaped like ``scripts/prepare_pet.py`` writes — what the shipped examples read.
+
+    The columns the examples name (``image_path``, ``species``, ``breed``, ``random_age``,
+    ``mask_path``) with absolute paths, as the script writes them. Species alternates so a
+    split stratified by it holds both classes in every stage; masks cycle through the
+    three declared indices so the fitted vocabulary is the declared one.
+    """
+    images = write_images(root, rows, side)
+    masks = write_masks(root, rows, 3, side)
+    records = [
+        {
+            "image_path": str(root / image),
+            "species": "cat" if index % 2 else "dog",
+            "breed": f"breed_{index % 4}",
+            "random_age": float(index % 7),
+            "mask_path": str(root / mask),
+        }
+        for index, (image, mask) in enumerate(zip(images, masks, strict=True))
+    ]
+    return write_table(root, records)

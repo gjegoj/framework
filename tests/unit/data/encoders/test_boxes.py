@@ -10,8 +10,8 @@ import pytest
 import torch
 
 from src.core import Geometry, Instances
-from src.core.entities import ClassDistribution
 from src.data.encoders import BoxesTargetEncoder
+from src.data.statistics import ClassDistribution
 
 CELL: list[dict[str, Any]] = [
     {"box": [1.0, 2.0, 5.0, 6.0], "class": "dog"},
@@ -26,7 +26,7 @@ def fitted(cells: list[Any] | None = None) -> BoxesTargetEncoder:
 
 
 def test_the_encoder_declares_that_its_values_are_boxes() -> None:
-    """The marker assembly reads to route the value through ``bbox_params``."""
+    """The marker ``build_stage_transforms`` reads to route the value through ``bbox_params``."""
     assert BoxesTargetEncoder.geometry is Geometry.BOXES
 
 
@@ -129,3 +129,25 @@ def test_the_distribution_counts_boxes_per_class_seeded_with_the_vocabulary() ->
 
     assert isinstance(distribution, ClassDistribution)
     assert distribution.counts == {"cat": 1, "dog": 1, "fox": 0}
+
+
+@pytest.mark.parametrize(
+    "box",
+    [
+        pytest.param([5.0, 2.0, 1.0, 6.0], id="x2 before x1"),
+        pytest.param([1.0, 2.0, 1.0, 6.0], id="zero width"),
+        pytest.param([-1.0, 2.0, 5.0, 6.0], id="negative corner"),
+    ],
+)
+def test_a_box_with_no_area_or_off_the_origin_is_refused_at_fit_showing_the_cell(box: list[float]) -> None:
+    """Refused at setup, where the cell can be shown. Measured on albumentationsx 2.3.7: left to
+    the pipeline, the same box dies inside the first epoch as ``x_max is less than or equal to
+    x_min for bbox [0.75 0.75 0.25 0.25 0.]`` — normalised, naming no row."""
+    with pytest.raises(ValueError, match=r"x1 < x2.*dog"):
+        BoxesTargetEncoder(classes={0: "cat", 1: "dog"}).fit([[{"box": box, "class": "dog"}]])
+
+
+def test_a_box_that_is_not_four_numbers_is_refused_showing_what_it_held() -> None:
+    """A string of corners iterates as characters; ``float(',')`` names nothing a user wrote."""
+    with pytest.raises(ValueError, match="box.*1,2,5,6"):
+        fitted().load([{"box": "1,2,5,6", "class": "dog"}])

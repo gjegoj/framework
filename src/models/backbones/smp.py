@@ -14,7 +14,7 @@ from src.core.ports import Backbone
 from src.core.taxonomy import Modality, Stream
 from src.models.backbones.checkpoints import (
     SMP_HEAD_PREFIXES,
-    load_arrived_weights,
+    load_checkpoint_weights,
     replace_last_projection,
     transplanted_segmentation_head,
 )
@@ -84,7 +84,7 @@ class SmpBackbone(Backbone):
             model.classification_head = nn.Identity()
         self._carried_head: dict[str, Tensor] | None = None
         if checkpoint_path is not None:
-            self._carried_head = load_arrived_weights(
+            self._carried_head = load_checkpoint_weights(
                 model,
                 f"{arch}/{encoder_name}",
                 checkpoint_path,

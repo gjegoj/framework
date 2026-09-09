@@ -63,6 +63,11 @@ class ComponentConfig(BaseModel):
         """Constructor arguments: every key beyond ``name``/``_target_``."""
         return dict(self.model_extra or {})
 
+    @property
+    def spelled(self) -> str:
+        """The component as the declaration wrote it — for a message that names it."""
+        return self.name if self.name is not None else str(self.target)
+
 
 ModelConfig = ComponentConfig
 """The model to build: a registry name ('timm', 'smp') or an import path, plus its arguments.
@@ -86,5 +91,5 @@ MetricConfig = ComponentConfig
 
 Declared under the label it logs as — the key says *where* it logs, the value
 says *what* it is, always explicitly. Here rather than beside one section
-because two of them share it: a task's declared metrics and the preset table.
+because two of them share it: a task's declared metrics and a kind's defaults, validated at build time.
 """

@@ -10,14 +10,14 @@ what you came for below. The project overview and quick start live in the
 |---|---|
 | Understand the design in five minutes | [Core concepts](concepts.md) |
 | Point the framework at your data | [Data](guides/data.md) |
-| Declare classification / segmentation / regression / metric-learning tasks | [Tasks and presets](guides/tasks.md) |
+| Declare classification / segmentation / regression / metric-learning tasks | [Tasks and kinds](guides/tasks.md) |
 | Pick an encoder — timm, smp, HF text, multi-encoder, multi-view | [Models](guides/models.md) |
 | Tune the optimizer, the LR schedule, per-task rates | [Optimizer and scheduler](guides/training.md) |
 | Choose or compose a loss | [Losses](guides/losses.md) |
 | Decide what a run is judged by | [Metrics](guides/metrics.md) |
 | Augment samples, or mix whole batches | [Transforms](guides/transforms.md) |
 | Configure EMA, checkpoints, freezing, annealing, the dataset report | [Callbacks](guides/callbacks.md) |
-| Train a YOLO object detector | [Detection](guides/detection.md) |
+| Bring a detection dataset into the table grammar | [Detection](guides/detection.md) |
 | See where the model gets it wrong, sample by sample | [The samples grid](guides/visualization.md) |
 | Read the log keys, or add a tracker | [Logging](guides/logging.md) |
 | Ship a model — TorchScript, ONNX, TensorRT | [Export](guides/export.md) |
@@ -28,7 +28,6 @@ what you came for below. The project overview and quick start live in the
 | | |
 |---|---|
 | [Backlog](backlog.md) | Known defects and deferred decisions, with the reasoning kept |
-| [Specs and plans](superpowers/) | The design record: why each feature has the shape it has |
 
 ## Runnable configs
 
@@ -45,7 +44,6 @@ dataset, which [`scripts/prepare_pet.py`](../scripts/prepare_pet.py) writes and
 | [`segmentation.yaml`](../configs/experiment/examples/segmentation.yaml) | Pet / background / boundary, per pixel |
 | [`multitask.yaml`](../configs/experiment/examples/multitask.yaml) | All three at once, on one backbone |
 | [`all_callbacks.yaml`](../configs/experiment/examples/all_callbacks.yaml) | Every shipped callback in one run |
-| [`detection.yaml`](../configs/experiment/examples/detection.yaml) | A YOLO detector on COCO128, which downloads itself |
 | [`pet.yaml`](../configs/experiment/examples/pet.yaml) | What the first five share; inherited, never run |
 
 ```bash

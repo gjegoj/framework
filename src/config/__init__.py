@@ -9,8 +9,6 @@ from src.config.components import ComponentConfig, MetricConfig, ModelConfig, Tr
 from src.config.data import CacheConfig, DataConfig, InputColumnConfig, InputLoaderConfig, SplitConfig
 from src.config.distillation import DistillationConfig, TeacherConfig
 from src.config.experiment import CallbackConfig, ExperimentConfig, LoggerConfig
-from src.config.presets import TaskPreset, resolve_preset
-from src.config.registry import task_preset_registry
 from src.config.run import RunConfig
 from src.config.tasks import HeadConfig, LossConfig, TargetEncoderConfig, TaskConfig
 from src.config.training import LoaderConfig, OptimizerConfig, SchedulerConfig, TrainerConfig
@@ -53,11 +51,8 @@ __all__ = [
     "SplitConfig",
     "TargetEncoderConfig",
     "TaskConfig",
-    "TaskPreset",
     "TeacherConfig",
     "TrainerConfig",
     "TransformConfig",
     "load_config",
-    "resolve_preset",
-    "task_preset_registry",
 ]

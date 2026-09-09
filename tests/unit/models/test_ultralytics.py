@@ -10,7 +10,6 @@ import pytest
 import torch
 
 from src.core import Stream
-from src.core.ports import Head
 from src.models.backbones.ultralytics import UltralyticsBackbone
 from src.models.heads import DetectHead
 from src.models.registry import backbone_registry
@@ -54,7 +53,7 @@ def test_the_native_head_is_a_detect_head_sized_for_the_task() -> None:
 
     head = backbone.native_head(backbone.pyramid(), (64, 128, 256), 3)
 
-    assert isinstance(head, DetectHead) and isinstance(head, Head)
+    assert isinstance(head, DetectHead)
     assert (head.num_classes, head.reg_max, head.strides, head.streams) == (3, 16, (8, 16, 32), THREE)
     assert backbone.native_head((Stream.FEATURES,), 256, 3) is None
 
@@ -165,3 +164,37 @@ def test_a_checkpoint_of_another_architecture_is_refused_naming_both(tmp_path: P
     """The message names the file and the architecture it did not fit."""
     with pytest.raises(ValueError, match="s.pt.*yolov8n"):
         UltralyticsBackbone("yolov8n.yaml", checkpoint_path=saved_graph(tmp_path / "s.pt", model_name="yolov8s.yaml"))
+
+
+def test_an_end_to_end_detect_head_is_refused_naming_the_line() -> None:
+    """yolo26's head is a ``Detect`` too, with ``end2end=True`` and ``reg_max=1``; rebuilt at the
+    defaults it was silently another head — measured: 7 channels expected, 67 produced."""
+    with pytest.raises(ValueError, match="end-to-end"):
+        UltralyticsBackbone("yolo26n.yaml")
+
+
+def test_the_rebuilt_head_keeps_the_templates_reg_max(tmp_path: Path) -> None:
+    """``reg_max`` is a fact of the yaml, read off the template; the rebuilt head takes it from
+    there rather than from ultralytics' default."""
+    import ultralytics
+
+    shipped = Path(ultralytics.__file__).parent / "cfg" / "models" / "v8" / "yolov8.yaml"
+    yaml = tmp_path / "yolov8n-dfl8.yaml"
+    yaml.write_text("reg_max: 8\n" + shipped.read_text(encoding="utf-8"), encoding="utf-8")
+    backbone = UltralyticsBackbone(str(yaml))
+
+    head = backbone.native_head(backbone.pyramid(), (64, 128, 256), 3)
+    assert isinstance(head, DetectHead)
+
+    raw = head(backbone({"image": torch.zeros(1, 3, 64, 64)}).streams)
+    assert head.reg_max == 8
+    assert raw.shape[1] == 4 * 8 + 3
+
+
+def test_building_the_graph_leaves_the_yamls_class_count_alone(capfd: pytest.CaptureFixture[str]) -> None:
+    """The head is dropped from the forward path, so ``nc`` is nobody's business here —
+    overriding it only made ultralytics print a line at every build (measured)."""
+    UltralyticsBackbone("yolov8n.yaml")
+
+    captured = capfd.readouterr()
+    assert "Overriding" not in captured.out + captured.err

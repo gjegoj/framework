@@ -12,7 +12,7 @@ from src.core.ports import Backbone
 from src.core.taxonomy import Modality, Stream
 from src.models.backbones.checkpoints import (
     classifier_prefixes,
-    load_arrived_weights,
+    load_checkpoint_weights,
     transplanted_classifier,
 )
 from src.models.registry import backbone_registry
@@ -63,7 +63,7 @@ class TimmBackbone(Backbone):
         self._input_name = input_name
         self._carried_classifier: dict[str, Tensor] | None = None
         if checkpoint_path is not None:
-            self._carried_classifier = load_arrived_weights(
+            self._carried_classifier = load_checkpoint_weights(
                 self.model,
                 model_name,
                 checkpoint_path,

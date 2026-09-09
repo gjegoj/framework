@@ -48,7 +48,7 @@ def test_a_subclass_that_forgot_its_part_name_is_refused_where_it_is_built() -> 
 
     Unchecked, the omission surfaced as an ``AttributeError`` inside the first
     ``forward`` — a thousand steps into a run, reading as a torch problem rather than as
-    a missing declaration. A criterion is built at assembly, so that is where this fires:
+    a missing declaration. A criterion is built at build time, so that is where this fires:
     before a single batch is read.
     """
 

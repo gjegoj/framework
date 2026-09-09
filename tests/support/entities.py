@@ -1,18 +1,22 @@
-"""Core entities a test hands a builder, instead of assembling the layer that produces them.
+"""Core entities a test hands a builder, instead of building the layer that produces them.
 
-``build_task_components(task, profile, backbone)`` needs a ``Task`` and a ``DataProfile``.
-A test about *building* should state those two facts and nothing else — writing a dataset
-and running ``setup`` to obtain them would make the assertion depend on a fixture rather
-than on the numbers the test named.
+``kind.components(task, backbone)`` needs a ``Task`` carrying its facts. A test about
+*building* should state those facts and nothing else — writing a dataset and running
+``setup`` to obtain them would make the assertion depend on a fixture rather than on the
+numbers the test named.
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from src.core import AdaptedTarget, DataProfile, Objective, OutputTopology, TargetFacts, Task
+from src.core import TaskFacts
+from src.models.composite import AdaptedTarget
+from src.tasks import Classification, Task, TaskKind
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from torch import Tensor
 
 
@@ -31,44 +35,31 @@ CLASS_NAMES = ["dog", "cat"]
 """The vocabulary ``write_dataset`` produces, in the order a fitted encoder learns it."""
 
 
-def a_task(**overrides: Any) -> Task:
-    """One global multiclass task named ``label``, with whatever the test changes about it.
+def a_task(
+    name: str = "label",
+    kind: TaskKind | None = None,
+    *,
+    facts: TaskFacts | None = None,
+    class_names: Sequence[str] | None = None,
+    **overrides: Any,
+) -> Task:
+    """One classification task named ``label``, with whatever the test changes about it.
 
     The defaults are the least a ``Task`` needs to exist, so an override is always the
-    thing under test: a topology, an objective, a weight, a rate.
+    thing under test: a kind, its facts, a weight, a rate. ``class_names`` is the short
+    spelling of facts that carry a vocabulary.
     """
-    return Task(
-        **{
-            "name": "label",
-            "output_topology": OutputTopology.GLOBAL,
-            "objective": Objective.MULTICLASS,
-            "metrics": {},
-        }
-        | overrides
-    )
+    if facts is None:
+        facts = TaskFacts(num_classes=len(class_names), class_names=tuple(class_names)) if class_names else TaskFacts()
+    return Task(name=name, kind=kind if kind is not None else Classification(), facts=facts, **overrides)
 
 
-def profiled(task: str = "label", classes: int = 2, names: list[str] | None = None) -> DataProfile:
-    """A profile holding one task's facts, as fitting its encoder would have left them.
+def dataset_facts(**tasks: int | TaskFacts) -> dict[str, TaskFacts]:
+    """What ``setup()`` returns, for a test that skips the pipeline: a class count per task, or the facts whole.
 
-    Parameters:
-        task (str): The task the facts belong to.
-        classes (int): How many classes the encoder learned.
-        names (list[str] | None): Their names, where the test's subject needs them;
-            ``None`` leaves the profile class-name-free, as an undeclared vocabulary is.
+    ``dataset_facts()`` is the one-task default every wiring test builds on; ``dataset_facts(label=3,
+    mask=2)`` several; ``dataset_facts(label=TaskFacts(num_classes=2, class_names=[...]))`` where the
+    names matter.
     """
-    return profiling(**{task: classes}) if names is None else _named(task, classes, names)
-
-
-def profiling(**classes: int) -> DataProfile:
-    """A profile holding several tasks' class counts — ``profiling(label=3, mask=2)``."""
-    profile = DataProfile()
-    for task, count in classes.items():
-        profile.record(task, TargetFacts(num_classes=count))
-    return profile
-
-
-def _named(task: str, classes: int, names: list[str]) -> DataProfile:
-    profile = DataProfile()
-    profile.record(task, TargetFacts(num_classes=classes, class_names=names))
-    return profile
+    declared = tasks or {"label": 2}
+    return {name: TaskFacts(num_classes=value) if isinstance(value, int) else value for name, value in declared.items()}

@@ -9,7 +9,7 @@ from torch import nn
 from torch.nn import functional
 
 from src.core.choices import one_of
-from src.losses.base import WrappedCriterion
+from src.losses.base import WrappedCriterion, without_channel
 from src.losses.registry import criterion_registry
 
 if TYPE_CHECKING:
@@ -60,9 +60,7 @@ class BinaryCrossEntropyCriterion(WrappedCriterion):
 
     @override
     def _prepare(self, logits: Tensor, target: Tensor) -> tuple[Tensor, Tensor]:
-        if logits.dim() == target.dim() + 1:
-            logits = logits.squeeze(1)  # The channel dim: [B, 1] and [B, 1, H, W] alike.
-        return logits, target
+        return without_channel(logits, target), target
 
 
 class FocalLoss(nn.Module):

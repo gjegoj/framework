@@ -10,18 +10,18 @@ import torch
 
 # At runtime, not under TYPE_CHECKING: a page asks what shape a task produced before
 # it looks for an annotator, and that question is answered by an isinstance.
-from src.core.entities import Instances, StepPreview, preview_of
-from src.core.normalisation import IMAGENET_MEAN, IMAGENET_STD
-from src.core.reporting import HtmlLogger
+from src.core.entities import Instances
 from src.core.taxonomy import Stage
+from src.loggers.ports import HtmlLogger
+from src.training.ports import StepPreview, preview_of
 from src.visualization import (
     MAX_CHIP_CHARS,
     MAX_DISPLAY_SIDE,
+    DrawingKnobs,
     HtmlRenderer,
     Image,
     SampleView,
     Text,
-    build_annotators,
 )
 
 if TYPE_CHECKING:
@@ -30,8 +30,9 @@ if TYPE_CHECKING:
     import numpy as np
     from torch import Tensor
 
-    from src.core.entities import Batch, Task
-    from src.visualization import Annotator, Media
+    from src.core.entities import Batch
+    from src.tasks import Task
+    from src.visualization import Media
 
 log = logging.getLogger(__name__)
 
@@ -43,8 +44,9 @@ class SampleGrid(L.Callback):
     from, built only for batches this callback asked for in ``on_*_batch_start``
     (``AwaitsPreview``). What a run will not draw is said early, and never kills a run.
 
+    Which tasks may be drawn is read off the module in ``setup`` (ADR-0004).
+
     Parameters:
-        tasks (Sequence[Task]): Every task whose predictions may be drawn; offered by assembly.
         mean (Sequence[float]): The normalisation mean the transforms applied; ``mean: "${mean}"``.
         std (Sequence[float]): The matching standard deviation.
         num_images (int): How many samples of the batch to draw.
@@ -52,17 +54,16 @@ class SampleGrid(L.Callback):
         batch_index (int): Which batch of the epoch to draw — fixed, so drift is visible.
         stages (Sequence[str]): Which stages draw; every stage by default. Train shows augmented pixels.
         title (str): The page's title, and the tracker series it lands under.
-        threshold (float): Offered to the annotators that name it (binary, multilabel).
-        ignore_index (int | None): Offered to the dense annotator that names it.
+        threshold (float): Above this a binary or multilabel class holds on the page.
+        ignore_index (int | None): A class a dense task's page neither draws nor scores.
         max_side (int | None): Downscale pictures to fit this before inlining; ``None`` inlines whole.
         max_chip_chars (int): Chip text budget before truncation; the lightbox shows the full text.
     """
 
     def __init__(
         self,
-        tasks: Sequence[Task],
-        mean: Sequence[float] = IMAGENET_MEAN,
-        std: Sequence[float] = IMAGENET_STD,
+        mean: Sequence[float],
+        std: Sequence[float],
         num_images: int = 8,
         every_n_epochs: int = 5,
         batch_index: int = 0,
@@ -92,10 +93,9 @@ class SampleGrid(L.Callback):
         self._batch_index = batch_index
         self._title = title
         self._renderer = HtmlRenderer(max_chip_chars=max_chip_chars, max_side=max_side)
-        self._tasks = tuple(tasks)
-        # Built here, not at setup: the tasks are known at assembly, so a task that
-        # draws nothing says so before the run starts rather than after an epoch.
-        self._annotators = build_annotators(self._tasks, threshold=threshold, ignore_index=ignore_index)
+        self._knobs = DrawingKnobs(threshold=threshold, ignore_index=ignore_index)
+        self._tasks: tuple[Task, ...] = ()
+        self._drawn_tasks: tuple[Task, ...] = ()
         self._said: set[str] = set()
         self._awaiting = False
 
@@ -140,7 +140,23 @@ class SampleGrid(L.Callback):
 
     @override
     def setup(self, trainer: L.Trainer, pl_module: L.LightningModule, stage: str) -> None:
-        """Warn about a tracker that cannot show a page — once, however many stages run."""
+        """Read the tasks off the module and decide what is drawn; warn once about what is not.
+
+        Setup is the earliest hook that sees the module, and still before the run starts:
+        a task that draws nothing is named here rather than after an epoch. Said once
+        however many stages run, because Lightning calls this per stage.
+        """
+        tasks = getattr(pl_module, "tasks", None)
+        if tasks is None:
+            self._say_once(
+                "tasks",
+                "The samples grid draws nothing: %s declares no 'tasks'. TrainingModule publishes "
+                "its tasks; a module of your own must too.",
+                type(pl_module).__name__,
+            )
+        else:
+            self._tasks = tuple(tasks)
+            self._drawn_tasks = tuple(task for task in self._tasks if self._drawable(task))
         if not self._page_targets(trainer):
             self._say_once(
                 "tracker",
@@ -188,7 +204,7 @@ class SampleGrid(L.Callback):
         if preview is None:
             self._say_once(
                 "step",
-                # The one thing that cannot be checked at assembly: only a step can show
+                # The one thing that cannot be checked at build time: only a step can show
                 # what a step returns. Named at the first batch that would have been
                 # drawn, so a run never loses its pages in silence.
                 "The samples grid draws nothing: this module's step returned %s, with no StepPreview "
@@ -205,9 +221,23 @@ class SampleGrid(L.Callback):
         for logger in targets:
             logger.log_html(title=title, html=page, iteration=trainer.current_epoch)
 
+    def _drawable(self, task: Task) -> bool:
+        """Whether the task's kind has a per-sample label to show; one that does not is named once, with the reason."""
+        if task.kind.not_drawn is None:
+            return True
+        if f"not_drawn/{task.name}" not in self._said:
+            self._said.add(f"not_drawn/{task.name}")
+            log.info(
+                "Task '%s' (%s): %s; it will not appear in the sample grid.",
+                task.name,
+                type(task.kind).__name__,
+                task.kind.not_drawn,
+            )
+        return False
+
     def _class_names(self) -> dict[str, Sequence[str]]:
         """Each task's whole vocabulary, so a class keeps its colour from page to page."""
-        return {task.name: task.class_names for task in self._tasks if task.class_names}
+        return {task.name: task.facts.class_names for task in self._tasks if task.facts.class_names}
 
     def _is_due(self, trainer: L.Trainer, stage: Stage, index: int) -> bool:
         return (
@@ -255,20 +285,16 @@ class SampleGrid(L.Callback):
         for index in range(count):
             row = cells[index] if index < len(cells) else {}
             view = SampleView(media=_media(batch, index, pictures, row))
-            for task, annotator, outputs, targets in drawn:
-                annotator.annotate(view, task, outputs, targets, index)
+            for task, outputs, targets in drawn:
+                task.kind.annotate(view, task, outputs, targets, index, self._knobs)
             views.append(view)
         return views
 
-    def _drawn(self, preview: StepPreview) -> list[tuple[Task, Annotator, Tensor, Tensor]]:
+    def _drawn(self, preview: StepPreview) -> list[tuple[Task, Tensor, Tensor]]:
         """The tasks this page will annotate, resolved once — these are facts about a
         task, not about a sample, so they are read before the per-sample loop."""
-        drawn: list[tuple[Task, Annotator, Tensor, Tensor]] = []
-        for task in self._tasks:
-            annotator = self._annotators.get(task.name)
-            if annotator is None:
-                # Already named at assembly: build_annotators logs the task and the reason.
-                continue
+        drawn: list[tuple[Task, Tensor, Tensor]] = []
+        for task in self._drawn_tasks:
             outputs = preview.outputs.get(task.name)
             targets = preview.targets.get(task.name)
             if outputs is None or targets is None:
@@ -277,7 +303,7 @@ class SampleGrid(L.Callback):
                 )
                 self._say_once(
                     f"missing/{task.name}",
-                    # The one silent loss the assembly checks could not catch: only a step
+                    # The one silent loss the build-time checks could not catch: only a step
                     # shows which tasks its preview carries. Named at the first drawn batch,
                     # while the tasks the preview does carry still make the page.
                     "Task '%s' has an annotator, but the step's preview carries no %s for it, "
@@ -298,7 +324,7 @@ class SampleGrid(L.Callback):
                     task.name,
                 )
                 continue
-            drawn.append((task, annotator, outputs, targets))
+            drawn.append((task, outputs, targets))
         return drawn
 
     def _say_once(self, topic: str, message: str, *args: Any) -> None:
@@ -402,7 +428,7 @@ def _media(batch: Batch, index: int, pictures: dict[str, np.ndarray], row: dict[
 
 
 def _valid_stages(stages: Sequence[str]) -> tuple[Stage, ...]:
-    """Fail at assembly on a misspelt stage rather than by drawing nothing for a whole run.
+    """Fail at build time on a misspelt stage rather than by drawing nothing for a whole run.
 
     ``Stage`` is the vocabulary, so it is asked rather than re-listed here — a new
     member becomes drawable by existing. Only the message is ours: it names every
@@ -423,7 +449,7 @@ def _refuse_impossible_values(
     batch_index: int,
     threshold: float,
 ) -> None:
-    """Fail at assembly on a value that can only draw nothing, naming it and the bound.
+    """Fail at build time on a value that can only draw nothing, naming it and the bound.
 
     Keyword-only, because this list and the constructor's have to stay in step by hand
     and eight positionals in that order was a transposition waiting to happen.

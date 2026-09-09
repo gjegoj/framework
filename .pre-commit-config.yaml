@@ -62,9 +62,9 @@ repos:
         pass_filenames: false
         stages: [pre-commit]
         verbose: true
-    -   id: test-unit
-        name: test-unit
-        entry: make test-unit
+    -   id: test-gate
+        name: test-gate
+        entry: make test-gate
         language: system
         pass_filenames: false
         stages: [pre-commit]

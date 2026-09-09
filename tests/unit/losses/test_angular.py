@@ -8,11 +8,11 @@ import pytest
 import torch
 from torch.nn import functional
 
-from src.core import Objective, TargetFacts
+from src.core import TaskFacts
 from src.losses import ArcFaceCriterion, ProxyAngularCriterion
 from src.losses.angular import ArcFaceLoss
 from src.losses.registry import criterion_registry
-from src.tasks.registry import objective_registry
+from src.tasks import MetricLearning
 
 COSINES = torch.tensor([[0.8, 0.1, -0.3], [0.2, 0.6, 0.1]])
 LABELS = torch.tensor([0, 1])
@@ -111,10 +111,10 @@ def test_an_inner_beside_its_arguments_is_refused() -> None:
 
 def test_a_metric_task_that_declared_labels_receives_them() -> None:
     """Facts decide: encoded labels reach the criterion, structure-supervised tasks stay targetless."""
-    behaviour = objective_registry.create(Objective.METRIC)
+    kind = MetricLearning()
 
-    assert behaviour.build_target_adapter(TargetFacts(num_classes=5)) is not None
-    assert behaviour.build_target_adapter(TargetFacts()) is None
+    assert kind.target_adapter(TaskFacts(num_classes=5)) is not None
+    assert kind.target_adapter(TaskFacts()) is None
 
 
 def test_both_are_reachable_from_config_by_name() -> None:

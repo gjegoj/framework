@@ -80,7 +80,14 @@ def _record(
             image=file_name,
             report=report,
         )
-        objects.append(annotation_object(bounded, categories[int(annotation["category_id"])]))
+        category = int(annotation["category_id"])
+        if category not in categories:
+            declared = ", ".join(f"{index}: {name}" for index, name in sorted(categories.items()))
+            raise ValueError(
+                f"An annotation of '{file_name}' names category id {category}, which the export's 'categories' "
+                f"table does not declare ({declared}). The export is inconsistent."
+            )
+        objects.append(annotation_object(bounded, categories[category]))
         report.objects += 1
     report.images += 1
     return annotation_row(file_name, objects)

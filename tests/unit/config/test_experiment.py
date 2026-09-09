@@ -8,7 +8,7 @@ import pytest
 from pydantic import ValidationError
 
 from src.config import load_config
-from src.core import Objective, OutputTopology, Stage
+from src.core import Stage
 
 
 def make_raw(**overrides: Any) -> dict[str, Any]:
@@ -20,8 +20,8 @@ def make_raw(**overrides: Any) -> dict[str, Any]:
             "split": {"train": 0.7, "val": 0.15, "test": 0.15},
         },
         "tasks": {
-            "label": {"preset": "classification", "target": "label"},
-            "age": {"preset": "regression", "target": "age", "weight": 0.5},
+            "label": {"kind": "classification", "target": "label"},
+            "age": {"kind": "regression", "target": "age", "weight": 0.5},
         },
         "model": {"name": "timm", "model_name": "resnet18"},
         "optimizer": {"name": "adamw", "lr": 1.0e-3},
@@ -34,8 +34,8 @@ def test_a_full_experiment_parses_into_typed_sections() -> None:
     config = load_config(make_raw())
 
     assert config.seed == 7
-    assert config.tasks["label"].output_topology is OutputTopology.GLOBAL
-    assert config.tasks["age"].objective is Objective.CONTINUOUS
+    assert config.tasks["label"].kind.name == "classification"
+    assert config.tasks["age"].kind.name == "regression"
     assert config.model.params == {"model_name": "resnet18"}
     assert config.optimizer.params == {"lr": 1.0e-3}
 
@@ -90,6 +90,16 @@ def test_sensible_defaults_cover_optional_sections() -> None:
     assert config.trainer.max_epochs == 10
 
 
+def test_a_config_without_loader_and_trainer_sections_trains_at_the_shared_batch_size_and_epochs() -> None:
+    """The root knobs are what the sections fall back to, so the two can never name different numbers."""
+    raw = make_raw()
+    del raw["loader"], raw["trainer"]
+
+    config = load_config(raw)
+
+    assert (config.loader.batch_size, config.trainer.max_epochs) == (config.batch_size, config.epochs)
+
+
 def test_an_unknown_root_key_is_rejected_and_named() -> None:
     # A plural slip instead of a misspelling: spell-fixers must not "repair" it.
     raw = make_raw() | {"optimizers": {"name": "sgd"}}
@@ -107,7 +117,7 @@ def test_at_least_one_task_is_required() -> None:
 
 def test_blank_task_names_are_rejected() -> None:
     raw = make_raw()
-    raw["tasks"] = {"  ": {"preset": "classification"}}
+    raw["tasks"] = {"  ": {"kind": "classification"}}
 
     with pytest.raises(ValidationError, match="name"):
         load_config(raw)

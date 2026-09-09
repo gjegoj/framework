@@ -20,8 +20,8 @@ class ColumnRole(StrEnum):
     """The three roles a table column can play in a schema, and how each is named in full.
 
     A column's full identity — ``input/image``, ``target/warmth`` — is a concept, not a
-    string convention: assembly scopes cache namespaces with it, the warm-up titles its
-    progress bars with it, and the summary reports by it. ``label`` is the one place
+    string convention: the warm-up titles its progress bars with it, and the cache scopes by
+    the same role and name as a pair. ``label`` is the one place
     the spelling exists, so no caller can misspell what it never writes.
     """
 
@@ -44,7 +44,7 @@ class InputColumn:
     """How the loaded value is transformed with the image — light, or per-pixel labels.
 
     Taken from the loader's own class-level marker at build time — never written by
-    hand — and read by assembly to give the column its treatment in the augmentation
+    hand — and read by ``build_stage_transforms`` to give the column its treatment in the augmentation
     pipeline. Captured *before* any cache wrapping, because a cache wrapper is a bare
     closure and would hide the marker behind itself.
     """
@@ -109,17 +109,16 @@ class DataSchema:
         auxiliary_columns = {input_column.column for input_column in self.auxiliary_inputs.values()}
         return input_columns | target_columns | auxiliary_columns
 
-    def labelled_columns(self) -> list[tuple[str, InputColumn | TargetColumn]]:
-        """Every column beside its full name — ``input/image``, ``target/warmth``.
+    def columns_by_role(self) -> list[tuple[ColumnRole, str, InputColumn | TargetColumn]]:
+        """Every column beside its role and name — what scopes a cache and titles a warm-up.
 
-        Next to ``columns()`` because it is the same walk with the names kept. The
-        labels come from ``ColumnRole.label``, the same call assembly scopes cache
-        namespaces with — assembly cannot use *this method* (the scoped cache is
-        handed to loaders while columns are constructed, before a schema exists),
-        and a test pins its role-per-section pairing to this walk.
+        Next to ``columns()`` because it is the same walk with the names kept. ``build_schema``
+        scopes each column's cache by the same ``(role, name)`` pair while the columns are
+        constructed — before a schema exists, so it cannot call this — and a test pins the
+        two walks to each other.
         """
         return [
-            *((ColumnRole.INPUT.label(name), column) for name, column in self.inputs.items()),
-            *((ColumnRole.AUXILIARY_INPUT.label(name), column) for name, column in self.auxiliary_inputs.items()),
-            *((ColumnRole.TARGET.label(name), column) for name, column in self.targets.items()),
+            *((ColumnRole.INPUT, name, column) for name, column in self.inputs.items()),
+            *((ColumnRole.AUXILIARY_INPUT, name, column) for name, column in self.auxiliary_inputs.items()),
+            *((ColumnRole.TARGET, name, column) for name, column in self.targets.items()),
         ]

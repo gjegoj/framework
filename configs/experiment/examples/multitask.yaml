@@ -20,20 +20,20 @@ batch_size: 16
 tasks:
   # Dense: reads the decoder's full-size map through smp's own segmentation head.
   mask:
-    preset: segmentation
+    kind: segmentation
     target: mask_path
     classes: {0: pet, 1: background, 2: boundary}
-    native_head: true
+    head: native
     weight: 1.0
 
   # Global, beside it on the same backbone: reads the *encoder* stage and asks for smp's
   # pooling classifier, because a linear head cannot take a feature map.
   label:
-    preset: classification
+    kind: classification
     target: species
     classes: {0: cat, 1: dog}
     streams: encoder
-    native_head: true
+    head: native
     weight: 0.5
     # Its own pace: the head is small and starts from nothing, while the backbone
     # arrives pretrained. Every task holds a named optimizer group either way, so
@@ -44,8 +44,8 @@ tasks:
   # `random_age` is noise (see the regression example) — it proves the plumbing, and a
   # mae near the column's deviation is the right answer.
   age:
-    preset: regression
+    kind: regression
     target: random_age
     streams: encoder
-    native_head: true
+    head: native
     weight: 0.2

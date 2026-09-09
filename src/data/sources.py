@@ -5,7 +5,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 import pandas as pd
 
@@ -13,6 +13,26 @@ from src.data.registry import table_source_registry
 
 type Table = pd.DataFrame
 """The annotation-table currency of the data layer (paths, labels, metadata)."""
+
+SUFFIX_FORMATS = {".csv": "csv", ".json": "json", ".jsonl": "jsonl"}
+"""Table formats inferable from a file extension, mapped to ``table_source_registry`` keys."""
+
+
+def format_of(path: str) -> str:
+    """The registered format a path's suffix implies.
+
+    Raises:
+        LookupError: If the suffix implies none; lists the registered formats.
+    """
+    suffix = Path(path).suffix.lower()
+    try:
+        return SUFFIX_FORMATS[suffix]
+    except KeyError:
+        known = ", ".join(sorted(str(key) for key in table_source_registry))
+        raise LookupError(
+            f"Cannot infer the table format of '{path}'. "
+            f"Give the source a 'format' explicitly; registered formats: {known}."
+        ) from None
 
 
 class TableSource(ABC):
@@ -87,49 +107,32 @@ class JsonLinesSource(FileSource):
         return pd.read_json(path, lines=True, **self._reader_kwargs)
 
 
-class LimitedSource(TableSource):
-    """Another source with its rows capped — the small run you iterate on.
+CAP_SEED: Final = 42
+"""The draw seed of a capped table: a cap is a debugging aid, and the rows it keeps must not move between runs."""
 
-    Wrapping the source keeps the meaning right in both layouts: around one source the cap
-    applies before the split, around per-stage sources to each stage. Rows are drawn at
-    random with their own seed — annotation files arrive grouped by class or date, so their
-    first rows are not a sample.
 
-    Parameters:
-        source (TableSource): The source to read from.
-        max_samples (int | float): Rows to keep. An ``int`` counts rows, a ``float`` in
-            (0, 1] takes a share — the sklearn idiom.
-        seed (int): Draw seed; the same seed always keeps the same rows.
+# PYI041 reads 'int | float' as a redundant union; here it is the contract itself: a count, or a share.
+def refuse_a_bad_cap(max_samples: int | float | None) -> None:  # noqa: PYI041
+    """A cap that keeps nothing, or a share read as a count, refused where the cap is declared."""
+    if max_samples is None:
+        return
+    if max_samples <= 0:
+        raise ValueError(f"max_samples must be positive, got {max_samples}.")
+    if isinstance(max_samples, float) and max_samples > 1.0:
+        raise ValueError(f"A fractional max_samples must be at most 1.0, got {max_samples}; use a count instead.")
+
+
+def capped(table: Table, max_samples: int | float | None) -> Table:  # noqa: PYI041
+    """The table's rows capped — the small run you iterate on; ``None`` keeps them all.
+
+    An ``int`` counts rows, a ``float`` in (0, 1] takes a share — the sklearn idiom. Rows
+    are drawn at random rather than taken from the top: annotation files arrive grouped by
+    class or date, so their first rows are not a sample.
     """
-
-    # PYI041 reads 'int | float' as a redundant union; here it is the contract itself —
-    # the two halves mean different things, and 'float' alone would hide that from a caller.
-    def __init__(self, source: TableSource, max_samples: int | float, seed: int = 42) -> None:  # noqa: PYI041
-        if max_samples <= 0:
-            raise ValueError(f"max_samples must be positive, got {max_samples}.")
-        if isinstance(max_samples, float) and max_samples > 1.0:
-            raise ValueError(f"A fractional max_samples must be at most 1.0, got {max_samples}; use a count instead.")
-        self._source = source
-        self._max_samples = max_samples
-        self._seed = seed
-
-    def read(self) -> Table:
-        table = self._source.read()
-        if isinstance(self._max_samples, float):
-            kept = table.sample(frac=self._max_samples, random_state=self._seed)
-        else:
-            kept = table.sample(n=min(self._max_samples, len(table)), random_state=self._seed)
-        return kept.reset_index(drop=True)
-
-
-class InMemorySource(TableSource):
-    """A table handed in directly — notebooks, tests, generated data.
-
-    Not registry-listed: a live ``DataFrame`` is not expressible from config.
-    """
-
-    def __init__(self, table: Table) -> None:
-        self._table = table
-
-    def read(self) -> Table:
-        return self._table
+    if max_samples is None:
+        return table
+    if isinstance(max_samples, float):
+        kept = table.sample(frac=max_samples, random_state=CAP_SEED)
+    else:
+        kept = table.sample(n=min(max_samples, len(table)), random_state=CAP_SEED)
+    return kept.reset_index(drop=True)

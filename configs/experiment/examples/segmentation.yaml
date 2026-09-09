@@ -15,13 +15,13 @@ batch_size: 16
 
 tasks:
   mask:
-    preset: segmentation
+    kind: segmentation
     target: mask_path
     # The vocabulary is the one thing a mask cannot infer: a split that never shows a
     # class would silently shrink the index map. The encoder itself follows from the
     # dense shape, so nothing here names one.
     classes: {0: pet, 1: background, 2: boundary}
-    native_head: true
+    head: native
     # The preset brings iou beside the classification set. Dice is the usual companion
     # for an imbalanced mask, and it goes in the loss rather than the metrics:
     loss:

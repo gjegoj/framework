@@ -1,4 +1,4 @@
-"""Command-line entry point: Hydra composes, assembly builds, the trainer runs."""
+"""Command-line entry point: Hydra composes, ``build`` wires, the trainer runs."""
 
 from __future__ import annotations
 
@@ -9,12 +9,12 @@ from typing import TYPE_CHECKING, Any, cast
 import hydra
 import yaml
 from omegaconf import DictConfig, OmegaConf
-from rich import print as rprint
 from rich.panel import Panel
 from rich.syntax import Syntax
 
-from src.assembly import assemble, run
+from src.build import build, run
 from src.config import load_config
+from src.console import console
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -25,7 +25,7 @@ CONFIG_DIRECTORY = str(Path(__file__).resolve().parents[1] / "configs")
 
 @hydra.main(version_base=None, config_path=CONFIG_DIRECTORY, config_name="config")
 def main(composed: DictConfig) -> None:
-    """Compose config, assemble the experiment, and run it.
+    """Compose config, build the experiment, and run it.
 
     Hydra is confined to this module — it composes the YAML groups and applies CLI
     overrides, and everything below receives one validated ``ExperimentConfig``::
@@ -42,7 +42,7 @@ def main(composed: DictConfig) -> None:
     raw = cast("dict[str, Any]", OmegaConf.to_container(composed, resolve=True))
     show_config(raw)
     config = load_config(raw)
-    run(assemble(config), config)
+    run(build(config), config)
 
 
 def silence_third_party_notices() -> None:
@@ -56,7 +56,7 @@ def silence_third_party_notices() -> None:
 def show_config(resolved: Mapping[str, Any]) -> None:
     """Show the run what it was given, in the language a config is written in."""
     rendered = yaml.safe_dump(dict(resolved), default_flow_style=None, sort_keys=False, allow_unicode=True)
-    rprint(
+    console().print(
         Panel(
             Syntax(rendered, "yaml", theme="perldoc", background_color="default"), title="Configuration", expand=False
         )

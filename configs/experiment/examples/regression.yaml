@@ -14,7 +14,7 @@ defaults:
 
 tasks:
   age:
-    preset: regression
+    kind: regression
     target: random_age
     # The objective's default is mae. A second metric is a second entry, keyed by the
     # label it logs under, so `val/age/mae` and `val/age/mse` stand side by side.
