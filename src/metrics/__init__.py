@@ -1,8 +1,7 @@
-"""The metrics capability: torchmetrics behind the ``MetricSet`` port, and the artifacts a metric draws."""
+"""Use torchmetrics.Metric and MetricCollection directly, once per task/stage/split.
+
+Task prepares metric arguments; Lightning owns update, compute and reset.
+Tracking formats scalar and artifact results. There is no second MetricCollection API.
+"""
 
 from __future__ import annotations
-
-from src.metrics.adapters import WrappedMetric, WrappedMetricSet
-from src.metrics.ports import MetricSet, MultiReadingMetric
-
-__all__ = ["MetricSet", "MultiReadingMetric", "WrappedMetric", "WrappedMetricSet"]

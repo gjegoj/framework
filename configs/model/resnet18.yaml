@@ -1,6 +1,0 @@
-# The model section is a plain component: one shape for every model, and what it
-# builds follows from the name — a backbone the framework composes heads onto, or,
-# by `_target_`, a model that arrives whole with its own head and loss.
-name: timm
-model_name: resnet18
-pretrained: true

@@ -1,5 +1,8 @@
 # ml-framework
 
+Architecture rewrite in progress: [framework v2 contracts and migration plan](docs/v2/README.md).
+The existing commands below still run the original implementation.
+
 Config-driven multi-task computer-vision training on PyTorch Lightning · Hydra ·
 Pydantic · timm / smp / ultralytics · albumentations · torchmetrics.
 

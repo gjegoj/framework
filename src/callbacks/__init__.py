@@ -1,11 +1,5 @@
-"""Callbacks: what a run does around its training steps."""
+"""Future Lightning callbacks: EMA, freezing, scheduling and reporting.
 
-from __future__ import annotations
-
-from src.callbacks.anneal import AnnealCriterion
-from src.callbacks.batch_transform import ApplyBatchTransform
-from src.callbacks.ema import EmaModelCheckpoint, EmaWeights
-from src.callbacks.freeze import Freeze
-from src.callbacks.registry import callback_registry
-
-__all__ = ["AnnealCriterion", "ApplyBatchTransform", "EmaModelCheckpoint", "EmaWeights", "Freeze", "callback_registry"]
+Callbacks use Lightning's existing hooks. No second callback/event framework is introduced.
+Weight-changing callbacks run before checkpointing; sample reporting delegates to integrations.
+"""

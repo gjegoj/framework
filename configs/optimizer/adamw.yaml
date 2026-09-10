@@ -1,3 +1,0 @@
-name: adamw
-lr: "${lr}"
-weight_decay: 1.0e-4

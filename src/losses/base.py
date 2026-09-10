@@ -1,67 +1,24 @@
-"""Shared base for single-part criteria — the extension point for wrapping any loss."""
+"""Internal objective context; ordinary user losses keep forward(outputs, targets)."""
 
 from __future__ import annotations
 
-from typing import ClassVar
+from abc import ABC, abstractmethod
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 
 from torch import Tensor, nn
 
-from src.core.entities import Loss
-from src.core.ports import Criterion
+from src.core import LossOutput, TensorTree
 
 
-def split_views(logits: Tensor, count: int, owner: str) -> tuple[Tensor, ...]:
-    """Validate a stacked ``[B, count, D]`` tensor and return its views.
-
-    Shared by the contrastive and ranking families, so a shape mistake names the criterion
-    instead of surfacing inside a torch loss.
-    """
-    if logits.dim() != 3 or logits.size(1) != count:
-        raise ValueError(f"{owner} expects stacked embeddings [B, {count}, D], got {tuple(logits.shape)}.")
-    return tuple(logits.unbind(dim=1))
+@dataclass(frozen=True, slots=True)
+class LossInput:
+    outputs: TensorTree = None
+    targets: TensorTree = None
+    model_losses: Mapping[str, Tensor] = field(default_factory=dict)
 
 
-class WrappedCriterion(Criterion):
-    """Base for criteria that wrap one torch loss and log it as one named part.
-
-    Wrap a module, subclass a composer: math ending in one tensor-in → tensor-out
-    ``nn.Module`` belongs here; a criterion composing other criteria subclasses
-    ``Criterion`` directly. The wrapped module is a registered submodule, so its parameters
-    train and its buffers move. Declare explicitly only parameters needing conversion (a
-    YAML list into a tensor) or a framework default; forward the rest through ``**kwargs``.
-    """
-
-    part_name: ClassVar[str]
-    """What this criterion's value logs as. Declared without a default because there is
-    no honest one — a part is named after what it computes."""
-
-    def __init__(self, loss: nn.Module) -> None:
-        super().__init__()
-        # Checked here rather than left to the annotation: a subclass that forgot it used
-        # to surface as an AttributeError inside the first `forward`, a thousand steps into
-        # a run, reading as a torch problem. Built from config, this fires at build time.
-        # An abstract intermediate sharing a `_prepare` names no part and is never built.
-        if not hasattr(type(self), "part_name"):
-            raise TypeError(
-                f"{type(self).__name__} declares no 'part_name', so its value would have no key to "
-                f"log under. Every wrapped criterion names the part it contributes — 'ce', 'dice'."
-            )
-        self._loss = loss
-
-    def forward(self, logits: Tensor, target: Tensor) -> Loss:
-        logits, target = self._prepare(logits, target)
-        value: Tensor = self._loss(logits, target)
-        return Loss.part(self.part_name, value)
-
-    def _prepare(self, logits: Tensor, target: Tensor) -> tuple[Tensor, Tensor]:
-        """Shape/type hook applied before the wrapped loss; identity by default."""
-        return logits, target
-
-
-def without_channel(logits: Tensor, target: Tensor) -> Tensor:
-    """``logits`` with its single channel dropped where ``target`` carries none.
-
-    ``[B, 1]`` against ``[B]``, dense ``[B, 1, H, W]`` against ``[B, H, W]``: the channel is
-    squeezed so a silent broadcast cannot happen; matching shapes pass through.
-    """
-    return logits.squeeze(1) if logits.dim() == target.dim() + 1 else logits
+class Loss(nn.Module, ABC):
+    @abstractmethod
+    def forward(self, inputs: LossInput) -> LossOutput:
+        raise NotImplementedError

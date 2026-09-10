@@ -1,3 +1,0 @@
-name: sgd
-lr: "${lr}"
-momentum: 0.9

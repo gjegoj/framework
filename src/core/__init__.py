@@ -1,64 +1,38 @@
-"""The framework-agnostic centre: entities, ports and taxonomy, on torch and stdlib only.
-
-What every capability package builds on and none may reshape: the values a run is made of
-(``Sample``, ``Batch``, ``Instances``, ``Features``, ``Loss``, ``Prediction``, ``StepResult``,
-the facts the data revealed), the ports a model and a backbone answer to, the closed
-vocabularies (``Stage``, ``Stream``, ``Geometry``, ``Modality``, ``OutputTopology``), the
-log-key grammar and the registry every package catalogues its names in. ``Backbone`` and
-``Criterion`` type their ``__call__`` because they are called that way and
-``nn.Module.__call__`` returns ``Any``; a head is any ``nn.Module``.
-"""
+"""Shared values; stdlib, PyTorch and tensor traversal from lightning_utilities."""
 
 from __future__ import annotations
 
-from src.core import log_keys
-from src.core.choices import one_of
 from src.core.entities import (
     Batch,
-    DatasetFacts,
-    Features,
-    Instances,
-    Loss,
+    DatasetInfo,
+    InputInfo,
+    LossOutput,
+    ModelOutput,
     Prediction,
     Sample,
-    StepResult,
-    TaskFacts,
-    TaskOutput,
-    require_tensor,
+    StepOutput,
+    TargetInfo,
 )
-from src.core.ports import (
-    Backbone,
-    Criterion,
-    GeometryAware,
-    Model,
-    SampleTransform,
-)
-from src.core.registry import Registry
-from src.core.taxonomy import Geometry, Modality, OutputTopology, Stage, Stream
+from src.core.taxonomy import Axis, Direction, Geometry, Modality, Stage, Stream
+from src.core.types import ShapeTree, TensorShape, TensorTree
 
 __all__ = [
-    "Backbone",
+    "Axis",
     "Batch",
-    "Criterion",
-    "DatasetFacts",
-    "Features",
+    "DatasetInfo",
+    "Direction",
     "Geometry",
-    "GeometryAware",
-    "Instances",
-    "Loss",
+    "InputInfo",
+    "LossOutput",
     "Modality",
-    "Model",
-    "OutputTopology",
+    "ModelOutput",
     "Prediction",
-    "Registry",
     "Sample",
-    "SampleTransform",
+    "ShapeTree",
     "Stage",
-    "StepResult",
+    "StepOutput",
     "Stream",
-    "TaskFacts",
-    "TaskOutput",
-    "log_keys",
-    "one_of",
-    "require_tensor",
+    "TargetInfo",
+    "TensorShape",
+    "TensorTree",
 ]

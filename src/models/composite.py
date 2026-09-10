@@ -1,181 +1,65 @@
-"""The composite model family: one shared backbone, per-task heads and criteria."""
+"""One graph for a ready backbone and heads; no models, tasks or configs are constructed here."""
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, ClassVar, override
+from typing import cast
 
-import torch
-from torch import Tensor, nn
+from torch import nn
 
-from src.core.entities import Loss, Prediction, StepResult, TaskOutput, require_tensor
-from src.core.ports import Model
-from src.core.taxonomy import Stream
-
-if TYPE_CHECKING:
-    from src.core.entities import Batch, Features
-    from src.core.ports import Backbone, Criterion
-
-
-type Activation = Callable[[Tensor], Tensor]
-"""Maps raw logits to predictions for metrics and inference — never for the loss."""
-
-type TargetAdapter = Callable[[Tensor], AdaptedTarget]
-"""Shapes one raw batched target into its loss and metric views."""
+from src.core import ModelOutput, ShapeTree, TensorTree
+from src.core.entities import validate_name
+from src.models.backbones.base import Backbone
+from src.models.base import Model
 
 
 @dataclass(frozen=True, slots=True)
-class AdaptedTarget:
-    """One raw target shaped into the two views a task consumes.
-
-    The split exists because loss and metrics may need different encodings of
-    the same target — e.g. MixUp trains against soft labels while metrics
-    compare against hard class indices.
-    """
-
-    for_loss: Tensor
-    for_metrics: Tensor
-
-    @classmethod
-    def absent(cls) -> AdaptedTarget:
-        """The adapted target of a structure-supervised task (metric learning): both views empty."""
-        return cls(for_loss=torch.empty(0), for_metrics=torch.empty(0))
-
-
-@dataclass(frozen=True, slots=True, eq=False)
-class TaskComponents:
-    """How the composite family serves one ``Task``: the components behind its predictions.
-
-    ``Task`` *declares* what is learned; ``TaskComponents`` *materializes* it for the
-    composite model — the head, criterion, activation and target adapter that
-    a kind derives from the task's facts and the backbone (``TaskKind.components``).
-    ``weight`` is the task's, snapshotted when the kind compiles these: the model reads it every
-    step and never holds the task, so the two are one number at build and never written after.
-    """
+class HeadConnection:
+    """One ready head and its feature selection; the mapping key names its output."""
 
     head: nn.Module
-    criterion: Criterion
-    activation: Activation
-    target_adapter: TargetAdapter | None
-    streams: tuple[str, ...] = (Stream.FEATURES,)
-    weight: float = 1.0
+    input: str | tuple[str, ...]
 
     def __post_init__(self) -> None:
-        if self.weight <= 0:
-            raise ValueError(f"Task weight must be positive, got {self.weight}.")
+        names = (self.input,) if isinstance(self.input, str) else self.input
+        if not names or any(not name.strip() for name in names) or len(names) != len(set(names)):
+            raise ValueError("Head inputs require distinct, nonblank feature names.")
 
 
-def _read(features: Features, streams: tuple[str, ...]) -> Tensor | dict[str, Tensor]:
-    """What a head is handed: one stream's tensor, or several as a mapping in the head's order."""
-    if len(streams) == 1:
-        return features[streams[0]]
-    return {name: features[name] for name in streams}
+def select_features(features: Mapping[str, TensorTree], selection: str | tuple[str, ...]) -> TensorTree:
+    """Select one value or an ordered mapping; adapters and composed models use the same rule."""
+    return features[selection] if isinstance(selection, str) else {name: features[name] for name in selection}
 
 
 class CompositeModel(Model):
-    """Backbone x heads: encode once, serve every task from named streams.
+    """Register a ready graph once; task semantics and dimension inference belong to assembly."""
 
-    Heads and criteria register as submodules (``heads.<task>``,
-    ``criteria.<task>``), so parametric criteria (ArcFace-style) are
-    optimized and checkpointed together with the model.
-    """
-
-    BACKBONE: ClassVar[str] = "backbone"
-    """The attribute the shared backbone sits under, and so the path a config names it by.
-
-    Published rather than spelled out where it is read: a freeze callback names this
-    module in config, and the guard against freezing an adapted backbone compares
-    against it. A rename here reaches the config addressing it.
-    """
-
-    def __init__(self, backbone: Backbone, components: Mapping[str, TaskComponents]) -> None:
+    def __init__(self, backbone: Backbone, heads: Mapping[str, HeadConnection]) -> None:
         super().__init__()
-        if not components:
-            raise ValueError("CompositeModel needs at least one task component.")
         self.backbone = backbone
-        self.heads = nn.ModuleDict({name: component.head for name, component in components.items()})
-        self.criteria = nn.ModuleDict({name: component.criterion for name, component in components.items()})
-        self._components = dict(components)
-
-    @override
-    def step(self, batch: Batch) -> StepResult:
-        features = self.backbone(batch.inputs)
-        raw = self._logits(features)
-        outputs: dict[str, TaskOutput] = {}
-        metric_targets: dict[str, TaskOutput] = {}
-        losses: list[Loss] = []
-        for name, component in self._components.items():
-            logits = raw[name]
-            adapted = self._adapt_target(batch, name, component)
-            task_loss = component.criterion(logits, adapted.for_loss).scoped(name)
-            losses.append(component.weight * task_loss)
-            outputs[name] = component.activation(logits)
-            metric_targets[name] = adapted.for_metrics
-        return StepResult(
-            loss=Loss.sum(losses),
-            prediction=Prediction(outputs=outputs, features=features, logits=raw),
-            targets=metric_targets,
-        )
-
-    @override
-    def predict(self, batch: Batch) -> Prediction:
-        features = self.backbone(batch.inputs)
-        raw = self._logits(features)
-        outputs: dict[str, TaskOutput] = {
-            name: self._components[name].activation(logits) for name, logits in raw.items()
-        }
-        return Prediction(outputs=outputs, features=features, logits=raw)
-
-    def _logits(self, features: Features) -> dict[str, Tensor]:
-        """Every head's raw output, each read from the streams its component declares."""
-        return {
-            name: component.head(_read(features, component.streams)) for name, component in self._components.items()
-        }
-
-    def _adapt_target(self, batch: Batch, task_name: str, component: TaskComponents) -> AdaptedTarget:
-        """Look up and shape the task's target; raw when there is nothing to shape.
-
-        No adapter means the kind has nothing to *shape* — not necessarily
-        nothing to deliver: a ranking task's per-pair preference arrives as the
-        number it already is. ``absent`` is only for a target that truly is —
-        structure-supervised tasks whose batch carries no column.
-        """
-        if component.target_adapter is None:
-            declared = batch.targets.get(task_name)
-            if declared is None:
-                return AdaptedTarget.absent()
-            raw = require_tensor(declared, task=task_name, wanted_by="a composed model")
-            return AdaptedTarget(for_loss=raw, for_metrics=raw)
-        return component.target_adapter(self._target(batch, task_name))
+        self.heads = nn.ModuleDict()
+        self._connections: dict[str, tuple[str, str | tuple[str, ...]]] = {}
+        registered: dict[int, str] = {}
+        for name, connection in heads.items():
+            validate_name(name)
+            names = (connection.input,) if isinstance(connection.input, str) else connection.input
+            missing = set(names) - backbone.feature_shapes.keys()
+            if missing:
+                raise ValueError(f"Head {name!r} requests unavailable features: {sorted(missing)}.")
+            if id(connection.head) not in registered:
+                self.heads[name] = connection.head
+                registered[id(connection.head)] = name
+            self._connections[name] = (registered[id(connection.head)], connection.input)
 
     @property
-    @override
-    def architecture(self) -> str:
-        """The backbone's: what a composed run is, is what encodes for it."""
-        return self.backbone.architecture
+    def feature_shapes(self) -> Mapping[str, ShapeTree]:
+        return self.backbone.feature_shapes
 
-    @override
-    def task_parameters(self, task_name: str) -> Iterable[nn.Parameter]:
-        """The task's head and criterion parameters — what a per-task rate moves."""
-        for owner in (self.heads, self.criteria):
-            if task_name in owner:
-                yield from owner[task_name].parameters()
-
-    @override
-    def criterion_of(self, task_name: str) -> nn.Module:
-        """This task's criterion — what a schedule moves a number on."""
-        try:
-            found: nn.Module = self.criteria[task_name]
-        except KeyError:
-            available = ", ".join(self.criteria) or "none"
-            raise LookupError(f"No criterion for task '{task_name}'. Tasks: {available}.") from None
-        return found
-
-    @staticmethod
-    def _target(batch: Batch, task_name: str) -> Tensor:
-        try:
-            return require_tensor(batch.targets[task_name], task=task_name, wanted_by="a composed model")
-        except KeyError:
-            available = ", ".join(sorted(batch.targets)) or "none"
-            raise LookupError(f"Batch has no target for task '{task_name}'. Available targets: {available}.") from None
+    def forward(self, inputs: Mapping[str, TensorTree]) -> ModelOutput:
+        features = cast(Mapping[str, TensorTree], self.backbone(inputs))
+        outputs = {
+            name: cast(TensorTree, self.heads[head_name](select_features(features, selection)))
+            for name, (head_name, selection) in self._connections.items()
+        }
+        return ModelOutput(outputs=outputs, features=features)

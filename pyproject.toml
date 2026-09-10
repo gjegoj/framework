@@ -43,6 +43,7 @@ default = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["src"]
 markers = [
     "e2e: full-flow integration (training smoke, export round-trip, full wiring); auto-applied to tests/e2e/",
     "slow: long-running tests excluded from the pre-commit gate",
@@ -75,6 +76,7 @@ profile = "black"
 
 [tool.mypy]
 python_version = "3.12"
+mypy_path = "$MYPY_CONFIG_FILE_DIR/src"
 plugins = ["pydantic.mypy"]
 ignore_missing_imports = true
 disallow_untyped_defs = true
@@ -84,3 +86,7 @@ warn_redundant_casts = true
 warn_unused_ignores = true
 warn_return_any = true
 no_implicit_optional = true
+
+[[tool.mypy.overrides]]
+module = ["framework", "framework.*"]
+ignore_missing_imports = false

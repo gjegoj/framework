@@ -1,3 +1,0 @@
-# Epoch-clocked: one cosine arc over the whole run.
-name: cosine
-T_max: "${epochs}"

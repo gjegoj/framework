@@ -1,38 +1,17 @@
-"""The models capability: implementations of the core ``Model`` port and its parts."""
+"""Network contracts and composition of ready modules, without model-library imports."""
 
 from __future__ import annotations
 
-from src.models.adapters import LoraAdapters, merge_adapters
-from src.models.backbones import (
-    HFTextBackbone,
-    MultiEncoderBackbone,
-    MultiViewBackbone,
-    SmpBackbone,
-    TimmBackbone,
-    UltralyticsBackbone,
-)
-from src.models.checkpoints import load_weights
-from src.models.composite import CompositeModel, TaskComponents
-from src.models.distillation import DistilledModel, without_teachers
-from src.models.heads import ConvHead, CosineHead, DetectHead, ExpandedHead, LinearHead
+from src.models.backbones.base import Backbone
+from src.models.base import GenerativeModel, Model, ModelWithLoss
+from src.models.composite import CompositeModel, HeadConnection, select_features
 
 __all__ = [
+    "Backbone",
     "CompositeModel",
-    "ConvHead",
-    "CosineHead",
-    "DetectHead",
-    "DistilledModel",
-    "ExpandedHead",
-    "HFTextBackbone",
-    "LinearHead",
-    "LoraAdapters",
-    "MultiEncoderBackbone",
-    "MultiViewBackbone",
-    "SmpBackbone",
-    "TaskComponents",
-    "TimmBackbone",
-    "UltralyticsBackbone",
-    "load_weights",
-    "merge_adapters",
-    "without_teachers",
+    "GenerativeModel",
+    "HeadConnection",
+    "Model",
+    "ModelWithLoss",
+    "select_features",
 ]

@@ -1,5 +1,5 @@
-"""Config-driven multi-task training framework: thin core + capability packages."""
+"""Framework v2 contracts. Training implementations are not available yet.
 
-from __future__ import annotations
-
-__version__ = "0.1.0"
+Import public contracts from their owning packages, for example ``src.models``.
+The root deliberately imports no integrations and initializes no registries.
+"""

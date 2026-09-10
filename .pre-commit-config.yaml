@@ -57,7 +57,7 @@ repos:
     hooks:
     -   id: mypy
         name: mypy
-        entry: uv run mypy src tests
+        entry: uv run mypy --exclude ^src/framework/ src tests
         language: system
         pass_filenames: false
         stages: [pre-commit]
@@ -69,3 +69,9 @@ repos:
         pass_filenames: false
         stages: [pre-commit]
         verbose: true
+    -   id: mypy-v2
+        name: mypy (v2 public package)
+        entry: uv run mypy -p framework
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]

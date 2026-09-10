@@ -1,61 +1,50 @@
-"""What a run distils from, and how strongly."""
+"""Model adaptation and teacher composition reuse the ordinary component and loss grammar."""
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from src.config.components import ComponentConfig
-from src.config.tasks import LossConfig
+from src.config.schema import AdaptersConfig, ComponentConfig, HeadConfig, WeightedLossConfig, validate_losses
+from src.core.entities import validate_name
 
 
 class TeacherConfig(BaseModel):
-    """One frozen teacher: an architecture, and optionally the weights to fill it with.
+    """A frozen complete model, including its trained heads; never infer trained heads from a backbone.
 
-    Its heads are derived from the student's tasks, so the two models' logits match by
-    construction. The field is ``backbone`` and not ``model``: a teacher can only be a
-    backbone, because distillation compares per-task logits only a composed model exposes.
+    Input names refer to experiment preprocessing views. Different resolutions or
+    tokenizers use different named views of the same source, not renormalized student tensors.
     """
 
     model_config = ConfigDict(extra="forbid")
+    model: ComponentConfig
+    heads: dict[str, HeadConfig] = Field(default_factory=dict)
+    adapters: AdaptersConfig = Field(default_factory=list)
+    checkpoint_path: str | None = Field(None, min_length=1)
 
-    backbone: ComponentConfig = Field(
-        description=(
-            "The teacher's encoder — a backbone this framework composes heads onto, and only that. "
-            "Its heads are derived from the student's tasks, so declaring anything about them here "
-            "would be a second source of truth for a shape that is already decided."
-        )
-    )
-    checkpoint_path: str | None = Field(
-        None,
-        description=(
-            "A run's checkpoint holding this teacher's weights. None keeps whatever the architecture "
-            "was built with: a backbone declared 'pretrained: true' is already a teacher, and "
-            "requiring a file would make that inexpressible."
-        ),
-    )
+    @model_validator(mode="after")
+    def named_heads(self) -> TeacherConfig:
+        for name in self.heads:
+            validate_name(name, kind="Teacher head")
+        if "heads" in self.model.params:
+            raise ValueError("Declare teacher heads once, at teacher.heads.")
+        return self
 
 
 class DistillationConfig(BaseModel):
-    """Training a student beside frozen teachers.
+    """Decorate the selected strategy during training; the student alone serves inference.
 
-    Each task's training loss gains a soft term comparing the student's logits with the
-    teachers' averaged ones, declared as any other loss term (a ``LossConfig``, weight
-    included). A root section rather than a callback because it changes what the model
-    *computes*; a technique that only changes what the model *holds* (EMA, freezing) is a
-    callback.
+    Each loss component chooses student outputs/features, a named teacher and its
+    outputs/features. Aggregation and feature projections belong to that component;
+    there is no implicit averaging or assumption of identical class vocabularies.
     """
 
     model_config = ConfigDict(extra="forbid")
+    teachers: dict[str, TeacherConfig] = Field(min_length=1)
+    loss: ComponentConfig | list[WeightedLossConfig]
 
-    teachers: list[TeacherConfig] = Field(
-        min_length=1,
-        description="Frozen teachers whose raw logits are averaged into one soft target.",
-    )
-    loss: LossConfig | list[LossConfig] = Field(
-        default_factory=lambda: LossConfig(name="kl_divergence"),
-        description=(
-            "How the two models' logits are compared, and how strongly the comparison pulls beside "
-            "the hard signal: {name: kl_divergence, temperature: 2.0, weight: 0.7}. The temperature "
-            "lives here and nowhere else. A list declares several comparisons, added with their weights."
-        ),
-    )
+    @model_validator(mode="after")
+    def comparisons(self) -> DistillationConfig:
+        for name in self.teachers:
+            validate_name(name, kind="Teacher")
+        validate_losses(self.loss)
+        return self

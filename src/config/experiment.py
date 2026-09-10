@@ -1,154 +1,133 @@
-"""The root of the config contract: one validated object per experiment."""
+"""Familiar experiment controls, independent of the model's input modalities."""
 
 from __future__ import annotations
 
-from typing import Final
+from collections.abc import Mapping
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from src.config.components import ComponentConfig, ModelConfig, TransformConfig
-from src.config.data import DataConfig
 from src.config.distillation import DistillationConfig
-from src.config.run import RunConfig
-from src.config.tasks import TaskConfig
-from src.config.training import (
-    DEFAULT_BATCH_SIZE,
-    DEFAULT_EPOCHS,
-    LoaderConfig,
-    OptimizerConfig,
-    SchedulerConfig,
-    TrainerConfig,
-)
-from src.core.taxonomy import Stage
-
-CallbackConfig = ComponentConfig
-"""One callback of the run: a registry name ('checkpoint', 'ema') or an import path, plus its arguments."""
-
-LoggerConfig = ComponentConfig
-"""The experiment tracker to build ('clearml' or an import path); None keeps Lightning's default."""
-
-ExporterConfig = ComponentConfig
-"""One deployment format to write ('torchscript') or an import path, plus its arguments."""
-
-AdaptersConfig = ComponentConfig
-"""A parameter-efficient technique to apply to the backbone ('lora'), plus its arguments."""
+from src.config.schema import AdaptersConfig, ComponentConfig, TaskConfig
+from src.core import Stage
+from src.core.entities import validate_name
 
 
-IMAGENET_MEAN: Final = (0.485, 0.456, 0.406)
-"""Per-channel mean of ImageNet, which every pretrained backbone here was fitted on.
+def reject_owned_keys(values: Mapping[str, object], owned: Mapping[str, str]) -> None:
+    for key, location in owned.items():
+        if key in values:
+            raise ValueError(f"Declare {key} once, at {location}.")
 
-Named once because two readers have to agree: the transforms that normalise, and the
-samples grid that undoes the normalisation to draw the pixels back. Different numbers
-on the two sides make a picture that looks like a model problem.
 
-A default, not an assumption — a run that normalises differently says so at the root,
-and both readers follow it through ``${mean}`` and ``${std}``.
-"""
+class RunConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
 
-IMAGENET_STD: Final = (0.229, 0.224, 0.225)
-"""The matching per-channel standard deviation."""
+    project: str | None = None
+    name: str | None = None
+    train: bool = True
+    test: bool = True
+    checkpoint_path: str | None = Field(None, min_length=1, description="Initial model weights; starts a fresh run.")
+    resume_path: str | None = Field(None, min_length=1, description="Continue weights, optimizer, scheduler and epoch.")
+    directory: str = Field("runs/v2", min_length=1)
+
+    @model_validator(mode="after")
+    def restoration(self) -> RunConfig:
+        if sum(path is not None for path in (self.checkpoint_path, self.resume_path)) > 1:
+            raise ValueError("Choose one of run.checkpoint_path or run.resume_path.")
+        if self.resume_path is not None and not self.train:
+            raise ValueError("run.resume_path requires run.train=true.")
+        return self
+
+
+class LoaderConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    num_workers: int = Field(0, ge=0)
+    pin_memory: bool = False
+    drop_last: bool = Field(False, description="Training only; evaluation preserves every sample.")
+
+    @model_validator(mode="after")
+    def framework_arguments(self) -> LoaderConfig:
+        reject_owned_keys(
+            self.model_extra or {},
+            {
+                "batch_size": "experiment.batch_size",
+                "dataset": "data",
+                "collate_fn": "preprocessing.collator",
+                "shuffle": "the stage-aware DataLoader assembly",
+                "batch_sampler": "a custom DataLoader adapter (it replaces fixed batch_size)",
+            },
+        )
+        return self
+
+
+class TrainerConfig(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    accelerator: str = "auto"
+    devices: int | str | list[int] = "auto"
+    profiler: ComponentConfig | None = None
+
+    @model_validator(mode="after")
+    def framework_arguments(self) -> TrainerConfig:
+        reject_owned_keys(
+            self.model_extra or {},
+            {
+                "max_epochs": "experiment.epochs",
+                "logger": "experiment.logger",
+                "callbacks": "experiment.callbacks",
+                "default_root_dir": "run.directory",
+            },
+        )
+        return self
+
+
+class SchedulerConfig(ComponentConfig):
+    interval: Literal["epoch", "step"] = "epoch"
+    frequency: int = Field(1, gt=0)
+    monitor: str | None = None
+    strict: bool = True
 
 
 class ExperimentConfig(BaseModel):
-    """The single validated source of truth for one experiment.
+    """Assembly injects root controls; runtime objects never read this schema.
 
-    Validation happens exactly once, at ``load_config``; nothing downstream re-parses raw
-    dicts. Structural sections reject unknown keys; forward sections (loader, trainer) and
-    components keep them as pass-through knobs. ``model`` is a plain component, the family
-    following from the name; heads are derived from tasks and sized from data facts.
+    Preprocessing owns modality-specific loading, normalization and collation.
+    Its component may compose named inputs or wrap one joint image/text processor.
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    seed: int = Field(
-        42,
-        description=(
-            "Everything stochastic inside a run: weight init, augmentation, batch order. The data "
-            "split has its own seed ('data.split.seed') on purpose, so repeating a run at several "
-            "seeds keeps one test set."
-        ),
+    seed: int = 42
+    lr: float = Field(1e-3, gt=0, allow_inf_nan=False)
+    batch_size: int = Field(16, gt=0, strict=True)
+    epochs: int = Field(10, gt=0, strict=True)
+    data: ComponentConfig
+    preprocessing: ComponentConfig | None = Field(None, description="None requires already prepared model inputs.")
+    transforms: dict[Stage, ComponentConfig] = Field(
+        default_factory=dict, description="Stage-specific sample augmentation, before final normalization and encoding."
     )
-    lr: float = Field(1.0e-3, gt=0, description="Shared learning rate; reach it with ${lr} wherever it belongs.")
-    epochs: int = Field(DEFAULT_EPOCHS, gt=0, description="Shared epoch count; reach it with ${epochs}.")
-    batch_size: int = Field(DEFAULT_BATCH_SIZE, gt=0, description="Shared batch size; reach it with ${batch_size}.")
-    image_size: tuple[int, int] = Field((224, 224), description="Shared (height, width); reach it with ${image_size}.")
-    mean: list[float] = Field(
-        default_factory=lambda: list(IMAGENET_MEAN),
-        description="Shared per-channel normalisation mean; reach it with ${mean}.",
-    )
-    std: list[float] = Field(
-        default_factory=lambda: list(IMAGENET_STD),
-        description="Shared per-channel normalisation deviation; reach it with ${std}.",
-    )
-
-    data: DataConfig = Field(description="Where the annotation rows come from and how they feed the model.")
-    tasks: dict[str, TaskConfig] = Field(
-        description="Tasks by name; the name prefixes every loss and metric a task logs.",
-    )
-    model: ModelConfig = Field(
-        description="The model to build: a registry name ('timm', 'smp') or an import path, plus its arguments.",
-    )
-    adapters: AdaptersConfig | None = Field(
-        None,
-        description=(
-            "Train a small delta instead of the backbone's weights: {name: lora, target_modules: "
-            "[qkv, proj], rank: 8}. The base freezes, the adapters and the heads learn, and the "
-            "delta folds back before anything reads the weights. None trains every weight."
-        ),
-    )
-    distillation: DistillationConfig | None = Field(
-        None,
-        description=(
-            "Train beside frozen teachers: {teachers: [{backbone: {...}, checkpoint_path: ...}], loss: "
-            "{name: kl_divergence, temperature: 2.0, weight: 0.7}}. Each task's training loss gains "
-            "the declared term, comparing the student's logits with the teachers' averaged ones; "
-            "evaluation is untouched. None trains against the data alone."
-        ),
-    )
-    transforms: dict[Stage, TransformConfig] | None = Field(
-        None,
-        description="Per-stage sample pipeline; None leaves samples as the loaders produced them.",
-    )
-    optimizer: OptimizerConfig = Field(
-        default_factory=lambda: OptimizerConfig(name="adamw"),
-        description="Optimizer by registry name or import path; its arguments forward to the constructor.",
-    )
-    scheduler: SchedulerConfig | None = Field(
-        None,
-        description="Learning-rate schedule plus how Lightning steps it; None keeps the rate fixed.",
-    )
-    loader: LoaderConfig = Field(default_factory=LoaderConfig, description="DataLoader knobs shared by every stage.")
-    trainer: TrainerConfig = Field(default_factory=TrainerConfig, description="Lightning Trainer knobs.")
-    callbacks: list[CallbackConfig] | None = Field(
-        None,
-        description=(
-            "What the run does around its training steps, in the order given — keep the best "
-            "checkpoint, log the learning rate, freeze a backbone. Order is not cosmetic: a "
-            "callback that changes the weights belongs before one that saves them."
-        ),
-    )
-    logger: LoggerConfig | None = Field(
-        None,
-        description=(
-            "The experiment tracker ({name: clearml, project_name: ...}); constructor knobs "
-            "forward verbatim. None keeps Lightning's default logging."
-        ),
-    )
-    export: list[ExporterConfig] | None = Field(
-        None,
-        description=(
-            "Deployment formats written after the run, in the order given; each entry names an "
-            "exporter and carries that format's own knobs. None or an empty list writes nothing."
-        ),
-    )
-    run: RunConfig = Field(default_factory=RunConfig, description="Which stages to run, from where, into where.")
+    model: ComponentConfig
+    tasks: dict[str, TaskConfig]
+    adapters: AdaptersConfig = Field(default_factory=list)
+    distillation: DistillationConfig | None = None
+    strategy: ComponentConfig = Field(default_factory=lambda: ComponentConfig(name="standard"))
+    optimizer: ComponentConfig = Field(default_factory=lambda: ComponentConfig(name="adamw"))
+    scheduler: SchedulerConfig | None = None
+    loader: LoaderConfig = Field(default_factory=LoaderConfig)
+    trainer: TrainerConfig = Field(default_factory=TrainerConfig)
+    callbacks: list[ComponentConfig] = Field(default_factory=list)
+    logger: ComponentConfig | None = None
+    export: list[ComponentConfig] = Field(default_factory=list)
+    run: RunConfig = Field(default_factory=RunConfig)
 
     @model_validator(mode="after")
-    def _require_named_tasks(self) -> ExperimentConfig:
-        """A run without a task learns nothing, and a blank name has no key to log under."""
+    def connections(self) -> ExperimentConfig:
+        reject_owned_keys(self.optimizer.params, {"lr": "experiment.lr"})
         if not self.tasks:
-            raise ValueError("An experiment needs at least one task.")
-        blank = [name for name in self.tasks if not name.strip()]
-        if blank:
-            raise ValueError("Task names must be non-empty.")
+            raise ValueError("An experiment requires at least one task.")
+        for name in self.tasks:
+            validate_name(name, kind="Task")
+        if "heads" in self.model.params or "mode" in self.model.params:
+            raise ValueError("Declare heads in tasks and select the model with name or _target_.")
         return self

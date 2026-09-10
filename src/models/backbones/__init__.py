@@ -1,18 +1,5 @@
-"""Backbone adapters, one module per source library; importing this registers them all."""
+"""Feature extractors; library implementations are imported only when selected."""
 
-from __future__ import annotations
+from src.models.backbones.base import Backbone
 
-from src.models.backbones.hf import HFTextBackbone
-from src.models.backbones.multi import MultiEncoderBackbone, MultiViewBackbone
-from src.models.backbones.smp import SmpBackbone
-from src.models.backbones.timm import TimmBackbone
-from src.models.backbones.ultralytics import UltralyticsBackbone
-
-__all__ = [
-    "HFTextBackbone",
-    "MultiEncoderBackbone",
-    "MultiViewBackbone",
-    "SmpBackbone",
-    "TimmBackbone",
-    "UltralyticsBackbone",
-]
+__all__ = ["Backbone"]
