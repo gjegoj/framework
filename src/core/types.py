@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
 import torch
@@ -12,10 +12,30 @@ type TensorTree = Tensor | Mapping[str, TensorTree] | list[TensorTree] | tuple[T
 type ShapeTree = TensorShape | Mapping[str, ShapeTree] | list[ShapeTree] | tuple[ShapeTree, ...] | None
 
 
-def require_tensor(value: TensorTree, *, name: str) -> Tensor:
+def tree_map(operation: Callable[[Tensor], Tensor], tree: TensorTree) -> TensorTree:
+    """Apply an operation to every tensor of a tree, preserving its structure and any other leaf as it is."""
+    if isinstance(tree, Tensor):
+        return operation(tree)
+    if isinstance(tree, Mapping):
+        return {name: tree_map(operation, value) for name, value in tree.items()}
+    if isinstance(tree, list):
+        return [tree_map(operation, value) for value in tree]
+    if isinstance(tree, tuple):
+        return tuple(tree_map(operation, value) for value in tree)
+    return tree
+
+
+def require_tensor(value: object, *, name: str) -> Tensor:
     """Narrow a structured value where an operation requires a single tensor."""
     if not isinstance(value, Tensor):
         raise TypeError(f"{name} must be a tensor, got {type(value).__name__}.")
+    return value
+
+
+def require_shape(value: ShapeTree, *, name: str) -> TensorShape:
+    """Narrow a shape tree where an operation requires one tensor's shape."""
+    if not isinstance(value, TensorShape):
+        raise TypeError(f"{name} must be a single tensor shape, got {type(value).__name__}.")
     return value
 
 

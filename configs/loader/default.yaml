@@ -1,0 +1,5 @@
+# Shared by every stage; unknown keys forward verbatim to torch's DataLoader.
+# `shuffle` is not here on purpose: training shuffles, evaluation does not.
+num_workers: 0
+pin_memory: false
+drop_last: false

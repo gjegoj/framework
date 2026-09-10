@@ -1,0 +1,3 @@
+# @package _global_
+# No schedule — the learning rate stays fixed.
+scheduler: null

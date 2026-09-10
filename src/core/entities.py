@@ -10,7 +10,7 @@ from typing import cast
 import torch
 from torch import Tensor
 
-from src.core.types import ShapeTree, TensorTree
+from src.core.types import ShapeTree, TensorTree, tree_map
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,12 +44,9 @@ class Batch:
         return self._map(Tensor.detach)
 
     def _map(self, operation: Callable[[Tensor], Tensor]) -> Batch:
-        from lightning_utilities.core.apply_func import apply_to_collection
-
-        # Frozen dataclass traversal in lightning_utilities 0.15.3 loses field replacements.
         return Batch(
-            inputs=cast(Mapping[str, TensorTree], apply_to_collection(self.inputs, Tensor, operation)),
-            targets=cast(Mapping[str, TensorTree], apply_to_collection(self.targets, Tensor, operation)),
+            inputs=cast(Mapping[str, TensorTree], tree_map(operation, self.inputs)),
+            targets=cast(Mapping[str, TensorTree], tree_map(operation, self.targets)),
             count=len(self),
             metadata=self.metadata,
         )
@@ -66,20 +63,43 @@ def validate_classes(classes: Mapping[int, str]) -> None:
 
 
 @dataclass(frozen=True, slots=True)
+class Normalization:
+    """Per-channel mean and std an input is trained with: the pixel pipeline applies it, export ships it."""
+
+    mean: tuple[float, ...]
+    std: tuple[float, ...]
+
+    def __post_init__(self) -> None:
+        if not self.mean or len(self.mean) != len(self.std):
+            raise ValueError("Normalization needs one mean and one std per channel.")
+        if any(not isfinite(value) for value in (*self.mean, *self.std)) or any(value <= 0 for value in self.std):
+            raise ValueError("Normalization needs finite means and positive stds.")
+
+
+@dataclass(frozen=True, slots=True)
 class InputInfo:
     shape: ShapeTree
     modality: str | None = None
+    normalization: Normalization | None = None
     metadata: Mapping[str, object] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
 class TargetInfo:
+    """Resolved facts about one target: its per-sample shape, its vocabulary, and the number each class stands for."""
+
     shape: ShapeTree = None
     classes: Mapping[int, str] | None = None
+    values: tuple[float, ...] | None = None
 
     def __post_init__(self) -> None:
         if self.classes is not None:
             validate_classes(self.classes)
+        if self.values is not None:
+            if self.classes is None or len(self.values) != len(self.classes):
+                raise ValueError("Target values stand one behind each class index; declare both, same length.")
+            if any(not isfinite(value) for value in self.values):
+                raise ValueError("Target values must be finite numbers.")
 
     @property
     def num_classes(self) -> int | None:
@@ -153,6 +173,10 @@ class StepOutput:
     targets: Mapping[str, object] = field(default_factory=dict)
 
 
+NAME_SEPARATORS = "./@"
+"""Characters names may not contain: dots address modules, slashes and ``@`` compose metric keys."""
+
+
 def validate_name(name: str, *, kind: str = "Component") -> None:
-    if not name or name == "_" or any(char in name for char in "./") or name.strip() != name:
-        raise ValueError(f"{kind} names must be nonblank, without dots, slashes or reserved '_'.")
+    if not name or name.strip() != name or any(char in name for char in NAME_SEPARATORS):
+        raise ValueError(f"{kind} names must be nonblank, unpadded and free of {NAME_SEPARATORS!r}: {name!r}.")

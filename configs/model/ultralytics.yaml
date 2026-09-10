@@ -1,0 +1,7 @@
+# The composed detection family: ultralytics' graph behind our ports — a pyramid backbone
+# (p3/p4/p5, plus pooled `features` for a whole-image task) and its Detect head rebuilt
+# per task. Weights never come with the name: add `checkpoint_path: path/to/yolov8n.pt`.
+name: composite
+backbone:
+  name: ultralytics
+  model_name: yolov8n.yaml

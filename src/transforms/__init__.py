@@ -2,6 +2,12 @@
 
 from __future__ import annotations
 
-from src.transforms.transform import BatchTransform, SampleTransform
+from src.transforms.albumentations import AlbumentationsTransform
+from src.transforms.base import BatchTransform, GeometryAware, SampleTransform
 
-__all__ = ["BatchTransform", "SampleTransform"]
+__all__ = [
+    "AlbumentationsTransform",
+    "BatchTransform",
+    "GeometryAware",
+    "SampleTransform",
+]

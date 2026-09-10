@@ -1,0 +1,8 @@
+defaults:
+  - override hydra_logging: rich
+  - override job_logging: rich
+
+# The run directory follows the run's identity: one declared naming feeds the
+# tracker, this tree, and run.directory (${hydra:run.dir}) alike.
+run:
+  dir: runs/${run.project}/${run.name}

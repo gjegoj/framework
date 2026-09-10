@@ -30,8 +30,7 @@ test-gate: ## The pre-commit gate: the whole suite but the tests that need a mod
 	uv run pytest tests -v -m "not slow"
 
 typecheck: ## Run mypy static analysis
-	uv run mypy --exclude '^src/framework/' src tests
-	uv run mypy -p framework
+	uv run mypy src tests
 
 check: typecheck test ## Run type checks and tests
 

@@ -1,0 +1,7 @@
+# Reactive: waits on a logged metric instead of counting time.
+# `val/loss` is the total validation loss — every run logs it.
+name: plateau
+monitor: val/loss
+mode: min
+factor: 0.5
+patience: 3

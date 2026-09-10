@@ -1,0 +1,6 @@
+# @package _global_
+# Both shipped formats from one run: a TorchScript file for a libtorch server and an
+# ONNX graph for everything else. Each is verified against the model independently.
+export:
+  - {name: torchscript}
+  - {name: onnx}

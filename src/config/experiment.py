@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Literal
+from typing import ClassVar, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from src.config.distillation import DistillationConfig
-from src.config.schema import AdaptersConfig, ComponentConfig, TaskConfig
-from src.core import Stage
-from src.core.entities import validate_name
+from src.config.schema import AdaptersConfig, ComponentConfig, ModelConfig, PreprocessingConfig, TaskConfig
+from src.core import Stage, validate_name
 
 
 def reject_owned_keys(values: Mapping[str, object], owned: Mapping[str, str]) -> None:
@@ -28,7 +27,7 @@ class RunConfig(BaseModel):
     test: bool = True
     checkpoint_path: str | None = Field(None, min_length=1, description="Initial model weights; starts a fresh run.")
     resume_path: str | None = Field(None, min_length=1, description="Continue weights, optimizer, scheduler and epoch.")
-    directory: str = Field("runs/v2", min_length=1)
+    directory: str = Field("runs", min_length=1)
 
     @model_validator(mode="after")
     def restoration(self) -> RunConfig:
@@ -39,47 +38,51 @@ class RunConfig(BaseModel):
         return self
 
 
-class LoaderConfig(BaseModel):
+class ForwardSection(BaseModel):
+    """Declared fields are validated; every other key reaches the library constructor verbatim.
+
+    Keys the framework owns elsewhere are refused by name, so a value is declared once.
+    """
+
     model_config = ConfigDict(extra="allow")
+    owned: ClassVar[Mapping[str, str]] = {}
+
+    @model_validator(mode="after")
+    def framework_arguments(self) -> Self:
+        reject_owned_keys(self.params, self.owned)
+        return self
+
+    @property
+    def params(self) -> dict[str, object]:
+        """The forwarded keys alone; declared fields are read as attributes."""
+        return dict(self.model_extra or {})
+
+
+class LoaderConfig(ForwardSection):
+    owned: ClassVar[Mapping[str, str]] = {
+        "batch_size": "experiment.batch_size",
+        "dataset": "data",
+        "collate_fn": "preprocessing.collator",
+        "shuffle": "the stage: training shuffles, evaluation preserves order",
+        "batch_sampler": "a custom DataLoader adapter (it replaces fixed batch_size)",
+    }
 
     num_workers: int = Field(0, ge=0)
     pin_memory: bool = False
     drop_last: bool = Field(False, description="Training only; evaluation preserves every sample.")
 
-    @model_validator(mode="after")
-    def framework_arguments(self) -> LoaderConfig:
-        reject_owned_keys(
-            self.model_extra or {},
-            {
-                "batch_size": "experiment.batch_size",
-                "dataset": "data",
-                "collate_fn": "preprocessing.collator",
-                "shuffle": "the stage-aware DataLoader assembly",
-                "batch_sampler": "a custom DataLoader adapter (it replaces fixed batch_size)",
-            },
-        )
-        return self
 
-
-class TrainerConfig(BaseModel):
-    model_config = ConfigDict(extra="allow")
+class TrainerConfig(ForwardSection):
+    owned: ClassVar[Mapping[str, str]] = {
+        "max_epochs": "experiment.epochs",
+        "logger": "experiment.tracker",
+        "callbacks": "experiment.callbacks",
+        "default_root_dir": "run.directory",
+    }
 
     accelerator: str = "auto"
     devices: int | str | list[int] = "auto"
     profiler: ComponentConfig | None = None
-
-    @model_validator(mode="after")
-    def framework_arguments(self) -> TrainerConfig:
-        reject_owned_keys(
-            self.model_extra or {},
-            {
-                "max_epochs": "experiment.epochs",
-                "logger": "experiment.logger",
-                "callbacks": "experiment.callbacks",
-                "default_root_dir": "run.directory",
-            },
-        )
-        return self
 
 
 class SchedulerConfig(ComponentConfig):
@@ -103,21 +106,21 @@ class ExperimentConfig(BaseModel):
     batch_size: int = Field(16, gt=0, strict=True)
     epochs: int = Field(10, gt=0, strict=True)
     data: ComponentConfig
-    preprocessing: ComponentConfig | None = Field(None, description="None requires already prepared model inputs.")
+    preprocessing: PreprocessingConfig | None = Field(None, description="None requires already prepared model inputs.")
     transforms: dict[Stage, ComponentConfig] = Field(
         default_factory=dict, description="Stage-specific sample augmentation, before final normalization and encoding."
     )
-    model: ComponentConfig
+    model: ModelConfig
     tasks: dict[str, TaskConfig]
     adapters: AdaptersConfig = Field(default_factory=list)
     distillation: DistillationConfig | None = None
-    strategy: ComponentConfig = Field(default_factory=lambda: ComponentConfig(name="standard"))
+    learner: ComponentConfig = Field(default_factory=lambda: ComponentConfig(name="standard"))
     optimizer: ComponentConfig = Field(default_factory=lambda: ComponentConfig(name="adamw"))
     scheduler: SchedulerConfig | None = None
     loader: LoaderConfig = Field(default_factory=LoaderConfig)
     trainer: TrainerConfig = Field(default_factory=TrainerConfig)
     callbacks: list[ComponentConfig] = Field(default_factory=list)
-    logger: ComponentConfig | None = None
+    tracker: ComponentConfig | None = None
     export: list[ComponentConfig] = Field(default_factory=list)
     run: RunConfig = Field(default_factory=RunConfig)
 
@@ -128,6 +131,6 @@ class ExperimentConfig(BaseModel):
             raise ValueError("An experiment requires at least one task.")
         for name in self.tasks:
             validate_name(name, kind="Task")
-        if "heads" in self.model.params or "mode" in self.model.params:
-            raise ValueError("Declare heads in tasks and select the model with name or _target_.")
+        if "heads" in self.model.params:
+            raise ValueError("Declare heads once, under tasks; the model section only selects the network.")
         return self

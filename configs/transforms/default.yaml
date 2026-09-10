@@ -1,0 +1,14 @@
+# @package _global_
+# The deterministic pipeline every stage needs, spelled out: the picture is resized together with its
+# masks, normalized with the statistics `preprocessing` declares, and crossed into tensors — the raw-to-
+# tensor boundary is crossed exactly once, here. Nothing is added behind this file: what a stage does to
+# pixels is what a stage declares. Swap to `augmented` to add train-time augmentation before this tail.
+transforms:
+  train: &pipeline
+    _target_: src.transforms.AlbumentationsTransform
+    transforms:
+      - {_target_: albumentations.Resize, height: "${preprocessing.inputs.image.image_size.0}", width: "${preprocessing.inputs.image.image_size.1}"}
+      - {_target_: albumentations.Normalize, mean: "${preprocessing.inputs.image.mean}", std: "${preprocessing.inputs.image.std}"}
+      - {_target_: albumentations.pytorch.ToTensorV2}
+  val: *pipeline
+  test: *pipeline

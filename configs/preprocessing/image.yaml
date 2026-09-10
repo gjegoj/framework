@@ -1,0 +1,16 @@
+# @package _global_
+# One image input declares how a picture reaches the model: its size, its per-channel statistics and
+# where its files live. Nothing here touches pixels — `transforms` declares the pipeline that does,
+# interpolating these values, so the size a head is built for and the size a picture is resized to are
+# one declaration. An experiment overriding `preprocessing.inputs.image.image_size` moves both.
+preprocessing:
+  name: standard
+  inputs:
+    image:
+      name: image
+      image_size: [224, 224]
+      mean: [0.485, 0.456, 0.406]
+      std: [0.229, 0.224, 0.225]
+  collator: stack
+  # Decoded files held in shared memory across data workers: `preprocessing.cache={name: ram, max_gib: 8}`.
+  cache: null

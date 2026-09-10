@@ -1,0 +1,6 @@
+# @package _global_
+# The default tracker: scalar metrics land in `${run.directory}/metrics.csv`.
+# An honest local record rather than a nameless fallback; `tracker=clearml` uploads instead.
+tracker:
+  name: csv
+  save_dir: ${run.directory}

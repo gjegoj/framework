@@ -1,0 +1,24 @@
+# @package _global_
+# ClearML experiment tracking; every Task.init knob forwards verbatim.
+# The names default to the run's identity — override either right here.
+#
+# Tags are what the experiments list filters by, so they name the shape of a run
+# rather than its results. The whole resolved config reaches ClearML as
+# hyperparameters besides, so nothing has to be squeezed in here to be findable.
+#
+# A tag is an interpolation, and a group that is off leaves an empty string
+# (`oc.select` reaches into a section that may be wholly null); empty tags are
+# dropped. The architecture is not written here at all — the key naming one
+# differs per backbone family and a composite backbone has none, so the model is
+# asked for it and the answer joins these.
+tracker:
+  name: clearml
+  project_name: ${run.project}
+  task_name: ${run.name}
+  tags:
+    - ${optimizer.name}
+    - ${oc.select:scheduler.name,''}         # the section itself may be null
+    - ${oc.select:adapters.name,''}          # lora, when a run trains a delta
+    - lr=${lr}
+    - bs=${batch_size}
+    - epochs=${epochs}

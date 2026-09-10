@@ -3,17 +3,25 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Annotated, Any
+from typing import Annotated, Any, ClassVar
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, field_validator, model_validator
 
-from src.core.entities import validate_classes
+from src.core import validate_classes, validate_name
 
 
 class ComponentConfig(BaseModel):
-    model_config = ConfigDict(extra="allow", populate_by_name=False)
+    """One grammar for naming something to build: ``name`` or ``_target_``, every other key a constructor argument.
+
+    ``loss: cross_entropy`` reads as ``{name: cross_entropy}``. A nested mapping is an ordinary
+    argument unless it carries ``_target_`` of its own; a nested position has no registry.
+    """
+
+    TARGET_KEY: ClassVar[str] = "_target_"
+
+    model_config = ConfigDict(extra="allow")
     name: str | None = Field(None, min_length=1)
-    import_path: str | None = Field(None, alias="_target_", min_length=1)
+    import_path: str | None = Field(None, alias=TARGET_KEY, min_length=1)
 
     @model_validator(mode="before")
     @classmethod
@@ -23,15 +31,24 @@ class ComponentConfig(BaseModel):
     @model_validator(mode="after")
     def one_selector(self) -> ComponentConfig:
         if (self.name is None) == (self.import_path is None):
-            raise ValueError("Declare exactly one of name or _target_.")
-        for key in self.model_extra or {}:
-            if key in {"_args_", "_partial_", "_recursive_", "_convert_", "import_path"}:
-                raise ValueError(f"Unsupported component key: {key}.")
+            raise ValueError(f"Declare exactly one of name or {self.TARGET_KEY}.")
+        reserved = sorted(key for key in self.params if key.startswith("_") or key == "import_path")
+        if reserved:
+            raise ValueError(
+                f"Unsupported keys {', '.join(reserved)}: only {self.TARGET_KEY} is meaningful here; "
+                "recursion is always on and positional arguments are never declared."
+            )
         return self
 
     @property
     def params(self) -> dict[str, Any]:
+        """Everything but the selector: the constructor's keyword arguments, nested values untouched."""
         return dict(self.model_extra or {})
+
+    @property
+    def spelled(self) -> str:
+        """The component as the declaration wrote it, for a message that names it."""
+        return self.name if self.name is not None else str(self.import_path)
 
 
 class ClassFile(BaseModel):
@@ -113,6 +130,28 @@ def validate_losses(loss: ComponentConfig | list[WeightedLossConfig] | None) -> 
         explicit = [item.log_name for item in loss if item.log_name is not None]
         if len(set(explicit)) != len(explicit):
             raise ValueError("Explicit loss log names must be distinct.")
+
+
+class ModelConfig(ComponentConfig):
+    """A network by name or import path; ``backbone`` is the child position a composite fills from its own registry."""
+
+    backbone: ComponentConfig | None = None
+
+
+class PreprocessingConfig(ComponentConfig):
+    """Modality-specific loading, normalization and collation; ``inputs`` and ``collator`` are child positions."""
+
+    inputs: dict[str, ComponentConfig] | None = None
+    auxiliary_inputs: dict[str, ComponentConfig] | None = None
+    collator: ComponentConfig | None = None
+    cache: ComponentConfig | None = None
+
+    @field_validator("inputs", "auxiliary_inputs")
+    @classmethod
+    def named_inputs(cls, value: dict[str, ComponentConfig] | None) -> dict[str, ComponentConfig] | None:
+        for name in value or {}:
+            validate_name(name, kind="Input")
+        return value
 
 
 class AdapterConfig(ComponentConfig):

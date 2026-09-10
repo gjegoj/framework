@@ -1,0 +1,4 @@
+# @package _global_
+# No pipeline of ours: what a run over already-tensor inputs (precomputed embeddings) declares,
+# since there is no picture to resize or normalise.
+transforms: {}

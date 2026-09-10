@@ -1,0 +1,19 @@
+# @package _global_
+# Train adds geometry and colour before the deterministic tail; evaluation keeps the tail alone.
+# `RandomResizedCrop` already sizes the picture, so no `Resize` follows it.
+transforms:
+  train:
+    _target_: src.transforms.AlbumentationsTransform
+    transforms:
+      - {_target_: albumentations.RandomResizedCrop, size: "${preprocessing.inputs.image.image_size}", scale: [0.7, 1.0]}
+      - {_target_: albumentations.HorizontalFlip, p: 0.5}
+      - {_target_: albumentations.ColorJitter, p: 0.3}
+      - {_target_: albumentations.Normalize, mean: "${preprocessing.inputs.image.mean}", std: "${preprocessing.inputs.image.std}"}
+      - {_target_: albumentations.pytorch.ToTensorV2}
+  val: &evaluation
+    _target_: src.transforms.AlbumentationsTransform
+    transforms:
+      - {_target_: albumentations.Resize, height: "${preprocessing.inputs.image.image_size.0}", width: "${preprocessing.inputs.image.image_size.1}"}
+      - {_target_: albumentations.Normalize, mean: "${preprocessing.inputs.image.mean}", std: "${preprocessing.inputs.image.std}"}
+      - {_target_: albumentations.pytorch.ToTensorV2}
+  test: *evaluation

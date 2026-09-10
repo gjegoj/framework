@@ -1,0 +1,8 @@
+# The model section names a network. `composite` puts one head per task onto the
+# `backbone` it declares; a model that arrives whole with its own head and loss is
+# reached by `_target_` instead and declares no backbone.
+name: composite
+backbone:
+  name: timm
+  model_name: resnet18
+  pretrained: true

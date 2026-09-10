@@ -43,7 +43,7 @@ default = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = ["."]
 markers = [
     "e2e: full-flow integration (training smoke, export round-trip, full wiring); auto-applied to tests/e2e/",
     "slow: long-running tests excluded from the pre-commit gate",
@@ -58,6 +58,26 @@ filterwarnings = [
 
 [tool.ruff]
 line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+# ruff replaces black + isort + flake8: one formatter, one import order, one linter.
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "TRY", "RUF", "PL", "N"]
+ignore = [
+    "TRY003",  # long messages inline: our errors name the declaration and the fix
+    "PLR2004", # magic numbers in tests and shape checks are the point
+    "PLR0913", # constructors of composed objects take what they compose
+    "PLC0415", # lazy imports are the quarantine: a library loads only when its adapter is selected
+    "RUF001", "RUF002", "RUF003",  # prose in docstrings and messages may use typographic dashes
+    "N812",    # `import albumentations as A` is that library's own spelling, as numpy is `np`
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["PLR0913", "PLC0415"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["src", "tests"]
+
 
 [tool.typos.default.extend-words]
 # ML abbreviations that typos misidentifies as misspellings
@@ -66,17 +86,8 @@ mis = "mis"
 FPR = "FPR"
 NCE = "NCE"
 
-[tool.black]
-line-length = 120
-
-[tool.isort]
-line_length = 120
-profile = "black"
-
-
 [tool.mypy]
 python_version = "3.12"
-mypy_path = "$MYPY_CONFIG_FILE_DIR/src"
 plugins = ["pydantic.mypy"]
 ignore_missing_imports = true
 disallow_untyped_defs = true
@@ -86,7 +97,3 @@ warn_redundant_casts = true
 warn_unused_ignores = true
 warn_return_any = true
 no_implicit_optional = true
-
-[[tool.mypy.overrides]]
-module = ["framework", "framework.*"]
-ignore_missing_imports = false

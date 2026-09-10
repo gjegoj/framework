@@ -4,29 +4,34 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from src.config.schema import AdaptersConfig, ComponentConfig, HeadConfig, WeightedLossConfig, validate_losses
-from src.core.entities import validate_name
+from src.config.schema import (
+    AdaptersConfig,
+    ComponentConfig,
+    ModelConfig,
+    WeightedLossConfig,
+    validate_losses,
+)
+from src.core import validate_name
 
 
 class TeacherConfig(BaseModel):
-    """A frozen complete model, including its trained heads; never infer trained heads from a backbone.
+    """A frozen model beside the student: this run's tasks on another network, or a model that arrives whole.
 
-    Input names refer to experiment preprocessing views. Different resolutions or
-    tokenizers use different named views of the same source, not renormalized student tensors.
+    A ``composite`` teacher gets one head per task from the same ``tasks`` declarations and
+    facts as the student, so their outputs match by construction and no size is stated twice;
+    a ``_target_`` teacher brings its own heads. Input names refer to preprocessing views, so a
+    teacher may read a differently sized view of the same source.
     """
 
     model_config = ConfigDict(extra="forbid")
-    model: ComponentConfig
-    heads: dict[str, HeadConfig] = Field(default_factory=dict)
+    model: ModelConfig
     adapters: AdaptersConfig = Field(default_factory=list)
     checkpoint_path: str | None = Field(None, min_length=1)
 
     @model_validator(mode="after")
-    def named_heads(self) -> TeacherConfig:
-        for name in self.heads:
-            validate_name(name, kind="Teacher head")
+    def heads_come_from_the_tasks(self) -> TeacherConfig:
         if "heads" in self.model.params:
-            raise ValueError("Declare teacher heads once, at teacher.heads.")
+            raise ValueError("A teacher's heads follow the run's tasks; declare none on the teacher.")
         return self
 
 
