@@ -64,16 +64,15 @@ class WeightedLossConfig(BaseModel):
 
 
 class HeadConfig(ComponentConfig):
-    input: str | list[str] | None = None
+    """A head and the one feature stream it reads; a head over several streams arrives with detection."""
+
+    input: str | None = Field(None, min_length=1)
 
     @field_validator("input")
     @classmethod
-    def selected_inputs(cls, value: str | list[str] | None) -> str | list[str] | None:
-        names = [value] if isinstance(value, str) else value
-        if names is not None and (
-            not names or any(not name.strip() for name in names) or len(set(names)) != len(names)
-        ):
-            raise ValueError("Head inputs require nonblank, distinct feature names.")
+    def named_stream(cls, value: str | None) -> str | None:
+        if value is not None and value.strip() != value:
+            raise ValueError("A head reads one feature name, unpadded.")
         return value
 
 

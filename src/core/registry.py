@@ -8,10 +8,14 @@ from collections.abc import Callable, Iterator
 class Registry[T]:
     """A package's catalogue: implementations register beside their definition, a config names one.
 
-    A registry holds what a declaration *names*; what a declaration only *implies* (a composite
-    built from a section's shape) has no name here, and anything unregistered stays reachable
-    by ``_target_``. Construction is not this class's business: a resolved class is built by
-    ``config.instantiate`` with the declaration's arguments, the same way a ``_target_`` is.
+    A registry holds what a declaration *names*; what a declaration only *implies* (a composite built
+    from a section's shape) has no name here, and anything unregistered stays reachable by ``_target_``.
+    Construction is not this class's business: a resolved class is built by ``config.instantiate`` with
+    the declaration's arguments, the same way a ``_target_`` is.
+
+    A class registers when the module defining it runs, so every package's ``__init__`` imports its
+    implementations: importing a package is what makes its names resolvable, and ``tests/test_registries.py``
+    holds that to be true.
 
     Args:
         kind: What is registered, as it reads in an error message, e.g. ``"loss"``.

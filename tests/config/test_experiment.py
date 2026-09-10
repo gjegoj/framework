@@ -109,8 +109,8 @@ class TestTask:
         with pytest.raises(ValidationError, match="mutually exclusive"):
             TaskConfig.model_validate({**task, "head": "linear", "output": "logits"})
 
-    @pytest.mark.parametrize("inputs", [[], ["pooled", "pooled"], [" "]], ids=["empty", "duplicate", "blank"])
-    def test_a_head_names_distinct_feature_streams(self, task: dict[str, Any], inputs: list[str]) -> None:
+    @pytest.mark.parametrize("inputs", ["", " ", "pooled "], ids=["empty", "blank", "padded"])
+    def test_a_head_names_one_feature_stream(self, task: dict[str, Any], inputs: str) -> None:
         with pytest.raises(ValidationError):
             TaskConfig.model_validate({**task, "head": {"name": "linear", "input": inputs}})
 

@@ -1,5 +1,8 @@
-"""Feature extractors; library implementations are imported only when selected."""
+"""Backbone adapters, one module per library; importing this registers every one of them."""
 
-from src.models.backbones.base import Backbone
+from __future__ import annotations
 
-__all__ = ["Backbone"]
+from src.models.backbones.smp import SmpBackbone
+from src.models.backbones.timm import TimmBackbone
+
+__all__ = ["SmpBackbone", "TimmBackbone"]
