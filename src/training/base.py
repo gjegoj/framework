@@ -5,7 +5,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, NotRequired, TypedDict
+from typing import TYPE_CHECKING, NotRequired, TypedDict
 
 from torch import nn
 from torch.optim import Optimizer
@@ -13,6 +13,9 @@ from torch.optim import Optimizer
 from src.core import Batch, StepOutput
 from src.models import Model
 from src.tasks import Task
+
+if TYPE_CHECKING:
+    from lightning.pytorch.utilities.types import LRSchedulerConfigType
 
 SHARED = "backbone"
 """What the group holding everything no task claimed is called.
@@ -124,5 +127,8 @@ type OptimizerFactory = Callable[[Sequence[ParameterGroup]], Optimizer]
 group naming no rate of its own inherits the factory's.
 """
 
-type SchedulerFactory = Callable[[Optimizer, FitProfile], dict[str, Any]]
-"""Builds a schedule and the policy Lightning steps it by, once the optimizer and the fit's length are known."""
+type SchedulerFactory = Callable[[Optimizer, FitProfile], LRSchedulerConfigType]
+"""Builds a schedule and the policy Lightning steps it by, once the optimizer and the fit's length are known.
+
+Lightning's own policy type rather than a mapping of ours: it is handed over verbatim, and a key
+misspelled on the way there is then a type error rather than a schedule that silently never steps."""

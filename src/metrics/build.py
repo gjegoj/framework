@@ -36,12 +36,14 @@ def _in_torchmetrics_dialect(facts: Mapping[str, Any]) -> dict[str, Any]:
     torchmetrics calls the label semantics ``task`` and takes one vocabulary under two names, depending
     on it. Translated here because this is the package torchmetrics is quarantined to: a task states
     what its labels mean in the framework's own word, and each library's dialect is spoken where that
-    library is imported. A task whose target is a number has no semantics and is offered none.
+    library is imported. The word itself needs no translating — ``Semantics`` is a ``StrEnum`` whose
+    members are the library's own spellings — so only the name it arrives under changes. A task whose
+    target is a number has no semantics and is offered none.
     """
     if facts.get("semantics") is None:
         return {}
     classes = facts.get("num_classes")
-    return {"task": str(facts["semantics"]), "num_classes": classes, "num_labels": classes}
+    return {"task": facts["semantics"], "num_classes": classes, "num_labels": classes}
 
 
 def _component(declared: object) -> ComponentConfig:

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from src.core.entities import (
+    SEGMENT,
+    SPLIT,
     Batch,
     DatasetInfo,
     InputInfo,
@@ -31,6 +33,8 @@ from src.core.types import (
 
 __all__ = [
     "CLASS_AXIS",
+    "SEGMENT",
+    "SPLIT",
     "Axis",
     "Batch",
     "DatasetInfo",

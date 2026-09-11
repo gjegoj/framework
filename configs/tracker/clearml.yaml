@@ -18,7 +18,6 @@ tracker:
   tags:
     - ${optimizer.name}
     - ${oc.select:scheduler.name,''}         # the section itself may be null
-    - ${oc.select:adapters.name,''}          # lora, when a run trains a delta
     - lr=${lr}
     - bs=${batch_size}
     - epochs=${epochs}

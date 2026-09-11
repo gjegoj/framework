@@ -76,7 +76,7 @@ class TableDataModule(DataModule):
     ) -> None:
         read = _sources(source)
         bound = {name: _column(name, one) for name, one in inputs.items()}
-        divided_by = Split(**split) if isinstance(split, Mapping) else split
+        divided_by = Split.declared(split) if isinstance(split, Mapping) else split
         divided = isinstance(read, Mapping)
         if divided and divided_by is not None:
             raise ValueError(

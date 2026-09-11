@@ -5,7 +5,7 @@ Importing this package is what makes its names resolvable: `loss: dice` in a con
 
 from __future__ import annotations
 
-from src.losses.base import Loss, TorchLoss
+from src.losses.base import Loss, NamedLoss, TorchLoss
 from src.losses.classification import BinaryCrossEntropy, CrossEntropy, Focal
 from src.losses.composite import WeightedSum
 from src.losses.regression import Expectation, Huber, MeanAbsoluteError, MeanSquaredError, SmoothL1
@@ -22,6 +22,7 @@ __all__ = [
     "Loss",
     "MeanAbsoluteError",
     "MeanSquaredError",
+    "NamedLoss",
     "SmoothL1",
     "TorchLoss",
     "Tversky",

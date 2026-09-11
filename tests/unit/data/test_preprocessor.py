@@ -7,7 +7,7 @@ import pytest
 import torch
 from torch import Tensor
 
-from src.core import Batch, DatasetInfo, Geometry, InputInfo, Modality, Sample, require_tensor
+from src.core import Batch, DatasetInfo, Geometry, InputInfo, Sample, require_tensor
 from src.data import InputEncoder, StandardPreprocessor
 from src.data.encoders import MaskEncoder
 from src.transforms import SampleTransform
@@ -103,7 +103,7 @@ class Text(InputEncoder):
 
     @property
     def info(self) -> InputInfo:
-        return InputInfo(shape=None, modality=Modality.TEXT)
+        return InputInfo(shape=None, modality="text")
 
     def encode(self, value: object) -> Tensor:
         return torch.tensor(len(str(value)))

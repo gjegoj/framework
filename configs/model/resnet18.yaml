@@ -1,6 +1,8 @@
 # The model section names a network. `composite` puts one head per task onto the
-# `backbone` it declares; a model that arrives whole with its own head and loss is
-# reached by `_target_` instead and declares no backbone.
+# `backbone` it declares; a model that arrives whole — its own heads, its own
+# decoding — is reached by `_target_` instead and declares no backbone, and then no
+# task may declare a head either. What a run is *learned by* is never the model's:
+# a loss belongs to the task, and an objective of one's own to `learner`.
 name: composite
 backbone:
   name: timm

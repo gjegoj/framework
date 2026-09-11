@@ -15,6 +15,9 @@ class ComponentConfig(BaseModel):
 
     ``loss: cross_entropy`` reads as ``{name: cross_entropy}``. A nested mapping is an ordinary
     argument unless it carries ``_target_`` of its own; a nested position has no registry.
+
+    ``name`` is the selector and therefore reserved: a constructor with a parameter of that name keeps
+    its default, whichever way it is reached. It is the one argument a declaration cannot pass.
     """
 
     TARGET_KEY: ClassVar[str] = "_target_"
@@ -35,8 +38,8 @@ class ComponentConfig(BaseModel):
         reserved = sorted(key for key in self.params if key.startswith("_") or key == "import_path")
         if reserved:
             raise ValueError(
-                f"Unsupported keys {', '.join(reserved)}: only {self.TARGET_KEY} is meaningful here; "
-                "recursion is always on and positional arguments are never declared."
+                f"Unsupported keys {', '.join(reserved)}: {self.TARGET_KEY} names what to build and every "
+                "other key is an argument for it, so there is nothing an underscored key could mean here."
             )
         return self
 
@@ -61,6 +64,14 @@ class WeightedLossConfig(BaseModel):
     loss: ComponentConfig
     weight: float = Field(1.0, ge=0, allow_inf_nan=False)
     log_name: str | None = Field(None, min_length=1)
+
+    @field_validator("log_name")
+    @classmethod
+    def reportable(cls, value: str | None) -> str | None:
+        """A term reports under this name, so it has to be one a metric key can carry."""
+        if value is not None:
+            validate_name(value, label="Loss log")
+        return value
 
 
 class HeadConfig(ComponentConfig):
@@ -91,6 +102,14 @@ class TaskConfig(BaseModel):
     metrics: dict[str, ComponentConfig] | None = None
     weight: float = Field(1.0, gt=0, allow_inf_nan=False)
     lr: float | None = Field(None, gt=0, allow_inf_nan=False)
+
+    @field_validator("metrics")
+    @classmethod
+    def reportable(cls, value: dict[str, ComponentConfig] | None) -> dict[str, ComponentConfig] | None:
+        """The label is what a report shows a metric under, so it has to be one a metric key can carry."""
+        for label in value or {}:
+            validate_name(label, label="Metric")
+        return value
 
     @field_validator("classes", mode="before")
     @classmethod
@@ -154,5 +173,5 @@ class PreprocessingConfig(ComponentConfig):
     @classmethod
     def named_inputs(cls, value: dict[str, ComponentConfig] | None) -> dict[str, ComponentConfig] | None:
         for name in value or {}:
-            validate_name(name, kind="Input")
+            validate_name(name, label="Input")
         return value

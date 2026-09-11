@@ -56,8 +56,14 @@ class Expectation(Loss):
     values: Tensor
     """Registered as a buffer, so the bins travel with the model to whatever device it runs on."""
 
-    def __init__(self, values: Sequence[float], distance: Loss | None = None) -> None:
+    def __init__(self, values: Sequence[float] | None = None, distance: Loss | None = None) -> None:
         super().__init__()
+        if values is None:
+            raise ValueError(
+                "An expectation reads the number each bin stands for, and this task's target was not laid "
+                "out in bins. Declare a binned encoder (target_encoder: {name: linear_bins, bins: 10}), or "
+                "learn the number directly with mse."
+            )
         if len(values) < 2:
             raise ValueError(f"An expectation spans at least two bins; {len(values)} were declared.")
         self.register_buffer("values", torch.as_tensor(list(values), dtype=torch.float))

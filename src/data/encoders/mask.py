@@ -46,7 +46,3 @@ class MaskEncoder(FileEncoder, VocabularyEncoder):
                     f"Mask {value!r} holds class index {highest}, but the task declares {len(self.classes)} classes "
                     f"(0..{len(self.classes) - 1}). Declare the missing classes, or remap the mask."
                 )
-
-    def fit(self, values: Iterable[object]) -> MaskEncoder:
-        self.validate(values)
-        return self

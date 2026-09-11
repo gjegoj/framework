@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Iterable, Mapping
-from typing import ClassVar
+from typing import ClassVar, Self
 
 import torch
 from torch import Tensor
@@ -31,6 +31,11 @@ class VocabularyEncoder(TargetEncoder):
     def info(self) -> TargetInfo:
         return TargetInfo(classes=self.classes)
 
+    def fit(self, values: Iterable[object]) -> Self:
+        """A declared vocabulary learns nothing from the training split; it is checked against it."""
+        self.validate(values)
+        return self
+
     def position(self, label: object) -> int:
         try:
             return self._positions[str(label).strip()]
@@ -52,10 +57,6 @@ class VocabularyEncoder(TargetEncoder):
 class LabelEncoder(VocabularyEncoder):
     """One class per sample, as an index tensor."""
 
-    def fit(self, values: Iterable[object]) -> LabelEncoder:
-        self.validate(values)
-        return self
-
     def validate(self, values: Iterable[object]) -> None:
         self.refuse_unknown(str(value).strip() for value in values)
 
@@ -72,10 +73,6 @@ class MultilabelEncoder(VocabularyEncoder):
             raise ValueError("multilabel needs a non-empty separator.")
         super().__init__(classes=classes)
         self.separator = separator
-
-    def fit(self, values: Iterable[object]) -> MultilabelEncoder:
-        self.validate(values)
-        return self
 
     def validate(self, values: Iterable[object]) -> None:
         self.refuse_unknown(label for value in values for label in labels_in(value, self.separator))

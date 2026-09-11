@@ -18,11 +18,11 @@ class Registry[T]:
     holds that to be true.
 
     Args:
-        kind: What is registered, as it reads in an error message, e.g. ``"loss"``.
+        label: What is registered, as it reads in an error message, e.g. ``"loss"``.
     """
 
-    def __init__(self, kind: str) -> None:
-        self._kind = kind
+    def __init__(self, label: str) -> None:
+        self._label = label
         self._entries: dict[str, type[T]] = {}
 
     def register(self, name: str, *aliases: str) -> Callable[[type[T]], type[T]]:
@@ -31,7 +31,7 @@ class Registry[T]:
         def decorator(cls: type[T]) -> type[T]:
             for key in (name, *aliases):
                 if key in self._entries:
-                    raise ValueError(f"{self._kind} {key!r} is already registered.")
+                    raise ValueError(f"{self._label} {key!r} is already registered.")
                 self._entries[key] = cls
             return cls
 
@@ -43,7 +43,7 @@ class Registry[T]:
             return self._entries[name]
         except KeyError:
             known = ", ".join(sorted(self._entries)) or "none"
-            raise LookupError(f"Unknown {self._kind} {name!r}. Registered: {known}.") from None
+            raise LookupError(f"Unknown {self._label} {name!r}. Registered: {known}.") from None
 
     def __contains__(self, name: object) -> bool:
         return name in self._entries

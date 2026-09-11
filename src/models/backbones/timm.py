@@ -9,7 +9,7 @@ import timm
 from torch import Tensor, nn
 
 from src.core import Axis, Modality, Stream, TensorShape, TensorTree, require_tensor
-from src.models.base import Backbone
+from src.models.base import Backbone, reads
 from src.models.registry import backbone_registry
 
 
@@ -37,7 +37,8 @@ class TimmBackbone(Backbone):
         return {Stream.POOLED: TensorShape(axes=(Axis.CHANNELS,), sizes=(self.width,))}
 
     def forward(self, inputs: Mapping[str, TensorTree]) -> Mapping[str, Tensor]:
-        pooled = cast(Tensor, self.model(require_tensor(inputs[self.input_name], name=self.input_name)))
+        picture = reads(inputs, self.input_name, type(self).__name__)
+        pooled = cast(Tensor, self.model(require_tensor(picture, name=self.input_name)))
         if pooled.ndim != 2:
             raise ValueError(
                 f"{self.input_name!r} encoded to {pooled.ndim} axes; this adapter publishes a pooled [batch, "

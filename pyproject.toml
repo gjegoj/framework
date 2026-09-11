@@ -54,6 +54,8 @@ filterwarnings = [
     "ignore:.*does not have many workers.*",
     "ignore:.*LeafSpec.*is deprecated.*",
     "ignore:Starting from v1.9.0, `tensorboardX` has been removed.*",
+    "ignore:You defined a `validation_step` but have no `val_dataloader`.*",
+    "ignore:The number of training batches.*is smaller than the logging interval.*",
 ]
 
 [tool.ruff]

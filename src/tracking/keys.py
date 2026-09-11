@@ -5,10 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Self
 
-from src.core import Stage, validate_name
-
-SEGMENT = "/"
-SPLIT = "@"
+from src.core import SEGMENT, SPLIT, Stage, validate_name
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,9 +23,9 @@ class MetricKey:
 
     def __post_init__(self) -> None:
         if self.task is not None:
-            validate_name(self.task, kind="Task")
+            validate_name(self.task, label="Task")
         if self.split is not None:
-            validate_name(self.split, kind="Split")
+            validate_name(self.split, label="Split")
         segments = self.name.split(SEGMENT)
         if any(not part or part.strip() != part or SPLIT in part for part in segments):
             raise ValueError(
@@ -55,5 +52,5 @@ class MetricKey:
         return self.name.rsplit(SEGMENT, 1)[-1]
 
     def __str__(self) -> str:
-        head = self.stage.value if self.split in (None, self.stage.value) else f"{self.stage.value}{SPLIT}{self.split}"
+        head = self.stage if self.split in (None, self.stage) else f"{self.stage}{SPLIT}{self.split}"
         return SEGMENT.join(segment for segment in (head, self.task, self.name) if segment)

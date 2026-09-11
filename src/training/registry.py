@@ -1,9 +1,10 @@
-"""The names an `optimizer`, `scheduler` or `learner` declaration may write."""
+"""The names an `optimizer`, `scheduler`, `learner` or `trainer.profiler` declaration may write."""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from lightning.pytorch.profilers import AdvancedProfiler, Profiler, PyTorchProfiler, SimpleProfiler
 from torch import optim
 
 from src.core import Registry
@@ -32,3 +33,15 @@ scheduler_registry.register("cosine")(optim.lr_scheduler.CosineAnnealingLR)
 scheduler_registry.register("onecycle")(optim.lr_scheduler.OneCycleLR)
 scheduler_registry.register("plateau")(optim.lr_scheduler.ReduceLROnPlateau)
 scheduler_registry.register("step")(optim.lr_scheduler.StepLR)
+
+
+profiler_registry: Registry[Profiler] = Registry("profiler")
+"""What `trainer.profiler` writes: where a run's wall clock went, in increasing detail.
+
+Lightning's own, as they come — `simple` times its hooks, `advanced` profiles the Python inside them,
+`pytorch` goes down to the operators.
+"""
+
+profiler_registry.register("simple")(SimpleProfiler)
+profiler_registry.register("advanced")(AdvancedProfiler)
+profiler_registry.register("pytorch")(PyTorchProfiler)

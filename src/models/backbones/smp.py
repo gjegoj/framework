@@ -11,7 +11,7 @@ import segmentation_models_pytorch as smp
 from torch import Tensor, nn
 
 from src.core import Axis, Modality, Stream, TensorShape, TensorTree, require_tensor
-from src.models.base import Backbone
+from src.models.base import Backbone, reads
 from src.models.registry import backbone_registry
 
 log = logging.getLogger(__name__)
@@ -71,7 +71,7 @@ class SmpBackbone(Backbone):
         }
 
     def forward(self, inputs: Mapping[str, TensorTree]) -> Mapping[str, Tensor]:
-        pictures = require_tensor(inputs[self.input_name], name=self.input_name)
+        pictures = require_tensor(reads(inputs, self.input_name, type(self).__name__), name=self.input_name)
         encoded = self.encoder(pictures)
         if self.carries_prefix_tokens:
             stages, prefix_tokens = encoded

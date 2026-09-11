@@ -18,11 +18,11 @@ import pytest
 SRC = Path(__file__).parents[1] / "src"
 
 QUARANTINE: dict[str, tuple[str, ...]] = {
-    "lightning": ("training/", "callbacks/", "tracking/"),
+    "lightning": ("training/", "callbacks/", "tracking/", "build.py", "experiment.py", "cli.py"),
     "lightning_utilities": (),
     "pydantic": ("config/",),
-    "hydra": ("config/instantiate.py",),
-    "omegaconf": (),
+    "hydra": ("config/instantiate.py", "cli.py"),
+    "omegaconf": ("cli.py",),
     "albumentations": ("transforms/",),
     "albucore": ("transforms/",),
     "torchvision": ("transforms/",),
@@ -38,12 +38,7 @@ QUARANTINE: dict[str, tuple[str, ...]] = {
     "pandas": ("data/",),
     "sklearn": ("data/",),
     "skmultilearn": ("data/",),
-    "onnx": ("export/",),
-    "onnxruntime": ("export/",),
-    "onnxscript": ("export/",),
-    "onnxsim": ("export/",),
-    "tensorrt": ("export/",),
-    "rich": ("console.py", "progress.py", "callbacks/"),
+    "rich": ("console.py", "progress.py", "callbacks/", "cli.py"),
 }
 """Library → the paths under ``src/`` allowed to import it; an empty tuple bans it outright.
 
@@ -55,12 +50,13 @@ CORE_MAY_IMPORT = ("torch", "src.core")
 """Besides the standard library: ``core/`` is the vocabulary every package speaks, so it knows no package."""
 
 CAPABILITY_EDGES: dict[str, frozenset[str]] = {
-    "callbacks": frozenset(
-        {"console", "data", "tracking", "models", "tasks", "training", "transforms", "visualization"}
+    "build": frozenset(
+        {"callbacks", "data", "experiment", "losses", "metrics", "models", "tasks", "tracking", "training"}
     ),
+    "cli": frozenset({"build", "console", "experiment"}),
+    "experiment": frozenset({"training"}),
+    "callbacks": frozenset({"console", "data", "tracking", "models", "tasks", "training", "transforms"}),
     "data": frozenset({"progress", "transforms"}),
-    "export": frozenset({"console", "models", "tasks"}),
-    "inference": frozenset({"data", "models", "tasks"}),
     "metrics": frozenset(),
     "tasks": frozenset(),
     "training": frozenset({"data", "tracking", "metrics", "tasks", "models", "losses"}),
@@ -68,7 +64,6 @@ CAPABILITY_EDGES: dict[str, frozenset[str]] = {
     "tracking": frozenset(),
     "losses": frozenset(),
     "models": frozenset(),
-    "integrations": frozenset({"visualization"}),
     "config": frozenset(),
     "console": frozenset(),
     "progress": frozenset({"console"}),
@@ -82,8 +77,11 @@ CONFIG_READERS = ("build.py", "cli.py", "experiment.py")
 """Only the composition root and a package's own ``build.py`` read declarations."""
 
 TRAINING_MODULE = "training/module.py"
-TRAINING_MODULE_MAY_IMPORT = ("src.core", "src.training", "src.metrics", "src.tracking.report")
-"""``training/module.py`` asks metric sets and trackers what their contracts promise, never how they are built."""
+TRAINING_MODULE_MAY_IMPORT = ("src.core", "src.training", "src.metrics", "src.tracking")
+"""The loop asks metrics and tracking for their contracts, through the one door each package publishes.
+
+Facades only: what a metric collection *is* and where a value goes are contracts, while which backend
+draws it and how one is built are not this module's business."""
 
 
 class Import(NamedTuple):
@@ -185,6 +183,17 @@ def test_every_package_declares_the_edges_it_may_use(files: list[str]) -> None:
 
     assert undeclared == [], "these may import anything until they are declared"
     assert unwritten == [], "these declare edges for something that is not there"
+
+
+def test_every_edge_a_package_declares_points_at_a_package_that_exists(files: list[str]) -> None:
+    """The same rule the quarantine is held to: a permission ahead of its target never fails and grants all."""
+    modules = {name.removesuffix(".py") for name in files if "/" not in name and name != "__init__.py"}
+    known = set(PACKAGES) | modules
+    nowhere = sorted(
+        f"{package} -> {target}" for package, allowed in CAPABILITY_EDGES.items() for target in allowed - known
+    )
+
+    assert nowhere == [], "these edges permit an import of something that is not in the tree"
 
 
 @pytest.mark.parametrize(("package", "allowed"), sorted(CAPABILITY_EDGES.items()), ids=sorted(CAPABILITY_EDGES))

@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 import pytest
 from torch import Tensor, nn
 
 from src.config import ComponentConfig, HeadConfig, ModelConfig
-from src.core import Axis, ModelOutput, Stream, TensorShape
-from src.models import CompositeModel
+from src.core import Axis, ModelOutput, Stream, TensorShape, TensorTree
+from src.models import CompositeModel, Model
 from src.models.build import build_model
 from src.models.heads import ConvHead, LinearHead
 from tests.unit.models.conftest import MAP_WIDTH, POOLED_WIDTH
@@ -128,6 +129,11 @@ class TestFamilies:
         [
             pytest.param(ModelConfig(name="composite"), "backbone", id="a family without a backbone"),
             pytest.param(
+                ModelConfig(_target_="tests.unit.models.test_build.NotAModel"),
+                "not a Model",
+                id="an import path to something else entirely",
+            ),
+            pytest.param(
                 ModelConfig(_target_="tests.unit.models.test_build.Whole", backbone=ENCODER),
                 "brings its own",
                 id="a whole model with a backbone",
@@ -144,8 +150,15 @@ class TestFamilies:
             build_model(declared, {"t": head()}, {"t": CLASSES})
 
 
-class Whole(nn.Module):
+class Whole(Model):
     """A network reached by import path: it owns its heads, so no task's head is built for it."""
 
-    def forward(self, inputs: dict[str, Tensor]) -> Tensor:
-        return next(iter(inputs.values()))
+    def forward(self, inputs: Mapping[str, TensorTree]) -> ModelOutput:
+        return ModelOutput(outputs={"t": next(iter(inputs.values()))})
+
+
+class NotAModel(nn.Module):
+    """Something a `_target_` may point at by mistake: it answers nothing a run can ask a model for."""
+
+    def forward(self, inputs: Mapping[str, TensorTree]) -> None:
+        return None

@@ -4,6 +4,7 @@ devices: auto
 log_every_n_steps: 10
 num_sanity_val_steps: 0
 deterministic: warn
-# Off by default; `trainer=profile` turns it on, and the key is written here so
-# `trainer.profiler.name=pytorch` needs no `+` to reach a config that has it.
+# Off by default; `trainer=profile` turns it on. Override the kind with the
+# shorthand — `trainer=profile trainer.profiler=pytorch` — because dotting into a
+# key that is null here (`trainer.profiler.name=...`) has nothing to dot into.
 profiler: null

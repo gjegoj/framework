@@ -1,6 +1,12 @@
 # @package _global_
-# The default tracker: scalar metrics land in `${run.directory}/metrics.csv`.
-# An honest local record rather than a nameless fallback; `tracker=clearml` uploads instead.
+# A local record: scalar metrics land in `${run.directory}/lightning_logs/metrics.csv`.
+# It holds numbers only — a reading that means a picture needs `tracker=clearml`.
+#
+# `version` is emptied because the run directory already *is* the run's identity, and
+# `version_0` beneath it spells that a second time. The folder above it is Lightning's
+# own default for this logger's `name`, which a declaration cannot write: `name` selects
+# the component here, so a component with a `name` argument of its own keeps its default.
 tracker:
   name: csv
   save_dir: ${run.directory}
+  version: ""

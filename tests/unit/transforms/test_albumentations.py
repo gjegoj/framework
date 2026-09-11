@@ -82,7 +82,6 @@ def test_a_stage_pipeline_normalizes_the_picture_alone_and_crosses_both_into_ten
         pytest.param({}, {**GEOMETRIES, "inputs": {"text": Geometry.NONE}}, "pixels", id="a non-pixel input"),
         pytest.param({}, {**GEOMETRIES, "inputs": {}}, "image input", id="no image at all"),
         pytest.param({}, {**GEOMETRIES, "targets": {"image": Geometry.MASK}}, "more than one role", id="two roles"),
-        pytest.param({}, {**GEOMETRIES, "targets": {"objects": Geometry.BOXES}}, "pixels", id="a boxes target"),
     ],
 )
 def test_refuses_a_binding_that_could_silently_misroute_a_value(

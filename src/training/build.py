@@ -4,10 +4,14 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from functools import partial
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
+from lightning.pytorch.profilers import Profiler
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import ReduceLROnPlateau
+
+if TYPE_CHECKING:
+    from lightning.pytorch.utilities.types import LRSchedulerConfigType
 
 from src.config import ComponentConfig, SchedulerConfig
 from src.config.instantiate import fill_signature, instantiate, resolve_factory, resolve_params
@@ -15,7 +19,7 @@ from src.losses import Loss
 from src.models import Model
 from src.tasks import Task
 from src.training.base import FitProfile, Learner, OptimizerFactory, SchedulerFactory
-from src.training.registry import learner_registry, optimizer_registry, scheduler_registry
+from src.training.registry import learner_registry, optimizer_registry, profiler_registry, scheduler_registry
 
 SCHEDULE = "lr"
 """What a learning-rate graph is titled; Lightning's monitor reads it from the policy below.
@@ -58,11 +62,11 @@ def build_scheduler_factory(declared: SchedulerConfig | None) -> SchedulerFactor
             "e.g. scheduler: {name: plateau, monitor: val/loss, mode: min}."
         )
 
-    def factory(optimizer: Optimizer, profile: FitProfile) -> dict[str, Any]:
+    def factory(optimizer: Optimizer, profile: FitProfile) -> LRSchedulerConfigType:
         written = resolve_params(declared)
         derived = _derived(schedule, optimizer, profile, written)
         _refuse_a_schedule_on_the_wrong_clock(declared.spelled, declared.interval, derived, profile)
-        policy: dict[str, Any] = {
+        policy: LRSchedulerConfigType = {
             "scheduler": schedule(optimizer, **written, **derived),
             "name": SCHEDULE,
             "interval": declared.interval,
@@ -105,3 +109,13 @@ def _refuse_a_schedule_on_the_wrong_clock(
             f"interval is 'epoch': it would advance {profile.epochs} of {profile.total_steps} steps and hold "
             "its warm-up rate for the whole run. Set interval: step."
         )
+
+
+def build_profiler(declared: ComponentConfig | None) -> Profiler | None:
+    """Where a run's wall clock went, when a run asks — `trainer=profile` is the shipped way to."""
+    if declared is None:
+        return None
+    built = instantiate(declared, profiler_registry)
+    if not isinstance(built, Profiler):
+        raise TypeError(f"{declared.spelled!r} built {type(built).__name__}, which profiles nothing.")
+    return built

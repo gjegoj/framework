@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from abc import abstractmethod
 from collections.abc import Iterable
 from typing import ClassVar, Self
 
@@ -73,8 +74,9 @@ class BinnedEncoder(TargetEncoder):
         edges = torch.linspace(low - padding, high + padding, self.bins + 1, dtype=torch.float64)
         self._centers = (edges[:-1] + edges[1:]) / 2.0
 
+    @abstractmethod
     def _padding(self, low: float, high: float) -> float:
-        return 0.0
+        """How far past the observed range the outermost centres sit; every layout answers for itself."""
 
     def _require_centers(self) -> Tensor:
         if self._centers is None:

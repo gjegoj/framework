@@ -25,6 +25,7 @@ from src.data.encoders import (
     MaskEncoder,
     MultilabelEncoder,
     ScalarEncoder,
+    single_threaded_cv2,
 )
 from src.data.preprocessor import StandardPreprocessor
 from src.data.sources import FileSource
@@ -51,4 +52,5 @@ __all__ = [
     "TableDataModule",
     "TableSource",
     "TargetEncoder",
+    "single_threaded_cv2",
 ]

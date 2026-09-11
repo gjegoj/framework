@@ -5,14 +5,18 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import Any, ClassVar, Final
+from typing import Any, ClassVar
 
 import pandas as pd
 
 from src.data.base import Table, TableSource
 from src.data.registry import table_source_registry
 
-CAP_SEED: Final = 42
+CAP_SEED = 42
+"""Which rows a cap keeps, fixed and separate from the experiment's seed — for the same reason
+``Split.seed`` is: two runs at different seeds must read the same slice, or their numbers are not
+comparable.
+"""
 
 
 def format_of(path: str | Path) -> str:

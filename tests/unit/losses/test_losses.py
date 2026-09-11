@@ -249,6 +249,11 @@ class TestBuild:
         reported = built(torch.randn(2, 2, 4, 4), torch.zeros(2, 4, 4, dtype=torch.long))
         assert sorted(reported.losses) == ["cross_entropy", "region"]
 
+    def test_a_loss_that_needs_a_fact_the_task_has_not_got_is_named_with_what_it_was_offered(self) -> None:
+        """The fact reaches the constructor either way; what is missing is said in the loss's own words."""
+        with pytest.raises(ValueError, match="bins"):
+            build_loss("expectation", {"semantics": None, "num_classes": None, "values": None})
+
     def test_a_declaration_that_is_not_a_loss_at_all_is_named(self) -> None:
         declared = ComponentConfig.model_validate({"_target_": "torch.nn.Linear", "in_features": 2, "out_features": 2})
 

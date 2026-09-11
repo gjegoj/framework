@@ -117,6 +117,14 @@ type Prediction = Mapping[str, TensorTree]
 """What a task's output means, per task: the same tree every other value in a batch is."""
 
 
+CONTRIBUTION = "contribution"
+"""The leaf a term's weighted share is reported under, beside the term reporting itself.
+
+A leaf rather than a prefix: a composed name reads ``<task>/<term>``, and a namespace in front of it
+would take the task's place — the share of `mask/dice` is `mask/dice/contribution`.
+"""
+
+
 @dataclass(frozen=True, slots=True)
 class LossOutput:
     """Raw losses never change under weighting; contributions describe the actual objective."""
@@ -145,6 +153,10 @@ class LossOutput:
     def __mul__(self, weight: float) -> LossOutput:
         if not isfinite(weight):
             raise ValueError("Loss weight must be finite.")
+        if weight == 1.0:
+            # A weight of one is not a weighting: the same values under both names, so a report has
+            # nothing to show twice and a step does no arithmetic to arrive back where it started.
+            return self
         return LossOutput(
             self.total * weight, self.losses, {name: value * weight for name, value in self.contributions.items()}
         )
@@ -155,9 +167,24 @@ class LossOutput:
         """Namespace loss values before combining tasks; tracking adds stage and split."""
         return LossOutput(
             self.total,
-            {f"{prefix}/{name}": value for name, value in self.losses.items()},
-            {f"{prefix}/{name}": value for name, value in self.contributions.items()},
+            {f"{prefix}{SEGMENT}{name}": value for name, value in self.losses.items()},
+            {f"{prefix}{SEGMENT}{name}": value for name, value in self.contributions.items()},
         )
+
+    def breakdown(self) -> Mapping[str, Tensor]:
+        """What a report shows besides the total: every term as itself, plus its share where a weight moved it.
+
+        The two readings answer different questions — a term compares across runs whatever weights they
+        gave it, a share explains which of them the total is made of — and a run that weighs nothing sees
+        only the first. Told apart by identity rather than by value: weighting returns new tensors and
+        not weighting returns the very ones reported, so the answer costs no arithmetic per step.
+        """
+        shares = {
+            f"{name}{SEGMENT}{CONTRIBUTION}": value
+            for name, value in self.contributions.items()
+            if value is not self.losses.get(name)
+        }
+        return {**self.losses, **shares}
 
 
 @dataclass(frozen=True, slots=True)
@@ -172,15 +199,27 @@ class Matrix:
 
     Which axis holds the prediction cannot be read off the tensor, and a chart drawn the other way
     round is a plausible-looking lie, so the metric states it here rather than leaving it to be guessed.
+
+    ``labels`` name the rows and columns where something knows what they stand for. A metric counts and
+    has no vocabulary, so they are filled in on the way to a tracker, by whoever holds the task.
+
+    The one value here that is not frozen, and not by choice: measured on torchmetrics 1.9.0, a
+    collection runs whatever ``compute`` returns through ``apply_to_collection``, which rebuilds a
+    dataclass field by field and raises on a frozen one.
     """
 
     value: Tensor
     xaxis: str
     yaxis: str
+    labels: tuple[str, ...] | None = None
 
     def __post_init__(self) -> None:
         if self.value.ndim != 2:
             raise ValueError(f"A matrix is drawn from two axes; this reading has {self.value.ndim}.")
+        if self.labels is not None and len(self.labels) != self.value.shape[0]:
+            raise ValueError(
+                f"A matrix is labelled row by row: {self.value.shape[0]} rows against {len(self.labels)} labels."
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -192,10 +231,16 @@ class StepOutput:
     targets: Mapping[str, TensorTree] = field(default_factory=dict)
 
 
-NAME_SEPARATORS = "./@"
-"""Characters names may not contain: dots address modules, slashes and ``@`` compose metric keys."""
+SEGMENT = "/"
+"""What joins the parts of a composed name: a task and its term, a family and its leaf."""
+
+SPLIT = "@"
+"""What marks a split a value was read on, where it is not the stage's own."""
+
+NAME_SEPARATORS = f".{SEGMENT}{SPLIT}"
+"""Characters a name may not contain: dots address modules, the other two compose the names above."""
 
 
-def validate_name(name: str, *, kind: str = "Component") -> None:
+def validate_name(name: str, *, label: str = "Component") -> None:
     if not name or name.strip() != name or any(char in name for char in NAME_SEPARATORS):
-        raise ValueError(f"{kind} names must be nonblank, unpadded and free of {NAME_SEPARATORS!r}: {name!r}.")
+        raise ValueError(f"{label} names must be nonblank, unpadded and free of {NAME_SEPARATORS!r}: {name!r}.")

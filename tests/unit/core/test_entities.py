@@ -7,7 +7,7 @@ import math
 import pytest
 import torch
 
-from src.core import Batch, InputInfo, LossOutput, Normalization, TargetInfo, TensorTree
+from src.core import Batch, InputInfo, LossOutput, Matrix, Normalization, TargetInfo, TensorTree
 from src.core.entities import validate_classes, validate_name
 from tests.unit.core.conftest import leaves
 
@@ -93,13 +93,14 @@ class TestClasses:
 class TestLossOutput:
     @pytest.fixture
     def ce(self) -> LossOutput:
-        return LossOutput(torch.tensor(2.0), losses={"ce": torch.tensor(2.0)}, contributions={"ce": torch.tensor(2.0)})
+        """One term reporting itself, built as every leaf loss builds it: one value under both names."""
+        value = torch.tensor(2.0)
+        return LossOutput(value, losses={"ce": value}, contributions={"ce": value})
 
     @pytest.fixture
     def dice(self) -> LossOutput:
-        return LossOutput(
-            torch.tensor(1.0), losses={"dice": torch.tensor(1.0)}, contributions={"dice": torch.tensor(1.0)}
-        )
+        value = torch.tensor(1.0)
+        return LossOutput(value, losses={"dice": value}, contributions={"dice": value})
 
     def test_requires_a_scalar_total(self) -> None:
         with pytest.raises(ValueError, match="scalar"):
@@ -128,6 +129,21 @@ class TestLossOutput:
         with pytest.raises(ValueError):
             _ = ce * weight
 
+    def test_a_weight_of_one_is_not_a_weighting(self, ce: LossOutput) -> None:
+        """The default weight leaves the same values, so nothing downstream has two of them to tell apart."""
+        assert 1.0 * ce is ce
+
+    def test_a_report_shows_each_term_once_and_its_share_only_where_a_weight_moved_it(self, ce: LossOutput) -> None:
+        """The share is a leaf of the term, so a namespaced name keeps the shape `<task>/<term>`."""
+        assert set(ce.breakdown()) == {"ce"}
+        assert set((0.5 * ce).breakdown()) == {"ce", "ce/contribution"}
+
+    def test_a_share_is_the_weighted_value_and_the_term_stays_itself(self, ce: LossOutput) -> None:
+        shown = (0.5 * ce).breakdown()
+
+        assert shown["ce"].item() == 2.0
+        assert shown["ce/contribution"].item() == 1.0
+
     def test_a_prefix_namespaces_the_parts_and_leaves_the_total(self, ce: LossOutput) -> None:
         scoped = ce.prefixed("label")
 
@@ -136,6 +152,20 @@ class TestLossOutput:
 
     def test_prefixed_parts_from_two_tasks_add_without_collision(self, ce: LossOutput) -> None:
         assert set((ce.prefixed("a") + ce.prefixed("b")).losses) == {"a/ce", "b/ce"}
+
+
+class TestMatrix:
+    def test_a_reading_is_drawn_from_two_axes_and_says_so_when_it_is_not(self) -> None:
+        with pytest.raises(ValueError, match="two axes"):
+            Matrix(torch.zeros(3), xaxis="Predicted", yaxis="True")
+
+    def test_labels_name_every_row_or_none_of_them(self) -> None:
+        """Half a vocabulary on an axis draws a chart that reads plausibly and says the wrong thing."""
+        with pytest.raises(ValueError, match="label"):
+            Matrix(torch.eye(3), xaxis="Predicted", yaxis="True", labels=("cat", "dog"))
+
+    def test_a_reading_may_be_drawn_without_naming_its_rows(self) -> None:
+        assert Matrix(torch.eye(2), xaxis="Predicted", yaxis="True").labels is None
 
 
 class TestNames:
@@ -148,6 +178,6 @@ class TestNames:
         with pytest.raises(ValueError):
             validate_name(name)
 
-    def test_names_the_kind_in_its_message(self) -> None:
+    def test_names_what_kind_of_name_it_was_given(self) -> None:
         with pytest.raises(ValueError, match="Task"):
-            validate_name("a/b", kind="Task")
+            validate_name("a/b", label="Task")

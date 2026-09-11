@@ -17,7 +17,7 @@ def test_the_minimal_experiment_fills_in_every_default(minimal: dict[str, Any]) 
 
     assert (config.lr, config.batch_size, config.epochs, config.seed) == (1e-3, 16, 10, 42)
     assert config.learner.name == "standard" and config.optimizer.name == "adamw"
-    assert config.scheduler is None and config.tracker is None and config.export == []
+    assert config.scheduler is None and config.tracker is None and config.callbacks == []
     assert config.run.train and config.run.test
 
 
@@ -26,12 +26,30 @@ def test_the_minimal_experiment_fills_in_every_default(minimal: dict[str, Any]) 
     [
         pytest.param("tasks", {}, "at least one task", id="no tasks"),
         pytest.param("tasks", {"a/b": {"kind": "classification"}}, "Task", id="task name with a separator"),
-        pytest.param("optimizer", {"name": "adamw", "lr": 1e-4}, "experiment.lr", id="lr on the optimizer"),
-        pytest.param("loader", {"batch_size": 8}, "experiment.batch_size", id="batch size on the loader"),
-        pytest.param("loader", {"shuffle": True}, "shuffle", id="shuffle is a stage convention"),
-        pytest.param("trainer", {"max_epochs": 3}, "experiment.epochs", id="epochs on the trainer"),
-        pytest.param("trainer", {"callbacks": []}, "experiment.callbacks", id="callbacks on the trainer"),
+        pytest.param("optimizer", {"name": "adamw", "lr": 1e-4}, "the root's lr", id="lr on the optimizer"),
+        pytest.param("loader", {"batch_size": 8}, "the root's batch_size", id="batch size on the loader"),
+        pytest.param("loader", {"shuffle": True}, "not a declaration", id="shuffle is settled by the stage"),
+        pytest.param("trainer", {"max_epochs": 3}, "the root's epochs", id="epochs on the trainer"),
+        pytest.param("trainer", {"callbacks": []}, "the root's callbacks", id="callbacks on the trainer"),
         pytest.param("model", {"name": "composite", "heads": {}}, "tasks", id="heads on the model"),
+        pytest.param(
+            "tasks",
+            {"t": {"kind": "classification", "loss": [{"loss": "cross_entropy", "log_name": "ce@main"}]}},
+            "Loss log",
+            id="a loss name a report could not carry",
+        ),
+        pytest.param(
+            "tasks",
+            {"t": {"kind": "classification", "metrics": {"f1@macro": {"name": "f1"}}}},
+            "Metric",
+            id="a metric label a report could not carry",
+        ),
+        pytest.param(
+            "run",
+            {"checkpoint_path": "runs/nothing-here.ckpt"},
+            "names no file",
+            id="a checkpoint that is not there",
+        ),
         pytest.param("unknown", 1, "unknown", id="unknown section"),
     ],
 )

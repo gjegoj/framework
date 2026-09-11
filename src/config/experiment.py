@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from pathlib import Path
 from typing import ClassVar, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -11,10 +12,18 @@ from src.config.schema import ComponentConfig, ModelConfig, PreprocessingConfig,
 from src.core import Stage, validate_name
 
 
-def reject_owned_keys(values: Mapping[str, object], owned: Mapping[str, str]) -> None:
+def refuse_owned_keys(values: Mapping[str, object], owned: Mapping[str, str]) -> None:
+    """A key the framework settles elsewhere is declared once, where it belongs."""
     for key, location in owned.items():
         if key in values:
             raise ValueError(f"Declare {key} once, at {location}.")
+
+
+def refuse_settled_keys(values: Mapping[str, object], settled: Mapping[str, str]) -> None:
+    """A key this framework never takes a declaration for, and why — there is nowhere to move it to."""
+    for key, reason in settled.items():
+        if key in values:
+            raise ValueError(f"{key} is not a declaration this framework takes: {reason}.")
 
 
 class RunConfig(BaseModel):
@@ -34,6 +43,11 @@ class RunConfig(BaseModel):
             raise ValueError("Choose one of run.checkpoint_path or run.resume_path.")
         if self.resume_path is not None and not self.train:
             raise ValueError("run.resume_path requires run.train=true.")
+        # Here rather than where they are read: both are read after the sources, the fitted encoders
+        # and a warmed cache, which is minutes into a run for a typo in a path.
+        for field, path in (("checkpoint_path", self.checkpoint_path), ("resume_path", self.resume_path)):
+            if path is not None and not Path(path).is_file():
+                raise ValueError(f"run.{field} names no file: {path}")
         return self
 
 
@@ -45,10 +59,14 @@ class ForwardSection(BaseModel):
 
     model_config = ConfigDict(extra="allow")
     owned: ClassVar[Mapping[str, str]] = {}
+    """Keys declared once somewhere else in this file, by the path a reader can go and edit."""
+    settled: ClassVar[Mapping[str, str]] = {}
+    """Keys with no declaration anywhere: the framework decides them, and says why."""
 
     @model_validator(mode="after")
     def framework_arguments(self) -> Self:
-        reject_owned_keys(self.params, self.owned)
+        refuse_owned_keys(self.params, self.owned)
+        refuse_settled_keys(self.params, self.settled)
         return self
 
     @property
@@ -59,11 +77,14 @@ class ForwardSection(BaseModel):
 
 class LoaderConfig(ForwardSection):
     owned: ClassVar[Mapping[str, str]] = {
-        "batch_size": "experiment.batch_size",
+        "batch_size": "the root's batch_size",
         "dataset": "data",
         "collate_fn": "preprocessing.collator",
-        "shuffle": "the stage: training shuffles, evaluation preserves order",
-        "batch_sampler": "a custom DataLoader adapter (it replaces fixed batch_size)",
+    }
+    settled: ClassVar[Mapping[str, str]] = {
+        "shuffle": "training shuffles and evaluation preserves the order it was given",
+        "batch_sampler": "it replaces the fixed batch size, so a run that needs one declares a data "
+        "module that yields batches",
     }
 
     num_workers: int = Field(0, ge=0)
@@ -73,9 +94,9 @@ class LoaderConfig(ForwardSection):
 
 class TrainerConfig(ForwardSection):
     owned: ClassVar[Mapping[str, str]] = {
-        "max_epochs": "experiment.epochs",
-        "logger": "experiment.tracker",
-        "callbacks": "experiment.callbacks",
+        "max_epochs": "the root's epochs",
+        "logger": "the root's tracker",
+        "callbacks": "the root's callbacks",
         "default_root_dir": "run.directory",
     }
 
@@ -119,16 +140,15 @@ class ExperimentConfig(BaseModel):
     trainer: TrainerConfig = Field(default_factory=TrainerConfig)
     callbacks: list[ComponentConfig] = Field(default_factory=list)
     tracker: ComponentConfig | None = None
-    export: list[ComponentConfig] = Field(default_factory=list)
     run: RunConfig = Field(default_factory=RunConfig)
 
     @model_validator(mode="after")
     def connections(self) -> ExperimentConfig:
-        reject_owned_keys(self.optimizer.params, {"lr": "experiment.lr"})
+        refuse_owned_keys(self.optimizer.params, {"lr": "the root's lr"})
         if not self.tasks:
             raise ValueError("An experiment requires at least one task.")
         for name in self.tasks:
-            validate_name(name, kind="Task")
+            validate_name(name, label="Task")
         if "heads" in self.model.params:
             raise ValueError("Declare heads once, under tasks; the model section only selects the network.")
         return self

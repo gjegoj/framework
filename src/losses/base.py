@@ -109,3 +109,20 @@ def as_tensor(value: Any) -> Tensor:
 def snake_case(name: str) -> str:
     """`BinaryCrossEntropy` reads as `binary_cross_entropy`: a class name as a log key."""
     return re.sub(r"(?<!^)(?=[A-Z])", "_", name).lower()
+
+
+class NamedLoss(Loss):
+    """A loss the framework did not write, reached by import path: called, and reported under its name.
+
+    The runtime half of what ``TorchLoss`` does declaratively — that one is told which module to build,
+    this one is handed one already built — so a `_target_` to any module comparing two tensors is a
+    complete declaration, and it reports under its own class name unless a run renames it.
+    """
+
+    def __init__(self, module: nn.Module) -> None:
+        super().__init__()
+        self.module = module
+        self.log_name = snake_case(type(module).__name__.removesuffix("Loss")) or "loss"
+
+    def forward(self, outputs: Tensor, targets: Tensor) -> LossOutput:
+        return self.reported(cast(Tensor, self.module(outputs, targets)))

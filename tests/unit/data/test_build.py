@@ -2,16 +2,17 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pandas as pd
 import pytest
+from torch.utils.data import Dataset
 
 from src.config import ComponentConfig
-from src.core import Geometry, Sample, Stage
-from src.data import StandardPreprocessor
+from src.core import DatasetInfo, Geometry, Sample, Stage
+from src.data import DataModule, StandardPreprocessor
 from src.data.build import build_data_module, build_preprocessor, build_target_encoder, build_transforms
 from src.data.encoders import LabelEncoder, ScalarEncoder
 from src.data.table import TableDataModule
@@ -105,7 +106,7 @@ class TestDataModule:
                 "name": "table",
                 "source": str(rows),
                 "inputs": {"image": {"column": "image_path"}},
-                "split": {"fractions": {"train": 0.5, "val": 0.5}, "seed": 1},
+                "split": {"train": 0.5, "val": 0.5, "seed": 1},
             }
         )
 
@@ -168,6 +169,22 @@ class Flip:
         return sample
 
 
-class Recording:
+class Recording(DataModule):
+    """A module of one's own, reached by `_target_`: it records what the builder handed it."""
+
     def __init__(self, **received: Any) -> None:
         self.received = received
+
+    @property
+    def preprocessor(self) -> StandardPreprocessor:
+        return cast(StandardPreprocessor, self.received["preprocessor"])
+
+    @property
+    def info(self) -> DatasetInfo:
+        return self.preprocessor.info
+
+    def setup(self, splits: Sequence[str]) -> None:
+        return None
+
+    def dataset(self, split: str) -> Dataset[Sample]:
+        raise LookupError(split)

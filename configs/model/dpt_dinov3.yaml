@@ -1,6 +1,7 @@
 # A DINOv3 ViT encoder under smp's DPT decoder — dense prediction from a
-# self-supervised backbone. `encoder_weights: true` asks for the encoder's own
-# pretrained weights rather than an ImageNet checkpoint it never saw.
+# self-supervised backbone. `encoder_weights` is written here only to be explicit:
+# for a `tu-` encoder smp asks timm for whatever tag that architecture ships with,
+# so this says the same thing the framework's own `pretrained: true` default says.
 #
 # `dynamic_img_size: false` with an explicit `img_size` is not a detail: built
 # dynamically, this family recomputes its rotary position grid inside every

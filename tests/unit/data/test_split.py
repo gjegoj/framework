@@ -82,3 +82,20 @@ def test_a_missing_column_or_an_empty_part_is_named(table: pd.DataFrame) -> None
         split_table(table, Split(FRACTIONS, stratify_by="breed"))
     with pytest.raises(ValueError, match="train"):
         split_table(table.head(1), Split({"train": 0.5, "val": 0.5}))
+
+
+class TestDeclaration:
+    """How a run writes a split: shares by split name, beside the options that shape the division."""
+
+    def test_the_shares_and_the_options_arrive_in_one_flat_mapping(self) -> None:
+        declared = Split.declared({"train": 0.7, "val": 0.3, "stratify_by": "species", "seed": 1})
+
+        assert declared == Split({"train": 0.7, "val": 0.3}, seed=1, stratify_by="species")
+
+    def test_a_share_written_as_a_whole_number_is_still_a_share(self) -> None:
+        assert Split.declared({"train": 1}) == Split({"train": 1.0})
+
+    def test_an_option_misspelled_is_named_among_the_splits_it_was_taken_for(self) -> None:
+        """The one cost of a flat mapping: a typo becomes a split, so the refusal has to name them."""
+        with pytest.raises(ValueError, match="stratify_bin"):
+            Split.declared({"train": 0.7, "val": 0.3, "stratify_bin": 5})

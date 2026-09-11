@@ -6,10 +6,15 @@ from enum import StrEnum
 
 
 class Stage(StrEnum):
+    """What a run is doing, and — by convention — the name of the split it reads while doing it.
+
+    The convention is what lets a declaration written per stage (`transforms`) reach the split a data
+    module prepared, so the two words stay one word wherever they meet.
+    """
+
     TRAIN = "train"
     VAL = "val"
     TEST = "test"
-    PREDICT = "predict"
 
 
 class Axis(StrEnum):
@@ -44,7 +49,6 @@ class Modality(StrEnum):
     """What an input is; conventional names, as ``Stream``'s are — a custom encoder may say anything."""
 
     IMAGE = "image"
-    TEXT = "text"
 
 
 class Role(StrEnum):
@@ -65,4 +69,3 @@ class Geometry(StrEnum):
     NONE = "none"
     IMAGE = "image"
     MASK = "mask"
-    BOXES = "boxes"

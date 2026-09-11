@@ -79,3 +79,20 @@ class ShapeAware(Protocol):
     """
 
     reads: ClassVar[tuple[str, ...]]
+
+
+def reads(inputs: Mapping[str, TensorTree], name: str, reader: str) -> TensorTree:
+    """The input a backbone reads, refused by name with what this run actually carries.
+
+    Three declarations have to agree on one word — `data.inputs.<name>`, `preprocessing.inputs.<name>`
+    and the backbone's `input_name` — and a bare `KeyError` inside a forward pass names none of them.
+    Shaped like ``Task._own``, which answers the same question on the other side of a step.
+    """
+    try:
+        return inputs[name]
+    except KeyError:
+        carried = ", ".join(sorted(inputs)) or "nothing"
+        raise LookupError(
+            f"{reader} reads input {name!r}, and this batch carries {carried}. The name is declared in "
+            "`data.inputs` and `preprocessing.inputs`; a backbone reading another says so with `input_name`."
+        ) from None

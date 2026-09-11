@@ -5,7 +5,8 @@ from __future__ import annotations
 import logging
 import math
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
+from typing import Any, Self
 
 import numpy as np
 import pandas as pd
@@ -38,15 +39,33 @@ class Split:
         if not self.fractions:
             raise ValueError("A split needs at least one named fraction.")
         for name in self.fractions:
-            validate_name(name, kind="Split")
+            validate_name(name, label="Split")
         if any(fraction < 0 for fraction in self.fractions.values()):
             raise ValueError("Split fractions are nonnegative.")
         if not math.isclose(sum(self.fractions.values()), 1.0, abs_tol=1e-6):
-            raise ValueError(f"Split fractions must sum to 1, got {sum(self.fractions.values())}.")
+            # Named, because a run writes the shares flat: a misspelled option reads as one more split.
+            raise ValueError(
+                f"Split fractions must sum to 1, got {sum(self.fractions.values())} over {', '.join(self.fractions)}."
+            )
         if self.stratify_by is not None and self.group_by is not None:
             raise ValueError("stratify_by and group_by cannot be combined: a group moves whole, a stratum is spread.")
         if self.stratify_bins < 2:
             raise ValueError(f"stratify_bins needs at least 2, got {self.stratify_bins}.")
+
+    @classmethod
+    def declared(cls, values: Mapping[str, Any]) -> Self:
+        """A split as a run writes it — ``{train: 0.7, val: 0.3, stratify_by: species}``.
+
+        One flat mapping rather than a nested ``fractions:``, because that is how a division reads: the
+        names below are this class's own options and every other key is a split with its share. The
+        cost is that a split cannot be called ``seed``, and that a misspelled option becomes a split —
+        which is why the refusal above names them.
+        """
+        options = {one.name for one in fields(cls)} - {"fractions"}
+        return cls(
+            {name: float(value) for name, value in values.items() if name not in options},
+            **{name: value for name, value in values.items() if name in options},
+        )
 
 
 def split_table(table: Table, split: Split) -> dict[str, Table]:

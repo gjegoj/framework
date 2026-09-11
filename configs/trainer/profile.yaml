@@ -12,7 +12,7 @@
 #
 #   uv run main.py experiment=... trainer=profile trainer.profiler.name=pytorch
 #
-# The report is written into the run's directory as `fit-profile.txt` — see
+# The report is written into the run's directory as `fit-profile.txt`.
 defaults:
   - default
 

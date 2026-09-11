@@ -79,7 +79,7 @@ def _values(sample: Sample) -> tuple[tuple[str, Mapping[str, object]], ...]:
 def _pipeline_kind(role: str, name: str, geometry: Geometry) -> str:
     """Everything a pipeline moves is pixels; anything else reaches it by mistake, whatever its role."""
     if geometry not in PIPELINE_KIND:
-        travels = ", ".join(sorted(kind.value for kind in PIPELINE_KIND))
+        travels = ", ".join(sorted(PIPELINE_KIND.values()))
         raise ValueError(
             f"{role} {name!r} declares geometry {geometry.value!r}, but a pipeline moves pixels: {travels}."
         )

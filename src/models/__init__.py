@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from src.models.backbones import SmpBackbone, TimmBackbone
 from src.models.base import Backbone, HeadConnection, Model, ShapeAware
+from src.models.checkpoints import load_weights
 from src.models.composite import CompositeModel
 from src.models.heads import ConvHead, LinearHead
 
@@ -21,4 +22,5 @@ __all__ = [
     "ShapeAware",
     "SmpBackbone",
     "TimmBackbone",
+    "load_weights",
 ]

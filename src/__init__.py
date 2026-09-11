@@ -1,5 +1,6 @@
-"""Framework v2 contracts. Training implementations are not available yet.
+"""The framework's packages; the root imports none of them.
 
-Import public contracts from their owning packages, for example ``src.models``.
-The root deliberately imports no integrations and initializes no registries.
+Import a contract from the package that owns it — ``src.models``, ``src.tasks``, ``src.training``.
+Importing a package is what registers the names its declarations may write, so the root deliberately
+initializes nothing: a tool that only reads a schema pays for no model hub.
 """

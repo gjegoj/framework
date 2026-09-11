@@ -4,11 +4,10 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
 
 from src.config import ClassFile, ComponentConfig, PreprocessingConfig, TaskConfig
 from src.config.instantiate import instantiate, resolve_factory
-from src.core import Stage
+from src.core import Geometry, Registry, Stage
 from src.data.base import DataModule, Encoder, Preprocessor, TargetEncoder
 from src.data.registry import (
     cache_registry,
@@ -32,7 +31,7 @@ def build_preprocessor(
         for name, task in tasks.items()
         if task.target
     }
-    built: Preprocessor = instantiate(
+    built = instantiate(
         declared,
         preprocessor_registry,
         inputs=_encoders(declared.inputs, input_encoder_registry),
@@ -41,6 +40,11 @@ def build_preprocessor(
         collator=instantiate(declared.collator or ComponentConfig(name="stack"), collator_registry),
         cache=instantiate(declared.cache, cache_registry) if declared.cache is not None else None,
     )
+    if not isinstance(built, Preprocessor):
+        raise TypeError(
+            f"{declared.spelled!r} built {type(built).__name__}, which is not a Preprocessor: a run asks it "
+            "to turn a raw sample into tensors and to join a batch of them, and this answers neither."
+        )
     return built
 
 
@@ -73,19 +77,13 @@ def classes_of(declared: Mapping[int, str] | ClassFile) -> dict[int, str]:
 
 
 def build_transforms(
-    declared: Mapping[Stage, ComponentConfig], geometries: Mapping[str, Mapping[str, Any]]
+    declared: Mapping[Stage, ComponentConfig], geometries: Mapping[str, Mapping[str, Geometry]]
 ) -> dict[str, SampleTransform]:
-    """One sample transform per stage, keyed by the split that runs it.
-
-    A stage and a split share a name by convention — ``train``, ``val``, ``test`` — which is how a
-    declaration written per stage reaches the split the data module prepared.
-    """
+    """One sample transform per stage, keyed by the split that runs it — the convention ``Stage`` declares."""
     built: dict[str, SampleTransform] = {}
     for stage, component in declared.items():
         transform = instantiate(component)
-        built[stage.value] = (
-            transform.with_geometry(**geometries) if isinstance(transform, GeometryAware) else transform
-        )
+        built[stage] = transform.with_geometry(**geometries) if isinstance(transform, GeometryAware) else transform
     return built
 
 
@@ -101,11 +99,16 @@ def build_data_module(
     A family with a declaration grammar of its own reads it in its own constructor — paths become
     sources, bindings become columns — so this builder knows of no family in particular.
     """
-    built: DataModule = instantiate(
+    built = instantiate(
         declared, data_module_registry, preprocessor=preprocessor, targets=targets, transforms=transforms
     )
+    if not isinstance(built, DataModule):
+        raise TypeError(
+            f"{declared.spelled!r} built {type(built).__name__}, which is not a DataModule: a run asks it for "
+            "prepared splits and what they turned out to hold, and this answers neither."
+        )
     return built
 
 
-def _encoders(declared: Mapping[str, ComponentConfig] | None, registry: Any) -> dict[str, Any]:
+def _encoders[T](declared: Mapping[str, ComponentConfig] | None, registry: Registry[T]) -> dict[str, T]:
     return {name: instantiate(component, registry) for name, component in (declared or {}).items()}

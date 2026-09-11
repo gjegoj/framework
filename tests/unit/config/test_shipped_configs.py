@@ -25,6 +25,7 @@ from src.metrics.registry import metric_registry
 from src.models.build import NATIVE
 from src.models.registry import backbone_registry, head_registry, model_registry
 from src.tasks.registry import task_registry
+from src.tracking.registry import tracker_registry
 from src.training.registry import learner_registry, optimizer_registry, scheduler_registry
 from tests.support.paths import CONFIGS
 
@@ -45,19 +46,6 @@ def test_a_shipped_example_composes_into_a_valid_experiment(example: str) -> Non
     config = load_config(composed(f"experiment=examples/{example}"))
 
     assert isinstance(config, ExperimentConfig) and config.tasks
-
-
-@pytest.mark.parametrize(
-    "override",
-    [
-        "tracker=none",
-        "scheduler=onecycle",
-        "callbacks=default",
-        "export=all",
-    ],
-)
-def test_every_group_option_validates_on_the_classification_example(override: str) -> None:
-    load_config(composed("experiment=examples/classification", override))
 
 
 @pytest.mark.parametrize("group", ["default", "augmented"])
@@ -93,6 +81,8 @@ def declared_names(config: ExperimentConfig) -> Iterator[tuple[ComponentConfig, 
     yield config.optimizer, optimizer_registry
     if config.scheduler is not None:
         yield config.scheduler, scheduler_registry
+    if config.tracker is not None:
+        yield config.tracker, tracker_registry
     for task in config.tasks.values():
         yield task.kind, task_registry
         if task.target_encoder is not None:
@@ -106,16 +96,43 @@ def declared_names(config: ExperimentConfig) -> Iterator[tuple[ComponentConfig, 
         yield from ((one, metric_registry) for one in (task.metrics or {}).values())
 
 
-@pytest.mark.parametrize("example", EXAMPLES)
-def test_every_name_a_shipped_example_writes_resolves_to_an_implementation(example: str) -> None:
-    """Validating a file only proves its grammar: a name nothing implements passes and dies at the run."""
-    config = load_config(composed(f"experiment=examples/{example}"))
-
+def unresolved_names(config: ExperimentConfig) -> list[str]:
+    """Every name this configuration writes that nothing implements, with the reason each failed."""
     unresolved = []
     for declared, registry in declared_names(config):
         try:
             resolve_factory(declared, registry)
         except (LookupError, TypeError) as error:
             unresolved.append(f"{declared.spelled}: {error}")
+    return unresolved
 
-    assert unresolved == []
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        "tracker=none",
+        "tracker=csv",
+        "tracker=clearml",
+        "scheduler=onecycle",
+        "scheduler=cosine",
+        "scheduler=plateau",
+        "scheduler=step",
+        "callbacks=default",
+        "model=dpt_dinov3",
+        "model=unet",
+        "trainer=profile",
+        "loader=performance",
+    ],
+)
+def test_every_group_option_validates_and_names_something_that_exists(override: str) -> None:
+    config = load_config(composed("experiment=examples/classification", override))
+
+    assert unresolved_names(config) == []
+
+
+@pytest.mark.parametrize("example", EXAMPLES)
+def test_every_name_a_shipped_example_writes_resolves_to_an_implementation(example: str) -> None:
+    """Validating a file only proves its grammar: a name nothing implements passes and dies at the run."""
+    config = load_config(composed(f"experiment=examples/{example}"))
+
+    assert unresolved_names(config) == []

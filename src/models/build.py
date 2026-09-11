@@ -28,7 +28,12 @@ def build_model(declared: ModelConfig, heads: Mapping[str, HeadConfig], outputs:
             raise ValueError(
                 f"{declared.spelled!r} is a whole model and brings its own backbone; drop 'model.backbone'."
             )
-        whole: Model = instantiate(declared)
+        whole = instantiate(declared)
+        if not isinstance(whole, Model):
+            raise TypeError(
+                f"{declared.spelled!r} built {type(whole).__name__}, which is not a Model: a run asks a model "
+                "for one thing, that inputs become outputs, and this cannot answer."
+            )
         return whole
     if declared.backbone is None:
         raise ValueError(f"{declared.spelled!r} composes heads onto a backbone; declare 'model.backbone'.")

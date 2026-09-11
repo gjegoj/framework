@@ -72,7 +72,7 @@ class TestContract:
 class TestConfusionMatrix:
     def test_it_says_which_of_its_axes_is_the_prediction(self) -> None:
         """A bare square tensor is any two-dimensional reading; which axis is which is this class's to say."""
-        matrix = ConfusionMatrix(task="multiclass", num_classes=CLASSES)
+        matrix = ConfusionMatrix(task=Semantics.MULTICLASS, num_classes=CLASSES)
         matrix.update(VOTES, CHOICES)
 
         drawn = matrix.compute()
@@ -82,7 +82,7 @@ class TestConfusionMatrix:
 
     def test_it_forgets_its_counts_with_the_metric_that_holds_them(self) -> None:
         """Measured on torchmetrics 1.9.0: resetting a metric leaves the state of a metric inside it."""
-        matrix = ConfusionMatrix(task="multiclass", num_classes=CLASSES)
+        matrix = ConfusionMatrix(task=Semantics.MULTICLASS, num_classes=CLASSES)
         matrix.update(VOTES, CHOICES)
 
         matrix.reset()
@@ -95,7 +95,7 @@ class TestConfusionMatrix:
         grouped (torchmetrics 1.9.0). Were that to change, a collection would update only the group's
         leader and this matrix would draw stale counts — a wrong chart, not an error."""
         grouped = build_metrics({"f1": {"name": "f1"}, "confusion_matrix": {"name": "confusion_matrix"}}, VOCABULARY)
-        alone = ConfusionMatrix(task="multiclass", num_classes=CLASSES)
+        alone = ConfusionMatrix(task=Semantics.MULTICLASS, num_classes=CLASSES)
 
         for _ in range(2):
             grouped.update(VOTES, CHOICES)

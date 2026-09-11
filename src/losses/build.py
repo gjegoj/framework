@@ -6,12 +6,11 @@ from collections.abc import Mapping, Sequence
 from inspect import signature
 from typing import Any, cast
 
-from torch import Tensor, nn
+from torch import nn
 
 from src.config import ComponentConfig, WeightedLossConfig
 from src.config.instantiate import instantiate_offering
-from src.core import LossOutput
-from src.losses.base import Loss, snake_case
+from src.losses.base import Loss, NamedLoss
 from src.losses.composite import WeightedSum
 from src.losses.registry import loss_registry
 
@@ -46,7 +45,13 @@ def _weighted(declared: object) -> list[WeightedLossConfig]:
 
 
 def _one(declared: ComponentConfig, facts: Mapping[str, Any], log_name: str | None) -> Loss:
-    built: Any = instantiate_offering(declared, loss_registry, **facts)
+    try:
+        built: Any = instantiate_offering(declared, loss_registry, **facts)
+    except TypeError as error:
+        offered = ", ".join(sorted(facts)) or "nothing"
+        raise ValueError(
+            f"{declared.spelled!r} needs more than this task settles about its target ({offered}): {error}"
+        ) from error
     if not isinstance(built, Loss):
         if not (isinstance(built, nn.Module) and _compares_two_tensors(built)):
             raise TypeError(
@@ -64,15 +69,3 @@ def _compares_two_tensors(module: nn.Module) -> bool:
     accepted = signature(type(module).forward).parameters
     positional = [name for name, one in accepted.items() if one.kind is not one.KEYWORD_ONLY][1:]  # drop self
     return len(positional) >= 2
-
-
-class NamedLoss(Loss):
-    """A torch loss reached by import path: it reports under its own class name unless a run renames it."""
-
-    def __init__(self, module: nn.Module) -> None:
-        super().__init__()
-        self.module = module
-        self.log_name = snake_case(type(module).__name__.removesuffix("Loss")) or "loss"
-
-    def forward(self, outputs: Tensor, targets: Tensor) -> LossOutput:
-        return self.reported(cast(Tensor, self.module(outputs, targets)))
