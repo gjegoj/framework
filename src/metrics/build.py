@@ -8,7 +8,7 @@ from typing import Any
 from torchmetrics import Metric, MetricCollection
 
 from src.config import ComponentConfig
-from src.config.instantiate import fill_signature, refuse_restated_facts, resolve_params, resolve_target
+from src.config.instantiate import instantiate_offering
 from src.metrics.registry import metric_registry
 
 
@@ -26,7 +26,22 @@ def build_metrics(declared: Mapping[str, object], facts: Mapping[str, Any]) -> M
     Metrics sharing that state (precision, recall and f1 over one confusion matrix) are updated once
     between them; torchmetrics groups them on its own.
     """
-    return MetricCollection({label: _one(_component(one), facts) for label, one in declared.items()})
+    spoken = _in_torchmetrics_dialect(facts)
+    return MetricCollection({label: _one(_component(one), spoken) for label, one in declared.items()})
+
+
+def _in_torchmetrics_dialect(facts: Mapping[str, Any]) -> dict[str, Any]:
+    """The run's facts under the names torchmetrics gives them.
+
+    torchmetrics calls the label semantics ``task`` and takes one vocabulary under two names, depending
+    on it. Translated here because this is the package torchmetrics is quarantined to: a task states
+    what its labels mean in the framework's own word, and each library's dialect is spoken where that
+    library is imported. A task whose target is a number has no semantics and is offered none.
+    """
+    if facts.get("semantics") is None:
+        return {}
+    classes = facts.get("num_classes")
+    return {"task": str(facts["semantics"]), "num_classes": classes, "num_labels": classes}
 
 
 def _component(declared: object) -> ComponentConfig:
@@ -39,11 +54,8 @@ def _component(declared: object) -> ComponentConfig:
 
 
 def _one(declared: ComponentConfig, facts: Mapping[str, Any]) -> Metric:
-    factory = resolve_target(declared, metric_registry)
-    settled = fill_signature(factory, **facts)
-    refuse_restated_facts(declared, settled)
     try:
-        built: Metric = factory(**resolve_params(declared), **settled)
+        built: Metric = instantiate_offering(declared, metric_registry, **facts)
     except TypeError as error:
         offered = ", ".join(sorted(facts)) or "nothing"
         raise ValueError(

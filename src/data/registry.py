@@ -10,10 +10,10 @@ from src.data.base import Collator, DataModule, InputEncoder, Preprocessor, Tabl
 if TYPE_CHECKING:
     from src.data.cache import Cache
 
-input_encoder_registry = Registry[InputEncoder]("input encoder")
-target_encoder_registry = Registry[TargetEncoder]("target encoder")
-collator_registry = Registry[Collator]("collator")
-table_source_registry = Registry[TableSource]("table source")
-data_module_registry = Registry[DataModule]("data module")
-preprocessor_registry = Registry[Preprocessor]("preprocessor")
+input_encoder_registry: Registry[InputEncoder] = Registry("input encoder")
+target_encoder_registry: Registry[TargetEncoder] = Registry("target encoder")
+collator_registry: Registry[Collator] = Registry("collator")
+table_source_registry: Registry[TableSource] = Registry("table source")
+data_module_registry: Registry[DataModule] = Registry("data module")
+preprocessor_registry: Registry[Preprocessor] = Registry("preprocessor")
 cache_registry: Registry[Cache] = Registry("cache")

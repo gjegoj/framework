@@ -4,13 +4,21 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, Sequence
-from math import isfinite
 from typing import ClassVar
 
 from torch import Tensor
 
-from src.core import Axis, Batch, ModelOutput, Stream, TargetInfo, TensorShape, TensorTree, require_tensor
-from src.core.entities import validate_name
+from src.core import (
+    Axis,
+    Batch,
+    ModelOutput,
+    Semantics,
+    Stream,
+    TargetInfo,
+    TensorShape,
+    TensorTree,
+    require_tensor,
+)
 
 type LossDeclaration = str | Mapping[str, object] | Sequence[Mapping[str, object]]
 """A loss as a task declares its default: a registry name, one declaration, or several to weigh together."""
@@ -23,24 +31,29 @@ class Task(ABC):
     column, which head serves it, what it is judged by — and it converts between the three views one step
     needs: what the loss compares, what the model's output means, and what a metric scores.
 
+    ``weight`` is its share of the objective and ``lr`` the rate its own parameters move at: both are
+    facts of this run rather than of the semantics, which is why they sit on the instance. They arrive
+    already checked — `tasks.<name>` is a typed section — so nothing here reads them twice.
+
     Attributes:
         default_head: The head a task gets when a run declares none, and the stream it reads.
         default_target_encoder: Registry name of the encoder its column starts from, or None when the
             batch itself is the supervision. Read before the data is prepared, so it cannot see facts.
         default_metrics: What the task is judged by when a run declares no metrics of its own.
+        semantics: What this task's labels mean, where they mean one of the three things a vocabulary
+            can mean; None where the target is a number rather than a label.
     """
 
-    default_head: ClassVar[Mapping[str, object]] = {"name": "linear", "input": Stream.POOLED}
+    default_head: ClassVar[Mapping[str, object]] = {"name": "linear", "stream": Stream.POOLED}
     default_target_encoder: ClassVar[str | None] = None
     default_metrics: ClassVar[Mapping[str, Mapping[str, object]]] = {}
+    semantics: ClassVar[Semantics | None] = None
 
-    def __init__(self, name: str, info: TargetInfo, *, weight: float = 1.0) -> None:
-        validate_name(name, kind="Task")
-        if not isfinite(weight) or weight <= 0:
-            raise ValueError(f"Task {name!r} needs a positive, finite weight; got {weight}.")
+    def __init__(self, name: str, info: TargetInfo, *, weight: float = 1.0, lr: float | None = None) -> None:
         self.name = name
         self.info = info
         self.weight = weight
+        self.lr = lr
 
     @classmethod
     @abstractmethod
@@ -57,9 +70,13 @@ class Task(ABC):
     def default_loss(self) -> LossDeclaration:
         """The objective this task is learned by when a run declares none; instance-level, so it can read facts."""
 
-    def metric_kwargs(self) -> Mapping[str, object]:
-        """Facts a metric's constructor may name — the vocabulary it scores against."""
-        return {}
+    def facts(self) -> Mapping[str, object]:
+        """What this run settled about the target, for whoever is built around it to name in its constructor.
+
+        One answer for losses and for metrics alike: a fact reaches a constructor that names it, and a
+        declaration restating one is refused. A new fact is a key here, not an edit to either builder.
+        """
+        return {"semantics": self.semantics, "num_classes": self.info.num_classes, "values": self.info.values}
 
     @abstractmethod
     def loss_target(self, batch: Batch) -> Tensor:

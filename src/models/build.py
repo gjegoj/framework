@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from torch import nn
 
 from src.config import ComponentConfig, HeadConfig, ModelConfig
-from src.config.instantiate import instantiate, resolve_params, resolve_target
+from src.config.instantiate import instantiate
 from src.core import Axis, TensorShape
 from src.models.base import Backbone, HeadConnection, Model, ShapeAware
 from src.models.registry import backbone_registry, head_registry, model_registry
@@ -52,19 +52,17 @@ def build_backbone(declared: ComponentConfig) -> Backbone:
 
 def build_head(task: str, declared: HeadConfig, output_shape: TensorShape, backbone: Backbone) -> HeadConnection:
     """The declared head at the widths nobody has to write down: the stream's, and the task's output."""
-    if declared.input is None:
+    if declared.stream is None:
         raise ValueError(f"Task {task!r}: head {declared.spelled!r} names no feature stream to read.")
-    stream, out_features = declared.input, _out_features(task, output_shape)
+    stream, out_features = declared.stream, _out_features(task, output_shape)
     if declared.name == NATIVE:
-        return HeadConnection(_native_head(task, declared, stream, out_features, backbone), input=stream)
-    _refuse_a_derived_size(task, declared)
+        return HeadConnection(_native_head(task, declared, stream, out_features, backbone), stream=stream)
     published = _published(task, stream, backbone)
-    factory = resolve_target(declared, head_registry)
-    head: nn.Module = factory(
-        in_features=_width(published, stream, backbone), out_features=out_features, **resolve_params(declared)
+    head: nn.Module = instantiate(
+        declared, head_registry, in_features=_width(published, stream, backbone), out_features=out_features
     )
     _refuse_a_head_that_cannot_read(task, declared.spelled, head, published, stream)
-    return HeadConnection(head, input=stream)
+    return HeadConnection(head, stream=stream)
 
 
 def _native_head(task: str, declared: HeadConfig, stream: str, out_features: int, backbone: Backbone) -> nn.Module:
@@ -118,12 +116,3 @@ def _out_features(task: str, shape: TensorShape) -> int:
     if classes is None:
         raise ValueError(f"Task {task!r} outputs classes without a count; a head cannot be sized for it.")
     return classes
-
-
-def _refuse_a_derived_size(task: str, declared: HeadConfig) -> None:
-    restated = sorted({"in_features", "out_features"} & declared.params.keys())
-    if restated:
-        raise ValueError(
-            f"Task {task!r} declares {', '.join(restated)} on its head, which the backbone and the data "
-            "already say; drop it from the declaration."
-        )

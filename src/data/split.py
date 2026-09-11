@@ -14,7 +14,7 @@ from skmultilearn.model_selection import IterativeStratification
 
 from src.core import validate_name
 from src.data.base import Table
-from src.data.encoders.label import labels_in
+from src.data.encoders.label import SEPARATOR, labels_in
 
 log = logging.getLogger(__name__)
 
@@ -31,7 +31,7 @@ class Split:
     seed: int = 42
     stratify_by: str | None = None
     stratify_bins: int = 10
-    stratify_separator: str = ","
+    stratify_separator: str = SEPARATOR
     group_by: str | None = None
 
     def __post_init__(self) -> None:

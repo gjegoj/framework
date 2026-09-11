@@ -1,8 +1,10 @@
-"""Decoded files held in shared memory: filled once in the parent, read by every data worker, copied by none."""
+"""Decoded files held in shared memory: filled once in the parent, read by every data worker.
+
+The arena itself is never duplicated per worker; a read copies out only the one array it asked for.
+"""
 
 from __future__ import annotations
 
-import logging
 from abc import ABC, abstractmethod
 from collections.abc import Iterator
 from contextlib import AbstractContextManager, contextmanager
@@ -15,8 +17,6 @@ import torch
 from torch import Tensor
 
 from src.data.registry import cache_registry
-
-log = logging.getLogger(__name__)
 
 BYTES_PER_GIB: Final = 1024**3
 SEGMENT_BYTES: Final = 256 * 1024**2
@@ -38,7 +38,8 @@ class CacheUsage:
 class Cache(ABC):
     """Writes happen only inside ``filling()``, in the parent process, before data workers exist.
 
-    Afterwards the cache is read-only everywhere: a worker that misses reads the file itself.
+    Afterwards the cache is read-only everywhere — a worker that misses reads the file itself — and a
+    copy that reached another process refuses to be filled at all.
     """
 
     workers: int
@@ -105,6 +106,7 @@ class RamCache(Cache):
         self._declined = 0
         self._full = False
         self._filling = False
+        self._may_fill = True
         self._lock = Lock()
 
     def __contains__(self, key: Key) -> bool:
@@ -152,6 +154,11 @@ class RamCache(Cache):
 
     @contextmanager
     def _filling_window(self) -> Iterator[None]:
+        if not self._may_fill:
+            raise RuntimeError(
+                "This cache reached another process, where its arena is already filled and shared. Fill it "
+                "in the parent, before the workers start; a second filler would write over the first's bytes."
+            )
         self._filling = True
         try:
             yield
@@ -163,9 +170,16 @@ class RamCache(Cache):
         return CacheUsage(len(self._index), self._used, self._allocated, self.capacity, self._declined, self._full)
 
     def __getstate__(self) -> dict[str, object]:
+        """A copy that crosses a process boundary is a reader: the arena it points at is already filled.
+
+        Two processes filling one arena would each advance their own cursor over the other's bytes —
+        decoded pixels quietly wrong rather than a crash. Reachable: under ``ddp_spawn`` Lightning runs
+        ``setup()`` in every rank, so the copy refuses rather than trusting that nobody asks.
+        """
         state = self.__dict__.copy()
         state["_lock"] = None
         state["_filling"] = False
+        state["_may_fill"] = False
         return state
 
     def __setstate__(self, state: dict[str, object]) -> None:

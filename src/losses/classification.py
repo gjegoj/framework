@@ -50,12 +50,29 @@ class Focal(Loss):
         self.gamma = gamma
         self.register_buffer("alpha", None if alpha is None else torch.as_tensor(alpha, dtype=torch.float))
 
+    def _per_position(self, targets: Tensor) -> Tensor | None:
+        """The declared class weight spread over a yes-or-no target: one weight on each side of it.
+
+        Without this, ``alpha`` was honoured only where the target names a class, and a run that
+        declared it on a binary task got plain focal loss and no word about it.
+        """
+        if self.alpha is None:
+            return None
+        if self.alpha.numel() != 2:
+            raise ValueError(
+                f"A yes-or-no target has two sides, so focal's alpha needs two weights; "
+                f"{self.alpha.numel()} were declared."
+            )
+        return torch.where(targets > 0.5, self.alpha[1], self.alpha[0])
+
     def forward(self, outputs: Tensor, targets: Tensor) -> LossOutput:
         outputs = aligned(outputs, targets)
         if outputs.ndim == targets.ndim:  # one score per position: a yes-or-no
             probabilities = outputs.sigmoid()
             given = torch.where(targets > 0.5, probabilities, 1 - probabilities)
-            terms = nn.functional.binary_cross_entropy_with_logits(outputs, targets.float(), reduction="none")
+            terms = nn.functional.binary_cross_entropy_with_logits(
+                outputs, targets.float(), weight=self._per_position(targets), reduction="none"
+            )
         else:
             given = outputs.softmax(dim=CLASS_AXIS).gather(CLASS_AXIS, targets.long().unsqueeze(CLASS_AXIS))
             given = given.squeeze(CLASS_AXIS)

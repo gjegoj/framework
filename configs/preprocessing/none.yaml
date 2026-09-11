@@ -1,3 +1,0 @@
-# @package _global_
-# No preprocessing: the data module already yields model-ready tensors (precomputed embeddings).
-preprocessing: null

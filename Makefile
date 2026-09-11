@@ -1,4 +1,4 @@
-.PHONY: help install pre-commit clean test test-gate typecheck check test-run
+.PHONY: help install pre-commit clean test test-unit test-e2e test-gate typecheck check test-run
 
 PET_TABLE := data/pet/data.csv
 
@@ -25,6 +25,12 @@ clean: ## Clean cache and temporary files
 
 test: ## Run all tests
 	uv run pytest tests/ -v
+
+test-unit: ## Run the unit suite alone: one package at a time, nothing assembled
+	uv run pytest tests/unit -v
+
+test-e2e: ## Run the end-to-end suite alone: the whole chain, assembled as a run assembles it
+	uv run pytest tests -v -m e2e
 
 test-gate: ## The pre-commit gate: the whole suite but the tests that need a model hub
 	uv run pytest tests -v -m "not slow"

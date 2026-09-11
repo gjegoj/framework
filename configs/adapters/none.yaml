@@ -1,3 +1,0 @@
-# @package _global_
-# No adapters — every weight that is not frozen elsewhere learns.
-adapters: null

@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Annotated, Any, ClassVar
+from typing import Any, ClassVar
 
-from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from src.core import validate_classes, validate_name
 
@@ -64,11 +64,15 @@ class WeightedLossConfig(BaseModel):
 
 
 class HeadConfig(ComponentConfig):
-    """A head and the one feature stream it reads; a head over several streams arrives with detection."""
+    """A head and the one feature stream it reads; a head over several streams arrives with detection.
 
-    input: str | None = Field(None, min_length=1)
+    ``stream`` rather than ``input``: a run's inputs are what the data feeds the model
+    (``preprocessing.inputs.image``), while this names one of the features a backbone publishes.
+    """
 
-    @field_validator("input")
+    stream: str | None = Field(None, min_length=1)
+
+    @field_validator("stream")
     @classmethod
     def named_stream(cls, value: str | None) -> str | None:
         if value is not None and value.strip() != value:
@@ -82,7 +86,6 @@ class TaskConfig(BaseModel):
     target: str | None = None
     classes: dict[int, str] | ClassFile | None = None
     head: HeadConfig | None = None
-    output: str | None = Field(None, min_length=1)
     loss: ComponentConfig | list[WeightedLossConfig] | None = None
     target_encoder: ComponentConfig | None = None
     metrics: dict[str, ComponentConfig] | None = None
@@ -116,8 +119,6 @@ class TaskConfig(BaseModel):
 
     @model_validator(mode="after")
     def task_connections(self) -> TaskConfig:
-        if self.head is not None and self.output is not None:
-            raise ValueError("head and output are mutually exclusive.")
         validate_losses(self.loss)
         return self
 
@@ -138,7 +139,11 @@ class ModelConfig(ComponentConfig):
 
 
 class PreprocessingConfig(ComponentConfig):
-    """Modality-specific loading, normalization and collation; ``inputs`` and ``collator`` are child positions."""
+    """Modality-specific loading, normalization and collation.
+
+    ``inputs``, ``auxiliary_inputs``, ``collator`` and ``cache`` are child positions: each is a
+    declaration in its own right, resolved against the registry that holds names for it.
+    """
 
     inputs: dict[str, ComponentConfig] | None = None
     auxiliary_inputs: dict[str, ComponentConfig] | None = None
@@ -151,22 +156,3 @@ class PreprocessingConfig(ComponentConfig):
         for name in value or {}:
             validate_name(name, kind="Input")
         return value
-
-
-class AdapterConfig(ComponentConfig):
-    module: str = Field(description="Path inside this model; empty string explicitly selects the whole model.")
-
-    @model_validator(mode="after")
-    def module_path(self) -> AdapterConfig:
-        if self.module and any(not part.strip() or part.strip() != part for part in self.module.split(".")):
-            raise ValueError("Adapter module must be a dotted module path, or empty for the whole model.")
-        return self
-
-
-def adapter_list(value: Any) -> Any:
-    if value is None:
-        return []
-    return value if isinstance(value, list) else [value]
-
-
-AdaptersConfig = Annotated[list[AdapterConfig], BeforeValidator(adapter_list)]

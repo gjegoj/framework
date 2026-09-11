@@ -18,11 +18,11 @@ import pytest
 SRC = Path(__file__).parents[1] / "src"
 
 QUARANTINE: dict[str, tuple[str, ...]] = {
-    "lightning": ("training/", "callbacks/", "tracking/", "build.py", "experiment.py"),
+    "lightning": ("training/", "callbacks/", "tracking/"),
     "lightning_utilities": (),
     "pydantic": ("config/",),
-    "hydra": ("cli.py", "config/instantiate.py"),
-    "omegaconf": ("cli.py",),
+    "hydra": ("config/instantiate.py",),
+    "omegaconf": (),
     "albumentations": ("transforms/",),
     "albucore": ("transforms/",),
     "torchvision": ("transforms/",),
@@ -43,9 +43,13 @@ QUARANTINE: dict[str, tuple[str, ...]] = {
     "onnxscript": ("export/",),
     "onnxsim": ("export/",),
     "tensorrt": ("export/",),
-    "rich": ("console.py", "progress.py", "cli.py", "callbacks/", "export/verification.py"),
+    "rich": ("console.py", "progress.py", "callbacks/"),
 }
-"""Library → the paths under ``src/`` allowed to import it; an empty tuple bans it outright."""
+"""Library → the paths under ``src/`` allowed to import it; an empty tuple bans it outright.
+
+Every home names a path that exists, so a permission written ahead of its file cannot sit here looking
+like a rule while holding nothing: the file arrives with its row.
+"""
 
 CORE_MAY_IMPORT = ("torch", "src.core")
 """Besides the standard library: ``core/`` is the vocabulary every package speaks, so it knows no package."""
@@ -57,22 +61,27 @@ CAPABILITY_EDGES: dict[str, frozenset[str]] = {
     "data": frozenset({"progress", "transforms"}),
     "export": frozenset({"console", "models", "tasks"}),
     "inference": frozenset({"data", "models", "tasks"}),
-    "metrics": frozenset({"tracking"}),
+    "metrics": frozenset(),
     "tasks": frozenset(),
     "training": frozenset({"data", "tracking", "metrics", "tasks", "models", "losses"}),
     "transforms": frozenset({"tasks"}),
     "tracking": frozenset(),
     "losses": frozenset(),
     "models": frozenset(),
-    "visualization": frozenset(),
     "integrations": frozenset({"visualization"}),
     "config": frozenset(),
+    "console": frozenset(),
+    "progress": frozenset({"console"}),
 }
 """Which capability may import which, besides ``core`` (and ``config`` from a build module)."""
+
+PACKAGES = sorted(path.name for path in SRC.iterdir() if (path / "__init__.py").exists() and path.name != "core")
+"""Every package under ``src/``; a new one is unconstrained until it appears in the table above."""
 
 CONFIG_READERS = ("build.py", "cli.py", "experiment.py")
 """Only the composition root and a package's own ``build.py`` read declarations."""
 
+TRAINING_MODULE = "training/module.py"
 TRAINING_MODULE_MAY_IMPORT = ("src.core", "src.training", "src.metrics", "src.tracking.report")
 """``training/module.py`` asks metric sets and trackers what their contracts promise, never how they are built."""
 
@@ -120,13 +129,26 @@ def files() -> list[str]:
     return [path.relative_to(SRC).as_posix() for path in sorted(SRC.rglob("*.py"))]
 
 
-MINIMUM_IMPORTS = 0
-"""Raised to 100 once the composition root is wired; until then the tree is legitimately small."""
+MINIMUM_IMPORTS = 300
+"""What the tree imports today, rounded down.
+
+The rules below all read the same list, so a glob that quietly stopped matching would make every one of
+them pass on nothing. This is the number that says the list is real; raise it as the tree grows."""
 
 
 def test_the_tree_is_read(files: list[str], imports: list[Import]) -> None:
     """A glob that matched nothing would make every rule below vacuous."""
     assert files and len(imports) >= MINIMUM_IMPORTS
+
+
+@pytest.mark.parametrize(("library", "homes"), QUARANTINE.items(), ids=QUARANTINE)
+def test_every_home_a_quarantine_names_is_a_place_in_the_tree(
+    files: list[str], library: str, homes: tuple[str, ...]
+) -> None:
+    """A home written ahead of the file it names reads as a permission and grants none; it also never fails."""
+    missing = sorted(home for home in homes if not any(name.startswith(home) for name in files))
+
+    assert missing == [], f"{library} is quarantined to paths that do not exist"
 
 
 @pytest.mark.parametrize(("library", "homes"), QUARANTINE.items(), ids=QUARANTINE)
@@ -154,6 +176,17 @@ def test_core_imports_torch_the_standard_library_and_itself_only(imports: list[I
     assert reaching_out == []
 
 
+def test_every_package_declares_the_edges_it_may_use(files: list[str]) -> None:
+    """A rule nobody wrote is a rule nobody breaks: an undeclared package would simply not be checked."""
+    modules = {name.removesuffix(".py") for name in files if "/" not in name and name != "__init__.py"}
+
+    undeclared = sorted((set(PACKAGES) | modules) - CAPABILITY_EDGES.keys())
+    unwritten = sorted(CAPABILITY_EDGES.keys() - (set(PACKAGES) | modules))
+
+    assert undeclared == [], "these may import anything until they are declared"
+    assert unwritten == [], "these declare edges for something that is not there"
+
+
 @pytest.mark.parametrize(("package", "allowed"), sorted(CAPABILITY_EDGES.items()), ids=sorted(CAPABILITY_EDGES))
 def test_a_capability_consumes_others_only_along_its_declared_edges(
     imports: list[Import], package: str, allowed: frozenset[str]
@@ -179,10 +212,12 @@ def test_only_build_modules_read_config(imports: list[Import]) -> None:
 
 
 def test_the_training_module_reads_capabilities_through_their_contracts_only(imports: list[Import]) -> None:
+    if not any(one.file == TRAINING_MODULE for one in imports):
+        pytest.skip(f"{TRAINING_MODULE} is not written yet; this rule has no subject to hold")
     reaching_in = sorted(
         one.module
         for one in imports
-        if one.file == "training/module.py"
+        if one.file == TRAINING_MODULE
         and one.target is not None
         and not one.module.startswith(TRAINING_MODULE_MAY_IMPORT)
     )
@@ -190,8 +225,14 @@ def test_the_training_module_reads_capabilities_through_their_contracts_only(imp
     assert reaching_in == []
 
 
-def test_visualization_is_a_library_of_its_own(imports: list[Import]) -> None:
-    """Display types and renderers know nothing of the framework; ``integrations`` converts results into them."""
+def test_visualization_is_a_library_of_its_own(files: list[str], imports: list[Import]) -> None:
+    """Display types and renderers know nothing of the framework; ``integrations`` converts results into them.
+
+    The package arrives in the augmentation phase; until then this states the rule and skips, rather than
+    passing on nothing.
+    """
+    if not any(name.startswith("visualization/") for name in files):
+        pytest.skip("visualization/ is not written yet; this rule has no subject to hold")
     reaching_out = sorted(
         f"{one.file} imports {one.module}"
         for one in imports

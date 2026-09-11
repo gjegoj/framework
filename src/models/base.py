@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import ClassVar, Protocol, runtime_checkable
 
@@ -23,6 +23,14 @@ class Model(nn.Module, ABC):
     def forward(self, inputs: Mapping[str, TensorTree]) -> ModelOutput:
         """Named outputs, one per task the model serves, beside the features they were read from."""
         raise NotImplementedError
+
+    def parameters_of(self, task: str) -> Iterable[nn.Parameter]:
+        """The parameters this network devotes to one task, or nothing when it shares everything.
+
+        What a run gives a task its own learning rate over. A family that serves every task from one
+        graph answers with nothing, and a rate declared for such a task is refused rather than ignored.
+        """
+        return ()
 
 
 class Backbone(nn.Module, ABC):
@@ -58,11 +66,7 @@ class HeadConnection:
     """One ready head and the stream it reads; the mapping key that holds it names its output."""
 
     head: nn.Module
-    input: str
-
-    def __post_init__(self) -> None:
-        if not self.input.strip():
-            raise ValueError("A head reads one nonblank feature name.")
+    stream: str
 
 
 @runtime_checkable

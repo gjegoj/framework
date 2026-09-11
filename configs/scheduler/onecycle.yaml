@@ -1,7 +1,8 @@
 # Step-clocked: `total_steps` is derived from the fit, and the schedule must be
 # stepped on the same clock it was sized for — hence `interval: step`.
+# The peak rate is derived too, one per parameter group, so a task that declared
+# its own lr keeps its pace; write `max_lr` here only to override every group at once.
 name: onecycle
-max_lr: ${lr}
 interval: step
 pct_start: 0.05
 final_div_factor: 2

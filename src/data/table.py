@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import logging
 from collections.abc import Mapping, Sequence
+from typing import Any
 
 import pandas as pd
 from torch.utils.data import Dataset
@@ -11,11 +11,9 @@ from torch.utils.data import Dataset
 from src.core import DatasetInfo, Sample
 from src.data.base import DataModule, Preprocessor, Table, TableSource
 from src.data.registry import data_module_registry
-from src.data.sources import capped
+from src.data.sources import capped, source_for
 from src.data.split import Split, split_table
 from src.transforms import SampleTransform
-
-log = logging.getLogger(__name__)
 
 type Source = TableSource | Table
 type DeclaredSource = Source | Mapping[str, Source]
@@ -67,27 +65,30 @@ class TableDataModule(DataModule):
 
     def __init__(
         self,
-        source: DeclaredSource,
-        inputs: Mapping[str, str],
+        source: DeclaredSource | str | Mapping[str, Any],
+        inputs: Mapping[str, str | Mapping[str, str]],
         targets: Mapping[str, str],
         *,
         preprocessor: Preprocessor,
-        split: Split | None = None,
+        split: Split | Mapping[str, Any] | None = None,
         transforms: Mapping[str, SampleTransform] | None = None,
         max_samples: int | float | None = None,
     ) -> None:
-        divided = isinstance(source, Mapping)
-        if divided and split is not None:
+        read = _sources(source)
+        bound = {name: _column(name, one) for name, one in inputs.items()}
+        divided_by = Split(**split) if isinstance(split, Mapping) else split
+        divided = isinstance(read, Mapping)
+        if divided and divided_by is not None:
             raise ValueError(
                 "Per-split sources are already divided; drop the split, or declare one source for it to divide."
             )
-        if not divided and split is None:
+        if not divided and divided_by is None:
             raise ValueError("One source has to be divided: declare a split with fractions, or per-split sources.")
-        self._source = source
-        self._inputs = dict(inputs)
+        self._source = read
+        self._inputs = bound
         self._targets = dict(targets)
         self._preprocessor = preprocessor
-        self._split = split
+        self._split = divided_by
         self._transforms = dict(transforms or {})
         self._max_samples = max_samples
         self._tables: dict[str, Table] = {}
@@ -158,3 +159,29 @@ class TableDataModule(DataModule):
 
 def _rows(source: Source) -> Table:
     return source if isinstance(source, pd.DataFrame) else source.read()
+
+
+def _sources(declared: Any) -> Source | dict[str, Source]:
+    """A path, a mapping of already divided splits, or a source already built — all arrive as sources."""
+    if isinstance(declared, TableSource | pd.DataFrame):
+        return declared
+    if isinstance(declared, Mapping) and "path" not in declared:
+        return {str(name): _source(entry) for name, entry in declared.items()}
+    return _source(declared)
+
+
+def _source(declared: Any) -> Source:
+    if isinstance(declared, TableSource | pd.DataFrame):
+        return declared
+    if isinstance(declared, Mapping):
+        return source_for(declared["path"], format=declared.get("format"))
+    return source_for(declared)
+
+
+def _column(name: str, binding: Any) -> str:
+    """A binding names a column, plainly or under ``column``; anything else could not be read."""
+    if isinstance(binding, Mapping):
+        return str(binding["column"])
+    if isinstance(binding, str):
+        return binding
+    raise ValueError(f"Input {name!r} binds to a column name or {{column: ...}}, got {binding!r}.")

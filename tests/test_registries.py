@@ -8,21 +8,34 @@ from __future__ import annotations
 
 import subprocess
 import sys
-from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).parents[1]
+from tests.support.paths import ROOT
+
 PACKAGES = sorted(path.parent.name for path in (ROOT / "src").glob("*/registry.py") if path.parent.name != "core")
 """Every package that offers names to a declaration; the check grows with the framework."""
 
 SCRIPT = """
 import importlib
+import pkgutil
 
-importlib.import_module("src.{package}")
-registry = importlib.import_module("src.{package}.registry")
-catalogues = [(name, value) for name, value in vars(registry).items() if name.endswith("_registry")]
-print(",".join(sorted(name for name, value in catalogues if not list(value))))
+package = importlib.import_module("src.{package}")
+catalogue = importlib.import_module("src.{package}.registry")
+registries = [(name, value) for name, value in vars(catalogue).items() if name.endswith("_registry")]
+known = {{name: set(value) for name, value in registries}}
+for found in pkgutil.walk_packages(package.__path__, prefix="src.{package}."):
+    importlib.import_module(found.name)
+empty = [name for name, value in registries if not list(value)]
+late = [
+    name + ": " + ", ".join(sorted(set(value) - known[name])) for name, value in registries if set(value) - known[name]
+]
+print("|".join(empty + late))
+"""
+"""Import the package the way a run does, then import every module in it and see if more names appeared.
+
+The second half is the interesting one: a registry that holds eight of its nine names looks full, and
+the ninth fails at build time in whatever run happens to write it.
 """
 
 
@@ -33,4 +46,7 @@ def test_importing_a_package_registers_every_name_it_offers(package: str) -> Non
         [sys.executable, "-c", SCRIPT.format(package=package)], capture_output=True, text=True, cwd=ROOT, check=True
     )
 
-    assert finished.stdout.strip() == "", f"{package}: these stayed empty after importing the package"
+    assert finished.stdout.strip() == "", (
+        f"{package}: a registry left empty, or names that only register when a module its `__init__` "
+        "does not import runs"
+    )

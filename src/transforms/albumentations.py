@@ -8,7 +8,7 @@ from typing import Any
 
 import albumentations as A
 
-from src.core import Geometry, Sample
+from src.core import Geometry, Role, Sample
 from src.transforms.base import SampleTransform
 
 PIPELINE_KIND = {Geometry.IMAGE: "image", Geometry.MASK: "mask"}
@@ -34,7 +34,11 @@ class AlbumentationsTransform:
     def with_geometry(
         self, inputs: Mapping[str, Geometry], targets: Mapping[str, Geometry], auxiliary_inputs: Mapping[str, Geometry]
     ) -> SampleTransform:
-        roles: Roles = {"inputs": dict(inputs), "auxiliary_inputs": dict(auxiliary_inputs), "targets": dict(targets)}
+        roles: Roles = {
+            Role.INPUTS: dict(inputs),
+            Role.AUXILIARY: dict(auxiliary_inputs),
+            Role.TARGETS: dict(targets),
+        }
         _refuse_a_name_under_two_roles(roles)
         carried = {
             name: _pipeline_kind(role, name, geometry)
@@ -65,7 +69,11 @@ class BoundPipeline:
 
 
 def _values(sample: Sample) -> tuple[tuple[str, Mapping[str, object]], ...]:
-    return ("inputs", sample.inputs), ("auxiliary_inputs", sample.auxiliary_inputs), ("targets", sample.targets)
+    return (
+        (Role.INPUTS, sample.inputs),
+        (Role.AUXILIARY, sample.auxiliary_inputs),
+        (Role.TARGETS, sample.targets),
+    )
 
 
 def _pipeline_kind(role: str, name: str, geometry: Geometry) -> str:

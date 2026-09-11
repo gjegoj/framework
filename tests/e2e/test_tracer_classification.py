@@ -19,16 +19,14 @@ from torch.utils.data import DataLoader
 from torchmetrics import MetricCollection
 
 from src.config import ComponentConfig, HeadConfig, ModelConfig, PreprocessingConfig, TaskConfig
-from src.core import Batch, Stage, require_tensor
+from src.core import Batch, Matrix, Stage, require_tensor
 from src.data.build import build_data_module, build_preprocessor, build_transforms
 from src.losses.build import build_loss
 from src.metrics.build import build_metrics
 from src.models.build import build_model
 from src.tasks.registry import task_registry
-from src.tracking.artifacts import Matrix
-from src.training import StandardLearner
-
-pytestmark = pytest.mark.e2e
+from src.training import Learner
+from src.training.build import build_learner
 
 SIZE = [32, 32]
 SAMPLES = 8
@@ -59,7 +57,7 @@ def table(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 
 @pytest.fixture(scope="module")
-def run(table: Path) -> tuple[StandardLearner, MetricCollection, Batch]:
+def run(table: Path) -> tuple[Learner, MetricCollection, Batch]:
     """Assemble a run from declarations alone, and hand back what a training step needs."""
     declared = TaskConfig.model_validate(
         {"kind": "classification", "target": "species", "classes": {0: "cat", 1: "dog"}}
@@ -98,13 +96,18 @@ def run(table: Path) -> tuple[StandardLearner, MetricCollection, Batch]:
         heads={"species": HeadConfig.model_validate(task.default_head)},
         outputs={"species": task.output_shape(info)},
     )
-    learner = StandardLearner(model, {"species": task}, {"species": build_loss(task.default_loss, info)})
+    learner = build_learner(
+        ComponentConfig(name="standard"),
+        model=model,
+        tasks={"species": task},
+        losses={"species": build_loss(task.default_loss, task.facts())},
+    )
     loader = DataLoader(data.dataset("train"), batch_size=4, collate_fn=preprocessor.collate)
-    return learner, build_metrics(type(task).default_metrics, task.metric_kwargs()), next(iter(loader))
+    return learner, build_metrics(type(task).default_metrics, task.facts()), next(iter(loader))
 
 
 def test_a_picture_on_disk_reaches_a_loss_and_a_gradient_comes_back(
-    run: tuple[StandardLearner, MetricCollection, Batch],
+    run: tuple[Learner, MetricCollection, Batch],
 ) -> None:
     learner, _, batch = run
 
@@ -120,7 +123,7 @@ def test_a_picture_on_disk_reaches_a_loss_and_a_gradient_comes_back(
 
 
 def test_the_metrics_the_task_declares_score_the_step_it_produced(
-    run: tuple[StandardLearner, MetricCollection, Batch],
+    run: tuple[Learner, MetricCollection, Batch],
 ) -> None:
     """The predictions a step answers with are what a metric reads: nothing in between reshapes them."""
     learner, metrics, batch = run

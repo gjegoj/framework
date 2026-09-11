@@ -7,6 +7,7 @@ from src.core.entities import (
     DatasetInfo,
     InputInfo,
     LossOutput,
+    Matrix,
     ModelOutput,
     Normalization,
     Prediction,
@@ -17,14 +18,13 @@ from src.core.entities import (
     validate_name,
 )
 from src.core.registry import Registry
-from src.core.taxonomy import Axis, Direction, Geometry, Modality, Stage, Stream
+from src.core.taxonomy import Axis, Geometry, Modality, Role, Semantics, Stage, Stream
 from src.core.types import (
     CLASS_AXIS,
     ShapeTree,
     TensorShape,
     TensorTree,
     drop_class_axis,
-    require_shape,
     require_tensor,
     tree_map,
 )
@@ -34,16 +34,18 @@ __all__ = [
     "Axis",
     "Batch",
     "DatasetInfo",
-    "Direction",
     "Geometry",
     "InputInfo",
     "LossOutput",
+    "Matrix",
     "Modality",
     "ModelOutput",
     "Normalization",
     "Prediction",
     "Registry",
+    "Role",
     "Sample",
+    "Semantics",
     "ShapeTree",
     "Stage",
     "StepOutput",
@@ -52,7 +54,6 @@ __all__ = [
     "TensorShape",
     "TensorTree",
     "drop_class_axis",
-    "require_shape",
     "require_tensor",
     "tree_map",
     "validate_classes",

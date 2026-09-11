@@ -10,7 +10,7 @@ from src.config.schema import ComponentConfig
 from src.core import Registry
 
 
-def resolve_target(component: ComponentConfig, registry: Registry[Any] | None = None) -> Callable[..., Any]:
+def resolve_factory(component: ComponentConfig, registry: Registry[Any] | None = None) -> Callable[..., Any]:
     """Return the class or factory a declaration names, resolving only that one implementation."""
     if component.import_path is not None:
         return _locate(component.import_path)
@@ -25,7 +25,21 @@ def resolve_target(component: ComponentConfig, registry: Registry[Any] | None = 
 def instantiate(component: ComponentConfig, registry: Registry[Any] | None = None, /, **facts: Any) -> Any:
     """Build a declared component with its arguments plus the facts the caller derived."""
     refuse_restated_facts(component, facts)
-    return resolve_target(component, registry)(**resolve_params(component), **facts)
+    return resolve_factory(component, registry)(**resolve_params(component), **facts)
+
+
+def instantiate_offering(component: ComponentConfig, registry: Registry[Any] | None = None, /, **facts: Any) -> Any:
+    """Build a declared component, *offering* derived facts: it receives the ones its signature names.
+
+    The counterpart of ``instantiate``, which *imposes* them. A loss, a metric and a schedule are each
+    built from a table of facts the run settled — and each takes only what it understands, so ``mae``
+    stands beside ``accuracy`` without being handed a vocabulary it would refuse. A fact the declaration
+    restates is still refused by name, so nothing is stated twice.
+    """
+    factory = resolve_factory(component, registry)
+    offered = fill_signature(factory, **facts)
+    refuse_restated_facts(component, offered)
+    return factory(**resolve_params(component), **offered)
 
 
 def refuse_restated_facts(component: ComponentConfig, facts: Iterable[str]) -> None:
@@ -50,8 +64,9 @@ def resolve_params(component: ComponentConfig) -> dict[str, Any]:
 def fill_signature(factory: Callable[..., Any], **facts: Any) -> dict[str, Any]:
     """Hand a constructor the framework does not own only the facts its signature names.
 
-    The one bounded exception to explicit facts, for torchmetrics metrics and torch schedulers;
-    a constructor that forwards ``**kwargs`` names nothing and receives nothing.
+    The one bounded exception to explicit facts: a constructor the framework does not own — a
+    torchmetrics metric, a torch schedule, a loss reached by ``_target_`` — takes what it understands
+    and nothing else. One that forwards ``**kwargs`` names nothing and so receives nothing.
     """
     named = signature(factory).parameters
     return {name: value for name, value in facts.items() if name in named}

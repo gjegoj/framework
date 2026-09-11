@@ -1,4 +1,4 @@
-"""One console for everything the framework prints; the composition root and callbacks share it."""
+"""One console for everything the framework prints; whatever writes to a terminal shares it."""
 
 from __future__ import annotations
 

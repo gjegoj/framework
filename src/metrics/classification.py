@@ -7,8 +7,8 @@ from typing import Any, Literal
 import torchmetrics
 from torch import Tensor
 
+from src.core import Matrix
 from src.metrics.registry import metric_registry
-from src.tracking.artifacts import Matrix
 
 MULTILABEL = "multilabel"
 """torchmetrics' own name for any number of labels per sample; the other two semantics draw one picture."""

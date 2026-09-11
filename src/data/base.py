@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from typing import ClassVar, Protocol, Self, runtime_checkable
+from typing import ClassVar, Self
 
 import pandas as pd
 from torch.utils.data import Dataset, IterableDataset
 
-from src.core import Batch, DatasetInfo, Geometry, InputInfo, Sample, TargetInfo, TensorTree
+from src.core import Batch, DatasetInfo, Geometry, InputInfo, Role, Sample, TargetInfo, TensorTree
 from src.transforms import SampleTransform
 
 
@@ -58,15 +58,6 @@ class TargetEncoder(Encoder):
         """Resolved target facts; available after ``fit`` for encoders that learn a layout."""
 
 
-@runtime_checkable
-class Stateful(Protocol):
-    """Optional fitted-state I/O for encoders: learned preprocessing values, never weights or data."""
-
-    def state_dict(self) -> Mapping[str, object]: ...
-
-    def load_state_dict(self, state: Mapping[str, object]) -> None: ...
-
-
 type Collator = Callable[[Sequence[Sample]], Batch]
 
 type Table = pd.DataFrame
@@ -91,7 +82,7 @@ class Preprocessor(ABC):
     @property
     def geometries(self) -> Mapping[str, Mapping[str, Geometry]]:
         """What moves with the picture under a spatial transform, per ``inputs``/``targets``/``auxiliary_inputs``."""
-        return {"inputs": {}, "targets": {}, "auxiliary_inputs": {}}
+        return {Role.INPUTS: {}, Role.TARGETS: {}, Role.AUXILIARY: {}}
 
     @abstractmethod
     def preprocess(self, sample: Sample, transform: SampleTransform | None = None) -> Sample:

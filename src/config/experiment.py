@@ -7,8 +7,7 @@ from typing import ClassVar, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from src.config.distillation import DistillationConfig
-from src.config.schema import AdaptersConfig, ComponentConfig, ModelConfig, PreprocessingConfig, TaskConfig
+from src.config.schema import ComponentConfig, ModelConfig, PreprocessingConfig, TaskConfig
 from src.core import Stage, validate_name
 
 
@@ -95,8 +94,9 @@ class SchedulerConfig(ComponentConfig):
 class ExperimentConfig(BaseModel):
     """Assembly injects root controls; runtime objects never read this schema.
 
-    Preprocessing owns modality-specific loading, normalization and collation.
-    Its component may compose named inputs or wrap one joint image/text processor.
+    Preprocessing owns modality-specific loading, normalization and collation. Its component may
+    compose named inputs or wrap one joint image/text processor, and every run declares one: a run
+    over inputs that are already tensors arrives with the data module that yields them.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -106,14 +106,12 @@ class ExperimentConfig(BaseModel):
     batch_size: int = Field(16, gt=0, strict=True)
     epochs: int = Field(10, gt=0, strict=True)
     data: ComponentConfig
-    preprocessing: PreprocessingConfig | None = Field(None, description="None requires already prepared model inputs.")
+    preprocessing: PreprocessingConfig
     transforms: dict[Stage, ComponentConfig] = Field(
         default_factory=dict, description="Stage-specific sample augmentation, before final normalization and encoding."
     )
     model: ModelConfig
     tasks: dict[str, TaskConfig]
-    adapters: AdaptersConfig = Field(default_factory=list)
-    distillation: DistillationConfig | None = None
     learner: ComponentConfig = Field(default_factory=lambda: ComponentConfig(name="standard"))
     optimizer: ComponentConfig = Field(default_factory=lambda: ComponentConfig(name="adamw"))
     scheduler: SchedulerConfig | None = None

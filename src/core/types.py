@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
-import torch
 from torch import Tensor
 
 type TensorTree = Tensor | Mapping[str, TensorTree] | list[TensorTree] | tuple[TensorTree, ...] | None
@@ -49,20 +48,12 @@ def drop_class_axis(values: Tensor) -> Tensor:
     return values.squeeze(CLASS_AXIS) if values.ndim > 1 and values.size(CLASS_AXIS) == 1 else values
 
 
-def require_shape(value: ShapeTree, *, name: str) -> TensorShape:
-    """Narrow a shape tree where an operation requires one tensor's shape."""
-    if not isinstance(value, TensorShape):
-        raise TypeError(f"{name} must be a single tensor shape, got {type(value).__name__}.")
-    return value
-
-
 @dataclass(frozen=True, slots=True)
 class TensorShape:
     """Axes exclude the batch dimension; custom axis names remain valid strings."""
 
     axes: tuple[str, ...]
     sizes: tuple[int | None, ...]
-    dtype: torch.dtype | None = None
 
     def __post_init__(self) -> None:
         if len(self.axes) != len(self.sizes) or len(set(self.axes)) != len(self.axes):

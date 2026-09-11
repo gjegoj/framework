@@ -50,17 +50,18 @@ class Expectation(Loss):
 
     Args:
         values: The number each bin stands for, in bin order.
+        distance: What compares the two numbers; the declaration may nest one of its own.
     """
 
     values: Tensor
     """Registered as a buffer, so the bins travel with the model to whatever device it runs on."""
 
-    def __init__(self, values: Sequence[float], distance: str = "mae") -> None:
+    def __init__(self, values: Sequence[float], distance: Loss | None = None) -> None:
         super().__init__()
         if len(values) < 2:
             raise ValueError(f"An expectation spans at least two bins; {len(values)} were declared.")
         self.register_buffer("values", torch.as_tensor(list(values), dtype=torch.float))
-        self.distance: Loss = loss_registry.get(distance)()
+        self.distance = distance if distance is not None else MeanAbsoluteError()
 
     def forward(self, outputs: Tensor, targets: Tensor) -> LossOutput:
         bins = self.values.numel()

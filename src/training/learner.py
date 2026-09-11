@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import operator
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from functools import reduce
 from typing import cast
 
@@ -15,8 +15,10 @@ from src.losses import Loss
 from src.models import Model
 from src.tasks import Task
 from src.training.base import Learner
+from src.training.registry import learner_registry
 
 
+@learner_registry.register("standard")
 class StandardLearner(Learner):
     """One network, one loss per task, one number to descend.
 
@@ -45,6 +47,10 @@ class StandardLearner(Learner):
             predictions=predictions,
             targets={name: task.metric_view(batch) for name, task in self.tasks.items()},
         )
+
+    def parameters_of(self, task: str) -> Iterable[nn.Parameter]:
+        """The model's parts for this task, plus its loss — an angular margin keeps the class prototypes."""
+        return [*super().parameters_of(task), *self.losses[task].parameters()]
 
     def _weighted(self, name: str, task: Task, output: ModelOutput, batch: Batch) -> LossOutput:
         """One task's loss under its own name, scaled by the share of the objective the run gave it."""

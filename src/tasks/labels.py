@@ -11,7 +11,7 @@ from typing import ClassVar
 
 from torch import Tensor
 
-from src.core import CLASS_AXIS, Batch, ModelOutput, TargetInfo, TensorTree, drop_class_axis
+from src.core import CLASS_AXIS, Batch, ModelOutput, Semantics, TargetInfo, TensorTree, drop_class_axis
 from src.tasks.base import LossDeclaration, Task
 
 CLASSIFICATION_METRICS: Mapping[str, Mapping[str, object]] = {
@@ -27,6 +27,7 @@ CLASSIFICATION_METRICS: Mapping[str, Mapping[str, object]] = {
 class MulticlassLabels(Task):
     """One class per position, chosen from a declared vocabulary; the model scores every class."""
 
+    semantics: ClassVar[Semantics | None] = Semantics.MULTICLASS
     default_target_encoder: ClassVar[str | None] = "label"
     default_metrics: ClassVar[Mapping[str, Mapping[str, object]]] = CLASSIFICATION_METRICS
 
@@ -42,9 +43,6 @@ class MulticlassLabels(Task):
                 f"{info.num_classes if info.num_classes is not None else 'none'}."
             )
         return info.num_classes
-
-    def metric_kwargs(self) -> Mapping[str, object]:
-        return {"task": "multiclass", "num_classes": self.info.num_classes}
 
     def loss_target(self, batch: Batch) -> Tensor:
         """An index as it stands; a share of each class, once a batch transform mixed two samples, as it stands too."""
@@ -63,6 +61,7 @@ class MulticlassLabels(Task):
 class BinaryLabels(Task):
     """One score per position: whether the thing is there. No vocabulary, one output."""
 
+    semantics: ClassVar[Semantics | None] = Semantics.BINARY
     default_target_encoder: ClassVar[str | None] = "scalar"
     default_metrics: ClassVar[Mapping[str, Mapping[str, object]]] = CLASSIFICATION_METRICS
 
@@ -73,9 +72,6 @@ class BinaryLabels(Task):
     @classmethod
     def out_features(cls, info: TargetInfo) -> int:
         return 1
-
-    def metric_kwargs(self) -> Mapping[str, object]:
-        return {"task": "binary"}
 
     def loss_target(self, batch: Batch) -> Tensor:
         """The share of the label the sample carries — one for a plain target, a fraction after a mix."""
@@ -91,6 +87,7 @@ class BinaryLabels(Task):
 class MultilabelLabels(Task):
     """Any number of labels per sample: one independent score for each of the declared classes."""
 
+    semantics: ClassVar[Semantics | None] = Semantics.MULTILABEL
     default_target_encoder: ClassVar[str | None] = "multilabel"
     # A multilabel confusion matrix is one small matrix per label, which reports as nothing useful.
     default_metrics: ClassVar[Mapping[str, Mapping[str, object]]] = {
@@ -106,9 +103,6 @@ class MultilabelLabels(Task):
         if info.num_classes is None:
             raise ValueError(f"{cls.__name__} scores one output per label, so its classes must be declared.")
         return info.num_classes
-
-    def metric_kwargs(self) -> Mapping[str, object]:
-        return {"task": "multilabel", "num_labels": self.info.num_classes}
 
     def loss_target(self, batch: Batch) -> Tensor:
         return self.target(batch).float()

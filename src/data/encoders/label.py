@@ -13,6 +13,9 @@ from src.core import TargetInfo, validate_classes
 from src.data.base import TargetEncoder
 from src.data.registry import target_encoder_registry
 
+SEPARATOR = ","
+"""How a cell lists several labels; the splitter reads a column the same way when it stratifies by one."""
+
 
 class VocabularyEncoder(TargetEncoder):
     """Shared by encoders built with a declared ``classes`` mapping."""
@@ -64,7 +67,7 @@ class LabelEncoder(VocabularyEncoder):
 class MultilabelEncoder(VocabularyEncoder):
     """Any number of classes per sample, as a float indicator vector; an empty cell is a negative."""
 
-    def __init__(self, *, classes: Mapping[int, str], separator: str = ",") -> None:
+    def __init__(self, *, classes: Mapping[int, str], separator: str = SEPARATOR) -> None:
         if not separator:
             raise ValueError("multilabel needs a non-empty separator.")
         super().__init__(classes=classes)
@@ -84,7 +87,7 @@ class MultilabelEncoder(VocabularyEncoder):
         return indicator
 
 
-def labels_in(value: object, separator: str) -> set[str]:
+def labels_in(value: object, separator: str = SEPARATOR) -> set[str]:
     """The labels a cell carries: a list, a separated string, or nothing at all."""
     if isinstance(value, list | tuple | set):
         return {str(item).strip() for item in value if str(item).strip()}

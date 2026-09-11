@@ -7,7 +7,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from itertools import batched
 
-from src.core import Batch, DatasetInfo, Geometry, Sample
+from src.core import Batch, DatasetInfo, Geometry, Role, Sample
 from src.data.base import Collator, Encoder, InputEncoder, Preprocessor, TargetEncoder
 from src.data.cache import Cache, Key
 from src.data.registry import preprocessor_registry
@@ -15,9 +15,6 @@ from src.progress import track
 from src.transforms import SampleTransform
 
 log = logging.getLogger(__name__)
-
-type Role = str
-INPUTS, TARGETS, AUXILIARY = "inputs", "targets", "auxiliary_inputs"
 
 
 @preprocessor_registry.register("standard")
@@ -47,9 +44,9 @@ class StandardPreprocessor(Preprocessor):
         self.collator = collator
         self.cache = cache
         self._by_role: dict[Role, Mapping[str, Encoder]] = {
-            INPUTS: self.inputs,
-            TARGETS: self.targets,
-            AUXILIARY: self.auxiliary_inputs,
+            Role.INPUTS: self.inputs,
+            Role.TARGETS: self.targets,
+            Role.AUXILIARY: self.auxiliary_inputs,
         }
 
     @property
@@ -66,12 +63,16 @@ class StandardPreprocessor(Preprocessor):
 
     def preprocess(self, sample: Sample, transform: SampleTransform | None = None) -> Sample:
         loaded = Sample(
-            inputs={name: self._load(INPUTS, name, _required(sample.inputs, name, "input")) for name in self.inputs},
+            inputs={
+                name: self._load(Role.INPUTS, name, _required(sample.inputs, name, "input")) for name in self.inputs
+            },
             targets={
-                name: self._load(TARGETS, name, sample.targets[name]) for name in self.targets if name in sample.targets
+                name: self._load(Role.TARGETS, name, sample.targets[name])
+                for name in self.targets
+                if name in sample.targets
             },
             auxiliary_inputs={
-                name: self._load(AUXILIARY, name, sample.auxiliary_inputs[name])
+                name: self._load(Role.AUXILIARY, name, sample.auxiliary_inputs[name])
                 for name in self.auxiliary_inputs
                 if name in sample.auxiliary_inputs
             },
@@ -104,9 +105,9 @@ class StandardPreprocessor(Preprocessor):
         pending: dict[Key, tuple[Role, str, object]] = {}
         for sample in samples:
             for role, cells in (
-                (INPUTS, sample.inputs),
-                (TARGETS, sample.targets),
-                (AUXILIARY, sample.auxiliary_inputs),
+                (Role.INPUTS, sample.inputs),
+                (Role.TARGETS, sample.targets),
+                (Role.AUXILIARY, sample.auxiliary_inputs),
             ):
                 for name, cell in cells.items():
                     key = self._key(role, name, cell)

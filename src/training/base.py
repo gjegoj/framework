@@ -1,15 +1,34 @@
-"""The algorithm boundary: what a batch becomes before anything is optimized."""
+"""The algorithm boundary: what a batch becomes before anything is optimized, and what optimizing it needs."""
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from dataclasses import dataclass
+from typing import Any, NotRequired, TypedDict
 
 from torch import nn
+from torch.optim import Optimizer
 
 from src.core import Batch, StepOutput
 from src.models import Model
 from src.tasks import Task
+
+SHARED = "backbone"
+"""What the group holding everything no task claimed is called.
+
+Defined by subtraction — what is left once every task has taken its own parts — and named for what
+that remainder usually is: the encoder. A label for a chart, not an address: the dot-path a config
+freezes by is the model's own, and renaming an attribute there must not rename a line in a graph.
+"""
+
+
+class ParameterGroup(TypedDict):
+    """One named group as torch takes it; a group without ``lr`` inherits the optimizer's."""
+
+    name: str
+    params: list[nn.Parameter]
+    lr: NotRequired[float]
 
 
 class Learner(nn.Module, ABC):
@@ -28,8 +47,6 @@ class Learner(nn.Module, ABC):
 
     def __init__(self, model: Model, tasks: Mapping[str, Task]) -> None:
         super().__init__()
-        if not tasks:
-            raise ValueError("A learner trains at least one task; none was given.")
         self.model = model
         self.tasks = dict(tasks)
 
@@ -41,3 +58,71 @@ class Learner(nn.Module, ABC):
         that trains differently in evaluation reads ``self.training``, which every module already carries.
         """
         raise NotImplementedError
+
+    def parameters_of(self, task: str) -> Iterable[nn.Parameter]:
+        """Everything that belongs to one task alone; a learner adds whatever it holds beside the model."""
+        return self.model.parameters_of(task)
+
+    def parameter_groups(self) -> list[ParameterGroup]:
+        """One group per task that owns parameters, and one for everything they share.
+
+        Split whether or not a rate was declared, because the groups are also what a learning-rate
+        monitor draws one line each of. A group carries an ``lr`` only where its task declared one:
+        the base rate has a single home, the optimizer section.
+        """
+        groups: list[ParameterGroup] = []
+        claimed: set[int] = set()
+        for name, task in self.tasks.items():
+            owned = list(self.parameters_of(name))
+            if not owned:
+                self._refuse_a_rate_over_nothing(name, task)
+                continue
+            claimed.update(id(parameter) for parameter in owned)
+            group: ParameterGroup = {"name": name, "params": owned}
+            if task.lr is not None:
+                group["lr"] = task.lr
+            groups.append(group)
+        shared = [parameter for parameter in self.parameters() if id(parameter) not in claimed]
+        if shared:
+            groups.insert(0, {"name": SHARED, "params": shared})
+        return groups
+
+    @staticmethod
+    def _refuse_a_rate_over_nothing(name: str, task: Task) -> None:
+        if task.lr is not None:
+            raise ValueError(
+                f"Task {name!r} declares lr={task.lr}, but nothing in this run belongs to it alone — "
+                "the rate would move nothing. Drop the task's lr, or give it a head of its own."
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class FitProfile:
+    """What a run turns out to be, once the fit loop exists: how many optimizer steps, over how many epochs.
+
+    Two numbers rather than three: the per-epoch count follows from them, so an incoherent triple stays
+    unrepresentable. Only the trainer can answer this, which is why a schedule is built as a factory.
+    """
+
+    total_steps: int
+    epochs: int
+
+    def __post_init__(self) -> None:
+        if self.total_steps < 1 or self.epochs < 1:
+            raise ValueError(f"A fit runs at least one step and one epoch; got {self.total_steps}/{self.epochs}.")
+
+    @property
+    def steps_per_epoch(self) -> int:
+        """Optimizer steps in one epoch; at least one, however short the loop."""
+        return max(self.total_steps // self.epochs, 1)
+
+
+type OptimizerFactory = Callable[[Sequence[ParameterGroup]], Optimizer]
+"""Builds an optimizer over named groups — a factory, because the parameters do not exist while config is read.
+
+``partial(torch.optim.AdamW, lr=1e-3)`` satisfies it: every torch constructor takes group dicts, and a
+group naming no rate of its own inherits the factory's.
+"""
+
+type SchedulerFactory = Callable[[Optimizer, FitProfile], dict[str, Any]]
+"""Builds a schedule and the policy Lightning steps it by, once the optimizer and the fit's length are known."""

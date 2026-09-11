@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from typing import cast
 
 from torch import Tensor, nn
 
-from src.core import ModelOutput, TensorTree, validate_name
+from src.core import ModelOutput, TensorTree
 from src.models.base import Backbone, HeadConnection, Model
 from src.models.registry import model_registry
 
@@ -22,21 +22,15 @@ class CompositeModel(Model):
 
     def __init__(self, backbone: Backbone, heads: Mapping[str, HeadConnection]) -> None:
         super().__init__()
-        if not heads:
-            raise ValueError("A composite model serves at least one task; none was declared.")
-        published = backbone.feature_shapes
-        for name, connection in heads.items():
-            validate_name(name, kind="Task")
-            if connection.input not in published:
-                raise ValueError(
-                    f"Head {name!r} reads {connection.input!r}, but {type(backbone).__name__} publishes "
-                    f"{', '.join(published)}."
-                )
         self.backbone = backbone
         self.heads = nn.ModuleDict({name: connection.head for name, connection in heads.items()})
-        self._inputs = {name: connection.input for name, connection in heads.items()}
+        self._streams = {name: connection.stream for name, connection in heads.items()}
+
+    def parameters_of(self, task: str) -> Iterable[nn.Parameter]:
+        """A composite gives each task its head and shares the backbone; the split is exactly that."""
+        return self.heads[task].parameters() if task in self.heads else ()
 
     def forward(self, inputs: Mapping[str, TensorTree]) -> ModelOutput:
         features = self.backbone(inputs)
-        outputs = {name: cast(Tensor, self.heads[name](features[stream])) for name, stream in self._inputs.items()}
+        outputs = {name: cast(Tensor, self.heads[name](features[stream])) for name, stream in self._streams.items()}
         return ModelOutput(outputs=outputs, features=features)

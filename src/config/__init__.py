@@ -5,10 +5,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from src.config.distillation import DistillationConfig, TeacherConfig
 from src.config.experiment import ExperimentConfig, LoaderConfig, RunConfig, SchedulerConfig, TrainerConfig
 from src.config.schema import (
-    AdapterConfig,
     ClassFile,
     ComponentConfig,
     HeadConfig,
@@ -25,10 +23,8 @@ def load_config(raw: Mapping[str, Any]) -> ExperimentConfig:
 
 
 __all__ = [
-    "AdapterConfig",
     "ClassFile",
     "ComponentConfig",
-    "DistillationConfig",
     "ExperimentConfig",
     "HeadConfig",
     "LoaderConfig",
@@ -37,7 +33,6 @@ __all__ = [
     "RunConfig",
     "SchedulerConfig",
     "TaskConfig",
-    "TeacherConfig",
     "TrainerConfig",
     "WeightedLossConfig",
     "load_config",

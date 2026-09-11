@@ -12,7 +12,6 @@ from src.data.base import (
     Encoder,
     InputEncoder,
     Preprocessor,
-    Stateful,
     TableSource,
     TargetEncoder,
 )
@@ -49,7 +48,6 @@ __all__ = [
     "ScalarEncoder",
     "StackCollator",
     "StandardPreprocessor",
-    "Stateful",
     "TableDataModule",
     "TableSource",
     "TargetEncoder",

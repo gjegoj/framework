@@ -9,24 +9,21 @@ from typing import Any, cast
 from torch import Tensor, nn
 
 from src.config import ComponentConfig, WeightedLossConfig
-from src.config.instantiate import fill_signature, refuse_restated_facts, resolve_params, resolve_target
-from src.core import LossOutput, TargetInfo
+from src.config.instantiate import instantiate_offering
+from src.core import LossOutput
 from src.losses.base import Loss, snake_case
 from src.losses.composite import WeightedSum
 from src.losses.registry import loss_registry
 
-type Declared = ComponentConfig | Sequence[WeightedLossConfig] | None
-"""What a run writes under `tasks.<name>.loss`: one component, several with weights, or nothing at all."""
 
-
-def build_loss(declared: object, info: TargetInfo) -> Loss:
-    """One task's objective, from the declaration that settled it and the facts its target encoder left.
+def build_loss(declared: object, facts: Mapping[str, Any]) -> Loss:
+    """One task's objective, from the declaration that settled it and what the run settled about its target.
 
     Which declaration that is — the run's or the task's own default — is decided before this call, so
-    this package needs to know nothing about tasks. Sizes are never declared: facts the encoder settled
-    reach a loss that names them in its constructor, and a declaration restating one is refused by name.
+    this package needs to know nothing about tasks. Facts are never declared: each reaches a loss that
+    names it in its constructor, and a declaration restating one is refused by name.
     """
-    parts = [(_one(part.loss, info, part.log_name), part.weight) for part in _weighted(declared)]
+    parts = [(_one(part.loss, facts, part.log_name), part.weight) for part in _weighted(declared)]
     if len(parts) == 1 and parts[0][1] == 1.0:
         return parts[0][0]
     return WeightedSum(parts)
@@ -48,11 +45,8 @@ def _weighted(declared: object) -> list[WeightedLossConfig]:
     raise TypeError(f"A loss is declared as a name, a component or a weighted list; got {type(declared).__name__}.")
 
 
-def _one(declared: ComponentConfig, info: TargetInfo, log_name: str | None) -> Loss:
-    factory = resolve_target(declared, loss_registry)
-    settled = fill_signature(factory, values=info.values, num_classes=info.num_classes)
-    refuse_restated_facts(declared, settled)
-    built: Any = factory(**resolve_params(declared), **settled)
+def _one(declared: ComponentConfig, facts: Mapping[str, Any], log_name: str | None) -> Loss:
+    built: Any = instantiate_offering(declared, loss_registry, **facts)
     if not isinstance(built, Loss):
         if not (isinstance(built, nn.Module) and _compares_two_tensors(built)):
             raise TypeError(

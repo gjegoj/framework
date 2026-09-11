@@ -81,7 +81,6 @@ class InputInfo:
     shape: ShapeTree
     modality: str | None = None
     normalization: Normalization | None = None
-    metadata: Mapping[str, object] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,7 +113,8 @@ class DatasetInfo:
     metadata: Mapping[str, object] = field(default_factory=dict)
 
 
-type Prediction = Mapping[str, object]
+type Prediction = Mapping[str, TensorTree]
+"""What a task's output means, per task: the same tree every other value in a batch is."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -134,7 +134,10 @@ class LossOutput:
             self.contributions.keys() & other.contributions.keys()
         )
         if duplicates:
-            raise ValueError(f"Loss names need distinct names: {sorted(duplicates)}.")
+            raise ValueError(
+                f"Two loss terms report under the same name: {', '.join(sorted(duplicates))}. Give one a "
+                "log_name of its own, or check that each task prefixes what it reports."
+            )
         return LossOutput(
             self.total + other.total, {**self.losses, **other.losses}, {**self.contributions, **other.contributions}
         )
@@ -161,7 +164,23 @@ class LossOutput:
 class ModelOutput:
     outputs: Mapping[str, TensorTree] = field(default_factory=dict)
     features: Mapping[str, TensorTree] = field(default_factory=dict)
-    losses: Mapping[str, Tensor] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class Matrix:
+    """A two-dimensional reading with its axes named by the metric that knew them.
+
+    Which axis holds the prediction cannot be read off the tensor, and a chart drawn the other way
+    round is a plausible-looking lie, so the metric states it here rather than leaving it to be guessed.
+    """
+
+    value: Tensor
+    xaxis: str
+    yaxis: str
+
+    def __post_init__(self) -> None:
+        if self.value.ndim != 2:
+            raise ValueError(f"A matrix is drawn from two axes; this reading has {self.value.ndim}.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -170,7 +189,7 @@ class StepOutput:
 
     loss: LossOutput | None
     predictions: Prediction = field(default_factory=dict)
-    targets: Mapping[str, object] = field(default_factory=dict)
+    targets: Mapping[str, TensorTree] = field(default_factory=dict)
 
 
 NAME_SEPARATORS = "./@"

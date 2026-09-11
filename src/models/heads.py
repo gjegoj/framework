@@ -1,8 +1,6 @@
-"""Built-in heads: what a stream becomes a task's raw outputs through.
-
-Every head is built from two widths and nothing else — that one contract is what lets a run swap
-one for another in a line of YAML, and what keeps the sizes out of config.
-"""
+"""A head is any module the framework can build at two widths — the stream's and the task's output — while
+every other argument comes from the declaration. That split is what lets a run swap one for another in a
+line of YAML."""
 
 from __future__ import annotations
 

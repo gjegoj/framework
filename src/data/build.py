@@ -7,9 +7,9 @@ from pathlib import Path
 from typing import Any
 
 from src.config import ClassFile, ComponentConfig, PreprocessingConfig, TaskConfig
-from src.config.instantiate import instantiate, resolve_params, resolve_target
+from src.config.instantiate import instantiate, resolve_factory
 from src.core import Stage
-from src.data.base import DataModule, Encoder, Preprocessor, TableSource, TargetEncoder
+from src.data.base import DataModule, Encoder, Preprocessor, TargetEncoder
 from src.data.registry import (
     cache_registry,
     collator_registry,
@@ -18,20 +18,15 @@ from src.data.registry import (
     preprocessor_registry,
     target_encoder_registry,
 )
-from src.data.sources import source_for
-from src.data.split import Split
-from src.data.table import TableDataModule
 from src.transforms import GeometryAware, SampleTransform
 
 
 def build_preprocessor(
-    declared: PreprocessingConfig | None,
+    declared: PreprocessingConfig,
     tasks: Mapping[str, TaskConfig],
     default_encoders: Mapping[str, ComponentConfig | None],
 ) -> Preprocessor:
     """Input encoders from the preprocessing section, target encoders from the tasks, one collator."""
-    if declared is None:
-        raise ValueError("preprocessing is required: declare how each input becomes a tensor (preprocessing=image).")
     targets = {
         name: build_target_encoder(name, task, default_encoders.get(name))
         for name, task in tasks.items()
@@ -56,7 +51,7 @@ def build_target_encoder(name: str, task: TaskConfig, default: ComponentConfig |
         raise ValueError(f"Task {name!r} declares a target but no target_encoder, and its kind has no default.")
     if "classes" in component.params:
         raise ValueError(f"Task {name!r}: classes are declared on the task, not inside its target encoder.")
-    factory = resolve_target(component, target_encoder_registry)
+    factory = resolve_factory(component, target_encoder_registry)
     reads_classes = isinstance(factory, type) and issubclass(factory, Encoder) and factory.takes_classes
     if reads_classes:
         if task.classes is None:
@@ -80,7 +75,11 @@ def classes_of(declared: Mapping[int, str] | ClassFile) -> dict[int, str]:
 def build_transforms(
     declared: Mapping[Stage, ComponentConfig], geometries: Mapping[str, Mapping[str, Any]]
 ) -> dict[str, SampleTransform]:
-    """One sample transform per split name; a transform that moves pixels is told what moves with them."""
+    """One sample transform per stage, keyed by the split that runs it.
+
+    A stage and a split share a name by convention — ``train``, ``val``, ``test`` — which is how a
+    declaration written per stage reaches the split the data module prepared.
+    """
     built: dict[str, SampleTransform] = {}
     for stage, component in declared.items():
         transform = instantiate(component)
@@ -97,45 +96,15 @@ def build_data_module(
     targets: Mapping[str, str],
     transforms: Mapping[str, SampleTransform],
 ) -> DataModule:
-    """The data section as a module; the table module's declaration grammar is translated here."""
-    factory = resolve_target(declared, data_module_registry)
-    params = resolve_params(declared)
-    if isinstance(factory, type) and issubclass(factory, TableDataModule):
-        params = table_arguments(params)
-    built: DataModule = factory(**params, preprocessor=preprocessor, targets=targets, transforms=transforms)
+    """The data section as a module, plus the three things every module is given rather than declares.
+
+    A family with a declaration grammar of its own reads it in its own constructor — paths become
+    sources, bindings become columns — so this builder knows of no family in particular.
+    """
+    built: DataModule = instantiate(
+        declared, data_module_registry, preprocessor=preprocessor, targets=targets, transforms=transforms
+    )
     return built
-
-
-def table_arguments(params: Mapping[str, Any]) -> dict[str, Any]:
-    """``source`` paths become sources, ``inputs`` bindings become columns, ``split`` becomes a Split."""
-    translated = dict(params)
-    if "source" in translated:
-        translated["source"] = _sources(translated["source"])
-    if "inputs" in translated:
-        translated["inputs"] = {name: _column(name, binding) for name, binding in translated["inputs"].items()}
-    if isinstance(translated.get("split"), Mapping):
-        translated["split"] = Split(**translated["split"])
-    return translated
-
-
-def _sources(declared: Any) -> TableSource | dict[str, TableSource]:
-    if isinstance(declared, Mapping) and "path" not in declared:
-        return {str(name): _source(entry) for name, entry in declared.items()}
-    return _source(declared)
-
-
-def _source(declared: Any) -> TableSource:
-    if isinstance(declared, Mapping):
-        return source_for(declared["path"], format=declared.get("format"))
-    return source_for(declared)
-
-
-def _column(name: str, binding: Any) -> str:
-    if isinstance(binding, Mapping):
-        return str(binding["column"])
-    if isinstance(binding, str):
-        return binding
-    raise ValueError(f"Input {name!r} binds to a column name or {{column: ...}}, got {binding!r}.")
 
 
 def _encoders(declared: Mapping[str, ComponentConfig] | None, registry: Any) -> dict[str, Any]:

@@ -21,13 +21,13 @@ SEGMENTATION_METRICS: Mapping[str, Mapping[str, object]] = {
 class DenseOutput(Task):
     """A decision per pixel: the head reads a feature map and keeps its extent.
 
-    A dense cell is a mask file whatever its labels mean, so the encoder and the metrics belong to the
-    topology rather than to the semantics paired with it.
+    The topology contributes what is genuinely topological — the shape a head produces and the kind of
+    head that produces it — and nothing else. What the target is read from and what the prediction is
+    judged by follow from the semantics it is paired with, so each pairing below states its own: a mask
+    of class indices for labels, and something else entirely for a depth map.
     """
 
-    default_head: ClassVar[Mapping[str, object]] = {"name": "conv", "input": Stream.DECODER}
-    default_target_encoder: ClassVar[str | None] = "mask"
-    default_metrics: ClassVar[Mapping[str, Mapping[str, object]]] = SEGMENTATION_METRICS
+    default_head: ClassVar[Mapping[str, object]] = {"name": "conv", "stream": Stream.DECODER}
 
     @classmethod
     def output_shape(cls, info: TargetInfo) -> TensorShape:
@@ -39,7 +39,13 @@ class DenseOutput(Task):
 class Segmentation(DenseOutput, MulticlassLabels):
     """One of the declared classes per pixel."""
 
+    default_target_encoder: ClassVar[str | None] = "mask"
+    default_metrics: ClassVar[Mapping[str, Mapping[str, object]]] = SEGMENTATION_METRICS
+
 
 @task_registry.register("binary_segmentation")
 class BinarySegmentation(DenseOutput, BinaryLabels):
     """One score per pixel: how much it belongs to the thing."""
+
+    default_target_encoder: ClassVar[str | None] = "mask"
+    default_metrics: ClassVar[Mapping[str, Mapping[str, object]]] = SEGMENTATION_METRICS

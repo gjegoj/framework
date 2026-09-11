@@ -5,10 +5,9 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from typing import Protocol, runtime_checkable
 
-from src.core import Batch, Geometry, Sample
+from src.core import Geometry, Sample
 
 type SampleTransform = Callable[[Sample], Sample]
-type BatchTransform = Callable[[Batch], Batch]
 
 
 @runtime_checkable
