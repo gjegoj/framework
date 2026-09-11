@@ -1,7 +1,8 @@
-"""Algorithm contract; standard training and distillation remain documented designs."""
+"""How a batch becomes a loss: the algorithm boundary, and the plain multitask objective behind it."""
 
 from __future__ import annotations
 
-from src.training.strategy import ParameterGroup, TrainingStrategy
+from src.training.base import Learner
+from src.training.learner import StandardLearner
 
-__all__ = ["ParameterGroup", "TrainingStrategy"]
+__all__ = ["Learner", "StandardLearner"]

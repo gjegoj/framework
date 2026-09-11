@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from inspect import signature
 from typing import Any
 
@@ -23,18 +23,23 @@ def resolve_target(component: ComponentConfig, registry: Registry[Any] | None = 
 
 
 def instantiate(component: ComponentConfig, registry: Registry[Any] | None = None, /, **facts: Any) -> Any:
-    """Build a declared component with its arguments plus the facts the caller derived.
+    """Build a declared component with its arguments plus the facts the caller derived."""
+    refuse_restated_facts(component, facts)
+    return resolve_target(component, registry)(**resolve_params(component), **facts)
 
-    A fact the declaration restates is refused by name: sizes and vocabularies are stated
-    once, where they are known, and never copied into a config.
+
+def refuse_restated_facts(component: ComponentConfig, facts: Iterable[str]) -> None:
+    """Refuse a declaration that restates a fact the framework will hand this constructor itself.
+
+    Sizes and vocabularies are stated once, where they are known — in the data, in the backbone, in the
+    task — and never copied into a config, where the copy would be free to disagree with the original.
     """
-    restated = sorted(facts.keys() & component.params.keys())
+    restated = sorted(component.params.keys() & set(facts))
     if restated:
         raise ValueError(
             f"{component.spelled!r} declares {', '.join(restated)}, which the framework derives; "
             "drop it from the declaration."
         )
-    return resolve_target(component, registry)(**resolve_params(component), **facts)
 
 
 def resolve_params(component: ComponentConfig) -> dict[str, Any]:

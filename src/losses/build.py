@@ -9,7 +9,7 @@ from typing import Any, cast
 from torch import Tensor, nn
 
 from src.config import ComponentConfig, WeightedLossConfig
-from src.config.instantiate import fill_signature, resolve_params, resolve_target
+from src.config.instantiate import fill_signature, refuse_restated_facts, resolve_params, resolve_target
 from src.core import LossOutput, TargetInfo
 from src.losses.base import Loss, snake_case
 from src.losses.composite import WeightedSum
@@ -50,14 +50,9 @@ def _weighted(declared: object) -> list[WeightedLossConfig]:
 
 def _one(declared: ComponentConfig, info: TargetInfo, log_name: str | None) -> Loss:
     factory = resolve_target(declared, loss_registry)
-    facts: dict[str, Any] = {"values": info.values, "num_classes": info.num_classes}
-    restated = sorted(fill_signature(factory, **facts).keys() & declared.params.keys())
-    if restated:
-        raise ValueError(
-            f"{declared.spelled!r} declares {', '.join(restated)}, which the target encoder already settled; "
-            "drop it from the declaration."
-        )
-    built: Any = factory(**resolve_params(declared), **fill_signature(factory, **facts))
+    settled = fill_signature(factory, values=info.values, num_classes=info.num_classes)
+    refuse_restated_facts(declared, settled)
+    built: Any = factory(**resolve_params(declared), **settled)
     if not isinstance(built, Loss):
         if not (isinstance(built, nn.Module) and _compares_two_tensors(built)):
             raise TypeError(

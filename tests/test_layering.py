@@ -73,7 +73,7 @@ CAPABILITY_EDGES: dict[str, frozenset[str]] = {
 CONFIG_READERS = ("build.py", "cli.py", "experiment.py")
 """Only the composition root and a package's own ``build.py`` read declarations."""
 
-TRAINING_MODULE_MAY_IMPORT = ("src.core", "src.training", "src.metrics.base", "src.tracking.report")
+TRAINING_MODULE_MAY_IMPORT = ("src.core", "src.training", "src.metrics", "src.tracking.report")
 """``training/module.py`` asks metric sets and trackers what their contracts promise, never how they are built."""
 
 

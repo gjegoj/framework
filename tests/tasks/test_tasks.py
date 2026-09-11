@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 import pytest
 import torch
 from torch import Tensor
@@ -11,12 +9,7 @@ from torch import Tensor
 from src.core import Batch, ModelOutput, TargetInfo, require_tensor
 from src.tasks import Task
 from src.tasks.registry import task_registry
-
-CLASSES = {0: "cat", 1: "dog", 2: "bird"}
-
-
-def info(**overrides: Any) -> TargetInfo:
-    return TargetInfo(**{"classes": CLASSES, **overrides})
+from tests.support.tasks import info, specimen
 
 
 def batch(target: Tensor) -> Batch:
@@ -25,17 +18,6 @@ def batch(target: Tensor) -> Batch:
 
 def prediction(logits: Tensor, name: str = "t") -> ModelOutput:
     return ModelOutput(outputs={name: logits})
-
-
-SPECIMENS: dict[str, tuple[TargetInfo, Tensor]] = {
-    "classification": (info(), torch.tensor([1, 2])),
-    "binary_classification": (TargetInfo(), torch.tensor([0.0, 1.0])),
-    "multilabel_classification": (info(), torch.tensor([[1.0, 0.0, 1.0], [0.0, 0.0, 1.0]])),
-    "segmentation": (info(), torch.zeros(2, 4, 5, dtype=torch.long)),
-    "binary_segmentation": (TargetInfo(), torch.zeros(2, 4, 5)),
-    "regression": (TargetInfo(), torch.tensor([1.5, 2.5])),
-}
-"""One target per kind, shaped as its own encoder hands it over: a new kind needs a row here."""
 
 
 class TestContract:
@@ -49,17 +31,13 @@ class TestContract:
         assert kind.default_target_encoder is None or isinstance(kind.default_target_encoder, str)
         assert isinstance(kind.default_metrics, dict)
 
-    @pytest.mark.parametrize("name", list(task_registry))
-    def test_every_registered_task_answers_the_step_with_tensors(self, name: str) -> None:
+    @pytest.mark.parametrize("kind", list(task_registry))
+    def test_every_registered_task_answers_the_step_with_tensors(self, kind: str) -> None:
         """Whatever the semantics, one step is: a target for the loss, a prediction, and a target to score it."""
-        assert name in SPECIMENS, f"{name!r} is registered but has no specimen target; add one to SPECIMENS."
-        declared, target = SPECIMENS[name]
-        task = task_registry.get(name)(name, declared)
-        logits = torch.rand(2, *(size or 4 for size in task.output_shape(declared).sizes))
-        step = Batch(inputs={}, targets={name: target}, count=2)
+        task, output, step = specimen(kind)
 
         assert isinstance(task.loss_target(step), Tensor)
-        assert isinstance(require_tensor(task.postprocess(prediction(logits, name)), name=name), Tensor)
+        assert isinstance(require_tensor(task.postprocess(output), name=task.name), Tensor)
         assert isinstance(task.metric_view(step), Tensor)
 
     def test_a_task_carries_its_name_its_facts_and_its_weight(self) -> None:
