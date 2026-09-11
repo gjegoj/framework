@@ -154,24 +154,7 @@ def test_core_imports_torch_the_standard_library_and_itself_only(imports: list[I
     assert reaching_out == []
 
 
-DEBT = {
-    "tasks": "phase 5: Task stops owning its loss, LossInput moves to core",
-}
-"""Edges the v2 skeleton still crosses; a strict xfail turns green the day the debt is paid."""
-
-
-@pytest.mark.parametrize(
-    ("package", "allowed"),
-    [
-        pytest.param(
-            package,
-            allowed,
-            id=package,
-            marks=pytest.mark.xfail(strict=True, reason=DEBT[package]) if package in DEBT else (),
-        )
-        for package, allowed in CAPABILITY_EDGES.items()
-    ],
-)
+@pytest.mark.parametrize(("package", "allowed"), sorted(CAPABILITY_EDGES.items()), ids=sorted(CAPABILITY_EDGES))
 def test_a_capability_consumes_others_only_along_its_declared_edges(
     imports: list[Import], package: str, allowed: frozenset[str]
 ) -> None:

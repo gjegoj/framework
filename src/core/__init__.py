@@ -18,9 +18,19 @@ from src.core.entities import (
 )
 from src.core.registry import Registry
 from src.core.taxonomy import Axis, Direction, Geometry, Modality, Stage, Stream
-from src.core.types import ShapeTree, TensorShape, TensorTree, require_shape, require_tensor, tree_map
+from src.core.types import (
+    CLASS_AXIS,
+    ShapeTree,
+    TensorShape,
+    TensorTree,
+    drop_class_axis,
+    require_shape,
+    require_tensor,
+    tree_map,
+)
 
 __all__ = [
+    "CLASS_AXIS",
     "Axis",
     "Batch",
     "DatasetInfo",
@@ -41,6 +51,7 @@ __all__ = [
     "TargetInfo",
     "TensorShape",
     "TensorTree",
+    "drop_class_axis",
     "require_shape",
     "require_tensor",
     "tree_map",

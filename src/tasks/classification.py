@@ -1,30 +1,21 @@
-"""One mutually exclusive class per sample; the model supplies unnormalized scores."""
+"""Whole-sample decisions: one class, one score, or one score per label."""
 
-from collections.abc import Mapping
-from typing import ClassVar, cast
+from __future__ import annotations
 
-from torch import Tensor
-
-from src.core import Axis, Batch, ModelOutput, Stream, TargetInfo, TensorShape
-from src.core.types import require_tensor
-from src.tasks.base import Task
+from src.tasks.labels import BinaryLabels, MulticlassLabels, MultilabelLabels
+from src.tasks.registry import task_registry
 
 
-class ClassificationTask(Task):
-    default_head: ClassVar[Mapping[str, object]] = {"name": "linear", "input": Stream.POOLED}
-    default_loss = "cross_entropy"
-    default_target_encoder = "label"
+@task_registry.register("classification")
+class Classification(MulticlassLabels):
+    """One of the declared classes per sample."""
 
-    @classmethod
-    def output_shape(cls, target_info: TargetInfo) -> TensorShape:
-        if target_info.num_classes is None or target_info.num_classes < 2:
-            raise ValueError("Multiclass classification requires at least two declared classes.")
-        return TensorShape(axes=(Axis.CLASSES,), sizes=(target_info.num_classes,))
 
-    def postprocess(self, model_output: ModelOutput, batch: Batch) -> Tensor:
-        return require_tensor(self.select_output(model_output), name=self.name).softmax(dim=-1)
+@task_registry.register("binary_classification")
+class BinaryClassification(BinaryLabels):
+    """One score per sample: how much it is the thing."""
 
-    def prepare_metric_targets(self, batch: Batch) -> Tensor | None:
-        targets = cast(Tensor | None, batch.targets.get(self.name))
-        # Mixup targets remain soft for the loss; metrics compare class indices.
-        return targets.argmax(dim=-1) if targets is not None and targets.ndim == 2 else targets
+
+@task_registry.register("multilabel_classification")
+class MultilabelClassification(MultilabelLabels):
+    """Any number of the declared labels per sample."""

@@ -1,7 +1,29 @@
-"""Objective context and interface; concrete adapters and composition come with execution."""
+"""Objectives: what a task is learned by, and how several of them combine.
+
+Importing this package is what makes its names resolvable: `loss: dice` in a config finds one here.
+"""
 
 from __future__ import annotations
 
-from src.losses.base import Loss, LossInput
+from src.losses.base import Loss, TorchLoss
+from src.losses.classification import BinaryCrossEntropy, CrossEntropy, Focal
+from src.losses.composite import WeightedSum
+from src.losses.regression import Expectation, Huber, MeanAbsoluteError, MeanSquaredError, SmoothL1
+from src.losses.segmentation import Dice, IntersectionOverUnion, Tversky
 
-__all__ = ["Loss", "LossInput"]
+__all__ = [
+    "BinaryCrossEntropy",
+    "CrossEntropy",
+    "Dice",
+    "Expectation",
+    "Focal",
+    "Huber",
+    "IntersectionOverUnion",
+    "Loss",
+    "MeanAbsoluteError",
+    "MeanSquaredError",
+    "SmoothL1",
+    "TorchLoss",
+    "Tversky",
+    "WeightedSum",
+]

@@ -32,6 +32,23 @@ def require_tensor(value: object, *, name: str) -> Tensor:
     return value
 
 
+CLASS_AXIS = 1
+"""Where the class axis sits in a batched value: ``[B, C]`` and ``[B, C, H, W]`` alike.
+
+Batch first, classes next is the layout every head produces and every loss reads, so its position is a
+property of the tensors packages exchange rather than of any one package that acts on them.
+"""
+
+
+def drop_class_axis(values: Tensor) -> Tensor:
+    """Drop a width-one class axis: ``[B, 1]`` becomes ``[B]``, ``[B, 1, H, W]`` becomes ``[B, H, W]``.
+
+    One output per position means the class axis carries no information, while a target never has one;
+    dropping it is what keeps a prediction comparable with what it is scored against.
+    """
+    return values.squeeze(CLASS_AXIS) if values.ndim > 1 and values.size(CLASS_AXIS) == 1 else values
+
+
 def require_shape(value: ShapeTree, *, name: str) -> TensorShape:
     """Narrow a shape tree where an operation requires one tensor's shape."""
     if not isinstance(value, TensorShape):
