@@ -28,6 +28,12 @@ QUARANTINE: dict[str, tuple[str, ...]] = {
     "segmentation_models_pytorch": ("models/backbones/", "losses/segmentation.py"),
     "torchmetrics": ("metrics/",),
     "clearml": ("tracking/",),
+    "ncnn": ("export/backends/ncnn.py",),
+    "pnnx": ("export/backends/ncnn.py",),
+    "onnx": ("export/backends/onnx.py",),
+    "onnxruntime": ("export/backends/onnx.py",),
+    "onnxsim": ("export/backends/onnx.py",),
+    "tensorrt": ("export/backends/tensorrt.py",),
     "cv2": ("data/",),
     "pandas": ("data/",),
     "sklearn": ("data/",),
@@ -51,6 +57,7 @@ CAPABILITY_EDGES: dict[str, frozenset[str]] = {
             "callbacks",
             "data",
             "experiment",
+            "export",
             "losses",
             "metrics",
             "models",
@@ -60,8 +67,10 @@ CAPABILITY_EDGES: dict[str, frozenset[str]] = {
             "transforms",
         }
     ),
-    "cli": frozenset({"build", "console", "experiment"}),
-    "experiment": frozenset({"training"}),
+    "cli": frozenset({"build", "console", "experiment", "export"}),
+    "experiment": frozenset({"export", "tracking", "training"}),
+    # `models` and `tasks` for what a deployable graph is made of: one network, and what its outputs mean.
+    "export": frozenset({"models", "tasks"}),
     # `losses`, because annealing moves a number of an objective and has to know what one is.
     # `console`, because a callback that prints a table prints through the one terminal everything shares.
     "callbacks": frozenset(
@@ -166,7 +175,7 @@ def files() -> list[str]:
     return [path.relative_to(SRC).as_posix() for path in sorted(SRC.rglob("*.py"))]
 
 
-MINIMUM_IMPORTS = 725
+MINIMUM_IMPORTS = 800
 """What the tree imports today, rounded down.
 
 The rules below all read the same list, so a glob that quietly stopped matching would make every one of

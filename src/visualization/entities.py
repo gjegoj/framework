@@ -20,7 +20,10 @@ word for two things is the thing this package exists to avoid. The two values st
 computer-vision reader already has, and the stylesheet keys off them.
 """
 
-SIDES: tuple[Side, ...] = ("gt", "pred")
+TRUTH: Side = "gt"
+PREDICTED: Side = "pred"
+SIDES: tuple[Side, ...] = (TRUTH, PREDICTED)
+"""The two sides in reading order, derived from them so a page and whoever fills it cannot disagree."""
 
 
 @dataclass(frozen=True, slots=True, eq=False)

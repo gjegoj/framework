@@ -9,15 +9,18 @@ The framework's side of the seam is ``src/integrations/``, which turns a batch, 
 tasks into the values below.
 
 This facade publishes the package's whole vocabulary, including the names its own modules use on each
-other. That is deliberate and the one place the rule "nothing without a consumer here" is waived: a
-library's facade *is* its contract, and what the next caller of it builds a page from is not something
-this tree gets to decide.
+other, and that is deliberate: a library's facade *is* its contract, and what the next caller of it
+builds a page from is not something this tree gets to decide. Elsewhere a facade publishes what its
+package offers rather than only what this tree happens to read, which is the same argument made once
+per package instead of once per name.
 """
 
 from __future__ import annotations
 
 from src.visualization.entities import (
+    PREDICTED,
     SIDES,
+    TRUTH,
     Classification,
     Classifications,
     Image,
@@ -36,7 +39,9 @@ from src.visualization.renderers import MAX_CHIP_CHARS
 __all__ = [
     "MAX_CHIP_CHARS",
     "MAX_DISPLAY_SIDE",
+    "PREDICTED",
     "SIDES",
+    "TRUTH",
     "Classification",
     "Classifications",
     "HtmlRenderer",

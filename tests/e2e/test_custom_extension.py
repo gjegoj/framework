@@ -23,7 +23,7 @@ from src.models import Model
 from src.tasks import Task
 from src.tasks.base import LossDeclaration
 from src.training import StandardLearner
-from tests.support.declarations import pixel_pipeline
+from tests.support.declarations import NORMALIZATION, pixel_pipeline
 from tests.support.table import write_table
 
 SIZE = [8, 8]
@@ -88,7 +88,10 @@ def declaration(table: Path, tmp_path: Path, **overrides: Any) -> dict[str, Any]
             "inputs": {"image": {"column": "image_path"}},
             "split": {"train": 0.5, "val": 0.5},
         },
-        "preprocessing": {"name": "standard", "inputs": {"image": {"name": "image", "image_size": SIZE}}},
+        "preprocessing": {
+            "name": "standard",
+            "inputs": {"image": {"name": "image", "image_size": SIZE, **NORMALIZATION}},
+        },
         "transforms": {stage: pixel_pipeline(SIZE) for stage in ("train", "val")},
         "model": {"name": "composite", "backbone": {"name": "timm", "model_name": "resnet18", "pretrained": False}},
         "tasks": {"age": {"kind": {"_target_": f"{HERE}.Doubling"}, "target_column": "age"}},

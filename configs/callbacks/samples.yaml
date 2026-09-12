@@ -16,10 +16,11 @@ callbacks:
   - {name: model_summary, max_depth: 3}
   - {name: lr_monitor, logging_interval: epoch}
   - {name: metric_summary}
-  # `stages: [train]` shows the pixels the run actually trained on — augmentation and mixing included,
-  # which is the only way to see what a batch transform is doing. `batch_index` is fixed on purpose:
-  # two pages of one run are comparable only if they are about the same samples.
-  # `max_side: null` inlines pictures whole; a dense task at full resolution makes a very large page.
+  # `stages` is the one line here that is not a default: it drops `predict`, and narrowing it to
+  # `[train]` shows the pixels the run actually trained on — augmentation and mixing included, which is
+  # the only way to see what a batch transform is doing. Two knobs are not written and are worth knowing:
+  # `batch_index` fixes which batch is drawn, so two pages of one run are about the same samples, and
+  # `max_side: null` inlines pictures whole, which a dense task at full resolution turns into a huge page.
   - name: samples
     every_n_epochs: 5
     stages: [train, val, test]

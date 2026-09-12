@@ -29,6 +29,12 @@ def test_the_minimal_experiment_fills_in_every_default(minimal: dict[str, Any]) 
         pytest.param("optimizer", {"name": "adamw", "lr": 1e-4}, "the root's lr", id="lr on the optimizer"),
         pytest.param("loader", {"batch_size": 8}, "the root's batch_size", id="batch size on the loader"),
         pytest.param("loader", {"shuffle": True}, "not a declaration", id="shuffle is settled by the stage"),
+        pytest.param(
+            "callbacks",
+            [{"name": "lr_monitor", "logging_interval": "epoch"}],
+            "nowhere to write a learning rate",
+            id="a rate watched with nothing recording",
+        ),
         pytest.param("trainer", {"max_epochs": 3}, "the root's epochs", id="epochs on the trainer"),
         pytest.param("trainer", {"callbacks": []}, "the root's callbacks", id="callbacks on the trainer"),
         pytest.param("model", {"name": "composite", "heads": {}}, "tasks", id="heads on the model"),

@@ -9,6 +9,11 @@ from src.config import ComponentConfig, PreprocessingConfig, TaskConfig
 
 CLASSES = {0: "cat", 1: "dog"}
 SIZE = [8, 8]
+NORMALIZATION = {"mean": [0.5] * 3, "std": [0.5] * 3}
+"""What these fixtures scale an image by — one source, read by the encoder that declares it and by the
+chain that applies it. The shipped groups interpolate the same two numbers for the same reason: a run
+whose halves disagree is refused, because everything reading the declaration would then be describing
+a model trained on something else."""
 
 
 def pixel_pipeline(size: list[int]) -> dict[str, Any]:
@@ -17,7 +22,7 @@ def pixel_pipeline(size: list[int]) -> dict[str, Any]:
         "_target_": "src.transforms.AlbumentationsTransform",
         "transforms": [
             {"_target_": "albumentations.Resize", "height": size[0], "width": size[1]},
-            {"_target_": "albumentations.Normalize", "mean": [0.5] * 3, "std": [0.5] * 3},
+            {"_target_": "albumentations.Normalize", **NORMALIZATION},
             {"_target_": "albumentations.pytorch.ToTensorV2"},
         ],
     }
@@ -35,7 +40,7 @@ def component(declared: Any) -> ComponentConfig:
 def preprocessing_config(**declared: Any) -> PreprocessingConfig:
     """The standard image preprocessor at 4x4, plus whatever a test adds."""
     return PreprocessingConfig.model_validate(
-        {"name": "standard", "inputs": {"image": {"name": "image", "image_size": [4, 4]}}, **declared}
+        {"name": "standard", "inputs": {"image": {"name": "image", "image_size": [4, 4], **NORMALIZATION}}, **declared}
     )
 
 
@@ -56,7 +61,10 @@ def smallest_run(table: Path, directory: Path) -> dict[str, Any]:
             "inputs": {"image": {"column": "image_path"}},
             "split": {"train": 0.5, "val": 0.25, "test": 0.25},
         },
-        "preprocessing": {"name": "standard", "inputs": {"image": {"name": "image", "image_size": SIZE}}},
+        "preprocessing": {
+            "name": "standard",
+            "inputs": {"image": {"name": "image", "image_size": SIZE, **NORMALIZATION}},
+        },
         "transforms": {stage: pixel_pipeline(SIZE) for stage in ("train", "val", "test")},
         "model": {"name": "composite", "backbone": {"name": "timm", "model_name": "resnet18", "pretrained": False}},
         "tasks": {"species": {"kind": "classification", "target_column": "species", "classes": CLASSES}},

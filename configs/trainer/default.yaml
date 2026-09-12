@@ -4,7 +4,9 @@ devices: auto
 log_every_n_steps: 10
 num_sanity_val_steps: 0
 deterministic: warn
-# Off by default; `trainer=profile` turns it on. Override the kind with the
-# shorthand — `trainer=profile trainer.profiler=pytorch` — because dotting into a
-# key that is null here (`trainer.profiler.name=...`) has nothing to dot into.
+# Off here; `trainer=profile` turns it on and brings with it the two keys that make a
+# profiler write a file. Change the kind on top of that group —
+# `trainer=profile trainer.profiler.name=pytorch` — rather than replacing the node:
+# `trainer.profiler=pytorch` does not compose at all, and if it did it would drop
+# `dirpath` and `filename` with it, which is how a report ends up in the job log.
 profiler: null

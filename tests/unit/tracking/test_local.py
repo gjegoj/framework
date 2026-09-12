@@ -2,15 +2,34 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
-from src.tracking import ShowsPage
+from src.tracking import KeepsRecord, ShowsPage
 from src.tracking.local import PAGES, LocalFiles
 
 
 def test_it_shows_pages_and_says_so_structurally(tmp_path: Path) -> None:
     """What the samples grid asks of a backend before offering it one; a rename here would be silent."""
     assert isinstance(LocalFiles(save_dir=str(tmp_path)), ShowsPage)
+
+
+def test_it_keeps_records_and_says_so_structurally(tmp_path: Path) -> None:
+    """What a shipped export asks of a backend before offering it one; a rename here would be silent."""
+    assert isinstance(LocalFiles(save_dir=str(tmp_path)), KeepsRecord)
+
+
+def test_the_record_of_what_a_run_produced_lands_beside_the_numbers_as_a_deployment_reads_it(
+    tmp_path: Path,
+) -> None:
+    """A run without a service keeps everything in one directory, and this is the half a deployment reads."""
+    tracker = LocalFiles(save_dir=str(tmp_path), version="")
+
+    tracker.log_record("model", {"outputs": [{"name": "species"}]})
+
+    assert json.loads((Path(tracker.log_dir) / "model.json").read_text(encoding="utf-8")) == {
+        "outputs": [{"name": "species"}]
+    }
 
 
 def test_a_page_lands_beside_the_numbers_and_needs_nothing_else_to_open(tmp_path: Path) -> None:

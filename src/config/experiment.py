@@ -11,6 +11,9 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from src.config.schema import ComponentConfig, ModelConfig, PreprocessingConfig, TaskConfig
 from src.core import Stage, validate_name
 
+LEARNING_RATE_MONITOR = "lr_monitor"
+"""The shipped callback that only reports, named here because the pairing is a rule about two sections."""
+
 
 def refuse_owned_keys(values: Mapping[str, object], owned: Mapping[str, str]) -> None:
     """A key the framework settles elsewhere is declared once, where it belongs."""
@@ -140,6 +143,9 @@ class ExperimentConfig(BaseModel):
     trainer: TrainerConfig = Field(default_factory=TrainerConfig)
     callbacks: list[ComponentConfig] = Field(default_factory=list)
     tracker: ComponentConfig | None = None
+    export: list[ComponentConfig] = Field(
+        default_factory=list, description="Deployment formats the trained model is written in when the run ends."
+    )
     run: RunConfig = Field(default_factory=RunConfig)
 
     @model_validator(mode="after")
@@ -159,7 +165,23 @@ class ExperimentConfig(BaseModel):
             validate_name(name, label="Task")
         self._refuse_heads_declared_twice()
         self._refuse_inputs_that_disagree()
+        self._refuse_watching_a_rate_with_nothing_recording()
         return self
+
+    def _refuse_watching_a_rate_with_nothing_recording(self) -> None:
+        """A callback that only reports needs somewhere to report to, and the two are separate sections.
+
+        Left alone, Lightning refuses this itself — but at ``on_train_start``, after the sources have been
+        read, the encoders fitted and the cache warmed, and in words naming ``LearningRateMonitor``, the
+        ``Trainer`` and its ``logger``: three things that appear nowhere in what the run declared.
+        """
+        if self.tracker is None and any(one.name == LEARNING_RATE_MONITOR for one in self.callbacks):
+            raise ValueError(
+                f"callbacks declares {LEARNING_RATE_MONITOR!r} and tracker is none, so there is nowhere to "
+                "write a learning rate. Either declare a tracker — `tracker=csv` keeps the numbers in the "
+                "run's own directory — or run without the callbacks that report: `callbacks=none`. A list "
+                "cannot be edited from the command line, because Hydra will not force-add to a group."
+            )
 
     def _refuse_heads_declared_twice(self) -> None:
         """A head is a task's declaration; the model section only selects the network, or brings its own.

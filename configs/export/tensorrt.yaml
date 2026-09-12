@@ -1,0 +1,17 @@
+# @package _global_
+# An engine for one NVIDIA GPU, compiled from the ONNX graph declared under it.
+# Needs the `tensorrt` package, which is not a dependency of this framework: it ships a build per
+# platform and needs a GPU at import. Everything a declaration can get wrong — the precision, the batch
+# profile — is refused on any machine; the engine is built only where one can be.
+# `min/opt/max_batch` are the sizes it will serve and the one it is optimized for, and half precision
+# drifts further than the default tolerances allow: raise `atol`/`rtol` with it, deliberately.
+export:
+  - name: tensorrt
+    precision: fp32
+    min_batch: 1
+    opt_batch: 1
+    max_batch: 1
+    onnx:
+      _target_: src.export.backends.onnx.OnnxExporter
+      opset: 18
+      simplify: true

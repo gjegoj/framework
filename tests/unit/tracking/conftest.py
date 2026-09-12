@@ -20,6 +20,7 @@ class Recorded:
     singles: dict[str, float] = field(default_factory=dict)
     media: list[dict[str, Any]] = field(default_factory=list)
     histograms: list[dict[str, Any]] = field(default_factory=list)
+    artifacts: dict[str, Any] = field(default_factory=dict)
     started: dict[str, Any] = field(default_factory=dict)
     connected: dict[str, Any] = field(default_factory=dict)
     flushes: int = 0
@@ -63,6 +64,9 @@ def clearml(monkeypatch: pytest.MonkeyPatch) -> Recorded:
 
         def get_logger(self) -> Backend:
             return Backend()
+
+        def upload_artifact(self, name: str, artifact_object: Any) -> None:
+            recorded.artifacts[name] = artifact_object
 
         def connect(self, values: dict[str, Any]) -> None:
             recorded.connected = values

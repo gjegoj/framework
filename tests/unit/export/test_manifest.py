@@ -1,0 +1,180 @@
+"""What a deployment is handed beside the artifact: how to build an input, and what an output means."""
+
+from __future__ import annotations
+
+import json
+from collections.abc import Mapping
+from pathlib import Path
+
+import pytest
+from torch import nn
+
+from src.config import ComponentConfig
+from src.core import (
+    Axis,
+    DatasetInfo,
+    InputInfo,
+    ModelOutput,
+    Normalization,
+    TargetInfo,
+    TensorShape,
+    TensorTree,
+    require_tensor,
+)
+from src.export import DeployableModel
+from src.export.base import beside
+from src.export.build import build_exporters
+from src.export.manifest import MANIFEST_SUFFIX, Manifest, ship
+from src.models import Model
+from src.tasks.regression import Regression
+from tests.unit.export.test_backends import FEATURES, deployable, wide
+
+NORMALIZATION = Normalization(mean=(0.485, 0.456, 0.374, 0.5), std=(0.229, 0.224, 0.225, 0.5))
+
+
+def prepared() -> DatasetInfo:
+    """What the run's encoders published about the one input this graph takes."""
+    shape = TensorShape(axes=(Axis.CHANNELS,), sizes=(FEATURES,))
+    return DatasetInfo(inputs={"features": InputInfo(shape=shape, normalization=NORMALIZATION)}, targets={})
+
+
+def shipped(tmp_path: Path, *declared: dict[str, object], graph: DeployableModel | None = None) -> Manifest:
+    formats = build_exporters([ComponentConfig.model_validate(one) for one in declared])
+    return ship(graph if graph is not None else deployable(), prepared(), formats, tmp_path / "model")
+
+
+def test_a_manifest_says_how_to_build_every_input_the_artifact_takes(tmp_path: Path) -> None:
+    """Shape, dtype and the scaling the model was trained under — without these a deployment guesses."""
+    (built,) = shipped(tmp_path, {"name": "onnx"}).inputs
+
+    assert built.name == "features"
+    assert built.shape == (FEATURES,)
+    assert built.dtype == "float32"
+    assert built.normalization == NORMALIZATION
+
+
+def test_a_manifest_says_what_every_output_means_in_the_order_the_artifact_answers(tmp_path: Path) -> None:
+    """Position is the contract every format keeps; a name is what the numbers in that position mean."""
+    outputs = shipped(tmp_path, {"name": "onnx"}).outputs
+
+    assert [one.name for one in outputs] == ["species", "weight"]
+    assert outputs[0].semantics == "multiclass"
+    assert outputs[0].classes == ("cat", "dog")
+    assert outputs[1].semantics is None
+    assert outputs[1].classes is None
+
+
+def test_a_manifest_says_which_file_is_the_artifact_and_which_only_travel_with_it(tmp_path: Path) -> None:
+    """An ONNX model whose weights sit beside it does not travel alone, and copying one file breaks it.
+
+    Named rather than ordered: a deployment has two questions — which file to open, and what has to be
+    beside it — and a single list answers neither without knowing that the first entry is the one.
+    """
+    (built,) = shipped(tmp_path, {"name": "onnx", "external_data": True}, graph=wide()).artifacts
+
+    assert (built.artifact, built.travels_with) == ("model.onnx", ("model.onnx.data",))
+
+
+def test_an_artifact_that_is_one_file_says_so_by_travelling_with_nothing(tmp_path: Path) -> None:
+    """Most formats are one file, and a record promising a second would send a deployment looking for it."""
+    (built,) = shipped(tmp_path, {"name": "onnx"}).artifacts
+
+    assert (built.artifact, built.travels_with) == ("model.onnx", ())
+
+
+def test_a_manifest_records_what_the_file_carries_rather_than_what_was_asked_for(tmp_path: Path) -> None:
+    """A declaration may ask for nothing and torch may substitute; the record is read off the artifact."""
+    (built,) = shipped(tmp_path, {"name": "onnx"}).artifacts
+
+    assert built.written_by == "OnnxExporter"
+    assert isinstance(built.details["opset"], int)
+
+
+def test_a_manifest_carries_what_each_artifact_was_proven_by(tmp_path: Path) -> None:
+    """A record of an artifact nobody compared with the model would be a record of a guess."""
+    (built,) = shipped(tmp_path, {"name": "pt2"}).artifacts
+
+    assert built.parity.within_tolerance
+    assert built.parity.batches == (2, 1)
+
+
+def test_the_record_is_written_beside_the_artifacts_and_reads_back_as_a_document(tmp_path: Path) -> None:
+    """Beside them because that is where a deployment looks, and as JSON because that is what reads it."""
+    manifest = shipped(tmp_path, {"name": "onnx"}, {"name": "pt2"})
+
+    written = json.loads(beside(tmp_path / "model", MANIFEST_SUFFIX).read_text(encoding="utf-8"))
+
+    assert [one["artifact"] for one in written["artifacts"]] == ["model.onnx", "model.pt2"]
+    assert written["inputs"][0]["normalization"]["mean"] == list(NORMALIZATION.mean)
+    assert written == json.loads(json.dumps(manifest.as_record()))
+
+
+def test_shipping_leaves_the_model_in_the_state_it_was_handed(tmp_path: Path) -> None:
+    """An artifact is written from a model in eval, and the reference implementation left it there —
+    encoding the order of a run's own steps as a mutation of somebody else's object."""
+    graph = deployable().train()
+
+    ship(graph, prepared(), build_exporters([ComponentConfig.model_validate({"name": "pt2"})]), tmp_path / "model")
+
+    assert graph.training
+
+
+def test_shipping_leaves_the_model_in_eval_when_that_is_how_it_was_handed_over(tmp_path: Path) -> None:
+    """The state restored has to be read off the model, not off the wrapper built around it.
+
+    A wrapper is constructed for the export and ``nn.Module`` starts every instance in training, while
+    construction does not propagate anything to the child — so a flag read off the wrapper says
+    "training" about a model that was handed over in eval, and hands it back switched on.
+    """
+    handed = deployable()
+    model = handed.model.eval()
+    graph = DeployableModel(model, list(handed.tasks), input_names=list(handed.input_names))
+    assert graph.training and not model.training, "the wrapper starts in training and the model stayed in eval"
+
+    ship(graph, prepared(), build_exporters([ComponentConfig.model_validate({"name": "pt2"})]), tmp_path / "model")
+
+    assert not model.training
+
+
+def test_an_input_the_graph_does_not_take_cannot_be_shipped(tmp_path: Path) -> None:
+    """The example comes from what the data prepared, so the two declarations have to name one thing."""
+    other = DatasetInfo(inputs={"image": InputInfo(shape=TensorShape((Axis.CHANNELS,), (FEATURES,)))}, targets={})
+
+    with pytest.raises(LookupError, match="'features'"):
+        ship(deployable(), other, build_exporters([ComponentConfig.model_validate({"name": "pt2"})]), tmp_path / "m")
+
+
+def test_a_run_that_ships_nothing_writes_no_record(tmp_path: Path) -> None:
+    """`export: none` is a declaration, not a gap: there is no artifact, so there is nothing to describe."""
+    manifest = ship(deployable(), prepared(), [], tmp_path / "model")
+
+    assert manifest.artifacts == ()
+    assert not beside(tmp_path / "model", MANIFEST_SUFFIX).exists()
+    assert not list(tmp_path.glob("model.*"))
+
+
+class Dropping(Model):
+    """A network that answers differently in training, which is what makes the state visible at all."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.dropout = nn.Dropout(p=0.5)
+        self.head = nn.Linear(FEATURES, 1)
+
+    def forward(self, inputs: Mapping[str, TensorTree]) -> ModelOutput:
+        features = require_tensor(inputs["features"], name="features")
+        return ModelOutput(outputs={"value": self.head(self.dropout(features))})
+
+
+def test_an_artifact_is_written_from_the_model_in_eval_however_it_was_handed_over(tmp_path: Path) -> None:
+    """Dropout bakes whichever branch it was in, so a graph written while training is a different model.
+
+    Visible here because the model is also the oracle: written in training, the artifact holds one drawn
+    mask and the model draws another, and the parity that proves it fails with numbers nobody can read.
+    """
+    graph = DeployableModel(Dropping(), [Regression("value", TargetInfo())], input_names=("features",)).train()
+    formats = build_exporters([ComponentConfig.model_validate({"name": "pt2"})])
+
+    manifest = ship(graph, prepared(), formats, tmp_path / "model")
+
+    assert manifest.artifacts[0].parity.within_tolerance

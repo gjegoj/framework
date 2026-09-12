@@ -6,16 +6,24 @@ the objects the composition root handed it is a decision of the run section, not
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Sequence
+from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING
 
+from src.export import DeployableModel, Manifest, ship
+from src.tracking import KeepsRecord
 from src.training import load_checkpoint, restore_best_weights
 
 if TYPE_CHECKING:
     import lightning as L
 
     from src.config import ExperimentConfig
+    from src.export import Exporter
     from src.training import TrainingData, TrainingModule
+
+MODEL = "model"
+"""What a run's artifacts and the record describing them are named, under the run's own directory."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,10 +39,11 @@ class Experiment:
     data: TrainingData
     trainer: L.Trainer
     declaration: ExperimentConfig
+    exporters: Sequence[Exporter] = field(default_factory=tuple)
 
 
-def run(experiment: Experiment) -> None:
-    """Fit and evaluate, as the run section asks.
+def run(experiment: Experiment) -> Manifest:
+    """Fit, evaluate and ship, as the run section asks; answer with what was shipped.
 
     Only ``fit`` is ever handed a checkpoint, and only to continue an interrupted run; everything after
     it reads the module, so the weights evaluated are the ones the run actually stopped on.
@@ -53,3 +62,27 @@ def run(experiment: Experiment) -> None:
         restore_best_weights(experiment.trainer, model)
     if config.run.test:
         experiment.trainer.test(experiment.module, datamodule=experiment.data, verbose=False)
+    return _ship(experiment)
+
+
+def _ship(experiment: Experiment) -> Manifest:
+    """Write the declared formats from the weights this run ended holding, and keep the record of it.
+
+    Last of all, because everything before it can change which weights those are, and because writing
+    moves the graph to the processor and back: a run with anything left to do would be doing it on a
+    model that had just been moved twice for somebody else's benefit.
+
+    The record goes to the tracker as well as beside the artifacts — the same one, where the run's
+    declaration already went, so the two are read side by side. A backend with nowhere to keep one says
+    so by not implementing the port, and the run carries on: the file beside the artifacts is the copy
+    that exists whatever a run declared for a tracker, including nothing.
+    """
+    config = experiment.declaration
+    learner = experiment.module.learner
+    info = experiment.data.info
+    graph = DeployableModel(learner.model, list(learner.tasks.values()), input_names=list(info.inputs))
+    manifest = ship(graph, info, experiment.exporters, Path(config.run.directory) / MODEL)
+    logger = experiment.trainer.logger
+    if manifest.artifacts and isinstance(logger, KeepsRecord):
+        logger.log_record(MODEL, manifest.as_record())
+    return manifest

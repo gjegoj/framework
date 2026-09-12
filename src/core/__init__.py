@@ -31,6 +31,7 @@ from src.core.registry import Registry
 from src.core.taxonomy import Axis, Geometry, Modality, Role, Semantics, Stage, Stream
 from src.core.types import (
     CLASS_AXIS,
+    ShapeTree,
     TensorShape,
     TensorTree,
     drop_class_axis,
@@ -61,6 +62,7 @@ __all__ = [
     "Role",
     "Sample",
     "Semantics",
+    "ShapeTree",
     "Stage",
     "StepOutput",
     "Stream",

@@ -11,6 +11,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from src.core import Bars, Matrix
 
 
@@ -53,3 +55,16 @@ class RecordsSummary(Protocol):
     """
 
     def record_summary(self, name: str, value: float) -> None: ...
+
+
+@runtime_checkable
+class KeepsRecord(Protocol):
+    """A backend with somewhere to keep a record of what a run produced, rather than of how it went.
+
+    Neither a number nor a picture, and not on the axis either of those is drawn against: an export
+    record is what a deployment builds its input from and reads its output by. It belongs where the
+    declaration already went, so the two are read side by side — this is the same run, described from
+    both ends. ClearML calls such a record an artifact.
+    """
+
+    def log_record(self, name: str, record: Mapping[str, object]) -> None: ...

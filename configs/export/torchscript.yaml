@@ -1,0 +1,6 @@
+# @package _global_
+# The one format libtorch loads from C++ — Triton's `pytorch_libtorch` backend among others.
+# Written by tracing, so its batch axis is generalized out of the example rather than declared; export
+# proves it at a second size for exactly that reason.
+export:
+  - name: torchscript

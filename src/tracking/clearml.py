@@ -163,6 +163,15 @@ class ClearMLTracker(Logger):
         )
 
     @rank_zero_only
+    def log_record(self, name: str, record: Mapping[str, object]) -> None:
+        """The ``KeepsRecord`` port: a record this service keeps as an artifact of the task.
+
+        An artifact and not media: this is read by whoever deploys the model, often from a script, and
+        the service stores a mapping as something they can fetch back as one.
+        """
+        self.experiment.upload_artifact(name, dict(record))
+
+    @rank_zero_only
     def record_summary(self, name: str, value: float) -> None:
         """The ``RecordsSummary`` port: a number with no iteration axis, in the table kept for those."""
         self._reporter.report_single_value(name=name, value=value)

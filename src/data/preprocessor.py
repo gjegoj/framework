@@ -157,10 +157,16 @@ class StandardPreprocessor(Preprocessor):
 
 
 def _required(values: Mapping[str, object], name: str, role: str) -> object:
+    """The value under ``name``, or a refusal naming it and what the row does carry.
+
+    ``LookupError`` rather than ``KeyError``, as everywhere else a name is looked up here: ``KeyError``
+    renders its argument with ``repr``, so a written sentence reaches the reader inside quotation marks
+    that belong to no part of it.
+    """
     try:
         return values[name]
     except KeyError:
-        raise KeyError(f"The sample carries no {role} {name!r}; it has {sorted(values)}.") from None
+        raise LookupError(f"The sample carries no {role} {name!r}; it has {sorted(values)}.") from None
 
 
 def _geometries(encoders: Mapping[str, Encoder]) -> dict[str, Geometry]:

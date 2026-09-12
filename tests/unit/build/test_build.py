@@ -6,7 +6,8 @@ what a task gets when it declares nothing, which splits a run prepares, and what
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -18,6 +19,7 @@ from src.config import TaskConfig, load_config
 from src.core import Axis, TargetInfo
 from src.tasks import Classification, Segmentation
 from src.tasks.build import head_for
+from tests.support.declarations import pixel_pipeline
 from tests.unit.build.conftest import SIZE
 
 
@@ -150,6 +152,27 @@ class TestTheRunItWillBe:
         with pytest.raises(LookupError, match="test"):
             built.data.test_dataloader()
 
+    def test_a_run_that_does_not_train_reads_neither_the_training_split_nor_the_validation_one(
+        self, declaration: Mapping[str, Any]
+    ) -> None:
+        """Evaluating weights it was handed, or only shipping them: reading a split to prepare it for
+        nobody is the whole cost of the thing such a run is not doing."""
+        built = experiment(declaration, run={**declaration["run"], "train": False})
+
+        built.data.test_dataloader()
+        with pytest.raises(LookupError, match="train"):
+            built.data.train_dataloader()
+
+    def test_an_encoder_that_would_have_to_learn_its_layout_refuses_a_run_that_never_trains(
+        self, declaration: Mapping[str, Any]
+    ) -> None:
+        """What a run gives up by not reading the training split, said where it is given up rather than
+        by a size that silently came from somewhere else. Declaring the range is the way to keep it."""
+        binned = {"kind": "regression", "target_column": "age", "target_encoder": {"name": "linear_bins", "bins": 4}}
+
+        with pytest.raises(ValueError, match="low and high"):
+            experiment(declaration, tasks={"age": binned}, run={**declaration["run"], "train": False})
+
     def test_a_run_that_will_test_without_a_split_to_test_on_is_refused_before_it_starts(
         self, declaration: Mapping[str, Any]
     ) -> None:
@@ -168,6 +191,24 @@ class TestTheRunItWillBe:
 
 class TestDeclarationsThatCannotHold:
     """Rules about two sections at once: nothing but the root can see both, so nothing else can refuse."""
+
+    def test_a_format_the_framework_never_heard_of_is_refused_before_a_row_is_read(
+        self, declaration: Mapping[str, Any], tmp_path: Path
+    ) -> None:
+        """An export declaration reads nothing but itself, while preparing the data is a source read, an
+        encoder fit and a cache warm — minutes to spend before answering a typo in a name.
+
+        Declared here over a source that does not exist, so whichever refusal arrives first is the one a
+        run would have paid that time for.
+        """
+        declared = {
+            **declaration,
+            "data": {**declaration["data"], "source": str(tmp_path / "no-such-table.csv")},
+            "export": [{"name": "onxn"}],
+        }
+
+        with pytest.raises(LookupError, match="onxn"):
+            build(load_config(declared))
 
     def test_inputs_bound_to_columns_and_inputs_encoded_are_one_vocabulary(
         self, declaration: Mapping[str, Any]
@@ -191,6 +232,37 @@ class TestDeclarationsThatCannotHold:
         with pytest.raises(ValueError, match="training"):
             experiment(declaration, tasks=tasks)
 
+    @pytest.mark.parametrize(
+        ("change", "expected"),
+        [
+            (lambda chain: chain["transforms"][1].update({"mean": [0.1] * 3}), "0.1"),
+            (lambda chain: chain["transforms"].pop(1), "no fixed scaling"),
+        ],
+        ids=["scaled by other numbers", "not scaled at all"],
+    )
+    def test_a_chain_that_does_not_apply_the_scaling_its_input_declares_is_refused(
+        self, declaration: Mapping[str, Any], change: Callable[[dict[str, Any]], object], expected: str
+    ) -> None:
+        """The encoder's `mean` and `std` are shipped in the export record and undone to draw a sample page,
+        so a chain doing something else makes both of those describe a model that was never trained."""
+        chain = pixel_pipeline(SIZE)
+        change(chain)
+
+        with pytest.raises(ValueError, match=expected):
+            experiment(declaration, transforms=dict.fromkeys(("train", "val", "test"), chain))
+
+    def test_one_number_in_a_chain_is_the_same_scaling_as_that_number_per_channel(
+        self, declaration: Mapping[str, Any]
+    ) -> None:
+        """Refusing this would be refusing a run that is right: albumentations spreads a single number
+        over every channel, so the two halves do say the same thing, written two ways."""
+        chain = pixel_pipeline(SIZE)
+        chain["transforms"][1] = {"_target_": "albumentations.Normalize", "mean": 0.5, "std": 0.5}
+
+        built = experiment(declaration, transforms=dict.fromkeys(("train", "val", "test"), chain))
+
+        assert built.data.info.inputs["image"].normalization is not None
+
     def test_a_head_declared_against_a_model_that_arrives_whole_is_refused(
         self, declaration: Mapping[str, Any]
     ) -> None:
@@ -213,8 +285,10 @@ class TestTheTrainer:
         assert isinstance(built.trainer.logger, CSVLogger)
 
     def test_the_declared_callbacks_arrive_in_the_order_they_were_written(self, declaration: Mapping[str, Any]) -> None:
+        """With a tracker, because one of the two only reports and a run without one is refused by name."""
         built = experiment(
             declaration,
+            tracker={"name": "csv", "save_dir": declaration["run"]["directory"]},
             callbacks=[
                 {"name": "lr_monitor", "logging_interval": "epoch"},
                 {"name": "checkpoint", "monitor": "val/loss", "mode": "min", "save_top_k": 1},

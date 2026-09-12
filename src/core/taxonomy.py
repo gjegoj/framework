@@ -1,4 +1,9 @@
-"""Execution modes; dataset split names remain open strings."""
+"""The closed vocabularies every package shares, and nothing that is open to a declaration.
+
+What a run is doing, what an axis is, what a stream carries, what a label means, what an input is made
+of, which side of a sample a value rides on, and how it moves through a pixel chain. Dataset split names
+are not here: a run names its own splits, and only the three that are also stages are spoken for.
+"""
 
 from __future__ import annotations
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import ClassVar
 
-from src.core import Axis, Stream, TargetInfo, TensorShape
+from src.core import OVERLAP, Axis, Stream, TargetInfo, TensorShape
 from src.tasks.base import Task
 from src.tasks.registry import task_registry
 from src.tasks.semantics import CLASSIFICATION_METRICS, BinarySemantics, MulticlassSemantics
@@ -13,7 +13,7 @@ from src.tasks.semantics import CLASSIFICATION_METRICS, BinarySemantics, Multicl
 # Per-pixel per-class f1 *is* dice (2TP / (2TP + FP + FN)), so the customary score is already on this
 # list under f1's name; iou adds the strict-overlap reading.
 SEGMENTATION_METRICS: Mapping[str, Mapping[str, object]] = {
-    "iou": {"name": "iou", "average": "none"},
+    OVERLAP: {"name": OVERLAP, "average": "none"},
     **CLASSIFICATION_METRICS,
 }
 

@@ -2,12 +2,14 @@
 # A continuous target: `uv run main.py experiment=examples/regression`.
 #
 # **`random_age` is noise, and named so nobody reads it as learnable.** Nothing in the
-# picture carries it, so no model can beat predicting its mean. A `val/age/mae` that
-# settles near the column's own standard deviation (~4.2 years) is the correct outcome,
-# not a failure — what this example demonstrates is that a regression task *builds,
+# picture carries it, so no model can beat predicting its middle. A `val/age/mae` that
+# settles near **3.6 years** is the correct outcome, not a failure: the column is uniform
+# over 0.5–15, and a constant at its middle is off by a quarter of that range. (Its
+# standard deviation, 4.2, is the other summary of the same spread and is not what a mean
+# absolute error measures — reading 3.6 as "better than possible" sends you hunting a leak) — what this example demonstrates is that a regression task *builds,
 # trains, logs and reports*, which is a property of the pipeline rather than of a model.
 #
-# Swap `target` for a column that carries signal and nothing else here changes.
+# Swap `target_column` for a column that carries signal and nothing else here changes.
 defaults:
   - examples/pet
   - override /model: resnet18

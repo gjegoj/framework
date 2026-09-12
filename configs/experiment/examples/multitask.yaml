@@ -42,7 +42,7 @@ tasks:
 
   # And a third, to show that the axes compose: same stream, different label semantics.
   # `random_age` is noise (see the regression example) — it proves the plumbing, and a
-  # mae near the column's deviation is the right answer.
+  # mae near 3.6, what a constant at the column's middle reaches, is the right answer.
   age:
     kind: regression
     target_column: random_age

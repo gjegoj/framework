@@ -8,7 +8,7 @@ from typing import ClassVar
 import torch
 from torch import Tensor
 
-from src.core import CLASS_AXIS, Batch, ModelOutput, TargetInfo, TensorTree, drop_class_axis
+from src.core import CLASS_AXIS, ERROR, Batch, ModelOutput, TargetInfo, TensorTree, drop_class_axis
 from src.tasks.base import LossDeclaration, Task
 from src.tasks.registry import task_registry
 
@@ -24,7 +24,7 @@ class Regression(Task):
     """
 
     default_target_encoder: ClassVar[str | None] = "scalar"
-    default_metrics: ClassVar[Mapping[str, Mapping[str, object]]] = {"mae": {"name": "mae"}}
+    default_metrics: ClassVar[Mapping[str, Mapping[str, object]]] = {ERROR: {"name": ERROR}}
 
     @property
     def binned(self) -> tuple[float, ...] | None:

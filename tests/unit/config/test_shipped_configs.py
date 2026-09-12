@@ -19,6 +19,10 @@ from src.data.registry import (
     preprocessor_registry,
     target_encoder_registry,
 )
+from src.export.backends.onnx import OnnxExporter
+from src.export.backends.tensorrt import TensorRtExporter
+from src.export.build import build_exporters
+from src.export.registry import exporter_registry
 from src.losses.registry import loss_registry
 from src.metrics.registry import metric_registry
 from src.models.build import NATIVE
@@ -94,6 +98,59 @@ def test_the_shipped_augmentations_draw_what_the_runs_seed_settles() -> None:
     assert drawn_at(123) != drawn_at(321)
 
 
+@pytest.mark.parametrize("group", ["onnx", "pt2", "torchscript", "tensorrt", "ncnn", "all"])
+def test_a_shipped_export_group_builds_what_it_declares(group: str) -> None:
+    """A name that resolves is not a declaration that works: an option spelled wrong reaches `params`
+    untouched and answers for it at the end of a run, with weights already trained and nothing shipped.
+
+    Building is the only thing that reads those options, and the two formats no machine here can run are
+    built too — everything they can be wrong about is settled before their libraries are looked for.
+    """
+    config = load_config(composed("experiment=examples/classification", f"export={group}"))
+
+    built = build_exporters(config.export)
+
+    assert [one.suffix for one in built] == [suffix for suffix, _ in SHIPPED[group]]
+    for one, (_, declared) in zip(built, SHIPPED[group], strict=True):
+        assert {option: getattr(one, option) for option in declared} == declared
+
+
+OPSET = 18
+"""The operator set every shipped ONNX declaration pins, wherever it is written."""
+
+
+SHIPPED: Mapping[str, list[tuple[str, Mapping[str, object]]]] = {
+    "onnx": [("onnx", {"opset": OPSET, "simplify": True})],
+    "pt2": [("pt2", {})],
+    "torchscript": [("pt", {})],
+    "tensorrt": [("engine", {"precision": "fp32", "min_batch": 1, "opt_batch": 1, "max_batch": 1})],
+    "ncnn": [("param", {"fp16": False})],
+    "all": [("onnx", {"opset": OPSET, "simplify": True}), ("pt2", {}), ("pt", {})],
+}
+"""What each shipped group writes and under what, named here so a group quietly losing either is a failure.
+
+The suffix alone would not notice an option: a group is read by whoever declares `export=`, and every
+option in it changes the artifact rather than the name it lands under.
+"""
+
+
+@pytest.mark.parametrize("group", ["onnx", "all", "tensorrt"])
+def test_every_shipped_group_that_writes_onnx_writes_the_same_onnx(group: str) -> None:
+    """One format declared in three files: on its own, among `all`, and under the engine compiled from it.
+
+    Written three times because a group is a whole declaration and none of them can reach into another —
+    so nothing but this holds them together, and `export=all` shipping a different graph than `export=onnx`
+    is a difference nobody would see until two deployments disagreed.
+    """
+    config = load_config(composed("experiment=examples/classification", f"export={group}"))
+
+    built = build_exporters(config.export)
+    written = [one for one in built if isinstance(one, OnnxExporter)]
+    written += [one.onnx for one in built if isinstance(one, TensorRtExporter)]
+
+    assert [(one.opset, one.simplify) for one in written] == [(OPSET, True)]
+
+
 def declared_names(config: ExperimentConfig) -> Iterator[tuple[ComponentConfig, Registry[Any] | None]]:
     """Every name a shipped file writes, beside the registry that has to hold it.
 
@@ -106,6 +163,7 @@ def declared_names(config: ExperimentConfig) -> Iterator[tuple[ComponentConfig, 
     yield config.preprocessing, preprocessor_registry
     yield from ((one, input_encoder_registry) for one in (config.preprocessing.inputs or {}).values())
     yield from ((one, None) for one in config.transforms.values())
+    yield from ((one, exporter_registry) for one in config.export)
     yield config.data, data_module_registry
     yield config.learner, learner_registry
     yield config.optimizer, optimizer_registry
@@ -140,7 +198,8 @@ def unresolved_names(config: ExperimentConfig) -> list[str]:
 @pytest.mark.parametrize(
     "override",
     [
-        "tracker=none",
+        # Paired, because the example watches the learning rate and nothing would be recording it.
+        "tracker=none callbacks=none",
         "tracker=csv",
         "tracker=clearml",
         "scheduler=onecycle",
@@ -152,10 +211,17 @@ def unresolved_names(config: ExperimentConfig) -> list[str]:
         "model=unet",
         "trainer=profile",
         "loader=performance",
+        "export=onnx",
+        "export=pt2",
+        "export=torchscript",
+        "export=tensorrt",
+        "export=ncnn",
+        "export=all",
     ],
 )
 def test_every_group_option_validates_and_names_something_that_exists(override: str) -> None:
-    config = load_config(composed("experiment=examples/classification", override))
+    """One entry may carry more than one group: some options only hold together in pairs."""
+    config = load_config(composed("experiment=examples/classification", *override.split()))
 
     assert unresolved_names(config) == []
 

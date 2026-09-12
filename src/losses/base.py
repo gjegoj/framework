@@ -67,7 +67,9 @@ class TorchLoss(Loss):
         wants_tensors = tensor_arguments(type(self))
         self.module = self.module_type(
             **{
-                name: as_tensor(value) if name in wants_tensors and value is not None else value
+                name: torch.as_tensor(value, dtype=torch.float)
+                if name in wants_tensors and value is not None
+                else value
                 for name, value in declared.items()
             }
         )
@@ -99,11 +101,6 @@ def tensor_arguments(loss: type[TorchLoss]) -> frozenset[str]:
 def aligned(outputs: Tensor, targets: Tensor) -> Tensor:
     """The head's output as its target is shaped: one output per position carries a class axis, a target none."""
     return drop_class_axis(outputs) if outputs.ndim == targets.ndim + 1 else outputs
-
-
-def as_tensor(value: Any) -> Tensor:
-    """A per-class number a config writes as a list, as the float tensor the library expects."""
-    return torch.as_tensor(value, dtype=torch.float)
 
 
 def snake_case(name: str) -> str:

@@ -1,0 +1,11 @@
+# @package _global_
+# Every format this framework can write with what it depends on: one artifact per deployment story —
+# any runtime (onnx), torch (pt2), libtorch from C++ (torchscript).
+# `tensorrt` and `ncnn` are not here and cannot be: each needs a tool that ships a build per platform
+# and is therefore not a dependency. Declare either one on a machine that has it.
+export:
+  - name: onnx
+    opset: 18
+    simplify: true
+  - name: pt2
+  - name: torchscript

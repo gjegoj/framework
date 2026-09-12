@@ -172,10 +172,11 @@ OVERLAP = "iou"
 ERROR = "mae"
 """What two measurements are called, wherever a run names one of them.
 
-Here rather than in ``metrics``, because two packages name the same quantity and neither may import
-the other: the registry a config writes these into, and a page that measures the same thing per sample
-so a reader can filter on it. The same argument :func:`class_name` is built on — renaming one of these
-in the registry alone would leave a page calling the new quantity by the old word.
+Here rather than in ``metrics``, because three packages name the same quantity and none may import the
+others: the registry a config writes these into, the default metric table a kind of task declares, and a
+page that measures the same thing per sample so a reader can filter on it. The same argument
+:func:`class_name` is built on — renaming one of these in the registry alone would leave the defaults
+asking for a name nothing answers to, and a page calling the new quantity by the old word.
 """
 
 CONTRIBUTION = "contribution"

@@ -1,7 +1,5 @@
 # A DINOv3 ViT encoder under smp's DPT decoder — dense prediction from a
-# self-supervised backbone. `encoder_weights` is written here only to be explicit:
-# for a `tu-` encoder smp asks timm for whatever tag that architecture ships with,
-# so this says the same thing the framework's own `pretrained: true` default says.
+# self-supervised backbone.
 #
 # `dynamic_img_size: false` with an explicit `img_size` is not a detail: built
 # dynamically, this family recomputes its rotary position grid inside every
@@ -16,7 +14,7 @@ backbone:
   name: smp
   arch: dpt
   encoder_name: tu-vit_small_plus_patch16_dinov3.lvd1689m
-  encoder_weights: true
+  pretrained: true
   global_pool: token  # required for ViT token-pool encoders
   dynamic_img_size: false
   img_size: ${preprocessing.inputs.image.image_size}

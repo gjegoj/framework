@@ -155,6 +155,52 @@ class TestRun:
         assert all(torch.equal(value, torch.zeros_like(value)) for value in built.module.learner.model.parameters())
 
 
+class TestWhatARunShips:
+    """A run ends holding weights; what turns those into something deployable happens here and nowhere else."""
+
+    def test_a_run_writes_every_declared_format_and_the_record_that_describes_them(
+        self, declaration: Mapping[str, Any], tmp_path: Path
+    ) -> None:
+        """The milestone in one assertion: trained here, and readable by something that is not this run."""
+        built = experiment(declaration, export=[{"name": "onnx"}, {"name": "pt2"}])
+
+        manifest = run(built)
+
+        directory = Path(declaration["run"]["directory"])
+        assert [one.artifact for one in manifest.artifacts] == ["model.onnx", "model.pt2"]
+        assert (directory / "model.onnx").exists() and (directory / "model.pt2").exists()
+        assert (directory / "model.json").exists()
+        assert [one.name for one in manifest.outputs] == ["species"]
+
+    def test_a_run_that_declared_no_format_writes_nothing_and_says_nothing(
+        self, declaration: Mapping[str, Any]
+    ) -> None:
+        """`export: none` is the default, and a run under it should not pay for a decision it did not make."""
+        manifest = run(experiment(declaration))
+
+        assert manifest.artifacts == ()
+        assert not list(Path(declaration["run"]["directory"]).glob("model.*"))
+
+    def test_the_record_reaches_the_tracker_the_run_declared(self, declaration: Mapping[str, Any]) -> None:
+        """Where the hyperparameters went: the same run described from both ends, read side by side."""
+        tracker = {"name": "csv", "save_dir": declaration["run"]["directory"], "version": ""}
+        built = experiment(declaration, export=[{"name": "onnx"}], tracker=tracker)
+
+        run(built)
+
+        kept = list(Path(cast(Any, built.trainer.logger).log_dir).glob("model.json"))
+        assert len(kept) == 1
+
+    def test_a_run_is_left_able_to_carry_on_after_shipping(self, declaration: Mapping[str, Any]) -> None:
+        """Writing moves the graph to the processor and turns training off; both belong to the caller."""
+        built = experiment(declaration, export=[{"name": "onnx"}])
+        built.module.learner.model.train()
+
+        run(built)
+
+        assert built.module.learner.model.training
+
+
 def _kept(path: str) -> Any:
     """A trainer as ``restore_best_weights`` reads one: the path its checkpoint callback settled on."""
     return cast(Any, SimpleNamespace(checkpoint_callback=SimpleNamespace(best_model_path=path)))

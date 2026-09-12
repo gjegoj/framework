@@ -6,7 +6,7 @@ resolvable, and none of them pulls its client in until it is actually built.
 
 from __future__ import annotations
 
-from src.tracking.base import DrawsBars, DrawsMatrix, RecordsSummary, ShowsPage
+from src.tracking.base import DrawsBars, DrawsMatrix, KeepsRecord, RecordsSummary, ShowsPage
 from src.tracking.clearml import ClearMLTracker
 from src.tracking.keys import MetricKey, series
 from src.tracking.local import LocalFiles
@@ -17,6 +17,7 @@ __all__ = [
     "ClearMLTracker",
     "DrawsBars",
     "DrawsMatrix",
+    "KeepsRecord",
     "LocalFiles",
     "MetricKey",
     "RecordsSummary",

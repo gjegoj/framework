@@ -9,9 +9,11 @@ without a glossary.
 
 Classification, segmentation and regression, several of them on one backbone,
 with EMA, freezing, MixUp/CutMix, loss-parameter annealing and per-task learning
-rates, a grid of samples and a summary of the data a run is about to read. Export
-and the metric-learning and detection families are not here yet; what is written
-below is what runs.
+rates, a grid of samples and a summary of the data a run is about to read. What a
+run ends with is deployable: ONNX, PT2, TorchScript, ncnn or a TensorRT engine,
+each proven against the model it was written from and described by a record a
+deployment reads. The metric-learning and detection families are not here yet;
+what is written below is what runs.
 
 ## Quick start
 
@@ -37,9 +39,11 @@ Configs live in [`configs/`](configs/). `config.yaml` holds the knobs a run is
 usually steered by — `seed`, `lr`, `epochs`, `batch_size` — and the group files
 interpolate from them, so one edit reaches every consumer. The picture's size and
 statistics are declared once in `configs/preprocessing/image.yaml`, and the pixel
-chain reads them from there. Override a knob (`lr=3e-4`), not its mirror
-(`optimizer.lr=3e-4`) — the second is refused by name. Adding a key a group file
-does not declare needs Hydra's `+` (`+trainer.precision=bf16-mixed`).
+chain reads them from there. Override a knob (`lr=3e-4`), not its mirror: the
+optimizer group declares no `lr`, so `optimizer.lr=3e-4` is refused by Hydra,
+which offers you `+optimizer.lr=3e-4` — take that offer and the run is refused by
+name, because `lr` has one home. Adding a key a group file genuinely does not
+declare is what the `+` is for (`+trainer.precision=bf16-mixed`).
 
 ## Architecture
 
@@ -47,7 +51,7 @@ does not declare needs Hydra's `+` (`+trainer.precision=bf16-mixed`).
 cli.py + build.py    composition root: Hydra composes, one grammar builds
       │ creates and wires
 capability packages  data · transforms · models · tasks · losses · metrics ·
-      │              training · tracking · callbacks · integrations
+      │              training · tracking · callbacks · export · integrations
       │              (visualization is a library of its own beside them)
       │ implement and consume
 core/                entities · taxonomy · the registry — torch and stdlib only
@@ -57,7 +61,9 @@ Arrows point down only. The core never imports a capability; a capability never
 imports `config/`; only the composition root and a package's own `build.py` read
 declarations. That is what keeps the third-party stacks contained — Lightning in
 `training/` and `callbacks/`, albumentations in `transforms/`, pandas and OpenCV
-in `data/`, pydantic in `config/`, Hydra in `cli.py`. The rules are not a
+in `data/`, pydantic in `config/`, ONNX and TensorRT in `export/backends/`,
+Hydra in `cli.py` and the one resolver it needs in `config/instantiate.py`. The
+rules are not a
 convention: [`tests/test_layering.py`](tests/test_layering.py) walks every import
 in the tree and fails on one that is not declared.
 

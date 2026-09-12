@@ -20,9 +20,10 @@ from lightning import seed_everything
 
 from src.callbacks.build import build_callbacks
 from src.config import ExperimentConfig, TaskConfig
-from src.core import Stage
+from src.core import InputInfo, Stage
 from src.data.build import build_data_module, build_preprocessor
 from src.experiment import Experiment
+from src.export.build import build_exporters
 from src.losses.build import build_loss
 from src.metrics.build import build_metrics
 from src.models.build import build_model
@@ -30,6 +31,8 @@ from src.tasks.build import build_task_kinds, build_tasks, default_target_encode
 from src.tracking.build import build_tracker
 from src.training import TrainingData, TrainingModule
 from src.training.build import build_learner, build_optimizer_factory, build_profiler, build_scheduler_factory
+from src.transforms import SampleTransform
+from src.transforms.base import AppliesNormalization, is_the_same_scaling
 from src.transforms.build import build_transforms
 
 if TYPE_CHECKING:
@@ -44,9 +47,18 @@ log = logging.getLogger(__name__)
 
 
 def build(config: ExperimentConfig) -> Experiment:
-    """Assemble a run from its declaration, in the one order the contracts allow."""
+    """Assemble a run from its declaration, in the one order the contracts allow.
+
+    What needs no facts is built first, so a declaration that cannot hold is answered before the data is
+    read; everything after that is ordered by what it needs, the data ahead of the model because a head
+    is sized by what the data settled.
+    """
     seed_everything(config.seed, workers=True)
     kinds = build_task_kinds(config.tasks)
+    # Before the data, though it is used last: what a run ships is settled by its declaration alone, and
+    # preparing the data is a source read, an encoder fit and a cache warm — the whole cost of a run that
+    # is going to answer a misspelled format at the end of it.
+    exporters = build_exporters(config.export)
     data = prepare_data(config, kinds)
     tasks = build_tasks(config.tasks, data.info)
     model = build_model(
@@ -70,6 +82,7 @@ def build(config: ExperimentConfig) -> Experiment:
         data=TrainingData(data, batch_size=config.batch_size, **config.loader.model_dump()),
         trainer=build_trainer(config),
         declaration=config,
+        exporters=exporters,
     )
 
 
@@ -84,25 +97,67 @@ def prepare_data(config: ExperimentConfig, kinds: Mapping[str, type[Task]]) -> D
         config.tasks,
         {name: default_target_encoder(kind) for name, kind in kinds.items()},
     )
+    transforms = build_transforms(config.transforms, preprocessor.geometries)
     data = build_data_module(
         config.data,
         preprocessor=preprocessor,
         targets={name: declared.target_column for name, declared in config.tasks.items() if declared.target_column},
-        transforms=build_transforms(config.transforms, preprocessor.geometries),
+        transforms=transforms,
     )
     splits = needed_splits(config)
     data.setup(splits)
-    data.fit_preprocessing(Stage.TRAIN)
+    if Stage.TRAIN in splits:
+        data.fit_preprocessing(Stage.TRAIN)
+    # After fitting rather than before: what an input declares is settled from the start, but the facts
+    # are published together, and the encoder that learns its layout from the training split has not.
+    _refuse_a_chain_that_does_not_apply_the_declared_scaling(data.info.inputs, transforms)
     data.warm(splits)
     return data
+
+
+def _refuse_a_chain_that_does_not_apply_the_declared_scaling(
+    inputs: Mapping[str, InputInfo], transforms: Mapping[str, SampleTransform]
+) -> None:
+    """An input's declared scaling has to be the one its stage's chain applies, or every reader of it lies.
+
+    Two sections own the two halves: `preprocessing.inputs.<name>` says what the model was trained under,
+    `transforms.<stage>` says what the pixels actually go through. Both are read elsewhere as fact — the
+    manifest a deployment builds its input from, the sample page that undoes the scaling to show an image
+    — and a run whose halves disagree makes both of them describe a model that never existed.
+
+    A transform that cannot say what it applies is not asked: the capability is optional, and one a run
+    wrote itself is its own business.
+    """
+    declared = {name: info.normalization for name, info in inputs.items() if info.normalization is not None}
+    for stage, transform in transforms.items():
+        if not isinstance(transform, AppliesNormalization):
+            continue
+        applied = transform.normalization
+        for name, one in declared.items():
+            if not is_the_same_scaling(one, applied):
+                says = "no fixed scaling of its own" if applied is None else f"mean {applied.mean}, std {applied.std}"
+                raise ValueError(
+                    f"Input {name!r} is declared to be scaled by mean {one.mean}, std {one.std}, and the "
+                    f"'{stage}' chain applies {says}. What reads the declaration — the record an export "
+                    "ships, the page that undoes the scaling to show an image — would be describing a model "
+                    "trained on something else. The shipped groups interpolate "
+                    "`${preprocessing.inputs.<name>.mean}` into `albumentations.Normalize` so the two "
+                    "cannot drift apart."
+                )
 
 
 def needed_splits(config: ExperimentConfig) -> tuple[Stage, ...]:
     """The splits this run will actually read: preparing one costs a read and a warm pass.
 
     Stages, because a stage and a split share a name — the convention ``Stage`` itself declares.
+
+    A run that does not train reads neither the training split nor the validation one: it is evaluating
+    or shipping weights it was handed, and reading a split to prepare it for nobody is the whole cost of
+    the thing it is not doing. What such a run gives up is an encoder that learns its layout from the
+    training data — it refuses by name instead, saying what to declare so it need not learn anything.
     """
-    return (Stage.TRAIN, Stage.VAL, *((Stage.TEST,) if config.run.test else ()))
+    fitting = (Stage.TRAIN, Stage.VAL) if config.run.train else ()
+    return (*fitting, *((Stage.TEST,) if config.run.test else ()))
 
 
 def loss_for(declared: TaskConfig, task: Task) -> Loss:

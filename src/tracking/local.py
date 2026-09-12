@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+from collections.abc import Mapping
 from pathlib import Path
 
 from lightning.pytorch.loggers import CSVLogger
@@ -33,3 +35,15 @@ class LocalFiles(CSVLogger):
         directory = Path(self.log_dir) / PAGES
         directory.mkdir(parents=True, exist_ok=True)
         (directory / f"{title.replace('/', '-')}-{iteration:04d}.html").write_text(html, encoding="utf-8")
+
+    @rank_zero_only
+    def log_record(self, name: str, record: Mapping[str, object]) -> None:
+        """The ``KeepsRecord`` port: the record beside the numbers, in the form its readers take.
+
+        A run without a service keeps everything in one directory, and this is the half of it a
+        deployment reads — the same one the export writes next to the artifacts themselves, here
+        because a run's own directory is where somebody looks for what the run produced.
+        """
+        directory = Path(self.log_dir)
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / f"{name}.json").write_text(json.dumps(record, indent=2), encoding="utf-8")

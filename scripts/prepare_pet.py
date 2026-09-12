@@ -13,8 +13,10 @@ synthetic one:
 ``random_age`` is noise on purpose, and named so nobody reads it as a learnable
 target: no model can beat predicting its mean, because nothing in the picture
 carries it. That makes it a test of the *pipeline* — does a regression task build,
-train, log and report — rather than of a model. A ``mae`` that settles near the
-column's own standard deviation is the correct outcome, not a failure.
+train, log and report — rather than of a model. A ``mae`` that settles near what a
+constant at the column's middle reaches is the correct outcome, not a failure; the
+number is printed when the table is written, and it is not the column's standard
+deviation, which summarises the same spread in units a mean absolute error is not in.
 
 The whole dataset is written: 7349 rows from ``annotations/list.txt``. The
 reference this is modelled on read ``trainval.txt`` instead and used 3680 of them,
@@ -183,9 +185,10 @@ def main() -> None:
     )
     if skipped:
         print(f"Skipped {sum(skipped.values())}: " + ", ".join(f"{count} {why}" for why, count in skipped.items()))
+    floor = float(np.abs(np.asarray(ages) - np.median(ages)).mean())
     print(
-        f"random_age spans {min(ages)}–{max(ages)} with a deviation of {float(np.std(ages)):.2f}. "
-        f"It is noise: a regression on it cannot do better than that number, and doing so would mean a leak."
+        f"random_age spans {min(ages)}–{max(ages)}; a constant at its middle is off by {floor:.2f} on "
+        f"average. It is noise, so a regression on it cannot beat that mae, and beating it means a leak."
     )
     # The vocabularies a task declares, ready to paste: the index space is a declaration,
     # never learned from whichever rows a split leaves in train, so the script that knows

@@ -81,8 +81,12 @@ def test_collate_delegates_to_the_collator(
 
 
 def test_an_input_the_row_does_not_carry_is_refused_by_name(preprocessor: StandardPreprocessor) -> None:
-    with pytest.raises(KeyError, match="image"):
+    """And the refusal reads as a sentence: ``KeyError`` renders its argument with ``repr``, so a message
+    raised as one arrives wrapped in quotation marks that belong to no part of what it says."""
+    with pytest.raises(LookupError) as refused:
         preprocessor.preprocess(Sample(inputs={}))
+
+    assert str(refused.value).startswith("The sample carries no input 'image'")
 
 
 def test_a_image_no_pipeline_prepared_is_refused_before_the_model_sees_it(

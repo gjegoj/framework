@@ -1,0 +1,22 @@
+# @package _global_
+# The portable one: a single file any ONNX runtime loads, with this run's own names on its tensors
+# and a batch axis that is free.
+#
+# `opset` is pinned rather than left to torch, whose own default moves with the version it ships: an
+# artifact is read by something that was not built today, and 18 is what runtimes in service take. An
+# opset a model cannot be written at is refused naming both numbers, never quietly replaced — raise this
+# where a model's operators need a later one.
+#
+# `simplify` folds what the graph computes from constants, after torch's own optimizer has already run.
+# What it is worth, measured on onnxsim 0.7.0: the same resnet18 loses 28.3% of its bytes *untrained* and
+# 0.3% once trained — at initialization batch norm is the identity, so folding it into the convolution
+# collapses whole tensors, and after a run there is nothing left to collapse. It costs one pass over the
+# graph; the artifact is proven against the model afterwards either way.
+#
+# `external_data: true` writes weights too large for the graph into `<name>.onnx.data` beside it, which a
+# model above the 2 GiB a protobuf holds has no choice about; then the two files travel together and the
+# record names both.
+export:
+  - name: onnx
+    opset: 18
+    simplify: true

@@ -1,0 +1,6 @@
+# @package _global_
+# torch's own archive, written by `torch.export` and read by `torch.export.load`.
+# The batch axis is declared free rather than generalized from an example, so the file itself promises
+# to serve a single row. Needs Python and torch where it is deployed; `torchscript` is the one that does not.
+export:
+  - name: pt2

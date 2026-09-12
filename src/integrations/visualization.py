@@ -23,6 +23,8 @@ import torch
 from src.core import CELLS, ERROR, OVERLAP, Normalization, Semantics, class_name, require_tensor
 from src.tasks import DECISION
 from src.visualization import (
+    PREDICTED,
+    TRUTH,
     Classification,
     Classifications,
     Image,
@@ -115,8 +117,8 @@ class Drawer[R](ABC):
 class Annotator[R]:
     """A reader and the drawer for what it reads — the whole of how one kind appears on a page.
 
-    Typed together, so the mismatch legacy had to refuse at runtime, a reading of one kind handed to a
-    drawer of another, cannot be constructed at all.
+    Typed together, so the mismatch the reference implementation had to refuse at runtime — a reading of
+    one kind handed to a drawer of another — cannot be constructed at all.
     """
 
     reader: Reader[R]
@@ -219,8 +221,8 @@ class ChipDrawer(Drawer[ClassReading]):
     """One decision for the whole sample: two chips, matched by comparing what holds on each side."""
 
     def draw(self, view: SampleView, task: Task, truth: ClassReading, predicted: ClassReading) -> None:
-        view.fields[(task.name, "gt")] = self._chips(task, truth)
-        view.fields[(task.name, "pred")] = self._chips(task, predicted)
+        view.fields[(task.name, TRUTH)] = self._chips(task, truth)
+        view.fields[(task.name, PREDICTED)] = self._chips(task, predicted)
         # Set equality, so `correct` means *everything* matched: one class missing or one extra is a
         # miss, whatever the semantics allow.
         matched = {one.index for one in truth.presences} == {one.index for one in predicted.presences}
@@ -241,8 +243,8 @@ class MaskDrawer(Drawer[ClassReading]):
     """One decision per pixel: a mask per class, scored by the overlap over the classes either side shows."""
 
     def draw(self, view: SampleView, task: Task, truth: ClassReading, predicted: ClassReading) -> None:
-        view.fields[(task.name, "gt")] = self._masks(task, truth)
-        view.fields[(task.name, "pred")] = self._masks(task, predicted)
+        view.fields[(task.name, TRUTH)] = self._masks(task, truth)
+        view.fields[(task.name, PREDICTED)] = self._masks(task, predicted)
         overlap = _mean_overlap(truth, predicted)
         view.verdicts[task.name] = Verdict(scores=() if overlap is None else (Score(OVERLAP, overlap),))
 
@@ -262,8 +264,8 @@ class NumberDrawer(Drawer[ValueReading]):
 
     def draw(self, view: SampleView, task: Task, truth: ValueReading, predicted: ValueReading) -> None:
         true_value, predicted_value = _scalar(truth.values), _scalar(predicted.values)
-        view.fields[(task.name, "gt")] = Regression(true_value)
-        view.fields[(task.name, "pred")] = Regression(predicted_value)
+        view.fields[(task.name, TRUTH)] = Regression(true_value)
+        view.fields[(task.name, PREDICTED)] = Regression(predicted_value)
         view.verdicts[task.name] = Verdict(scores=(Score(ERROR, abs(predicted_value - true_value)),))
 
 

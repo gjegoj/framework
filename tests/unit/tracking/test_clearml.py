@@ -13,7 +13,7 @@ import torch
 from lightning.pytorch.utilities.rank_zero import rank_zero_only
 
 from src.core import Bars, Matrix
-from src.tracking import ClearMLTracker, DrawsBars, DrawsMatrix, RecordsSummary, ShowsPage
+from src.tracking import ClearMLTracker, DrawsBars, DrawsMatrix, KeepsRecord, RecordsSummary, ShowsPage
 from tests.unit.tracking.conftest import Recorded
 
 
@@ -196,3 +196,17 @@ def test_a_balance_is_one_grouped_chart_with_a_series_per_split(logger: ClearMLT
 
 def test_it_draws_bars_and_says_so_structurally(logger: ClearMLTracker) -> None:
     assert isinstance(logger, DrawsBars)
+
+
+def test_the_record_of_what_a_run_produced_is_kept_as_something_fetched_back_whole(
+    logger: ClearMLTracker, clearml: Recorded
+) -> None:
+    """An export record is neither a number nor a picture: whoever deploys the model reads it from a
+    script, so the service has to hand it back as one object rather than render it."""
+    logger.log_record("model", {"inputs": [{"name": "image"}]})
+
+    assert clearml.artifacts == {"model": {"inputs": [{"name": "image"}]}}
+
+
+def test_it_keeps_records_and_says_so_structurally(logger: ClearMLTracker) -> None:
+    assert isinstance(logger, KeepsRecord)

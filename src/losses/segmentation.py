@@ -60,6 +60,11 @@ class IntersectionOverUnion(RegionLoss):
 
 @loss_registry.register("tversky")
 class Tversky(RegionLoss):
-    """Dice with the two kinds of mistake weighed apart: `alpha` misses, `beta` false alarms."""
+    """Dice with the two kinds of mistake weighed apart: `alpha` false alarms, `beta` misses.
+
+    Measured against smp 0.5.0 rather than read off the name: on a prediction that is all false alarms
+    `alpha=0.9` costs 0.474 and `alpha=0.1` costs 0.091, and on one that is all misses the two swap. A
+    run that wants recall raises `beta`.
+    """
 
     module_type: ClassVar[type[nn.Module]] = TverskyLoss
