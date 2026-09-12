@@ -34,13 +34,13 @@ def test_the_minimal_experiment_fills_in_every_default(minimal: dict[str, Any]) 
         pytest.param("model", {"name": "composite", "heads": {}}, "tasks", id="heads on the model"),
         pytest.param(
             "tasks",
-            {"t": {"kind": "classification", "loss": [{"loss": "cross_entropy", "log_name": "ce@main"}]}},
+            {"t": {"kind": "classification", "loss": [{"loss": "cross_entropy", "log_name": "ce/main"}]}},
             "Loss log",
             id="a loss name a report could not carry",
         ),
         pytest.param(
             "tasks",
-            {"t": {"kind": "classification", "metrics": {"f1@macro": {"name": "f1"}}}},
+            {"t": {"kind": "classification", "metrics": {"f1/macro": {"name": "f1"}}}},
             "Metric",
             id="a metric label a report could not carry",
         ),
@@ -98,7 +98,7 @@ def test_transforms_are_keyed_by_stage(minimal: dict[str, Any]) -> None:
 class TestTask:
     @pytest.fixture
     def task(self) -> dict[str, Any]:
-        return {"kind": "classification", "target": "species", "classes": CLASSES}
+        return {"kind": "classification", "target_column": "species", "classes": CLASSES}
 
     def test_classes_accept_string_indices_from_yaml(self, task: dict[str, Any]) -> None:
         assert TaskConfig.model_validate({**task, "classes": {"0": "cat", "1": "dog"}}).classes == {0: "cat", 1: "dog"}

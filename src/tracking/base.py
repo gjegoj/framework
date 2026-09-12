@@ -19,3 +19,14 @@ class DrawsMatrix(Protocol):
     """A backend that can draw a two-dimensional reading — a confusion matrix, above all."""
 
     def log_matrix(self, title: str, matrix: Matrix, iteration: int) -> None: ...
+
+
+@runtime_checkable
+class RecordsSummary(Protocol):
+    """A backend with a place for a run's headline numbers, off the axis the rest are drawn on.
+
+    A number reported each epoch is a line; a headline number is one value for the whole run, and a
+    backend that keeps the two apart shows the second at a glance — ClearML calls it single values.
+    """
+
+    def record_summary(self, name: str, value: float) -> None: ...

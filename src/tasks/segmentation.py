@@ -7,8 +7,8 @@ from typing import ClassVar
 
 from src.core import Axis, Stream, TargetInfo, TensorShape
 from src.tasks.base import Task
-from src.tasks.labels import CLASSIFICATION_METRICS, BinaryLabels, MulticlassLabels
 from src.tasks.registry import task_registry
+from src.tasks.semantics import CLASSIFICATION_METRICS, BinarySemantics, MulticlassSemantics
 
 # Per-pixel per-class f1 *is* dice (2TP / (2TP + FP + FN)), so the customary score is already on this
 # list under f1's name; iou adds the strict-overlap reading.
@@ -36,7 +36,7 @@ class DenseOutput(Task):
 
 
 @task_registry.register("segmentation")
-class Segmentation(DenseOutput, MulticlassLabels):
+class Segmentation(DenseOutput, MulticlassSemantics):
     """One of the declared classes per pixel."""
 
     default_target_encoder: ClassVar[str | None] = "mask"
@@ -44,7 +44,7 @@ class Segmentation(DenseOutput, MulticlassLabels):
 
 
 @task_registry.register("binary_segmentation")
-class BinarySegmentation(DenseOutput, BinaryLabels):
+class BinarySegmentation(DenseOutput, BinarySemantics):
     """One score per pixel: how much it belongs to the thing."""
 
     default_target_encoder: ClassVar[str | None] = "mask"

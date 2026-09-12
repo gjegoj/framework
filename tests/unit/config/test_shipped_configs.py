@@ -13,7 +13,6 @@ from omegaconf import OmegaConf
 from src.config import ComponentConfig, ExperimentConfig, WeightedLossConfig, load_config
 from src.config.instantiate import resolve_factory
 from src.core import Geometry, Registry, Sample, require_tensor
-from src.data.build import build_transforms
 from src.data.registry import (
     data_module_registry,
     input_encoder_registry,
@@ -27,6 +26,7 @@ from src.models.registry import backbone_registry, head_registry, model_registry
 from src.tasks.registry import task_registry
 from src.tracking.registry import tracker_registry
 from src.training.registry import learner_registry, optimizer_registry, scheduler_registry
+from src.transforms.build import build_transforms
 from tests.support.paths import CONFIGS
 
 EXAMPLES = sorted(path.stem for path in (CONFIGS / "experiment" / "examples").glob("*.yaml") if path.stem != "pet")

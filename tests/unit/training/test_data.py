@@ -7,10 +7,14 @@ makes the batch, and which options are the stage's own rather than the run's.
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
+from types import SimpleNamespace
+from typing import cast
 
+import lightning as L
 import pytest
 import torch
-from torch.utils.data import Dataset, RandomSampler, SequentialSampler
+from torch.utils.data import DataLoader, Dataset, RandomSampler, SequentialSampler
+from torch.utils.data.distributed import DistributedSampler
 
 from src.core import Batch, DatasetInfo, Sample
 from src.data import DataModule, Preprocessor, single_threaded_cv2
@@ -128,3 +132,36 @@ class TestOptions:
 
         assert data.train_dataloader().worker_init_fn is single_threaded_cv2
         assert TrainingData(Prepared(), worker_init_fn=mine).train_dataloader().worker_init_fn is mine
+
+
+class TestAcrossDevices:
+    """The one thing several devices must not do to a report: score a row twice because a batch was padded."""
+
+    @staticmethod
+    def loader(stage: str, *, world_size: int, rank: int = 0) -> DataLoader[Sample]:
+        data = TrainingData(Prepared(), batch_size=2)
+        # What Lightning attaches before it asks for a loader, and all this decision needs of it.
+        data.trainer = cast("L.Trainer", SimpleNamespace(world_size=world_size, global_rank=rank))
+        return cast("DataLoader[Sample]", getattr(data, f"{stage}_dataloader")())
+
+    @staticmethod
+    def rows(loader: DataLoader[Sample]) -> list[int]:
+        return [int(row) for batch in loader for row in batch.inputs["row"]]
+
+    @pytest.mark.parametrize(("stage", "devices"), [("val", 3), ("test", 2)])
+    def test_evaluation_reads_every_row_exactly_once_across_the_devices(self, stage: str, devices: int) -> None:
+        read = [row for rank in range(devices) for row in self.rows(self.loader(stage, world_size=devices, rank=rank))]
+
+        assert sorted(read) == list(range(SPLITS[stage])), "a padded tail is scored twice and skews the report"
+
+    def test_the_sampler_is_one_lightning_leaves_alone(self) -> None:
+        """Measured on lightning 2.6.5: it inserts its own padding sampler unless the loader carries a
+        ``DistributedSampler`` already, so being one is what keeps ours from being wrapped."""
+        assert isinstance(self.loader("val", world_size=2).sampler, DistributedSampler)
+
+    def test_training_is_left_to_lightning(self) -> None:
+        """Gradients sync every step, so every device owes the same number of them; a repeat is the cheaper cost."""
+        assert isinstance(self.loader("train", world_size=2).sampler, RandomSampler)
+
+    def test_one_device_reads_the_split_as_it_is(self) -> None:
+        assert isinstance(self.loader("val", world_size=1).sampler, SequentialSampler)

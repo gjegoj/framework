@@ -8,15 +8,14 @@ no backend by name.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from math import isfinite
-from typing import TYPE_CHECKING, override
+from collections.abc import Callable, Mapping
+from typing import TYPE_CHECKING, Any, ClassVar, override
 
 import lightning as L
 from torch import Tensor, nn
 
 from src.core import Batch, LossOutput, Stage, StepOutput, TensorTree
-from src.tracking import MetricKey, report
+from src.tracking import MetricKey, report, series
 from src.training.base import FitProfile, Learner, OptimizerFactory, SchedulerFactory
 
 if TYPE_CHECKING:
@@ -41,6 +40,9 @@ class TrainingModule(L.LightningModule):
     checkpoint's keys and a callback's dot-path are written against.
     """
 
+    MODEL: ClassVar[str] = "learner.model"
+    """Where the network sits in this module: what a checkpoint's keys carry and a config's path names."""
+
     def __init__(
         self,
         learner: Learner,
@@ -56,10 +58,31 @@ class TrainingModule(L.LightningModule):
         self._refuse_metrics_for_a_task_that_is_not_learned(declared)
         self._metrics = {stage: {name: collection.clone() for name, collection in declared.items()} for stage in Stage}
         # Registered so Lightning moves them with the model between devices; the mapping above is what
-        # reads them back, because torch's containers answer as plain modules. Their state is not
-        # checkpointed and needs not be — measured, torchmetrics registers it non-persistent, and every
-        # reading below is reset at the end of the epoch that produced it.
+        # reads them back, because torch's containers answer as plain modules. Flat, and not nested by
+        # stage, because a container keyed by stage cannot be built: `train` is a method every module
+        # already has, and torch refuses a child that would shadow one. Their state is not checkpointed
+        # and needs not be — measured, torchmetrics registers it non-persistent, and every reading below
+        # is reset at the end of the epoch that produced it.
         self._measured = nn.ModuleList(collection for stage in self._metrics.values() for collection in stage.values())
+        self._transform: Callable[[Batch], Batch] | None = None
+
+    def transform_batches(self, transform: Callable[[Batch], Batch] | None) -> None:
+        """Install what rewrites a training batch before a step reads one, or take it back out.
+
+        A seam rather than a hook of its own, because a ``Batch`` is frozen and Lightning discards
+        whatever a callback's hook returns: a callback can therefore never replace a batch, only ask
+        this to. Which is also why the decision of *what* to install, and for how long, stays with the
+        callback that declared it — this only knows that training reads what is installed.
+        """
+        self._transform = transform
+
+    @override
+    def on_after_batch_transfer(self, batch: Batch, dataloader_idx: int) -> Batch:
+        """Training reads what was installed; every other stage reads the data as it is.
+
+        A report is about the data a run will be judged on, and a mixed picture is not that.
+        """
+        return self._transform(batch) if self.training and self._transform is not None else batch
 
     @override
     def training_step(self, batch: Batch, batch_index: int) -> Tensor | None:
@@ -85,6 +108,20 @@ class TrainingModule(L.LightningModule):
     def on_test_epoch_end(self) -> None:
         self._report(Stage.TEST)
 
+    def metric_directions(self) -> dict[str, bool | None]:
+        """Which way each measured value is better, as the metric producing it declares.
+
+        Keyed by series rather than by logged key, because a direction is a fact about the
+        measurement and holds in every stage it is measured in — any stage answers the same, since
+        they are clones of one declaration. ``None`` is a reading with no better direction at all:
+        a confusion matrix is not improved, it is read.
+        """
+        return {
+            series(task, label): metric.higher_is_better
+            for task, collection in self._metrics[Stage.TRAIN].items()
+            for label, metric in collection.items()
+        }
+
     @override
     def configure_optimizers(self) -> Optimizer | OptimizerLRSchedulerConfig:
         """Build the optimizer over the learner's groups, and the schedule once the fit has a length."""
@@ -93,24 +130,9 @@ class TrainingModule(L.LightningModule):
             return optimizer
         optimized: OptimizerLRSchedulerConfig = {
             "optimizer": optimizer,
-            "lr_scheduler": self._scheduler_factory(optimizer, self._profile()),
+            "lr_scheduler": self._scheduler_factory(optimizer, FitProfile.of(self.trainer)),
         }
         return optimized
-
-    def _profile(self) -> FitProfile:
-        """How long this fit turned out to be — the one question only the trainer can answer.
-
-        Read from ``estimated_stepping_batches`` because it is what Lightning guarantees at this point:
-        the loops are not set up yet, so the per-epoch counts are still infinite.
-        """
-        steps, epochs = self.trainer.estimated_stepping_batches, self.trainer.max_epochs
-        # Measured on lightning 2.6.5: a loop with no length reports -1 rather than infinity.
-        if not isfinite(steps) or steps < 1 or epochs is None or epochs < 1:
-            raise ValueError(
-                f"A schedule is sized by the length of the fit, and this one has no declared end: {steps} "
-                f"optimizer steps over {epochs} epochs. Declare epochs, or run without a scheduler."
-            )
-        return FitProfile(total_steps=int(steps), epochs=epochs)
 
     def _step(self, batch: Batch, stage: Stage) -> Tensor | None:
         output = self.learner.step(batch)
@@ -190,3 +212,33 @@ class TrainingModule(L.LightningModule):
                 f"Metrics are declared for {', '.join(unknown)}, which this run does not learn: it has "
                 f"{', '.join(sorted(self.learner.tasks)) or 'no tasks'}. Nothing would ever update them."
             )
+
+
+def module_at(pl_module: L.LightningModule, path: str, *, reader: str) -> nn.Module:
+    """The sub-module a dot-path names, relative to the model, or a message naming what is there.
+
+    Here rather than beside whichever callback walks one: the path is *this* module's layout, the same
+    one ``MODEL_PREFIX`` turns into a checkpoint's keys, so a config's path and a saved file's contents
+    are two readings of one declaration rather than two spellings to keep in step.
+
+    Parameters:
+        pl_module: The training module the path is relative to the model of.
+        path: Dot-path under the model — ``backbone``, ``heads.species``.
+        reader: Who is asking, so a refusal names the declaration the path was written in.
+    """
+    found: Any = pl_module
+    for step in f"{TrainingModule.MODEL}.{path}".split("."):
+        try:
+            found = getattr(found, step)
+        except AttributeError:
+            children = ", ".join(name for name, _ in found.named_children()) or "none"
+            raise LookupError(
+                f"{reader} cannot find {path!r}: {step!r} is not a module of {type(found).__name__}. "
+                f"Available: {children}."
+            ) from None
+    if not isinstance(found, nn.Module):
+        # same mistake in the same declaration, and one mistake is worth one kind of refusal.
+        raise LookupError(  # noqa: TRY004
+            f"{reader} works on modules, and {path!r} names a {type(found).__name__}."
+        )
+    return found

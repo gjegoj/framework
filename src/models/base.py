@@ -81,7 +81,7 @@ class ShapeAware(Protocol):
     reads: ClassVar[tuple[str, ...]]
 
 
-def reads(inputs: Mapping[str, TensorTree], name: str, reader: str) -> TensorTree:
+def required_input(inputs: Mapping[str, TensorTree], name: str, reader: str) -> TensorTree:
     """The input a backbone reads, refused by name with what this run actually carries.
 
     Three declarations have to agree on one word — `data.inputs.<name>`, `preprocessing.inputs.<name>`

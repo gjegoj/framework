@@ -90,6 +90,15 @@ class Task(ABC):
     def postprocess(self, output: ModelOutput) -> TensorTree:
         """What the model's raw output means: probabilities, a value, a mask. Never the loss's view."""
 
+    def soften(self, target: Tensor) -> Tensor:
+        """This task's target in the shape a weighted sum of two of them needs.
+
+        A number, an indicator vector or a distribution already admits one and wants only a float
+        dtype. A target that is a class *index* does not — an average of indices names a third class
+        that neither sample was — so the kinds whose targets are indices widen them first.
+        """
+        return target.float()
+
     def target(self, batch: Batch) -> Tensor:
         """This task's raw target, refused by name when the batch carries none."""
         return self._own(batch.targets, "target in the batch")

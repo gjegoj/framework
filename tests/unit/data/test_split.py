@@ -5,7 +5,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from src.data.split import Split, split_table
+from src.data.split import GroupedSplit, Split, StratifiedSplit, split_table
 
 FRACTIONS = {"train": 0.6, "val": 0.2, "test": 0.2}
 
@@ -34,26 +34,26 @@ def test_random_split_divides_by_fraction_and_is_seeded(table: pd.DataFrame) -> 
 
 
 def test_stratified_split_keeps_class_shares_in_every_part(table: pd.DataFrame) -> None:
-    parts = split_table(table, Split(FRACTIONS, stratify_by="species"))
+    parts = split_table(table, Split(FRACTIONS, rule=StratifiedSplit(by="species")))
 
     for part in parts.values():
         assert (part["species"] == "dog").mean() == pytest.approx(0.25, abs=0.05)
 
 
 def test_stratified_split_bins_a_continuous_column(table: pd.DataFrame) -> None:
-    parts = split_table(table, Split(FRACTIONS, stratify_by="age", stratify_bins=5))
+    parts = split_table(table, Split(FRACTIONS, rule=StratifiedSplit(by="age", bins=5)))
 
     assert parts["val"]["age"].mean() == pytest.approx(table["age"].mean(), abs=15)
 
 
 def test_stratified_split_balances_multilabel_cells_one_label_at_a_time(table: pd.DataFrame) -> None:
-    parts = split_table(table, Split(FRACTIONS, stratify_by="tags"))
+    parts = split_table(table, Split(FRACTIONS, rule=StratifiedSplit(by="tags")))
 
     assert all(part["tags"].str.contains("b").any() for part in parts.values())
 
 
 def test_group_split_keeps_a_group_in_one_part(table: pd.DataFrame) -> None:
-    parts = split_table(table, Split(FRACTIONS, group_by="patient"))
+    parts = split_table(table, Split(FRACTIONS, rule=GroupedSplit(by="patient")))
 
     seen = [set(part["patient"]) for part in parts.values()]
     assert all(a.isdisjoint(b) for i, a in enumerate(seen) for b in seen[i + 1 :])
@@ -65,10 +65,6 @@ def test_group_split_keeps_a_group_in_one_part(table: pd.DataFrame) -> None:
     [
         pytest.param({"fractions": {}}, id="no fractions"),
         pytest.param({"fractions": {"train": 0.5, "val": 0.4}}, id="not summing to one"),
-        pytest.param(
-            {"fractions": FRACTIONS, "stratify_by": "species", "group_by": "patient"}, id="stratify and group"
-        ),
-        pytest.param({"fractions": FRACTIONS, "stratify_bins": 1}, id="one bin"),
         pytest.param({"fractions": {"train": 1.0, "a/b": 0.0}}, id="split name with a separator"),
     ],
 )
@@ -77,9 +73,15 @@ def test_refuses_a_declaration_it_cannot_serve(kwargs: dict[str, object]) -> Non
         Split(**kwargs)  # type: ignore[arg-type]
 
 
+def test_a_rule_that_could_never_divide_anything_is_refused_where_it_was_declared() -> None:
+    """A rule's own options are refused by the rule, which is the only thing that knows what they mean."""
+    with pytest.raises(ValueError, match="bins"):
+        StratifiedSplit(by="species", bins=1)
+
+
 def test_a_missing_column_or_an_empty_part_is_named(table: pd.DataFrame) -> None:
     with pytest.raises(KeyError, match="breed"):
-        split_table(table, Split(FRACTIONS, stratify_by="breed"))
+        split_table(table, Split(FRACTIONS, rule=StratifiedSplit(by="breed")))
     with pytest.raises(ValueError, match="train"):
         split_table(table.head(1), Split({"train": 0.5, "val": 0.5}))
 
@@ -88,9 +90,11 @@ class TestDeclaration:
     """How a run writes a split: shares by split name, beside the options that shape the division."""
 
     def test_the_shares_and_the_options_arrive_in_one_flat_mapping(self) -> None:
-        declared = Split.declared({"train": 0.7, "val": 0.3, "stratify_by": "species", "seed": 1})
+        rule = StratifiedSplit(by="species")
 
-        assert declared == Split({"train": 0.7, "val": 0.3}, seed=1, stratify_by="species")
+        declared = Split.declared({"train": 0.7, "val": 0.3, "rule": rule, "seed": 1})
+
+        assert declared == Split({"train": 0.7, "val": 0.3}, seed=1, rule=rule)
 
     def test_a_share_written_as_a_whole_number_is_still_a_share(self) -> None:
         assert Split.declared({"train": 1}) == Split({"train": 1.0})

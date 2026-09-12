@@ -21,15 +21,16 @@ from lightning import seed_everything
 from src.callbacks.build import build_callbacks
 from src.config import ExperimentConfig, TaskConfig
 from src.core import Stage
-from src.data.build import build_data_module, build_preprocessor, build_transforms
+from src.data.build import build_data_module, build_preprocessor
 from src.experiment import Experiment
 from src.losses.build import build_loss
 from src.metrics.build import build_metrics
 from src.models.build import build_model
-from src.tasks.build import build_task_kinds, build_tasks, default_encoder, head_for
+from src.tasks.build import build_task_kinds, build_tasks, default_target_encoder, head_for
 from src.tracking.build import build_tracker
 from src.training import TrainingData, TrainingModule
 from src.training.build import build_learner, build_optimizer_factory, build_profiler, build_scheduler_factory
+from src.transforms.build import build_transforms
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -45,8 +46,6 @@ log = logging.getLogger(__name__)
 def build(config: ExperimentConfig) -> Experiment:
     """Assemble a run from its declaration, in the one order the contracts allow."""
     seed_everything(config.seed, workers=True)
-    refuse_inputs_that_disagree(config)
-    refuse_heads_a_whole_model_cannot_serve(config)
     kinds = build_task_kinds(config.tasks)
     data = prepare_data(config, kinds)
     tasks = build_tasks(config.tasks, data.info)
@@ -74,39 +73,6 @@ def build(config: ExperimentConfig) -> Experiment:
     )
 
 
-def refuse_inputs_that_disagree(config: ExperimentConfig) -> None:
-    """`data.inputs` binds a name to a column; `preprocessing.inputs` gives that name an encoder.
-
-    Two declarations, one vocabulary. Left to itself the mismatch surfaces on the first batch, inside a
-    loader worker, after the sources were read and the encoders fitted — so the two key sets are
-    compared here, in the one place that sees both.
-    """
-    bound = set(config.data.params.get("inputs", {}))
-    encoded = set(config.preprocessing.inputs or {})
-    if bound and bound != encoded:
-        raise ValueError(
-            f"The inputs a run binds to columns and the inputs it encodes are different names: "
-            f"data.inputs has {', '.join(sorted(bound)) or 'none'}, preprocessing.inputs has "
-            f"{', '.join(sorted(encoded)) or 'none'}. They name the same values."
-        )
-
-
-def refuse_heads_a_whole_model_cannot_serve(config: ExperimentConfig) -> None:
-    """A model reached by import path arrives whole — head, decoding and all — so it composes none.
-
-    The two sections are declared apart and only here are both in view. Silently ignoring a declared
-    head would leave a run reporting numbers for a recipe nobody ran.
-    """
-    if config.model.import_path is None:
-        return
-    declared = sorted(name for name, task in config.tasks.items() if task.head is not None)
-    if declared:
-        raise ValueError(
-            f"{config.model.spelled!r} is a whole model and brings its own heads, so the head declared for "
-            f"{', '.join(declared)} would never be built. Drop it, or declare a backbone to compose onto."
-        )
-
-
 def prepare_data(config: ExperimentConfig, kinds: Mapping[str, type[Task]]) -> DataModule:
     """Read the sources, fit the encoders on the training split, and warm whatever cache there is.
 
@@ -116,12 +82,12 @@ def prepare_data(config: ExperimentConfig, kinds: Mapping[str, type[Task]]) -> D
     preprocessor = build_preprocessor(
         config.preprocessing,
         config.tasks,
-        {name: default_encoder(kind) for name, kind in kinds.items()},
+        {name: default_target_encoder(kind) for name, kind in kinds.items()},
     )
     data = build_data_module(
         config.data,
         preprocessor=preprocessor,
-        targets={name: task.target for name, task in config.tasks.items() if task.target},
+        targets={name: declared.target_column for name, declared in config.tasks.items() if declared.target_column},
         transforms=build_transforms(config.transforms, preprocessor.geometries),
     )
     splits = needed_splits(config)

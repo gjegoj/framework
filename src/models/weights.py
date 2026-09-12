@@ -1,4 +1,4 @@
-"""Putting weights that came from somewhere else into a model."""
+"""Putting a set of weights into a model: whole, or refused by name."""
 
 from __future__ import annotations
 

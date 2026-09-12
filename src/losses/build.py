@@ -45,13 +45,7 @@ def _weighted(declared: object) -> list[WeightedLossConfig]:
 
 
 def _one(declared: ComponentConfig, facts: Mapping[str, Any], log_name: str | None) -> Loss:
-    try:
-        built: Any = instantiate_offering(declared, loss_registry, **facts)
-    except TypeError as error:
-        offered = ", ".join(sorted(facts)) or "nothing"
-        raise ValueError(
-            f"{declared.spelled!r} needs more than this task settles about its target ({offered}): {error}"
-        ) from error
+    built: Any = instantiate_offering(declared, loss_registry, **facts)
     if not isinstance(built, Loss):
         if not (isinstance(built, nn.Module) and _compares_two_tensors(built)):
             raise TypeError(

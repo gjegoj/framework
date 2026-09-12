@@ -17,10 +17,9 @@ class Encoder(ABC):
     """Raw cell → training value, in two halves around augmentation.
 
     ``load`` prepares a raw cell for sample transforms (a path becomes pixels); ``encode``
-    turns the transformed value into its tensor. ``fit`` learns non-vocabulary state on the
-    training split only; ``validate`` checks other splits without refitting. Vocabularies are
-    declared, never discovered: an encoder that reads one says so with ``takes_classes`` and
-    receives ``classes`` from the task that declares them.
+    turns the transformed value into its tensor. Vocabularies are declared, never discovered:
+    an encoder that reads one says so with ``takes_classes`` and receives ``classes`` from the
+    task that declares them.
     """
 
     geometry: ClassVar[Geometry] = Geometry.NONE
@@ -37,12 +36,6 @@ class Encoder(ABC):
     def encode(self, value: object) -> TensorTree:
         raise NotImplementedError
 
-    def fit(self, values: Iterable[object]) -> Self:
-        return self
-
-    def validate(self, values: Iterable[object]) -> None:
-        return None
-
 
 class InputEncoder(Encoder):
     @property
@@ -52,10 +45,26 @@ class InputEncoder(Encoder):
 
 
 class TargetEncoder(Encoder):
+    """An encoder for what a run is scored against, which is the half of them a split is read for.
+
+    ``fit`` and ``validate`` are here rather than on ``Encoder`` because only targets are ever given
+    to them: the preprocessor fits the training split's targets and validates the other splits', and
+    an input is only ever encoded. Offering them to every encoder invited an image encoder to
+    implement a ``fit`` that would never be called.
+    """
+
     @property
     @abstractmethod
     def info(self) -> TargetInfo:
         """Resolved target facts; available after ``fit`` for encoders that learn a layout."""
+
+    def fit(self, values: Iterable[object]) -> Self:
+        """Learn whatever layout this split settles — a range, a set of bins; a vocabulary is declared."""
+        return self
+
+    def validate(self, values: Iterable[object]) -> None:
+        """Check a split against what was already learned, without learning from it."""
+        return None
 
 
 type Collator = Callable[[Sequence[Sample]], Batch]

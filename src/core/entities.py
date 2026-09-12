@@ -234,11 +234,8 @@ class StepOutput:
 SEGMENT = "/"
 """What joins the parts of a composed name: a task and its term, a family and its leaf."""
 
-SPLIT = "@"
-"""What marks a split a value was read on, where it is not the stage's own."""
-
-NAME_SEPARATORS = f".{SEGMENT}{SPLIT}"
-"""Characters a name may not contain: dots address modules, the other two compose the names above."""
+NAME_SEPARATORS = f".{SEGMENT}"
+"""Characters a name may not contain: a dot addresses modules, and the other composes the names above."""
 
 
 def validate_name(name: str, *, label: str = "Component") -> None:

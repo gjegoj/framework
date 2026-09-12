@@ -1,18 +1,20 @@
 """ClearML behind Lightning's logger, and behind the one drawing port it can serve.
 
-The service is reached lazily: this module is imported whenever the package is, and a run that never
-declares `tracker: clearml` must not need the client installed. Every reporting method is rank-zero
-only, the drawing one included — this is the object that knows there is a remote service behind it,
-and unguarded, a matrix would be uploaded once per device.
+The service is reached lazily twice over: the client is imported only when a run is actually started
+there, so a run that never declares `tracker: clearml` does not need it installed, and the run itself
+is started by the first thing reported rather than by the constructor. Every reporting method is
+rank-zero only, the drawing one included — this is the object that knows there is a remote service
+behind it, and unguarded, a matrix would be uploaded once per device.
 """
 
 from __future__ import annotations
 
 import logging
 from collections.abc import Mapping, Sequence
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from lightning.pytorch.loggers import Logger
+from lightning.pytorch.loggers.logger import rank_zero_experiment
 from lightning.pytorch.utilities.rank_zero import rank_zero_only
 
 from src.tracking.keys import SEGMENT, MetricKey
@@ -28,10 +30,10 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-DECIMALS = 3
+MATRIX_DECIMALS = 3
 """Matrix cells are read rather than computed with: 0.333 reads, 0.3333333 does not."""
 
-SERIES = "value"
+DEFAULT_LINE = "value"
 """The line a value that names none of its own is drawn as — `epoch` is a graph with one series."""
 
 
@@ -56,42 +58,67 @@ class ClearMLTracker(Logger):
         **options: Any,
     ) -> None:
         super().__init__()
-        from clearml import Task
-
-        self._task: Task = Task.init(
-            project_name=project_name,
-            task_name=task_name,
-            tags=_worth_showing(tags or ()),
-            reuse_last_task_id=reuse_last_task_id,
+        self._declared: dict[str, Any] = {
+            "project_name": project_name,
+            "task_name": task_name,
+            "tags": _worth_showing(tags or ()),
+            "reuse_last_task_id": reuse_last_task_id,
             **options,
-        )
-        self._backend: Backend = self._task.get_logger()
+        }
+        self._task: Task | None = None
+
+    @property
+    @rank_zero_experiment
+    def experiment(self) -> Task:
+        """The run on the service, made by the first thing reported to it and only where reporting happens.
+
+        A constructor runs on every device, so starting the run there would start one per device, all
+        but the first empty. ``rank_zero_experiment`` is Lightning's own answer: every other device is
+        handed a stand-in that quietly does nothing, which is exactly what a follower should report.
+        """
+        if self._task is None:
+            from clearml import Task
+
+            self._task = Task.init(**self._declared)
+        return self._task
+
+    @property
+    def _reporter(self) -> Backend:
+        """Where numbers and pictures go. The service holds one per run, so this holds none."""
+        # Cast, because Lightning's rank-zero guard around `experiment` is untyped by construction:
+        # what it hands a follower is a stand-in, not a run.
+        return cast("Backend", self.experiment.get_logger())
 
     @property
     def name(self) -> str:
-        return str(self._task.name)
+        """What the service calls this run. Asking for the identity starts the run, as it does in Lightning's
+        own remote loggers; a device that starts none has no name to give."""
+        _ = self.experiment
+        return "" if self._task is None else str(self._task.name)
 
     @property
     def version(self) -> str:
-        return str(self._task.id)
+        _ = self.experiment
+        return "" if self._task is None else str(self._task.id)
 
     @rank_zero_only
     def log_hyperparams(self, params: Mapping[str, Any] | Namespace, *args: Any, **kwargs: Any) -> None:
-        self._task.connect(dict(params) if isinstance(params, Mapping) else vars(params))
+        self.experiment.connect(dict(params) if isinstance(params, Mapping) else vars(params))
 
     @rank_zero_only
     def log_metrics(self, metrics: Mapping[str, float], step: int | None = None) -> None:
+        reporter = self._reporter
         for key, value in metrics.items():
             title, series = _drawn_as(key)
-            self._backend.report_scalar(title=title, series=series, value=float(value), iteration=step or 0)
+            reporter.report_scalar(title=title, series=series, value=float(value), iteration=step or 0)
 
     @rank_zero_only
     def log_matrix(self, title: str, matrix: Matrix, iteration: int) -> None:
         labels = list(matrix.labels) if matrix.labels is not None else None
-        self._backend.report_confusion_matrix(
+        self._reporter.report_confusion_matrix(
             title=title,
-            series=SERIES,
-            matrix=matrix.value.detach().cpu().float().round(decimals=DECIMALS).numpy(),
+            series=DEFAULT_LINE,
+            matrix=matrix.value.detach().cpu().float().round(decimals=MATRIX_DECIMALS).numpy(),
             iteration=iteration,
             xlabels=labels,
             ylabels=labels,
@@ -100,7 +127,15 @@ class ClearMLTracker(Logger):
         )
 
     @rank_zero_only
+    def record_summary(self, name: str, value: float) -> None:
+        """The ``RecordsSummary`` port: a number with no iteration axis, in the table kept for those."""
+        self._reporter.report_single_value(name=name, value=value)
+
+    @rank_zero_only
     def finalize(self, status: str) -> None:
+        """A run that reported nothing has nothing to push, and starting one to say so would be a lie."""
+        if self._task is None:
+            return
         try:
             self._task.flush()
         except Exception as error:
@@ -118,7 +153,7 @@ def _drawn_as(key: str) -> tuple[str, str]:
     """
     head, _, rest = key.partition(SEGMENT)
     if not rest:
-        return key, SERIES
+        return key, DEFAULT_LINE
     try:
         parsed = MetricKey.parse(key)
     except ValueError:

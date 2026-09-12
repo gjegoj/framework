@@ -5,7 +5,7 @@ from __future__ import annotations
 import operator
 from collections.abc import Iterable, Mapping
 from functools import reduce
-from typing import cast
+from typing import cast, override
 
 import torch
 from torch import nn
@@ -34,6 +34,16 @@ class StandardLearner(Learner):
                 f"the losses are {', '.join(sorted(losses))}."
             )
         self.losses = nn.ModuleDict({name: losses[name] for name in self.tasks})
+
+    @override
+    def loss_of(self, task: str) -> Loss | None:
+        """This learner holds one objective per task, under the name the run gave the task.
+
+        Cast, and not ``.get``: torch's ``ModuleDict`` has no such method, and it answers as a module.
+        """
+        if task not in self.losses:
+            return None
+        return cast("Loss", self.losses[task])
 
     def step(self, batch: Batch) -> StepOutput:
         output = self.model(batch.inputs)

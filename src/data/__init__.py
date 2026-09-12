@@ -29,6 +29,7 @@ from src.data.encoders import (
 )
 from src.data.preprocessor import StandardPreprocessor
 from src.data.sources import FileSource
+from src.data.split import GroupedSplit, RandomSplit, Splitter, StratifiedSplit
 from src.data.table import TableDataModule
 
 __all__ = [
@@ -38,6 +39,7 @@ __all__ = [
     "Encoder",
     "FileSource",
     "GaussianBinsEncoder",
+    "GroupedSplit",
     "ImageEncoder",
     "InputEncoder",
     "LabelEncoder",
@@ -46,9 +48,12 @@ __all__ = [
     "MultilabelEncoder",
     "Preprocessor",
     "RamCache",
+    "RandomSplit",
     "ScalarEncoder",
+    "Splitter",
     "StackCollator",
     "StandardPreprocessor",
+    "StratifiedSplit",
     "TableDataModule",
     "TableSource",
     "TargetEncoder",

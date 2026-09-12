@@ -207,6 +207,60 @@ class TestReporting:
         )
 
 
+class TestBatchTransforms:
+    """The one place a batch is rewritten, and the only stage it is rewritten in."""
+
+    @staticmethod
+    def doubled(given: Batch) -> Batch:
+        twice = {name: require_tensor(value, name=name) * 2 for name, value in given.inputs.items()}
+        return Batch(inputs=twice, count=given.count)
+
+    def test_a_training_batch_is_rewritten_by_what_was_installed(self) -> None:
+        under_test = module()
+        under_test.transform_batches(self.doubled)
+
+        rewritten = under_test.on_after_batch_transfer(batch(RIGHT), 0)
+
+        assert torch.equal(require_tensor(rewritten.inputs["species"], name="species"), RIGHT * 2)
+
+    def test_evaluation_reads_the_data_as_it_is(self) -> None:
+        """A report is about the data a run will be judged on, not about a picture made up for training."""
+        under_test = module()
+        under_test.transform_batches(self.doubled)
+        under_test.eval()
+
+        rewritten = under_test.on_after_batch_transfer(batch(RIGHT), 0)
+
+        assert torch.equal(require_tensor(rewritten.inputs["species"], name="species"), RIGHT)
+
+    def test_a_run_that_installs_nothing_is_handed_the_very_batch_it_was_given(self) -> None:
+        under_test, given = module(), batch(RIGHT)
+
+        assert under_test.on_after_batch_transfer(given, 0) is given
+
+    def test_what_was_installed_can_be_taken_back_out(self) -> None:
+        under_test = module()
+        under_test.transform_batches(self.doubled)
+
+        under_test.transform_batches(None)
+
+        rewritten = under_test.on_after_batch_transfer(batch(RIGHT), 0)
+        assert torch.equal(require_tensor(rewritten.inputs["species"], name="species"), RIGHT)
+
+
+class TestDirections:
+    def test_it_says_which_way_each_measurement_is_better(self) -> None:
+        """A table shows a best, and a direction guessed from a name is how a run shows the wrong one."""
+        assert module().metric_directions() == {"species/accuracy": True, "species/confusion_matrix": None}
+
+    def test_a_measurement_with_no_better_direction_says_so_rather_than_being_left_out(self) -> None:
+        """Left out, it would be indistinguishable from a loss, which is the one thing assumed."""
+        assert module().metric_directions()["species/confusion_matrix"] is None
+
+    def test_a_run_that_measures_nothing_declares_nothing(self) -> None:
+        assert module(measured=False).metric_directions() == {}
+
+
 class TestOptimization:
     def test_the_optimizer_is_built_over_the_groups_the_learner_owns(self) -> None:
         seen: list[ParameterGroup] = []

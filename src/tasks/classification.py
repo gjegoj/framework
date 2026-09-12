@@ -8,20 +8,20 @@ topology has something of its own to say.
 
 from __future__ import annotations
 
-from src.tasks.labels import BinaryLabels, MulticlassLabels, MultilabelLabels
 from src.tasks.registry import task_registry
+from src.tasks.semantics import BinarySemantics, MulticlassSemantics, MultilabelSemantics
 
 
 @task_registry.register("classification")
-class Classification(MulticlassLabels):
+class Classification(MulticlassSemantics):
     """One of the declared classes per sample."""
 
 
 @task_registry.register("binary_classification")
-class BinaryClassification(BinaryLabels):
+class BinaryClassification(BinarySemantics):
     """One score per sample: how much it is the thing."""
 
 
 @task_registry.register("multilabel_classification")
-class MultilabelClassification(MultilabelLabels):
+class MultilabelClassification(MultilabelSemantics):
     """Any number of the declared labels per sample."""

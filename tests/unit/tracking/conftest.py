@@ -17,6 +17,7 @@ class Recorded:
 
     scalars: list[tuple[str, str, float, int]] = field(default_factory=list)
     matrices: list[dict[str, Any]] = field(default_factory=list)
+    singles: dict[str, float] = field(default_factory=dict)
     started: dict[str, Any] = field(default_factory=dict)
     connected: dict[str, Any] = field(default_factory=dict)
     flushes: int = 0
@@ -39,6 +40,9 @@ def clearml(monkeypatch: pytest.MonkeyPatch) -> Recorded:
 
         def report_confusion_matrix(self, **reported: Any) -> None:
             recorded.matrices.append(reported)
+
+        def report_single_value(self, name: str, value: float) -> None:
+            recorded.singles[name] = value
 
     class Task:
         name = "a-run"

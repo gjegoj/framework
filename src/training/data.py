@@ -10,7 +10,8 @@ from __future__ import annotations
 from typing import Any, override
 
 import lightning as L
-from torch.utils.data import DataLoader
+from lightning.pytorch.overrides.distributed import UnrepeatedDistributedSampler
+from torch.utils.data import DataLoader, Dataset, Sampler
 
 from src.core import Sample, Stage
 from src.data import DataModule, single_threaded_cv2
@@ -23,9 +24,7 @@ class TrainingData(L.LightningDataModule):
     training shuffles and may drop an incomplete tail, evaluation does neither, because a report is
     about every sample it was given. A stage reads the split of its own name.
 
-    On one device that is exactly true. Across several, Lightning inserts a distributed sampler that
-    pads the last batch by wrapping around, so a few rows are scored twice; run the final evaluation
-    on one device when a report has to be exact.
+    Across several devices the same holds, which takes a sampler of our own: see :meth:`_share_of`.
 
     Parameters:
         data: The prepared pipeline; ``setup`` has already run.
@@ -54,12 +53,36 @@ class TrainingData(L.LightningDataModule):
         return self._loader(Stage.TEST, shuffle=False, drop_last=False)
 
     def _loader(self, stage: Stage, *, shuffle: bool, drop_last: bool) -> DataLoader[Sample]:
+        dataset = self._data.dataset(stage)
         return DataLoader(
-            self._data.dataset(stage),
+            dataset,
             shuffle=shuffle,
             drop_last=drop_last,
+            # Shuffling and a sampler are alternatives to a DataLoader, and only training shuffles:
+            # how training spreads over devices stays Lightning's, for the reason `_share_of` gives.
+            sampler=None if shuffle else self._share_of(dataset),
             # The pipeline that prepared the samples is what joins them: a modality whose samples are
             # ragged collates its own way, and this adapter never learns which one it is serving.
             collate_fn=self._data.preprocessor.collate,
             **self._options,
+        )
+
+    def _share_of(self, dataset: Dataset[Sample]) -> Sampler[int] | None:
+        """This device's part of an evaluation split, with no row landing on two of them.
+
+        Lightning inserts a distributed sampler of its own, and that one pads the last batch by
+        wrapping around to the start — right for training, where every device owes the same number of
+        gradient steps and a repeated sample is one shuffled draw among many, and wrong for a report,
+        where those rows are scored twice. Measured on lightning 2.6.5: a loader that already carries
+        a ``DistributedSampler`` is left alone, and this is one, which is how the swap is made.
+
+        The cost is that devices finish an evaluation a batch apart. That is safe while nothing in the
+        loop is collective per batch — metrics gather when they compute, and this framework logs
+        nothing with ``sync_dist`` on a step — and it is why Lightning uses this same sampler to predict.
+        """
+        trainer = self.trainer
+        if trainer is None or trainer.world_size == 1:
+            return None
+        return UnrepeatedDistributedSampler(
+            dataset, num_replicas=trainer.world_size, rank=trainer.global_rank, shuffle=False
         )

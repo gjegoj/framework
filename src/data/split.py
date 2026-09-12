@@ -1,11 +1,17 @@
-"""One table into named splits: at random, keeping class shares, or keeping whole groups together."""
+"""One table into named splits, by a rule the run declares.
+
+Three rules ship — at random, keeping class shares, keeping whole groups together — and a fourth
+arrives by import path with its own options, like a pixel chain or a network. A rule is a callable of
+``(rows, fractions, seed)``; everything it needs to know about *how* to divide is its own constructor's
+business, which is why no two of them have to be told apart here.
+"""
 
 from __future__ import annotations
 
 import logging
 import math
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, field, fields
 from typing import Any, Self
 
 import numpy as np
@@ -19,10 +25,85 @@ from src.data.encoders.label import SEPARATOR, labels_in
 
 log = logging.getLogger(__name__)
 
+type Splitter = Callable[[Table, Mapping[str, float], int], dict[str, Table]]
+"""A rule for dividing a table: the rows, the share wanted for each name, and the seed to repeat it by."""
+
+
+@dataclass(frozen=True, slots=True)
+class RandomSplit:
+    """Shuffle, then cut: the default, and the only one that needs nothing about the rows."""
+
+    def __call__(self, rows: Table, fractions: Mapping[str, float], seed: int) -> dict[str, Table]:
+        shuffled = rows.sample(frac=1, random_state=seed).reset_index(drop=True)
+        parts: dict[str, Table] = {}
+        names = list(fractions)
+        start = 0
+        for position, name in enumerate(names):
+            end = len(shuffled) if position == len(names) - 1 else start + int(len(shuffled) * fractions[name])
+            parts[name] = shuffled.iloc[start:end].reset_index(drop=True)
+            start = end
+        return _refusing_empty(parts, f"{len(rows)} rows do not stretch across the requested fractions")
+
+
+@dataclass(frozen=True, slots=True)
+class StratifiedSplit:
+    """Keep each split's mix of a column the same as the whole table's.
+
+    Parameters:
+        by: The column whose shares are kept. Several labels in one cell make it a multilabel
+            column, and the division becomes an iterative one over all of them.
+        bins: How many quantile bins a numeric column is grouped into before its shares are kept.
+        separator: How a cell lists several labels.
+    """
+
+    by: str
+    bins: int = 10
+    separator: str = SEPARATOR
+
+    def __post_init__(self) -> None:
+        if self.bins < 2:
+            raise ValueError(f"A stratified split needs at least 2 bins, got {self.bins}.")
+
+    def __call__(self, rows: Table, fractions: Mapping[str, float], seed: int) -> dict[str, Table]:
+        column = _column(rows, self.by, purpose="stratify")
+        indicators = _label_indicators(rows[column], self.separator)
+        if indicators is not None:
+            return _divide(
+                rows, fractions, lambda frame, share: _take_iterative(frame, indicators.loc[frame.index], share, seed)
+            )
+        strata = _strata(rows[column], self.bins)
+        return _divide(
+            rows, fractions, lambda frame, share: _take_stratified(frame, strata.loc[frame.index], share, seed, column)
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class GroupedSplit:
+    """Keep every row of a group on one side, so nothing a group shares leaks between splits.
+
+    Parameters:
+        by: The column whose equal values belong together — a patient, a scene, a session.
+    """
+
+    by: str
+
+    def __call__(self, rows: Table, fractions: Mapping[str, float], seed: int) -> dict[str, Table]:
+        column = _column(rows, self.by, purpose="group")
+        sizes = rows.groupby(column, sort=False).size().sample(frac=1, random_state=seed)
+        wanted = {name: fraction * len(rows) for name, fraction in fractions.items()}
+        members: dict[str, list[object]] = {name: [] for name in fractions}
+        filled = dict.fromkeys(fractions, 0)
+        for group, size in sizes.items():
+            name = max(fractions, key=lambda candidate: wanted[candidate] - filled[candidate])
+            members[name].append(group)
+            filled[name] += int(size)
+        parts = {name: rows[rows[column].isin(groups)].reset_index(drop=True) for name, groups in members.items()}
+        return _refusing_empty(parts, f"whole groups move together and {column!r} has only {len(sizes)} of them")
+
 
 @dataclass(frozen=True, slots=True)
 class Split:
-    """How to divide: fractions per split name (summing to one), and at most one balancing rule.
+    """How to divide: a fraction per split name, summing to one, and the rule that does the dividing.
 
     ``seed`` is separate from the experiment's on purpose: runs at different seeds must share
     one test set, or their numbers are not comparable.
@@ -30,10 +111,7 @@ class Split:
 
     fractions: Mapping[str, float]
     seed: int = 42
-    stratify_by: str | None = None
-    stratify_bins: int = 10
-    stratify_separator: str = SEPARATOR
-    group_by: str | None = None
+    rule: Splitter = field(default_factory=RandomSplit)
 
     def __post_init__(self) -> None:
         if not self.fractions:
@@ -47,19 +125,15 @@ class Split:
             raise ValueError(
                 f"Split fractions must sum to 1, got {sum(self.fractions.values())} over {', '.join(self.fractions)}."
             )
-        if self.stratify_by is not None and self.group_by is not None:
-            raise ValueError("stratify_by and group_by cannot be combined: a group moves whole, a stratum is spread.")
-        if self.stratify_bins < 2:
-            raise ValueError(f"stratify_bins needs at least 2, got {self.stratify_bins}.")
 
     @classmethod
     def declared(cls, values: Mapping[str, Any]) -> Self:
-        """A split as a run writes it — ``{train: 0.7, val: 0.3, stratify_by: species}``.
+        """A split as a run writes it — ``{train: 0.7, val: 0.3, rule: {_target_: …, by: species}}``.
 
         One flat mapping rather than a nested ``fractions:``, because that is how a division reads: the
-        names below are this class's own options and every other key is a split with its share. The
-        cost is that a split cannot be called ``seed``, and that a misspelled option becomes a split —
-        which is why the refusal above names them.
+        two names below are this class's own options and every other key is a split with its share. The
+        cost is that a split cannot be called ``seed`` or ``rule``, and that a misspelled option becomes
+        a split — which is why the refusal above names them.
         """
         options = {one.name for one in fields(cls)} - {"fractions"}
         return cls(
@@ -69,51 +143,8 @@ class Split:
 
 
 def split_table(table: Table, split: Split) -> dict[str, Table]:
-    rows = table.reset_index(drop=True)
-    if split.group_by is not None:
-        return _by_groups(rows, split)
-    if split.stratify_by is not None:
-        return _stratified(rows, split)
-    return _at_random(rows, split)
-
-
-def _at_random(rows: Table, split: Split) -> dict[str, Table]:
-    shuffled = rows.sample(frac=1, random_state=split.seed).reset_index(drop=True)
-    parts: dict[str, Table] = {}
-    names = list(split.fractions)
-    start = 0
-    for position, name in enumerate(names):
-        end = len(shuffled) if position == len(names) - 1 else start + int(len(shuffled) * split.fractions[name])
-        parts[name] = shuffled.iloc[start:end].reset_index(drop=True)
-        start = end
-    return _refusing_empty(parts, f"{len(rows)} rows do not stretch across the requested fractions")
-
-
-def _stratified(rows: Table, split: Split) -> dict[str, Table]:
-    column = _column(rows, split.stratify_by, purpose="stratify")
-    indicators = _label_indicators(rows[column], split.stratify_separator)
-    if indicators is not None:
-        return _divide(
-            rows, split, lambda frame, share: _take_iterative(frame, indicators.loc[frame.index], share, split.seed)
-        )
-    strata = _strata(rows[column], split.stratify_bins)
-    return _divide(
-        rows, split, lambda frame, share: _take_stratified(frame, strata.loc[frame.index], share, split.seed, column)
-    )
-
-
-def _by_groups(rows: Table, split: Split) -> dict[str, Table]:
-    column = _column(rows, split.group_by, purpose="group")
-    sizes = rows.groupby(column, sort=False).size().sample(frac=1, random_state=split.seed)
-    wanted = {name: fraction * len(rows) for name, fraction in split.fractions.items()}
-    members: dict[str, list[object]] = {name: [] for name in split.fractions}
-    filled = dict.fromkeys(split.fractions, 0)
-    for group, size in sizes.items():
-        name = max(split.fractions, key=lambda candidate: wanted[candidate] - filled[candidate])
-        members[name].append(group)
-        filled[name] += int(size)
-    parts = {name: rows[rows[column].isin(groups)].reset_index(drop=True) for name, groups in members.items()}
-    return _refusing_empty(parts, f"whole groups move together and {column!r} has only {len(sizes)} of them")
+    """The rule the split declared, run over the rows: which rule it is was settled when it was built."""
+    return split.rule(table.reset_index(drop=True), split.fractions, split.seed)
 
 
 def _column(rows: Table, column: str | None, *, purpose: str) -> str:
@@ -122,14 +153,16 @@ def _column(rows: Table, column: str | None, *, purpose: str) -> str:
     return column
 
 
-def _divide(rows: Table, split: Split, take: Callable[[Table, float], tuple[Table, Table]]) -> dict[str, Table]:
+def _divide(
+    rows: Table, fractions: Mapping[str, float], take: Callable[[Table, float], tuple[Table, Table]]
+) -> dict[str, Table]:
     parts: dict[str, Table] = {}
-    names = list(split.fractions)
+    names = list(fractions)
     remaining, remaining_share = rows, 1.0
     for name in names[:-1]:
-        taken, remaining = take(remaining, split.fractions[name] / remaining_share)
+        taken, remaining = take(remaining, fractions[name] / remaining_share)
         parts[name] = taken.reset_index(drop=True)
-        remaining_share -= split.fractions[name]
+        remaining_share -= fractions[name]
     parts[names[-1]] = remaining.reset_index(drop=True)
     return _refusing_empty(parts, f"{len(rows)} rows do not stretch across the requested fractions")
 
@@ -200,6 +233,6 @@ def _take_stratified(rows: Table, strata: pd.Series, share: float, seed: int, co
     except ValueError as error:
         raise ValueError(
             f"Cannot stratify by {column!r}: every split needs one row of each of its {strata.nunique()} values and "
-            f"{len(rows)} rows do not stretch that far ({error}). Use a coarser column or drop stratify_by."
+            f"{len(rows)} rows do not stretch that far ({error}). Use a coarser column, or a rule that needs none."
         ) from error
     return pd.concat([kept, taken]), rest

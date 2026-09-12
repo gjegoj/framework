@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from functools import partial
+from inspect import signature
 from typing import TYPE_CHECKING, Any
 
 from lightning.pytorch.profilers import Profiler
 from torch.optim import Optimizer
-from torch.optim.lr_scheduler import ReduceLROnPlateau
 
 if TYPE_CHECKING:
     from lightning.pytorch.utilities.types import LRSchedulerConfigType
@@ -21,7 +21,7 @@ from src.tasks import Task
 from src.training.base import FitProfile, Learner, OptimizerFactory, SchedulerFactory
 from src.training.registry import learner_registry, optimizer_registry, profiler_registry, scheduler_registry
 
-SCHEDULE = "lr"
+LEARNING_RATE = "lr"
 """What a learning-rate graph is titled; Lightning's monitor reads it from the policy below.
 
 Left unset, the monitor titles the graph after the optimizer's class — ``lr-AdamW/backbone`` — which
@@ -51,12 +51,24 @@ def build_optimizer_factory(declared: ComponentConfig, lr: float) -> OptimizerFa
     return partial(resolve_factory(declared, optimizer_registry), lr=lr, **resolve_params(declared))
 
 
+def _reacts_to_a_metric(schedule: Any) -> bool:
+    """Whether a schedule steps on a logged number rather than on the clock — asked of the library.
+
+    torch distinguishes the two in the signature it publishes: ``ReduceLROnPlateau.step`` takes the
+    metric, every other schedule's takes at most an epoch. Asked that way rather than by naming the one
+    class, for the reason ``_derived`` gives below: a table of library names is a thing to keep in step,
+    and a schedule reached by ``_target_`` would not be in it.
+    """
+    step = getattr(schedule, "step", None)
+    return step is not None and "metrics" in signature(step).parameters
+
+
 def build_scheduler_factory(declared: SchedulerConfig | None) -> SchedulerFactory | None:
     """A factory too, one step later: a schedule needs the built optimizer and the length of the fit."""
     if declared is None:
         return None
     schedule = resolve_factory(declared, scheduler_registry)
-    if isinstance(schedule, type) and issubclass(schedule, ReduceLROnPlateau) and declared.monitor is None:
+    if _reacts_to_a_metric(schedule) and declared.monitor is None:
         raise ValueError(
             "A plateau schedule reacts to a logged metric, so it needs 'monitor' — "
             "e.g. scheduler: {name: plateau, monitor: val/loss, mode: min}."
@@ -68,7 +80,7 @@ def build_scheduler_factory(declared: SchedulerConfig | None) -> SchedulerFactor
         _refuse_a_schedule_on_the_wrong_clock(declared.spelled, declared.interval, derived, profile)
         policy: LRSchedulerConfigType = {
             "scheduler": schedule(optimizer, **written, **derived),
-            "name": SCHEDULE,
+            "name": LEARNING_RATE,
             "interval": declared.interval,
             "frequency": declared.frequency,
             "strict": declared.strict,

@@ -14,7 +14,7 @@ from torch import nn
 from src.build import build
 from src.config import load_config
 from src.experiment import Experiment, run
-from src.training import restore_best_weights, shipped_weights
+from src.training import model_weights, restore_best_weights
 from src.training.checkpoints import MODEL_PREFIX
 
 
@@ -32,13 +32,13 @@ class TestWeights:
     def test_a_checkpoint_of_ours_gives_up_the_models_own_keys(self, tmp_path: Path) -> None:
         path = written(tmp_path / "one.ckpt", {"weight": torch.zeros(2, 2)})
 
-        assert set(shipped_weights(path)) == {"weight"}
+        assert set(model_weights(path)) == {"weight"}
 
     def test_a_file_that_is_not_a_checkpoint_of_ours_is_refused_by_name(self, tmp_path: Path) -> None:
         torch.save({"weight": torch.zeros(2)}, tmp_path / "backbone.pt")
 
         with pytest.raises(ValueError, match="state_dict"):
-            shipped_weights(str(tmp_path / "backbone.pt"))
+            model_weights(str(tmp_path / "backbone.pt"))
 
     def test_weights_that_do_not_fit_are_refused_rather_than_half_loaded(self, tmp_path: Path) -> None:
         """A model with a loaded encoder and a fresh head looks trained and is not."""
@@ -115,7 +115,7 @@ class TestRun:
         kept = Path(str(getattr(built.trainer.checkpoint_callback, "best_model_path", "")))
         assert "epoch=0" in kept.name, "the run got worse, so the epoch it kept is not the one it ended on"
         held = built.module.learner.model.state_dict()
-        assert all(torch.equal(held[name], value) for name, value in shipped_weights(str(kept)).items())
+        assert all(torch.equal(held[name], value) for name, value in model_weights(str(kept)).items())
 
     def test_a_run_continues_from_a_checkpoint_the_shipped_saver_wrote(
         self, declaration: Mapping[str, Any], tmp_path: Path

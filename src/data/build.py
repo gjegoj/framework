@@ -7,7 +7,7 @@ from pathlib import Path
 
 from src.config import ClassFile, ComponentConfig, PreprocessingConfig, TaskConfig
 from src.config.instantiate import instantiate, resolve_factory
-from src.core import Geometry, Registry, Stage
+from src.core import Registry
 from src.data.base import DataModule, Encoder, Preprocessor, TargetEncoder
 from src.data.registry import (
     cache_registry,
@@ -17,7 +17,7 @@ from src.data.registry import (
     preprocessor_registry,
     target_encoder_registry,
 )
-from src.transforms import GeometryAware, SampleTransform
+from src.transforms import SampleTransform
 
 
 def build_preprocessor(
@@ -29,7 +29,7 @@ def build_preprocessor(
     targets = {
         name: build_target_encoder(name, task, default_encoders.get(name))
         for name, task in tasks.items()
-        if task.target
+        if task.target_column
     }
     built = instantiate(
         declared,
@@ -74,17 +74,6 @@ def classes_of(declared: Mapping[int, str] | ClassFile) -> dict[int, str]:
         names = [line.strip() for line in Path(declared.file).read_text(encoding="utf-8").splitlines() if line.strip()]
         return dict(enumerate(names))
     return dict(declared)
-
-
-def build_transforms(
-    declared: Mapping[Stage, ComponentConfig], geometries: Mapping[str, Mapping[str, Geometry]]
-) -> dict[str, SampleTransform]:
-    """One sample transform per stage, keyed by the split that runs it — the convention ``Stage`` declares."""
-    built: dict[str, SampleTransform] = {}
-    for stage, component in declared.items():
-        transform = instantiate(component)
-        built[stage] = transform.with_geometry(**geometries) if isinstance(transform, GeometryAware) else transform
-    return built
 
 
 def build_data_module(

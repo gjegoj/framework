@@ -27,5 +27,5 @@ def minimal() -> dict[str, Any]:
         "data": {"name": "table", "source": "data.csv"},
         "preprocessing": {"name": "standard", "inputs": {"image": {"name": "image", "image_size": [224, 224]}}},
         "model": {"name": "timm", "model_name": "resnet18"},
-        "tasks": {"species": {"kind": "classification", "target": "species", "classes": {0: "cat", 1: "dog"}}},
+        "tasks": {"species": {"kind": "classification", "target_column": "species", "classes": {0: "cat", 1: "dog"}}},
     }

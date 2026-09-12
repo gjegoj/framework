@@ -39,11 +39,15 @@ def _in_torchmetrics_dialect(facts: Mapping[str, Any]) -> dict[str, Any]:
     library is imported. The word itself needs no translating — ``Semantics`` is a ``StrEnum`` whose
     members are the library's own spellings — so only the name it arrives under changes. A task whose
     target is a number has no semantics and is offered none.
+
+    Both spellings are offered, because the metrics of a run are not all the library's: ours say
+    ``semantics``, as every other part of this framework does. ``fill_signature`` hands each
+    constructor only what it names, so neither ever sees the other's word.
     """
     if facts.get("semantics") is None:
         return {}
     classes = facts.get("num_classes")
-    return {"task": facts["semantics"], "num_classes": classes, "num_labels": classes}
+    return {"task": facts["semantics"], "semantics": facts["semantics"], "num_classes": classes, "num_labels": classes}
 
 
 def _component(declared: object) -> ComponentConfig:
@@ -56,11 +60,10 @@ def _component(declared: object) -> ComponentConfig:
 
 
 def _one(declared: ComponentConfig, facts: Mapping[str, Any]) -> Metric:
-    try:
-        built: Metric = instantiate_offering(declared, metric_registry, **facts)
-    except TypeError as error:
-        offered = ", ".join(sorted(facts)) or "nothing"
-        raise ValueError(
-            f"{declared.spelled!r} needs more than this task settles about its target ({offered}): {error}"
-        ) from error
+    built = instantiate_offering(declared, metric_registry, **facts)
+    if not isinstance(built, Metric):
+        raise TypeError(
+            f"{declared.spelled!r} built {type(built).__name__}, which is not a Metric: a run asks it to "
+            "accumulate over a stage and to answer with one reading at the end, and this answers neither."
+        )
     return built

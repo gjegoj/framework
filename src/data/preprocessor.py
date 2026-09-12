@@ -7,11 +7,11 @@ from collections.abc import Iterable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from itertools import batched
 
+from src.console import track
 from src.core import Batch, DatasetInfo, Geometry, Role, Sample
 from src.data.base import Collator, Encoder, InputEncoder, Preprocessor, TargetEncoder
 from src.data.cache import Cache, Key
 from src.data.registry import preprocessor_registry
-from src.progress import track
 from src.transforms import SampleTransform
 
 log = logging.getLogger(__name__)
@@ -58,7 +58,12 @@ class StandardPreprocessor(Preprocessor):
 
     @property
     def geometries(self) -> dict[str, dict[str, Geometry]]:
-        """How each value moves with the picture under a spatial transform; ``NONE`` entries are omitted."""
+        """How each declared value moves with the picture, including the ones that do not move at all.
+
+        Everything is published, ``NONE`` included, because what a pipeline can carry is the pipeline's
+        to decide: it is the one that knows both — and an augmentation that writes an answer needs a
+        value that does not move to reach it.
+        """
         return {role: _geometries(encoders) for role, encoders in self._by_role.items()}
 
     def preprocess(self, sample: Sample, transform: SampleTransform | None = None) -> Sample:
@@ -154,4 +159,4 @@ def _required(values: Mapping[str, object], name: str, role: str) -> object:
 
 
 def _geometries(encoders: Mapping[str, Encoder]) -> dict[str, Geometry]:
-    return {name: encoder.geometry for name, encoder in encoders.items() if encoder.geometry is not Geometry.NONE}
+    return {name: encoder.geometry for name, encoder in encoders.items()}

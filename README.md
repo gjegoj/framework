@@ -1,20 +1,16 @@
 # ml-framework
 
-Architecture rewrite in progress: [framework v2 contracts and migration plan](docs/v2/README.md).
-The existing commands below still run the original implementation.
-
 Config-driven multi-task computer-vision training on PyTorch Lightning · Hydra ·
-Pydantic · timm / smp / ultralytics · albumentations · torchmetrics.
+Pydantic · timm / smp · albumentations · torchmetrics.
 
 Built around a strict dependency discipline — a thin core, capability packages
 around it, one composition root — and a vocabulary any data scientist can read
 without a glossary.
 
-> Classification · segmentation · regression · **metric learning** (ranking,
-> dual-encoder) · **object detection** (in progress) · **knowledge distillation** ·
-> **LoRA fine-tuning** — with EMA, MixUp/CutMix/Mosaic, loss-parameter annealing,
-> per-task learning rates, model **export** (TorchScript / ONNX / TensorRT) with
-> numerical-parity verification, and interactive HTML grids of predictions.
+Classification, segmentation and regression, several of them on one backbone,
+with EMA, freezing, MixUp/CutMix, loss-parameter annealing and per-task learning
+rates. Export, prediction grids and the metric-learning and detection families
+are not here yet; what is written below is what runs.
 
 ## Quick start
 
@@ -32,40 +28,46 @@ they live:
 ```bash
 uv run main.py experiment=examples/classification
 uv run main.py experiment=examples/segmentation
-uv run main.py experiment=examples/classification lr=3e-4 trainer.max_epochs=50 loader=performance scheduler=onecycle
+uv run main.py experiment=examples/finetuning
+uv run main.py experiment=examples/classification lr=3e-4 epochs=50 loader=performance scheduler=onecycle
 ```
 
-Configs live in [`configs/`](configs/). `config.yaml` holds the shared knobs
-(`lr`, `epochs`, `batch_size`, `image_size`, `mean`, `std`) and the group files
-interpolate from them, so one edit in an experiment file reaches every consumer.
-Override a knob (`lr=3e-4`), not its mirror (`optimizer.lr=3e-4`). Adding a key a
-group file does not declare needs Hydra's `+` (`+trainer.precision=bf16-mixed`).
+Configs live in [`configs/`](configs/). `config.yaml` holds the knobs a run is
+usually steered by — `seed`, `lr`, `epochs`, `batch_size` — and the group files
+interpolate from them, so one edit reaches every consumer. The picture's size and
+statistics are declared once in `configs/preprocessing/image.yaml`, and the pixel
+chain reads them from there. Override a knob (`lr=3e-4`), not its mirror
+(`optimizer.lr=3e-4`) — the second is refused by name. Adding a key a group file
+does not declare needs Hydra's `+` (`+trainer.precision=bf16-mixed`).
 
 ## Architecture
 
 ```
 cli.py + build.py    composition root: Hydra composes, one grammar builds
       │ creates and wires
-capability packages  data · models · tasks · losses · metrics · transforms ·
-      │              training · callbacks · loggers · export · visualization
+capability packages  data · transforms · models · tasks · losses · metrics ·
+      │              training · tracking · callbacks
       │ implement and consume
-core/                entities · ports · taxonomy · the log-key grammar — torch and stdlib only
+core/                entities · taxonomy · the registry — torch and stdlib only
 ```
 
 Arrows point down only. The core never imports a capability; a capability never
-imports `config/`; only the composition root reads config. That is what keeps the
-third-party stacks contained — Lightning in `training/`, pydantic in `config/`,
-Hydra in `cli.py`.
+imports `config/`; only the composition root and a package's own `build.py` read
+declarations. That is what keeps the third-party stacks contained — Lightning in
+`training/` and `callbacks/`, albumentations in `transforms/`, pandas and OpenCV
+in `data/`, pydantic in `config/`, Hydra in `cli.py`. The rules are not a
+convention: [`tests/test_layering.py`](tests/test_layering.py) walks every import
+in the tree and fails on one that is not declared.
 
 Three ideas carry most of the design:
 
-- **A task is a kind.** `classification`, `segmentation`, `detection` are classes
-  that each state what the task needs — encoder, head, loss, metrics, drawing — in
+- **A task is a kind.** `classification`, `segmentation`, `regression` are
+  classes that each state what the task needs — encoder, head, loss, metrics — in
   one place; a kind of your own is a subclass reachable by `_target_`, not a new
   subsystem.
 - **Sizes come from the data.** Encoders fit on the train split, their facts land
-  as the value `setup()` returns, and only then are heads built — `num_classes` is never
-  written in a config file.
+  on the prepared module's `info`, and only then are heads built — `num_classes`
+  is never written in a config file.
 - **One grammar for every component.** `name` (a registry key) or `_target_` (an
   import path); every other key is a constructor argument, so an upstream knob is
   reachable without a schema change.
@@ -80,33 +82,34 @@ every row below is one new class, with no edit to existing code:
 | Features behind a removable head (torchvision) | a `Backbone` adapter that strips it |
 | Logits but no loss (HF `*ForClassification`) | a `Backbone` exposing a `logits` stream + `head: {_target_: torch.nn.Identity}` |
 | Everything: head, loss, decoding (a DETR of your own) | a `Model`, reached by `_target_` and built as it is |
-| Just weights for our own topology | nothing — `checkpoint_path` loads them |
+| Just weights for our own topology | nothing — `run.checkpoint_path` loads them |
+
+The same holds off the model path: a loss, a metric, a callback, an encoder, a
+pixel augmentation and a rule for dividing a table all arrive the same way.
+[`tests/e2e/test_custom_extension.py`](tests/e2e/test_custom_extension.py) is the
+promise written down — a task kind, a network and a splitting rule of one's own,
+run end to end with nothing under `src/` knowing about them.
 
 ## Documentation
 
-Full documentation is in [`docs/`](docs/README.md).
-
-| | |
-|---|---|
-| [Core concepts](docs/concepts.md) | The design in five minutes, with the build order |
-| [Data](docs/guides/data.md) · [Tasks](docs/guides/tasks.md) · [Models](docs/guides/models.md) · [Optimizer & scheduler](docs/guides/training.md) | Everyday configuration |
-| [Losses](docs/guides/losses.md) · [Metrics](docs/guides/metrics.md) · [Transforms](docs/guides/transforms.md) · [Callbacks](docs/guides/callbacks.md) | The pieces of a run |
-| [Detection](docs/guides/detection.md) · [Export](docs/guides/export.md) · [Samples grid](docs/guides/visualization.md) · [Logging](docs/guides/logging.md) | Feature guides |
-| [Extending](docs/guides/extending.md) | Your own loss, metric, callback, backbone or task kind |
-| [Backlog](docs/backlog.md) | Known defects and deferred decisions, with the reasoning kept |
+There is none yet, deliberately: the guides are written once the shape stops
+moving. Until then the configs under [`configs/`](configs/) carry the reasoning
+in comments, and every contract is stated in the docstring of the `base.py` that
+declares it.
 
 ## Development
 
 ```bash
 make install     # uv sync
 make test        # full pytest suite
+make test-unit   # the package tests only
+make test-e2e    # the runs that go from a file on disk to logged metrics
 make test-gate   # the whole suite minus the tests that need a model hub (the pre-commit gate)
-make typecheck   # mypy --strict over src and tests
+make typecheck   # mypy over src and tests
 make check       # typecheck + full tests — the gate
-make pre-commit  # every hook: typos, isort, black, ruff, mypy, unit tests
+make pre-commit  # every hook: file hygiene, typos, ruff check, ruff format, mypy, the test gate
 make clean       # caches and temporary files
 ```
 
-The framework runs end to end from YAML: `main.py` composes a config, `build.py`
-wires the experiment, and it trains, tests and exports — covered by acceptance
-tests that go from a file on disk to logged metrics.
+`make pre-commit` runs over the files git tracks, so `git add` a new file before
+trusting a green run.

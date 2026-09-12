@@ -9,12 +9,19 @@ from typing import Any
 import albumentations as A
 
 from src.core import Geometry, Role, Sample
-from src.transforms.base import SampleTransform
+from src.transforms.base import AnswersTask, SampleTransform
 
 PIPELINE_KIND = {Geometry.IMAGE: "image", Geometry.MASK: "mask"}
-"""How a geometry travels through ``albumentations.Compose``; a geometry absent here is not pixels and cannot travel."""
+"""How a geometry travels through ``albumentations.Compose``; a value whose geometry is absent here stays put.
 
-type Roles = Mapping[str, Mapping[str, Geometry]]
+Which is the whole of the rule, and the reason there is no refusal beside it: ``Geometry`` names what
+a raw value is, and the two entries here are everything it can be besides ``NONE``. A third kind —
+boxes, keypoints — arrives with the ``Compose`` argument it travels as, and adds its line here."""
+
+LABEL = "label"
+"""How a value that is not pixels travels, for the one case there is: a target an augmentation writes."""
+
+type Roles = Mapping[str, Mapping[str, Any]]
 
 
 class AlbumentationsTransform:
@@ -40,15 +47,20 @@ class AlbumentationsTransform:
             Role.TARGETS: dict(targets),
         }
         _refuse_a_name_under_two_roles(roles)
-        carried = {
-            name: _pipeline_kind(role, name, geometry)
+        answered = _answered_tasks(self.transforms, targets)
+        carried: Roles = {
+            role: {
+                name: kind
+                for name, geometry in declared.items()
+                if (kind := _travels_as(name, geometry, answered)) is not None
+            }
             for role, declared in roles.items()
-            for name, geometry in declared.items()
         }
-        if "image" not in carried.values():
+        registered = {name: kind for held in carried.values() for name, kind in held.items()}
+        if "image" not in registered.values():
             raise ValueError("An albumentations pipeline needs at least one image input to move.")
         options: dict[str, Any] = {"telemetry": False, **self.compose_options}
-        return BoundPipeline(A.Compose(self.transforms, additional_targets=carried, **options), roles)
+        return BoundPipeline(A.Compose(self.transforms, additional_targets=registered, **options), carried)
 
 
 class BoundPipeline:
@@ -76,14 +88,43 @@ def _values(sample: Sample) -> tuple[tuple[str, Mapping[str, object]], ...]:
     )
 
 
-def _pipeline_kind(role: str, name: str, geometry: Geometry) -> str:
-    """Everything a pipeline moves is pixels; anything else reaches it by mistake, whatever its role."""
-    if geometry not in PIPELINE_KIND:
-        travels = ", ".join(sorted(PIPELINE_KIND.values()))
+def _answered_tasks(transforms: Sequence[Any], targets: Mapping[str, Geometry]) -> frozenset[str]:
+    """The tasks the pipeline's own augmentations answer — derived from them, never declared beside them.
+
+    Measured on albumentationsx 2.3.7: a pipeline routes a value by its kind, and every value of one
+    kind is put through every rule for it. Two writers in one pipeline would therefore each rewrite
+    the other's target, so the second one is refused rather than named as a caveat.
+    """
+    answered = sorted(one.task for one in transforms if isinstance(one, AnswersTask))
+    if len(answered) > 1:
         raise ValueError(
-            f"{role} {name!r} declares geometry {geometry.value!r}, but a pipeline moves pixels: {travels}."
+            f"{answered} are answered by augmentations of one pipeline, which routes a value by its kind "
+            f"and so cannot tell two targets apart: each would rewrite the other's. One stage declares "
+            f"one such augmentation."
         )
-    return PIPELINE_KIND[geometry]
+    for name in answered:
+        if name not in targets:
+            declared = ", ".join(sorted(targets)) or "none"
+            raise ValueError(
+                f"An augmentation of this pipeline answers the task {name!r}, which this run does not "
+                f"declare, so it would write nothing for the length of the run. Declared tasks: {declared}."
+            )
+        if targets[name] is not Geometry.NONE:
+            raise ValueError(
+                f"An augmentation of this pipeline answers {name!r}, whose target is pixels "
+                f"({targets[name].value}): pixels move with the picture, and an answer is written over."
+            )
+    return frozenset(answered)
+
+
+def _travels_as(name: str, geometry: Geometry, answered: frozenset[str]) -> str | None:
+    """The kind a value reaches the pipeline as, or ``None`` for one that stays where it is.
+
+    Everything a pipeline moves is pixels, so a class or a number rides along untouched — with the one
+    exception this returns ``LABEL`` for: the target of a task an augmentation of this very pipeline
+    answers has to reach it in order to be written.
+    """
+    return LABEL if name in answered else PIPELINE_KIND.get(geometry)
 
 
 def _refuse_a_name_under_two_roles(roles: Roles) -> None:

@@ -13,4 +13,6 @@ preprocessing:
       std: [0.229, 0.224, 0.225]
   collator: stack
   # Decoded files held in shared memory across data workers: `preprocessing.cache={name: ram, max_gib: 8}`.
+  # `max_gib` is the machine's budget, not each process's: several devices run several copies of this
+  # script, and the arena is divided between the ones that share a machine.
   cache: null

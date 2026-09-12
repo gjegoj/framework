@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, cast
 
@@ -11,9 +11,9 @@ import pytest
 from torch.utils.data import Dataset
 
 from src.config import ComponentConfig
-from src.core import DatasetInfo, Geometry, Sample, Stage
+from src.core import DatasetInfo, Geometry, Sample
 from src.data import DataModule, StandardPreprocessor
-from src.data.build import build_data_module, build_preprocessor, build_target_encoder, build_transforms
+from src.data.build import build_data_module, build_preprocessor, build_target_encoder
 from src.data.encoders import LabelEncoder, ScalarEncoder
 from src.data.table import TableDataModule
 from tests.support.declarations import CLASSES, component, preprocessing_config, task_config
@@ -67,16 +67,21 @@ class TestTargetEncoder:
 
 class TestPreprocessor:
     def test_inputs_come_from_preprocessing_and_targets_from_tasks(self) -> None:
-        tasks = {"species": task(classes=CLASSES), "age": task(target="age", target_encoder="scalar")}
+        tasks = {"species": task(classes=CLASSES), "age": task(target_column="age", target_encoder="scalar")}
 
         built = build_preprocessor(PREPROCESSING, tasks, {"species": ComponentConfig(name="label")})
 
         assert isinstance(built, StandardPreprocessor)
         assert set(built.inputs) == {"image"} and set(built.targets) == {"species", "age"}
-        assert built.geometries == {"inputs": {"image": Geometry.IMAGE}, "targets": {}, "auxiliary_inputs": {}}
+        assert built.geometries == {
+            "inputs": {"image": Geometry.IMAGE},
+            # Published rather than filtered: what a pipeline can carry is the pipeline's to decide.
+            "targets": {"species": Geometry.NONE, "age": Geometry.NONE},
+            "auxiliary_inputs": {},
+        }
 
     def test_a_task_without_a_target_gets_no_encoder(self) -> None:
-        built = build_preprocessor(PREPROCESSING, {"align": task_config(kind="contrastive", target=None)}, {})
+        built = build_preprocessor(PREPROCESSING, {"align": task_config(kind="contrastive", target_column=None)}, {})
 
         assert isinstance(built, StandardPreprocessor) and built.targets == {}
 
@@ -141,32 +146,6 @@ class TestDataModule:
             and module.received["flag"] is True
             and module.received["targets"] == {"t": "c"}
         )
-
-
-def test_transforms_are_keyed_by_split_and_told_the_geometry() -> None:
-    declared = {Stage.TRAIN: component({"_target_": "tests.unit.data.test_build.Flip"})}
-    geometries = {"inputs": {"image": Geometry.IMAGE}, "targets": {"mask": Geometry.MASK}, "auxiliary_inputs": {}}
-
-    built = build_transforms(declared, geometries)
-
-    assert set(built) == {"train"} and Flip.bound == geometries
-
-
-class Flip:
-    bound: Mapping[str, Mapping[str, Geometry]] = {}
-
-    def with_geometry(
-        self, inputs: Mapping[str, Geometry], targets: Mapping[str, Geometry], auxiliary_inputs: Mapping[str, Geometry]
-    ) -> Any:
-        type(self).bound = {
-            "inputs": dict(inputs),
-            "targets": dict(targets),
-            "auxiliary_inputs": dict(auxiliary_inputs),
-        }
-        return lambda sample: sample
-
-    def __call__(self, sample: Sample) -> Sample:
-        return sample
 
 
 class Recording(DataModule):

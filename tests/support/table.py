@@ -19,9 +19,18 @@ def write_table(root: Path, samples: int = 8) -> Path:
     """Pictures of two kinds and the table naming them; returns the table's path."""
     rows = []
     for index in range(samples):
-        picture = np.full((12, 10, 3), 20 * index + 30, dtype=np.uint8)
+        # Distinct per row and wrapped into the byte a picture is made of, so any count of them fits.
+        picture = np.full((12, 10, 3), (20 * index + 30) % 256, dtype=np.uint8)
         cv2.imwrite(str(root / f"{index}.png"), picture)
-        rows.append({"image_path": str(root / f"{index}.png"), "species": SPECIES[index % 2], "age": float(index)})
+        # ``angle`` is upright throughout: a pretext augmentation advances it, and nothing else reads it.
+        rows.append(
+            {
+                "image_path": str(root / f"{index}.png"),
+                "species": SPECIES[index % 2],
+                "age": float(index),
+                "angle": 0,
+            }
+        )
     table = root / "rows.csv"
     pd.DataFrame(rows).to_csv(table, index=False)
     return table

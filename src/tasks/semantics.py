@@ -7,9 +7,10 @@ Paired with a topology (a whole sample, or every pixel of one) they make the kin
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import ClassVar
+from typing import ClassVar, override
 
 from torch import Tensor
+from torch.nn.functional import one_hot
 
 from src.core import CLASS_AXIS, Batch, ModelOutput, Semantics, TargetInfo, TensorTree, drop_class_axis
 from src.tasks.base import LossDeclaration, Task
@@ -24,7 +25,7 @@ CLASSIFICATION_METRICS: Mapping[str, Mapping[str, object]] = {
 }
 
 
-class MulticlassLabels(Task):
+class MulticlassSemantics(Task):
     """One class per position, chosen from a declared vocabulary; the model scores every class."""
 
     semantics: ClassVar[Semantics | None] = Semantics.MULTICLASS
@@ -54,11 +55,18 @@ class MulticlassLabels(Task):
         target = self.target(batch)
         return target.argmax(dim=CLASS_AXIS) if target.is_floating_point() else target.long()
 
+    @override
+    def soften(self, target: Tensor) -> Tensor:
+        """An index widened into the share of each class it stands for: all of one, none of the rest."""
+        if target.is_floating_point():
+            return target
+        return one_hot(target.long(), num_classes=self.out_features(self.info)).movedim(-1, CLASS_AXIS).float()
+
     def postprocess(self, output: ModelOutput) -> TensorTree:
         return self.raw(output).softmax(dim=CLASS_AXIS)
 
 
-class BinaryLabels(Task):
+class BinarySemantics(Task):
     """One score per position: whether the thing is there. No vocabulary, one output."""
 
     semantics: ClassVar[Semantics | None] = Semantics.BINARY
@@ -84,7 +92,7 @@ class BinaryLabels(Task):
         return drop_class_axis(self.raw(output)).sigmoid()
 
 
-class MultilabelLabels(Task):
+class MultilabelSemantics(Task):
     """Any number of labels per sample: one independent score for each of the declared classes."""
 
     semantics: ClassVar[Semantics | None] = Semantics.MULTILABEL

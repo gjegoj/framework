@@ -15,7 +15,13 @@ from torch import Tensor
 from src.core import Geometry, Sample
 from src.transforms import AlbumentationsTransform, GeometryAware
 
-GEOMETRIES = {"inputs": {"image": Geometry.IMAGE}, "targets": {"mask": Geometry.MASK}, "auxiliary_inputs": {}}
+GEOMETRIES = {
+    "inputs": {"image": Geometry.IMAGE},
+    # A label is declared like everything else and travels like nothing else: it has no geometry,
+    # so the pipeline leaves it where it is rather than never hearing about it.
+    "targets": {"mask": Geometry.MASK, "label": Geometry.NONE},
+    "auxiliary_inputs": {},
+}
 HALVES = (0.5, 0.5, 0.5)
 
 
@@ -79,7 +85,6 @@ def test_a_stage_pipeline_normalizes_the_picture_alone_and_crosses_both_into_ten
     ("declaration", "geometries", "reason"),
     [
         pytest.param({"additional_targets": {}}, GEOMETRIES, "derived", id="additional_targets by hand"),
-        pytest.param({}, {**GEOMETRIES, "inputs": {"text": Geometry.NONE}}, "pixels", id="a non-pixel input"),
         pytest.param({}, {**GEOMETRIES, "inputs": {}}, "image input", id="no image at all"),
         pytest.param({}, {**GEOMETRIES, "targets": {"image": Geometry.MASK}}, "more than one role", id="two roles"),
     ],

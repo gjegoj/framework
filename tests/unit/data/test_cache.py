@@ -220,3 +220,16 @@ class CountingImage(ImageEncoder):
     def load(self, value: object) -> np.ndarray:
         type(self).loads += 1
         return super().load(value)
+
+
+def test_the_budget_is_the_machines_and_is_divided_between_the_copies_of_the_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Several devices means several copies of this script, each with an arena the others cannot read:
+    read per process, `max_gib: 8` would quietly mean 64 GiB on an eight-GPU node."""
+    monkeypatch.delenv("LOCAL_WORLD_SIZE", raising=False)
+    alone = RamCache(max_gib=1.0).capacity
+
+    monkeypatch.setenv("LOCAL_WORLD_SIZE", "4")
+
+    assert RamCache(max_gib=1.0).capacity == alone // 4

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from src.core.entities import (
     SEGMENT,
-    SPLIT,
     Batch,
     DatasetInfo,
     InputInfo,
@@ -12,7 +11,6 @@ from src.core.entities import (
     Matrix,
     ModelOutput,
     Normalization,
-    Prediction,
     Sample,
     StepOutput,
     TargetInfo,
@@ -23,18 +21,15 @@ from src.core.registry import Registry
 from src.core.taxonomy import Axis, Geometry, Modality, Role, Semantics, Stage, Stream
 from src.core.types import (
     CLASS_AXIS,
-    ShapeTree,
     TensorShape,
     TensorTree,
     drop_class_axis,
     require_tensor,
-    tree_map,
 )
 
 __all__ = [
     "CLASS_AXIS",
     "SEGMENT",
-    "SPLIT",
     "Axis",
     "Batch",
     "DatasetInfo",
@@ -45,12 +40,10 @@ __all__ = [
     "Modality",
     "ModelOutput",
     "Normalization",
-    "Prediction",
     "Registry",
     "Role",
     "Sample",
     "Semantics",
-    "ShapeTree",
     "Stage",
     "StepOutput",
     "Stream",
@@ -59,7 +52,6 @@ __all__ = [
     "TensorTree",
     "drop_class_axis",
     "require_tensor",
-    "tree_map",
     "validate_classes",
     "validate_name",
 ]

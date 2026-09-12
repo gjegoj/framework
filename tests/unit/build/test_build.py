@@ -40,7 +40,8 @@ class TestFactsTravel:
         self, declaration: Mapping[str, Any]
     ) -> None:
         """Bins are laid out over the training split's own range, so this width exists only after the fit."""
-        tasks = {"age": {"kind": "regression", "target": "age", "target_encoder": {"name": "linear_bins", "bins": 3}}}
+        binned = {"name": "linear_bins", "bins": 3}
+        tasks = {"age": {"kind": "regression", "target_column": "age", "target_encoder": binned}}
 
         built = experiment(declaration, tasks=tasks)
 
@@ -76,7 +77,7 @@ class TestFactsTravel:
         self, declared: Mapping[str, Any], expected: set[str]
     ) -> None:
         task = Classification("species", TargetInfo(classes={0: "cat", 1: "dog"}))
-        config = TaskConfig.model_validate({"kind": "classification", "target": "species", **declared})
+        config = TaskConfig.model_validate({"kind": "classification", "target_column": "species", **declared})
 
         assert set(metrics_for(config, task)) == expected
 
@@ -88,7 +89,7 @@ class TestTwoTasks:
     def both(self, declaration: Mapping[str, Any]) -> Any:
         tasks = {
             "species": {**declaration["tasks"]["species"], "weight": 0.5},
-            "age": {"kind": "regression", "target": "age", "lr": 1.0e-4},
+            "age": {"kind": "regression", "target_column": "age", "lr": 1.0e-4},
         }
         return experiment(declaration, tasks=tasks)
 
@@ -125,15 +126,15 @@ class TestTheHead:
         return Segmentation("mask", TargetInfo(classes={0: "pet", 1: "background"}))
 
     def test_a_task_that_declares_no_head_gets_the_one_its_kind_serves_itself_with(self, task: Segmentation) -> None:
-        declared = TaskConfig.model_validate({"kind": "segmentation", "target": "mask_path"})
+        declared = TaskConfig.model_validate({"kind": "segmentation", "target_column": "mask_path"})
 
         assert head_for(declared, task).name == "conv"
 
     def test_a_declared_head_reads_the_stream_its_kind_reads_unless_it_names_another(self, task: Segmentation) -> None:
         """Which stream a task reads follows from its topology; which head reads it is the run's to choose."""
-        own = TaskConfig.model_validate({"kind": "segmentation", "target": "mask_path", "head": "native"})
+        own = TaskConfig.model_validate({"kind": "segmentation", "target_column": "mask_path", "head": "native"})
         elsewhere = TaskConfig.model_validate(
-            {"kind": "segmentation", "target": "mask_path", "head": {"name": "native", "stream": "encoder"}}
+            {"kind": "segmentation", "target_column": "mask_path", "head": {"name": "native", "stream": "encoder"}}
         )
 
         assert (head_for(own, task).name, head_for(own, task).stream) == ("native", "decoder")

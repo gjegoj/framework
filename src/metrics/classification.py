@@ -28,12 +28,12 @@ class ConfusionMatrix(torchmetrics.Metric):
 
     def __init__(
         self,
-        task: Semantics,
+        semantics: Semantics,
         num_classes: int | None = None,
         num_labels: int | None = None,
         **options: Any,
     ) -> None:
-        if task is Semantics.MULTILABEL:
+        if semantics is Semantics.MULTILABEL:
             raise ValueError(
                 "A multilabel confusion matrix is one small matrix per label, which draws as nothing; "
                 "drop 'confusion_matrix' from this task's metrics."
@@ -42,7 +42,7 @@ class ConfusionMatrix(torchmetrics.Metric):
         # torchmetrics types this argument as a Literal of the three words ``Semantics`` *is*, so the
         # member passes at runtime and only a type checker needs telling.
         self.counts = torchmetrics.ConfusionMatrix(
-            task=cast(Any, task), num_classes=num_classes, num_labels=num_labels, **options
+            task=cast(Any, semantics), num_classes=num_classes, num_labels=num_labels, **options
         )
 
     def update(self, predictions: Tensor, targets: Tensor) -> None:

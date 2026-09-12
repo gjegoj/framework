@@ -38,7 +38,7 @@ def test_a_command_line_composes_a_declaration_and_hands_it_to_a_run(
 
     composed = started["built"]
     assert isinstance(composed, ExperimentConfig)
-    assert composed.tasks["label"].target == "species", "the example was composed"
+    assert composed.tasks["label"].target_column == "species", "the example was composed"
     assert composed.lr == 0.05, "and the override applied"
     assert started["ran"] is composed, "the run is started over the very thing that was built"
 
@@ -51,7 +51,7 @@ def test_a_run_that_never_said_where_its_data_is_is_told_that(monkeypatch: pytes
     monkeypatch.setattr(
         sys,
         "argv",
-        ["main.py", "+tasks.t.kind=classification", "+tasks.t.target=species", f"hydra.run.dir={tmp_path}"],
+        ["main.py", "+tasks.t.kind=classification", "+tasks.t.target_column=species", f"hydra.run.dir={tmp_path}"],
     )
 
     with pytest.raises(MissingMandatoryValue, match=r"data\.source"):

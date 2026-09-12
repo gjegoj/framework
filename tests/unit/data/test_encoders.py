@@ -37,15 +37,33 @@ class TestContract:
     def test_every_registered_input_encoder_is_one(self, name: str) -> None:
         assert issubclass(input_encoder_registry.get(name), InputEncoder)
 
-    def test_load_fit_and_validate_are_optional_hooks(self) -> None:
+    def test_an_encoder_has_to_do_nothing_but_encode(self) -> None:
+        """``load`` is where a cell becomes something a transform can move, and a value that already is
+        one needs no preparing — so the default is to hand it back."""
+
         class Identity(Encoder):
             def encode(self, value: object) -> torch.Tensor:
                 return torch.as_tensor(value)
 
-        encoder = Identity()
+        assert Identity().load(3) == 3
+
+    def test_reading_a_split_is_asked_of_targets_and_of_nothing_else(self) -> None:
+        """Only a target is ever fitted or validated: the preprocessor fits the training split's targets
+        and checks the others against them, while an input is only ever encoded."""
+
+        class Counted(TargetEncoder):
+            @property
+            def info(self) -> TargetInfo:
+                return TargetInfo()
+
+            def encode(self, value: object) -> torch.Tensor:
+                return torch.as_tensor(value)
+
+        encoder = Counted()
         encoder.validate([1])
 
-        assert encoder.load(3) == 3 and encoder.fit([1, 2]) is encoder
+        assert encoder.fit([1, 2]) is encoder
+        assert not hasattr(InputEncoder, "fit"), "an input encoder is offered a hook nothing would call"
 
 
 class TestLabel:

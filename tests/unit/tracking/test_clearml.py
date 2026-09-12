@@ -10,9 +10,10 @@ import logging
 
 import pytest
 import torch
+from lightning.pytorch.utilities.rank_zero import rank_zero_only
 
 from src.core import Matrix
-from src.tracking import ClearMLTracker, DrawsMatrix
+from src.tracking import ClearMLTracker, DrawsMatrix, RecordsSummary
 from tests.unit.tracking.conftest import Recorded
 
 
@@ -67,6 +68,17 @@ def test_a_matrix_arrives_with_its_axes_and_the_names_of_its_rows(logger: ClearM
     assert drawn["matrix"][0][0] == pytest.approx(0.333), "cells are read, not computed with"
 
 
+def test_it_keeps_a_summary_table_and_says_so_structurally(logger: ClearMLTracker) -> None:
+    assert isinstance(logger, RecordsSummary)
+
+
+def test_a_headline_number_goes_where_the_service_keeps_those(logger: ClearMLTracker, clearml: Recorded) -> None:
+    """Off the iteration axis on purpose: one value for the whole run is not a line of one point."""
+    logger.record_summary("label/f1", 0.75)
+
+    assert clearml.singles == {"label/f1": 0.75}
+
+
 def test_a_matrix_of_a_task_that_named_nothing_is_drawn_without_labels(
     logger: ClearMLTracker, clearml: Recorded
 ) -> None:
@@ -78,20 +90,43 @@ def test_a_matrix_of_a_task_that_named_nothing_is_drawn_without_labels(
 class TestTheRun:
     def test_every_knob_of_the_service_forwards_verbatim(self, clearml: Recorded) -> None:
         """Its own documentation stays the reference: nothing is relayed by a parameter of ours."""
-        ClearMLTracker(project_name="pets", output_uri="s3://bucket")
+        assert ClearMLTracker(project_name="pets", output_uri="s3://bucket").experiment
 
         assert clearml.started["project_name"] == "pets" and clearml.started["output_uri"] == "s3://bucket"
 
     def test_a_tag_that_says_nothing_is_not_a_tag(self, clearml: Recorded) -> None:
         """Tags are written as interpolations, and a group that is off leaves an empty string behind."""
-        ClearMLTracker(tags=["adamw", "", "adamw", "lr=0.001"])
+        assert ClearMLTracker(tags=["adamw", "", "adamw", "lr=0.001"]).experiment
 
         assert clearml.started["tags"] == ["adamw", "lr=0.001"]
 
     def test_a_fresh_run_rather_than_whatever_the_service_would_reuse(
         self, logger: ClearMLTracker, clearml: Recorded
     ) -> None:
-        assert clearml.started["reuse_last_task_id"] is False
+        assert logger.experiment and clearml.started["reuse_last_task_id"] is False
+
+    def test_the_run_on_the_service_is_created_by_the_first_thing_reported_to_it(
+        self, logger: ClearMLTracker, clearml: Recorded
+    ) -> None:
+        """A constructor runs on every device; an experiment must not be a side effect of one."""
+        assert clearml.started == {}
+
+        logger.log_metrics({"train/loss": 1.0})
+
+        assert clearml.started["project_name"] == "pets"
+
+    def test_a_device_that_only_follows_creates_no_run_of_its_own(
+        self, clearml: Recorded, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Four devices used to mean four experiments there, three of them empty."""
+        monkeypatch.setattr(rank_zero_only, "rank", 1)
+        follower = ClearMLTracker(project_name="pets", task_name="a-run")
+
+        follower.log_metrics({"train/loss": 1.0})
+        follower.log_hyperparams({"lr": 1e-3})
+        follower.finalize("success")
+
+        assert clearml.started == {} and follower.version == ""
 
     def test_the_run_answers_with_the_identity_the_service_gave_it(self, logger: ClearMLTracker) -> None:
         assert (logger.name, logger.version) == ("a-run", "abc123")
@@ -104,6 +139,8 @@ class TestTheRun:
         assert clearml.connected == {"lr": 1e-3}
 
     def test_what_was_recorded_is_pushed_when_the_run_ends(self, logger: ClearMLTracker, clearml: Recorded) -> None:
+        logger.log_metrics({"train/loss": 1.0})
+
         logger.finalize("success")
 
         assert clearml.flushes == 1
@@ -112,6 +149,7 @@ class TestTheRun:
         self, logger: ClearMLTracker, clearml: Recorded, caplog: pytest.LogCaptureFixture
     ) -> None:
         """Telemetry is not the run: a fit that finished must not fail on its way to saying so."""
+        logger.log_metrics({"train/loss": 1.0})
         clearml.fails_to_flush = True
 
         with caplog.at_level(logging.WARNING):

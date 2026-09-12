@@ -35,7 +35,7 @@ def build_task_kinds(declared: Mapping[str, TaskConfig]) -> dict[str, type[Task]
     return kinds
 
 
-def default_encoder(kind: type[Task]) -> ComponentConfig | None:
+def default_target_encoder(kind: type[Task]) -> ComponentConfig | None:
     """The encoder a kind reads its column with, where it names one; a run may declare another."""
     return None if kind.default_target_encoder is None else ComponentConfig(name=kind.default_target_encoder)
 

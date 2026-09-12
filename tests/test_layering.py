@@ -23,27 +23,23 @@ QUARANTINE: dict[str, tuple[str, ...]] = {
     "pydantic": ("config/",),
     "hydra": ("config/instantiate.py", "cli.py"),
     "omegaconf": ("cli.py",),
-    "albumentations": ("transforms/",),
-    "albucore": ("transforms/",),
-    "torchvision": ("transforms/",),
+    "albumentations": ("transforms/albumentations.py", "transforms/augmentations/"),
     "timm": ("models/backbones/",),
-    "transformers": ("models/backbones/",),
-    "ultralytics": ("models/backbones/",),
-    "peft": ("models/",),
     "segmentation_models_pytorch": ("models/backbones/", "losses/segmentation.py"),
     "torchmetrics": ("metrics/",),
     "clearml": ("tracking/",),
-    "plotly": ("tracking/",),
     "cv2": ("data/",),
     "pandas": ("data/",),
     "sklearn": ("data/",),
     "skmultilearn": ("data/",),
-    "rich": ("console.py", "progress.py", "callbacks/", "cli.py"),
+    "rich": ("console.py", "callbacks/", "cli.py"),
 }
 """Library → the paths under ``src/`` allowed to import it; an empty tuple bans it outright.
 
-Every home names a path that exists, so a permission written ahead of its file cannot sit here looking
-like a rule while holding nothing: the file arrives with its row.
+Every home names a path that exists, and every permission names a library the tree actually imports, so
+a row written ahead of its code cannot sit here looking like a rule while holding nothing: the row
+arrives with what it permits. A ban is exempt from the second half — its whole point is to hold for
+something absent.
 """
 
 CORE_MAY_IMPORT = ("torch", "src.core")
@@ -51,12 +47,24 @@ CORE_MAY_IMPORT = ("torch", "src.core")
 
 CAPABILITY_EDGES: dict[str, frozenset[str]] = {
     "build": frozenset(
-        {"callbacks", "data", "experiment", "losses", "metrics", "models", "tasks", "tracking", "training"}
+        {
+            "callbacks",
+            "data",
+            "experiment",
+            "losses",
+            "metrics",
+            "models",
+            "tasks",
+            "tracking",
+            "training",
+            "transforms",
+        }
     ),
     "cli": frozenset({"build", "console", "experiment"}),
     "experiment": frozenset({"training"}),
-    "callbacks": frozenset({"console", "data", "tracking", "models", "tasks", "training", "transforms"}),
-    "data": frozenset({"progress", "transforms"}),
+    # `losses`, because annealing moves a number of an objective and has to know what one is.
+    "callbacks": frozenset({"losses", "tracking", "training", "transforms"}),
+    "data": frozenset({"console", "transforms"}),
     "metrics": frozenset(),
     "tasks": frozenset(),
     "training": frozenset({"data", "tracking", "metrics", "tasks", "models", "losses"}),
@@ -66,7 +74,6 @@ CAPABILITY_EDGES: dict[str, frozenset[str]] = {
     "models": frozenset(),
     "config": frozenset(),
     "console": frozenset(),
-    "progress": frozenset({"console"}),
 }
 """Which capability may import which, besides ``core`` (and ``config`` from a build module)."""
 
@@ -127,7 +134,7 @@ def files() -> list[str]:
     return [path.relative_to(SRC).as_posix() for path in sorted(SRC.rglob("*.py"))]
 
 
-MINIMUM_IMPORTS = 300
+MINIMUM_IMPORTS = 650
 """What the tree imports today, rounded down.
 
 The rules below all read the same list, so a glob that quietly stopped matching would make every one of
@@ -137,6 +144,19 @@ them pass on nothing. This is the number that says the list is real; raise it as
 def test_the_tree_is_read(files: list[str], imports: list[Import]) -> None:
     """A glob that matched nothing would make every rule below vacuous."""
     assert files and len(imports) >= MINIMUM_IMPORTS
+
+
+PERMISSIONS = {library: homes for library, homes in QUARANTINE.items() if homes}
+"""The rows that *allow* something; a row allowing nothing is a ban, and holds for an absent library."""
+
+
+@pytest.mark.parametrize(("library", "homes"), PERMISSIONS.items(), ids=PERMISSIONS)
+def test_every_quarantine_that_permits_something_permits_a_library_the_tree_imports(
+    imports: list[Import], library: str, homes: tuple[str, ...]
+) -> None:
+    """A permission says "this is needed here". One nothing imports is a rule about nobody, and it
+    outlives the code that earned it — which is how a quarantine drifts into decoration."""
+    assert [one.file for one in imports if one.library == library] != [], f"{homes} import no {library}"
 
 
 @pytest.mark.parametrize(("library", "homes"), QUARANTINE.items(), ids=QUARANTINE)
@@ -232,20 +252,3 @@ def test_the_training_module_reads_capabilities_through_their_contracts_only(imp
     )
 
     assert reaching_in == []
-
-
-def test_visualization_is_a_library_of_its_own(files: list[str], imports: list[Import]) -> None:
-    """Display types and renderers know nothing of the framework; ``integrations`` converts results into them.
-
-    The package arrives in the augmentation phase; until then this states the rule and skips, rather than
-    passing on nothing.
-    """
-    if not any(name.startswith("visualization/") for name in files):
-        pytest.skip("visualization/ is not written yet; this rule has no subject to hold")
-    reaching_out = sorted(
-        f"{one.file} imports {one.module}"
-        for one in imports
-        if one.file.startswith("visualization/") and one.target not in {None, "visualization"}
-    )
-
-    assert reaching_out == []

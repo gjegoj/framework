@@ -21,13 +21,10 @@ from torch import Tensor
 
 from src.core import Matrix
 from src.tracking.base import DrawsMatrix
-from src.tracking.keys import SEGMENT, MetricKey
+from src.tracking.keys import MEAN, SEGMENT, MetricKey
 
 type ScalarLog = Callable[[str, Any], None]
 """Where a single number goes; ``LightningModule.log`` is the one a run passes in."""
-
-MEAN = "mean"
-"""The line a per-class graph is read against, drawn beside the classes themselves."""
 
 
 def report(
@@ -90,9 +87,8 @@ def _draw(key: MetricKey, matrix: Matrix, *, trackers: Sequence[object], step: i
     if trackers and not drawers:
         # Named without its stage, because the answer is the same in every one of them: said once per
         # run rather than once per stage. Silent where a run declared no tracker at all — as asked.
-        unkept = SEGMENT.join(part for part in (key.task, key.name) if part)
         warnings.warn(
-            f"{unkept} is a picture, and nothing this run records to can draw one: it is the one reading "
+            f"{key.series} is a picture, and nothing this run records to can draw one: it is the one reading "
             "that goes unkept. `tracker: clearml` draws it, `tracker: csv` holds numbers only.",
             stacklevel=3,
         )

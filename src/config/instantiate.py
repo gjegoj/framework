@@ -35,11 +35,20 @@ def instantiate_offering(component: ComponentConfig, registry: Registry[Any] | N
     built from a table of facts the run settled — and each takes only what it understands, so ``mae``
     stands beside ``accuracy`` without being handed a vocabulary it would refuse. A fact the declaration
     restates is still refused by name, so nothing is stated twice.
+
+    A constructor that wants *more* than the table holds is refused here rather than by each caller:
+    this is the function that knows what was offered, so it is the one that can say what was missing.
     """
     factory = resolve_factory(component, registry)
     offered = fill_signature(factory, **facts)
     refuse_restated_facts(component, offered)
-    return factory(**resolve_params(component), **offered)
+    try:
+        return factory(**resolve_params(component), **offered)
+    except TypeError as error:
+        settled = ", ".join(sorted(facts)) or "nothing"
+        raise ValueError(
+            f"{component.spelled!r} needs more than this task settles about its target ({settled}): {error}"
+        ) from error
 
 
 def refuse_restated_facts(component: ComponentConfig, facts: Iterable[str]) -> None:

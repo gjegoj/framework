@@ -5,16 +5,19 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, NotRequired, TypedDict
+from math import isfinite
+from typing import TYPE_CHECKING, NotRequired, Protocol, Self, TypedDict, runtime_checkable
 
 from torch import nn
 from torch.optim import Optimizer
 
 from src.core import Batch, StepOutput
+from src.losses import Loss
 from src.models import Model
 from src.tasks import Task
 
 if TYPE_CHECKING:
+    import lightning as L
     from lightning.pytorch.utilities.types import LRSchedulerConfigType
 
 SHARED = "backbone"
@@ -52,6 +55,14 @@ class Learner(nn.Module, ABC):
         super().__init__()
         self.model = model
         self.tasks = dict(tasks)
+
+    def loss_of(self, task: str) -> Loss | None:
+        """The objective this learner optimizes one task by, where it holds one of its own.
+
+        Nothing by default, because an algorithm need not: a model that arrives whole owns its loss
+        internally, and a callback that schedules a number on one does without rather than failing.
+        """
+        return None
 
     @abstractmethod
     def step(self, batch: Batch) -> StepOutput:
@@ -114,6 +125,24 @@ class FitProfile:
         if self.total_steps < 1 or self.epochs < 1:
             raise ValueError(f"A fit runs at least one step and one epoch; got {self.total_steps}/{self.epochs}.")
 
+    @classmethod
+    def of(cls, trainer: L.Trainer) -> Self:
+        """How long this fit turned out to be — the one question only the trainer can answer.
+
+        Read from ``estimated_stepping_batches`` because that is what Lightning guarantees this early:
+        the loops are not set up yet, so the per-epoch counts are still unknown. Everything measured
+        against the length of a run comes through here — a schedule, a freeze that lets go partway, an
+        average that starts late — so a fit with no declared end is refused in one place.
+        """
+        steps, epochs = trainer.estimated_stepping_batches, trainer.max_epochs
+        # Measured on lightning 2.6.5: a loop with no length reports -1 rather than infinity.
+        if not isfinite(steps) or steps < 1 or epochs is None or epochs < 1:
+            raise ValueError(
+                f"This fit has no declared end — {steps} optimizer steps over {epochs} epochs — and anything "
+                "timed against the length of the run needs one. Declare epochs, or drop what needs them."
+            )
+        return cls(total_steps=int(steps), epochs=epochs)
+
     @property
     def steps_per_epoch(self) -> int:
         """Optimizer steps in one epoch; at least one, however short the loop."""
@@ -132,3 +161,27 @@ type SchedulerFactory = Callable[[Optimizer, FitProfile], LRSchedulerConfigType]
 
 Lightning's own policy type rather than a mapping of ours: it is handed over verbatim, and a key
 misspelled on the way there is then a type error rather than a schedule that silently never steps."""
+
+
+@runtime_checkable
+class DeclaresMetricDirections(Protocol):
+    """Something that can say which way each of its measurements is better.
+
+    A capability rather than a contract: a display asks for it and does without where it is absent.
+    Keyed by series (``task/label``), because a direction belongs to the measurement and holds in
+    every stage it is measured in; ``None`` is a reading with no better direction at all.
+    """
+
+    def metric_directions(self) -> Mapping[str, bool | None]: ...
+
+
+@runtime_checkable
+class AcceptsBatchTransform(Protocol):
+    """Something that will let a declared transform rewrite its training batches.
+
+    A capability rather than a class, because the seam has to belong to whoever owns the batch: a
+    ``Batch`` is frozen and Lightning discards whatever a callback's hook returns, so a callback can
+    only hand the rewriting over. ``None`` takes it back again.
+    """
+
+    def transform_batches(self, transform: Callable[[Batch], Batch] | None) -> None: ...

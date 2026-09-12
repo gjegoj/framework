@@ -144,11 +144,53 @@ class ExperimentConfig(BaseModel):
 
     @model_validator(mode="after")
     def connections(self) -> ExperimentConfig:
+        """Everything two sections have to agree about, checked before anything is built from them.
+
+        Here rather than in the composition root: these are functions of the declaration alone, and a
+        declaration that has been validated should be one a run can be built from. Checking them at the
+        root would leave a second reader — a notebook, a test, an export entry point — holding a config
+        that passed validation and still cannot be assembled, and would refuse a typo only after the
+        global seed had already been set.
+        """
         refuse_owned_keys(self.optimizer.params, {"lr": "the root's lr"})
         if not self.tasks:
             raise ValueError("An experiment requires at least one task.")
         for name in self.tasks:
             validate_name(name, label="Task")
+        self._refuse_heads_declared_twice()
+        self._refuse_inputs_that_disagree()
+        return self
+
+    def _refuse_heads_declared_twice(self) -> None:
+        """A head is a task's declaration; the model section only selects the network, or brings its own.
+
+        Two ways to get this wrong, and they are one mistake: writing ``heads`` in the model section,
+        and declaring a head for a task when the model reached by ``_target_`` arrives whole — head,
+        decoding and all — so it composes none. Either way a declared head would never be built, and
+        the run would report numbers for a recipe nobody ran.
+        """
         if "heads" in self.model.params:
             raise ValueError("Declare heads once, under tasks; the model section only selects the network.")
-        return self
+        if self.model.import_path is None:
+            return
+        declared = sorted(name for name, task in self.tasks.items() if task.head is not None)
+        if declared:
+            raise ValueError(
+                f"{self.model.spelled!r} is a whole model and brings its own heads, so the head declared for "
+                f"{', '.join(declared)} would never be built. Drop it, or declare a backbone to compose onto."
+            )
+
+    def _refuse_inputs_that_disagree(self) -> None:
+        """``data.inputs`` binds a name to a column; ``preprocessing.inputs`` gives that name an encoder.
+
+        Two declarations, one vocabulary. Left to itself the mismatch surfaces on the first batch, inside
+        a loader worker, after the sources were read and the encoders fitted.
+        """
+        bound = set(self.data.params.get("inputs", {}))
+        encoded = set(self.preprocessing.inputs or {})
+        if bound and bound != encoded:
+            raise ValueError(
+                f"The inputs a run binds to columns and the inputs it encodes are different names: "
+                f"data.inputs has {', '.join(sorted(bound)) or 'none'}, preprocessing.inputs has "
+                f"{', '.join(sorted(encoded)) or 'none'}. They name the same values."
+            )

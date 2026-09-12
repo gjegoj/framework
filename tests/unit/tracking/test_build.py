@@ -10,6 +10,7 @@ from lightning.pytorch.loggers import CSVLogger, Logger
 
 from src.config import ComponentConfig
 from src.config.instantiate import resolve_factory
+from src.tracking import ClearMLTracker
 from src.tracking.build import build_tracker
 from src.tracking.registry import tracker_registry
 
@@ -38,11 +39,14 @@ def test_something_that_is_not_a_tracker_is_refused_where_it_was_declared() -> N
 
 
 def test_a_backend_is_named_long_before_its_client_is_needed(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Importing this package registers every tracker; a run that declares none installs none."""
+    """Importing this package registers every tracker; a run that declares none installs none.
+
+    Nor does declaring one, until it is used: what needs the client is starting the run on the service.
+    """
     monkeypatch.setitem(sys.modules, "clearml", None)
 
     resolved = resolve_factory(ComponentConfig(name="clearml"), tracker_registry)
 
-    assert isinstance(resolved, type) and issubclass(resolved, Logger)
+    assert isinstance(resolved, type) and issubclass(resolved, ClearMLTracker)
     with pytest.raises(ImportError):
-        resolved()
+        _ = resolved().experiment

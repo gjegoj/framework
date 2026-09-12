@@ -1,6 +1,22 @@
 # @package _global_
 # Train adds geometry and colour before the deterministic tail; evaluation keeps the tail alone.
 # `RandomResizedCrop` already sizes the picture, so no `Resize` follows it.
+#
+# Two augmentations here answer a task instead of leaving its answer alone, which is how a folder of
+# unannotated pictures becomes one. Each names the task it answers, and one pipeline carries one of
+# them — albumentations routes a value by its kind, so a second would rewrite the first one's target:
+#
+#   - {_target_: src.transforms.Rotate90, task: turn}
+#   - {_target_: src.transforms.RandomBorderCrop, task: trimmed, crop_left: 0.3, crop_right: 0.3,
+#      min_crop: 0.15, applied_label: cropped, p: 0.5}
+#
+# The task's own `target_column` holds the picture's *current* state, upright or uncropped, because
+# these advance it rather than set it — so a dataset that already records some of it stays truthful.
+# What the column cannot teach is the rest of the vocabulary, so the task declares it: `classes:
+# {0: "0", 1: "1", 2: "2", 3: "3"}` for the turn, `{0: intact, 1: cropped}` for the crop.
+# `applied_label` is written as the table writes it, since encoding runs after the transforms.
+# Both change the picture's size, so they go before the `Resize` that restores it — as below.
+# Declare them on evaluation too, or its answers stay the column's and there is nothing to measure.
 transforms:
   train:
     _target_: src.transforms.AlbumentationsTransform

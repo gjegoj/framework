@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 import torch
 
 from src.models import load_weights
+from src.training.module import TrainingModule
 
 if TYPE_CHECKING:
     import lightning as L
@@ -15,11 +16,11 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-MODEL_PREFIX = "learner.model."
+MODEL_PREFIX = f"{TrainingModule.MODEL}."
 """Where the model's own entries sit inside the state a training module is checkpointed from.
 
-Both attributes are contracts of their own — the learner under ``learner``, its network under
-``model`` — and this is the one place that composes them into the prefix a saved file carries.
+The path itself is the module's to declare — a config's freeze path is written against the same one —
+and this is where it becomes the prefix a saved file's keys carry.
 """
 
 
@@ -42,11 +43,11 @@ def load_checkpoint(model: nn.Module, path: str) -> None:
     optimizer and the epoch counter deliberately start fresh — continuing an interrupted run is what
     ``run.resume_path`` and Lightning are for.
     """
-    load_weights(model, shipped_weights(path), path)
+    load_weights(model, model_weights(path), path)
     log.info("Loaded the weights from %s; the optimizer and the epoch counter start fresh.", path)
 
 
-def shipped_weights(path: str) -> dict[str, Tensor]:
+def model_weights(path: str) -> dict[str, Tensor]:
     """The model's own weights out of a checkpoint this framework wrote.
 
     A run writes its whole training module, so the model's entries carry the path to it; unwrapping

@@ -94,7 +94,7 @@ class HeadConfig(ComponentConfig):
 class TaskConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
     kind: ComponentConfig
-    target: str | None = None
+    target_column: str | None = None
     classes: dict[int, str] | ClassFile | None = None
     head: HeadConfig | None = None
     loss: ComponentConfig | list[WeightedLossConfig] | None = None

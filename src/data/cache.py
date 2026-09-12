@@ -5,11 +5,13 @@ The arena itself is never duplicated per worker; a read copies out only the one 
 
 from __future__ import annotations
 
+import os
 from abc import ABC, abstractmethod
 from collections.abc import Iterator
 from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
 from threading import Lock
+from typing import override
 
 import numpy as np
 import torch
@@ -86,9 +88,25 @@ class _Entry:
     dtype: str
 
 
+def ranks_on_this_machine() -> int:
+    """How many processes of this run share the machine's memory, as the launcher set it.
+
+    Read from the environment rather than from the trainer, because the arena is sized before a
+    trainer exists — and it is the launcher, not Lightning, that decides how many copies of the script
+    there are. One outside a distributed run, which is the shipped case.
+    """
+    return max(int(os.environ.get("LOCAL_WORLD_SIZE", "1")), 1)
+
+
 @cache_registry.register("ram")
 class RamCache(Cache):
-    """Arrays laid end to end in shared-memory segments; the index travels to workers as plain data."""
+    """Arrays laid end to end in shared-memory segments; the index travels to workers as plain data.
+
+    ``max_gib`` is the machine's budget, not each process's. Several devices means several copies of
+    this script, each with an arena of its own that the others cannot read — shared memory is shared
+    with a process's *workers*, not with its siblings — so the budget is divided between them. Declared
+    the other way round it would be a number that quietly means eight times itself on an eight-GPU node.
+    """
 
     def __init__(self, max_gib: float = 4.0, workers: int = 8) -> None:
         if max_gib <= 0:
@@ -96,7 +114,8 @@ class RamCache(Cache):
         if workers < 1:
             raise ValueError(f"A ram cache needs at least one worker, got {workers}.")
         self.workers = workers
-        self.capacity = int(max_gib * BYTES_PER_GIB)
+        self.shared_with = ranks_on_this_machine()
+        self.capacity = int(max_gib * BYTES_PER_GIB / self.shared_with)
         self.segments: list[Tensor] = []
         self._index: dict[Key, _Entry] = {}
         self._used = 0
@@ -107,6 +126,13 @@ class RamCache(Cache):
         self._filling = False
         self._may_fill = True
         self._lock = Lock()
+
+    @override
+    def summary(self) -> str:
+        line = super().summary()
+        if self.shared_with > 1:
+            line += f" One of {self.shared_with} arenas on this machine, each holding a share of the budget."
+        return line
 
     def __contains__(self, key: Key) -> bool:
         return key in self._index

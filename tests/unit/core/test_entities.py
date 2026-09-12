@@ -169,11 +169,11 @@ class TestMatrix:
 
 
 class TestNames:
-    @pytest.mark.parametrize("name", ["label", "mask_path", "_", "p3", "species-2", "golden retriever"])
+    @pytest.mark.parametrize("name", ["label", "mask_path", "_", "p3", "species-2", "golden retriever", "ce@main"])
     def test_accepts_ordinary_identifiers(self, name: str) -> None:
         validate_name(name)
 
-    @pytest.mark.parametrize("name", ["", " label", "label ", "a.b", "a/b", "a@b"], ids=repr)
+    @pytest.mark.parametrize("name", ["", " label", "label ", "a.b", "a/b"], ids=repr)
     def test_refuses_blank_padded_or_separator_bearing_names(self, name: str) -> None:
         with pytest.raises(ValueError):
             validate_name(name)

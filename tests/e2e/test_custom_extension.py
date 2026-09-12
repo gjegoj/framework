@@ -91,7 +91,7 @@ def declaration(table: Path, tmp_path: Path, **overrides: Any) -> dict[str, Any]
         "preprocessing": {"name": "standard", "inputs": {"image": {"name": "image", "image_size": SIZE}}},
         "transforms": {stage: pixel_pipeline(SIZE) for stage in ("train", "val")},
         "model": {"name": "composite", "backbone": {"name": "timm", "model_name": "resnet18", "pretrained": False}},
-        "tasks": {"age": {"kind": {"_target_": f"{HERE}.Doubling"}, "target": "age"}},
+        "tasks": {"age": {"kind": {"_target_": f"{HERE}.Doubling"}, "target_column": "age"}},
         "trainer": {
             "accelerator": "cpu",
             "enable_progress_bar": False,
@@ -101,6 +101,34 @@ def declaration(table: Path, tmp_path: Path, **overrides: Any) -> dict[str, Any]
         "run": {"directory": str(tmp_path / "run"), "test": False},
         **overrides,
     }
+
+
+class EveryOther:
+    """A rule of one's own for dividing a table: odd rows to the first split, even rows to the rest.
+
+    Nothing about splitting is registered anywhere, so this reaches a run the same way a network or a
+    pixel chain does — by import path, with its own options.
+    """
+
+    def __init__(self, first: str) -> None:
+        self.first = first
+
+    def __call__(self, rows: Any, fractions: Mapping[str, float], seed: int) -> dict[str, Any]:
+        rest = [name for name in fractions if name != self.first]
+        return {self.first: rows.iloc[::2].reset_index(drop=True), rest[0]: rows.iloc[1::2].reset_index(drop=True)}
+
+
+def test_a_rule_for_dividing_a_table_arrives_by_import_path_like_everything_else(table: Path, tmp_path: Path) -> None:
+    """Splitting was the one decision with no seam; it is declared now like every other one."""
+    divided = {"train": 0.5, "val": 0.5, "rule": {"_target_": f"{HERE}.EveryOther", "first": "train"}}
+    declared = declaration(table, tmp_path)
+    declared["data"] = {**declared["data"], "split": divided}
+
+    experiment = build(load_config(declared))
+
+    rows = sum(batch.count for batch in experiment.data.train_dataloader())
+
+    assert rows == 4, "every other one of eight"
 
 
 def test_a_kind_of_task_nobody_registered_is_assembled_like_any_other(table: Path, tmp_path: Path) -> None:

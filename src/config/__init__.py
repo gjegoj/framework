@@ -1,4 +1,9 @@
-"""Validated declarations; importing schemas does not resolve implementations."""
+"""Validated declarations; importing schemas does not resolve implementations.
+
+The resolver is one import further in, at ``src.config.instantiate``, and deliberately not re-exported
+here: a declaration and the construction of what it names are two things, and a builder that does both
+says so in two lines. Reading a schema stays free of everything a ``_target_`` could reach.
+"""
 
 from __future__ import annotations
 
