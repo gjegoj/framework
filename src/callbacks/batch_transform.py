@@ -53,6 +53,17 @@ class ApplyBatchTransform(L.Callback):
 
     @override
     def setup(self, trainer: L.Trainer, pl_module: L.LightningModule, stage: str) -> None:
+        # Lightning's connector fills `callbacks` rather than the Trainer annotating it, so it is
+        # asked for the way `checkpoint_callback` is elsewhere.
+        installed: list[L.Callback] = getattr(trainer, "callbacks", [])
+        sharing = [one for one in installed if isinstance(one, ApplyBatchTransform)]
+        if len(sharing) > 1:
+            named = ", ".join(type(one._declared).__name__ for one in sharing)
+            raise ValueError(
+                f"A run rewrites its batches with one transform, and {len(sharing)} are declared: {named}. "
+                "The module keeps a single seam, so these would not compose but overwrite each other, and "
+                "the first to reach its 'until' would clear the survivor. Declare one, composing inside it."
+            )
         if not isinstance(pl_module, TrainingModule):
             raise TypeError(
                 f"{type(self._declared).__name__} rewrites the targets of a run's tasks, and "

@@ -182,7 +182,7 @@ class TestReporting:
 
         assert again.logged_metrics["val/species/accuracy"] == 0.0
 
-    def test_a_reading_that_means_a_picture_reaches_the_tracker_and_the_numbers_reach_the_log(self) -> None:
+    def test_a_reading_that_means_a_image_reaches_the_tracker_and_the_numbers_reach_the_log(self) -> None:
         recorder = Recorder()
         fit = trainer(logger=recorder)
 
@@ -195,7 +195,7 @@ class TestReporting:
         assert "train/species/confusion_matrix" not in recorder.scalars
 
     def test_a_sanity_check_draws_nothing_and_reports_nothing(self) -> None:
-        """Lightning suppresses `self.log` during one; a picture handed straight to a tracker needs the same."""
+        """Lightning suppresses `self.log` during one; an image handed straight to a tracker needs the same."""
         recorder = Recorder()
         fit = trainer(logger=recorder, num_sanity_val_steps=1)
 
@@ -203,7 +203,7 @@ class TestReporting:
 
         drawn = sorted(title for title, _, _ in recorder.drawn)
         assert drawn == ["train/species/confusion_matrix", "val/species/confusion_matrix"], (
-            "one picture per stage that ran an epoch, and none for the batches the check looked at"
+            "one image per stage that ran an epoch, and none for the batches the check looked at"
         )
 
 
@@ -224,7 +224,7 @@ class TestBatchTransforms:
         assert torch.equal(require_tensor(rewritten.inputs["species"], name="species"), RIGHT * 2)
 
     def test_evaluation_reads_the_data_as_it_is(self) -> None:
-        """A report is about the data a run will be judged on, not about a picture made up for training."""
+        """A report is about the data a run will be judged on, not about an image made up for training."""
         under_test = module()
         under_test.transform_batches(self.doubled)
         under_test.eval()
@@ -342,7 +342,7 @@ class TestPreviews:
         ]
 
     def test_a_preview_carries_the_batch_the_step_read_and_what_it_produced(self) -> None:
-        """Both halves, because a page draws the prediction over the very picture that made it."""
+        """Both halves, because a page draws the prediction over the very image that made it."""
         seen, watcher = self.watching()
         under_test = module()
         under_test.preview_steps(watcher)

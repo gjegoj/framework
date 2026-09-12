@@ -77,6 +77,23 @@ class TestLabel:
 
         assert encoded.item() == index and encoded.dtype is torch.long
 
+    @pytest.mark.parametrize(
+        "classes",
+        [pytest.param({0: "1", 1: "0"}, id="swapped"), pytest.param({0: "cat", 1: "0"}, id="one of them")],
+    )
+    def test_a_vocabulary_whose_word_spells_another_class_is_refused(self, classes: dict[int, str]) -> None:
+        """A column writes names or indices, so 'the label is 1' must have one answer."""
+        with pytest.raises(ValueError, match="spell another class"):
+            LabelEncoder(classes=classes)
+
+    def test_a_class_may_be_named_after_its_own_index(self) -> None:
+        """What a rotation task declares: four quarter turns named by the turns themselves."""
+        assert LabelEncoder(classes={0: "0", 1: "1", 2: "2", 3: "3"}).position("2") == 2
+
+    def test_a_class_declared_with_padding_is_still_found_by_its_word(self) -> None:
+        """A cell is read stripped, so a vocabulary written with padding has to be read the same way."""
+        assert int(require_tensor(LabelEncoder(classes={0: "cat ", 1: "dog"}).encode("cat"), name="label")) == 0
+
     def test_reports_the_declared_vocabulary_as_its_info(self, label_encoder: LabelEncoder) -> None:
         assert label_encoder.info == TargetInfo(classes=CLASSES)
 
@@ -123,6 +140,21 @@ class TestScalarAndBins:
 
         assert encoder.info.num_classes == 10
         assert torch.isclose(require_tensor(encoder.encode(5.0), name="bins").sum(), torch.tensor(1.0))
+
+    @pytest.mark.parametrize("cls", [LinearBinsEncoder, GaussianBinsEncoder])
+    def test_a_value_the_layout_cannot_hold_is_refused_rather_than_quietly_pulled_to_the_edge(
+        self, cls: type[BinnedEncoder]
+    ) -> None:
+        """Measured: with bins over [0, 10], the target 100 encodes to the edge and reads back as 10,
+        so a model predicting 10 scored a perfect error on a sample it was 90 away from."""
+        with pytest.raises(ValueError, match="outside"):
+            cls(bins=10, low=0.0, high=10.0).validate([5.0, 100.0])
+
+    @pytest.mark.parametrize("cls", [LinearBinsEncoder, GaussianBinsEncoder])
+    def test_a_declared_layout_is_checked_against_the_split_it_is_fitted_on_too(self, cls: type[BinnedEncoder]) -> None:
+        """Learning the range from training data puts every training value inside it; declaring one does not."""
+        with pytest.raises(ValueError, match="outside"):
+            cls(bins=10, low=0.0, high=10.0).fit([5.0, 100.0])
 
     def test_linear_bins_split_a_value_between_its_two_neighbours(self) -> None:
         encoder = LinearBinsEncoder(bins=3, low=0.0, high=2.0)  # centres at 0, 1, 2

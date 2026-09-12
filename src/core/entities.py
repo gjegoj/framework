@@ -8,7 +8,7 @@ from math import isfinite
 from typing import cast
 
 import torch
-from torch import Tensor
+from torch import Tensor, nn
 
 from src.core.types import ShapeTree, TensorTree, tree_map
 
@@ -62,14 +62,47 @@ def class_name(classes: Mapping[int, str] | None, index: int) -> str:
     return f"class{index}" if classes is None else classes.get(index, f"class{index}")
 
 
+def as_children(children: Mapping[str, nn.Module]) -> nn.ModuleDict:
+    """The modules a run keeps one per task, under the names the run gave its tasks.
+
+    Here rather than at each of the two places that keep such a mapping — a model's heads, a learner's
+    losses — because both turn one vocabulary into torch children and both owe the same answer when a
+    name cannot be one. Torch is asked rather than listed: every ``nn.Module`` already answers to
+    ``training``, ``forward`` and some forty more, and a child shadowing one is refused by the
+    container with a message about attributes, minutes into a run and naming nothing a reader wrote.
+
+    Not folded into ``validate_name``: a loss's log name and a metric's label pass through that too,
+    and neither becomes an attribute of anything.
+    """
+    reserved = sorted(name for name in children if hasattr(nn.Module, name) or name in vars(nn.Module()))
+    if reserved:
+        raise ValueError(
+            f"{', '.join(repr(name) for name in reserved)} cannot name a task: every torch module already "
+            "answers to it, so the run could not keep this one under that name. Rename it."
+        )
+    return nn.ModuleDict(dict(children))
+
+
 def validate_classes(classes: Mapping[int, str]) -> None:
-    """Validate the user-defined output vocabulary, never infer it from observations."""
+    """Validate the user-defined output vocabulary, never infer it from observations.
+
+    A vocabulary also has to name one class one way: every reader of it — a table cell being encoded,
+    a metric leaf, a chip on a sample page — turns a name into a class or back, and two classes under
+    one word make that turn a guess. Whitespace counts as none, because a cell is read stripped.
+
+    Digits are left alone here. A word that spells another class's index is ambiguous only where an
+    index is accepted as a spelling, which is one encoder's decision and refused there; a vocabulary
+    of bin centres names class 9 ``'10'`` and means it.
+    """
     if not classes or any(type(index) is not int for index in classes):
         raise ValueError("Classes require integer indices.")
     if set(classes) != set(range(len(classes))):
         raise ValueError("Class indices must be contiguous from zero.")
     if any(not isinstance(name, str) or not name.strip() for name in classes.values()):
         raise ValueError("Class names must be nonblank strings.")
+    named = {index: name.strip() for index, name in classes.items()}
+    if len(set(named.values())) != len(named):
+        raise ValueError(f"Class names must name one class each: {', '.join(sorted(named.values()))}.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,7 +159,7 @@ class DatasetInfo:
 CELLS = "cells"
 """Where a sample's readable cells are carried in its metadata, keyed as the sample's names are.
 
-A page shows which file a picture came from, and the pipeline is the only thing that ever saw one.
+A page shows which file an image came from, and the pipeline is the only thing that ever saw one.
 Named here because the writer and the reader sit in different packages and neither owns the other.
 """
 

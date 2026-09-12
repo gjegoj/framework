@@ -5,7 +5,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from src.data.split import GroupedSplit, Split, StratifiedSplit, split_table
+from src.data.split import GroupedSplit, RandomSplit, Split, Splitter, StratifiedSplit, split_table
 
 FRACTIONS = {"train": 0.6, "val": 0.2, "test": 0.2}
 
@@ -58,6 +58,36 @@ def test_group_split_keeps_a_group_in_one_part(table: pd.DataFrame) -> None:
     seen = [set(part["patient"]) for part in parts.values()]
     assert all(a.isdisjoint(b) for i, a in enumerate(seen) for b in seen[i + 1 :])
     assert len(parts["train"]) == pytest.approx(60, abs=10)
+
+
+RULES = [
+    pytest.param(RandomSplit(), id="random"),
+    pytest.param(StratifiedSplit(by="species"), id="stratified"),
+    pytest.param(GroupedSplit(by="patient"), id="grouped"),
+]
+
+
+@pytest.mark.parametrize("rule", RULES)
+def test_every_rule_deals_each_row_exactly_once(rule: Splitter, table: pd.DataFrame) -> None:
+    """A division that loses rows is the one failure a split cannot report by being empty.
+
+    Written against the ages, which are unique per row: the parts together have to be the table, and
+    no row may sit in two of them.
+    """
+    parts = split_table(table, Split(FRACTIONS, rule=rule))
+    dealt = [age for part in parts.values() for age in part["age"]]
+
+    assert sorted(dealt) == sorted(table["age"]) and len(dealt) == len(set(dealt))
+
+
+def test_a_row_with_no_group_of_its_own_is_named_rather_than_dropped(table: pd.DataFrame) -> None:
+    """Whose patient is unknown is a question for whoever wrote the table: keeping every such row
+    together is one experiment and dropping them is another, and pandas answers it silently."""
+    holed = table.copy()
+    holed.loc[3, "patient"] = None
+
+    with pytest.raises(ValueError, match="patient"):
+        split_table(holed, Split(FRACTIONS, rule=GroupedSplit(by="patient")))
 
 
 @pytest.mark.parametrize(

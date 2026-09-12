@@ -38,16 +38,18 @@ def _in_torchmetrics_dialect(facts: Mapping[str, Any]) -> dict[str, Any]:
     what its labels mean in the framework's own word, and each library's dialect is spoken where that
     library is imported. The word itself needs no translating — ``Semantics`` is a ``StrEnum`` whose
     members are the library's own spellings — so only the name it arrives under changes. A task whose
-    target is a number has no semantics and is offered none.
+    target is a number has no semantics and gets no such translation.
 
-    Both spellings are offered, because the metrics of a run are not all the library's: ours say
-    ``semantics``, as every other part of this framework does. ``fill_signature`` hands each
-    constructor only what it names, so neither ever sees the other's word.
+    Added to the run's facts rather than put in their place. Both are offered because the metrics of a
+    run are not all the library's: ours say ``semantics``, as every other part of this framework does,
+    and a reader's own metric may be about a fact torchmetrics has no word for at all — the centres a
+    binned target stands for were unreachable while this returned a closed four. ``fill_signature``
+    hands each constructor only what it names, so no metric sees a word it did not ask for.
     """
     if facts.get("semantics") is None:
-        return {}
+        return dict(facts)
     classes = facts.get("num_classes")
-    return {"task": facts["semantics"], "semantics": facts["semantics"], "num_classes": classes, "num_labels": classes}
+    return {**facts, "task": facts["semantics"], "num_labels": classes}
 
 
 def _component(declared: object) -> ComponentConfig:

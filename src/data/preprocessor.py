@@ -58,7 +58,7 @@ class StandardPreprocessor(Preprocessor):
 
     @property
     def geometries(self) -> dict[str, dict[str, Geometry]]:
-        """How each declared value moves with the picture, including the ones that do not move at all.
+        """How each declared value moves with the image, including the ones that do not move at all.
 
         Everything is published, ``NONE`` included, because what a pipeline can carry is the pipeline's
         to decide: it is the one that knows both — and an augmentation that writes an answer needs a

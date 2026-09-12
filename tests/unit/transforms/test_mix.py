@@ -1,4 +1,4 @@
-"""Two samples become one picture, and every task's label is rewritten by the same draw."""
+"""Two samples become one image, and every task's label is rewritten by the same draw."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from src.transforms import BatchTransform, CutMix, MixUp
 
 CLASSES = {0: "cat", 1: "dog"}
 PICTURES = torch.stack([torch.zeros(3, 8, 8), torch.ones(3, 8, 8)])
-"""Two pictures a mix can be read off exactly: one all zeros, one all ones."""
+"""Two images a mix can be read off exactly: one all zeros, one all ones."""
 
 DRAWS = 20
 """Enough draws that a run of them cannot all round their patch away; see the test that says why."""
@@ -33,26 +33,26 @@ def mixed(transform: BatchTransform, tasks: Sequence[Task], **targets: Tensor) -
     return transform.for_tasks(tasks)(batch(**targets))
 
 
-def weights_of(picture: Tensor) -> tuple[float, float]:
+def weights_of(image: Tensor) -> tuple[float, float]:
     """The two shares the mix was made with, read off a blend of a constant zero and a constant one.
 
     Both read off the result rather than one of them subtracted from the other: a weight near 1 leaves
     a complement of a few ten-thousandths, and subtracting it back costs most of its significant digits.
     """
-    return float(picture[1].mean()), float(picture[0].mean())
+    return float(image[1].mean()), float(image[0].mean())
 
 
 class TestMixUp:
-    def test_the_picture_is_blended_with_its_neighbour_by_one_weight(self) -> None:
+    def test_the_image_is_blended_with_its_neighbour_by_one_weight(self) -> None:
         """Every pixel of a blend of a constant zero and a constant one sums to exactly one."""
         result = mixed(MixUp(), [task()], label=torch.tensor([0, 1]))
 
-        picture = result.inputs["image"]
-        assert isinstance(picture, Tensor)
-        assert torch.allclose(picture[0] + picture[1], torch.ones(3, 8, 8))
+        image = result.inputs["image"]
+        assert isinstance(image, Tensor)
+        assert torch.allclose(image[0] + image[1], torch.ones(3, 8, 8))
 
-    def test_the_label_is_mixed_by_the_weight_the_picture_was(self) -> None:
-        """One draw, or a picture would take one neighbour's pixels and another's label."""
+    def test_the_label_is_mixed_by_the_weight_the_image_was(self) -> None:
+        """One draw, or an image would take one neighbour's pixels and another's label."""
         result = mixed(MixUp(), [task()], label=torch.tensor([0, 1]))
 
         kept, taken = weights_of(torch.as_tensor(result.inputs["image"]))
@@ -91,14 +91,14 @@ class TestCutMix:
         """
         pasted = 0
         for _ in range(DRAWS):
-            picture = torch.as_tensor(mixed(CutMix(), [task()], label=torch.tensor([0, 1])).inputs["image"])
-            assert set(picture[0].unique().tolist()) <= {0.0, 1.0}, "pasted whole, never blended"
-            pasted += int(picture[0].any())
+            image = torch.as_tensor(mixed(CutMix(), [task()], label=torch.tensor([0, 1])).inputs["image"])
+            assert set(image[0].unique().tolist()) <= {0.0, 1.0}, "pasted whole, never blended"
+            pasted += int(image[0].any())
 
         assert pasted, "no draw pasted anything at all"
 
     def test_the_label_weight_is_the_area_that_stayed(self) -> None:
-        """The pasted area is what the weight has to mean, or the label describes a picture nobody saw."""
+        """The pasted area is what the weight has to mean, or the label describes an image nobody saw."""
         result = mixed(CutMix(), [task()], label=torch.tensor([0, 1]))
 
         pasted = float(torch.as_tensor(result.inputs["image"])[0].mean())
@@ -107,7 +107,7 @@ class TestCutMix:
 
 class TestBinding:
     def test_a_task_measured_at_every_pixel_is_refused_by_name(self) -> None:
-        """A blended picture has no coherent per-pixel target, and this is known before the first batch."""
+        """A blended image has no coherent per-pixel target, and this is known before the first batch."""
         with pytest.raises(ValueError, match="mask"):
             MixUp().for_tasks([task(), task(kind="segmentation", name="mask")])
 

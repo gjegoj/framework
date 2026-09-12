@@ -1,4 +1,4 @@
-"""What a run is judged by: the names a declaration writes, and the one reading that means a picture."""
+"""What a run is judged by: the names a declaration writes, and the one reading that means an image."""
 
 from __future__ import annotations
 

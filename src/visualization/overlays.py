@@ -1,4 +1,4 @@
-"""What a mask looks like over a picture: a wash of the class's colour inside, an edge around it."""
+"""What a mask looks like over an image: a wash of the class's colour inside, an edge around it."""
 
 from __future__ import annotations
 
@@ -18,11 +18,11 @@ _BLACK: Final = (0, 0, 0)
 
 
 def mask_overlay_uri(mask: np.ndarray, rgb: tuple[int, int, int], max_side: int | None = None) -> str:
-    """A boolean ``[H, W]`` mask as a transparent PNG to lay over the picture it explains.
+    """A boolean ``[H, W]`` mask as a transparent PNG to lay over the image it explains.
 
     A translucent fill in the class's colour, a one-pixel rim of it just inside the shape, and a
     one-pixel black rim just outside — two rims because one in the class's own colour disappears over
-    a picture of that colour. Ground truth and prediction draw the same way, so where they overlap the
+    an image of that colour. Ground truth and prediction draw the same way, so where they overlap the
     fills darken: agreement is visible without reading a number.
 
     The mask is brought to display size *before* the rims are drawn: a rim drawn first survives only
@@ -49,8 +49,8 @@ def _neighbours_of(mask: np.ndarray, *, beyond_the_edge: bool) -> np.ndarray:
     """Pixels with a four-connected neighbour inside ``mask``, padded rather than wrapped.
 
     Rolling would carry the top row's neighbours onto the bottom one and draw a rim across the far
-    side of the picture. ``beyond_the_edge`` says what to assume outside the frame: ``False`` keeps
-    the outer rim inside the picture, ``True`` gives a shape running off the edge a rim along it.
+    side of the image. ``beyond_the_edge`` says what to assume outside the frame: ``False`` keeps
+    the outer rim inside the image, ``True`` gives a shape running off the edge a rim along it.
     """
     padded = np.pad(mask, 1, constant_values=beyond_the_edge)
     return cast("np.ndarray", padded[2:, 1:-1] | padded[:-2, 1:-1] | padded[1:-1, 2:] | padded[1:-1, :-2])

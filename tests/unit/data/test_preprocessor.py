@@ -25,7 +25,7 @@ def test_a_row_becomes_tensors_and_a_missing_target_is_simply_absent(
     assert prepared.metadata == {"row": 0} and unlabeled.targets == {}
 
 
-def test_the_picture_and_its_mask_travel_through_one_pipeline_into_their_own_tensors(
+def test_the_image_and_its_mask_travel_through_one_pipeline_into_their_own_tensors(
     preprocessor: StandardPreprocessor, pixels: SampleTransform, row: Sample
 ) -> None:
     prepared = preprocessor.preprocess(row, pixels)
@@ -58,7 +58,7 @@ def test_a_transform_sees_loaded_values_before_anything_is_encoded(
     assert prepared.auxiliary_inputs == {}
 
 
-def test_info_gathers_every_encoder_and_geometries_name_what_moves_with_the_picture(
+def test_info_gathers_every_encoder_and_geometries_name_what_moves_with_the_image(
     make_preprocessor: PreprocessorFactory, mask_encoder: MaskEncoder
 ) -> None:
     preprocessor = make_preprocessor(targets={"mask": mask_encoder}, auxiliary_inputs={"region": mask_encoder})
@@ -85,7 +85,7 @@ def test_an_input_the_row_does_not_carry_is_refused_by_name(preprocessor: Standa
         preprocessor.preprocess(Sample(inputs={}))
 
 
-def test_a_picture_no_pipeline_prepared_is_refused_before_the_model_sees_it(
+def test_a_image_no_pipeline_prepared_is_refused_before_the_model_sees_it(
     preprocessor: StandardPreprocessor, row: Sample
 ) -> None:
     with pytest.raises(ValueError, match="transforms"):

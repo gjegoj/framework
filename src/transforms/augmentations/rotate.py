@@ -15,7 +15,7 @@ class Rotate90(A.CustomTransformsApplyMixin, A.DualTransform):
     """Turn by a random multiple of 90° counter-clockwise, and advance the target by as much.
 
     Parameters:
-        task: The task this answers; its target holds the picture's current turn, in quarters.
+        task: The task this answers; its target holds the image's current turn, in quarters.
         p: How often it turns at all; a draw of zero turns is one of the four outcomes either way.
     """
 

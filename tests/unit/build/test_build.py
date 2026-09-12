@@ -173,10 +173,23 @@ class TestDeclarationsThatCannotHold:
         self, declaration: Mapping[str, Any]
     ) -> None:
         """Left to itself the mismatch surfaces on the first batch, inside a loader worker."""
-        preprocessing = {"name": "standard", "inputs": {"picture": {"name": "image", "image_size": SIZE}}}
+        preprocessing = {"name": "standard", "inputs": {"image": {"name": "image", "image_size": SIZE}}}
 
-        with pytest.raises(ValueError, match="picture"):
+        with pytest.raises(ValueError, match="image"):
             experiment(declaration, preprocessing=preprocessing)
+
+    def test_a_task_named_after_something_torch_keeps_for_itself_is_refused(
+        self, declaration: Mapping[str, Any]
+    ) -> None:
+        """A task name has to survive two rule sets: this framework's, and the one torch keeps quietly.
+
+        Through the builder rather than the check alone, because the collision happens where the name
+        becomes a child of a module — which is what a reader's task name eventually is.
+        """
+        tasks = {"training": {"kind": "classification", "target_column": "species", "classes": {0: "cat", 1: "dog"}}}
+
+        with pytest.raises(ValueError, match="training"):
+            experiment(declaration, tasks=tasks)
 
     def test_a_head_declared_against_a_model_that_arrives_whole_is_refused(
         self, declaration: Mapping[str, Any]

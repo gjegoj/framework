@@ -43,7 +43,7 @@ DEFAULT_LINE = "value"
 
 @tracker_registry.register("clearml")
 class ClearMLTracker(Logger):
-    """One ClearML task carrying a run's numbers and the readings that mean a picture.
+    """One ClearML task carrying a run's numbers and the readings that mean an image.
 
     Parameters:
         project_name: ClearML project; the service's own default when None.
@@ -88,7 +88,7 @@ class ClearMLTracker(Logger):
 
     @property
     def _reporter(self) -> Backend:
-        """Where numbers and pictures go. The service holds one per run, so this holds none."""
+        """Where numbers and images go. The service holds one per run, so this holds none."""
         # Cast, because Lightning's rank-zero guard around `experiment` is untyped by construction:
         # what it hands a follower is a stand-in, not a run.
         return cast("Backend", self.experiment.get_logger())

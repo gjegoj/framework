@@ -34,7 +34,7 @@ def read_image(path: Path, *, grayscale: bool = False) -> np.ndarray:
 
 @input_encoder_registry.register("image")
 class ImageEncoder(FileEncoder, InputEncoder):
-    """Declares how a picture reaches the model — size, channels, normalization — and reads its file.
+    """Declares how an image reaches the model — size, channels, normalization — and reads its file.
 
     Pixels are moved by the pipeline each stage declares (``configs/transforms``), which interpolates
     this declaration: ``Resize`` to ``image_size``, ``Normalize`` with ``mean``/``std``, ``ToTensorV2``.

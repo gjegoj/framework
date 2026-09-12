@@ -41,6 +41,16 @@ def composed(*overrides: str) -> Mapping[str, Any]:
     return cast(Mapping[str, Any], raw)
 
 
+def test_the_examples_a_reader_is_sent_to_are_in_the_repository() -> None:
+    """Named rather than counted: these are the lines README and `make test-run` tell a reader to run.
+
+    A glob is the subject of the table below, so an example missing from a fresh clone — left
+    untracked, or ignored by a rule meant for somewhere else — would empty that table rather than
+    fail it, and every check on the shipped examples would pass on nothing.
+    """
+    assert {"classification", "segmentation", "finetuning", "multitask"} <= set(EXAMPLES)
+
+
 @pytest.mark.parametrize("example", EXAMPLES)
 def test_a_shipped_example_composes_into_a_valid_experiment(example: str) -> None:
     config = load_config(composed(f"experiment=examples/{example}"))
@@ -49,7 +59,7 @@ def test_a_shipped_example_composes_into_a_valid_experiment(example: str) -> Non
 
 
 @pytest.mark.parametrize("group", ["default", "augmented"])
-def test_a_shipped_transforms_group_prepares_a_picture_for_the_declared_size(group: str) -> None:
+def test_a_shipped_transforms_group_prepares_a_image_for_the_declared_size(group: str) -> None:
     """The pixel pipeline lives in YAML, so a wrong import path or a dropped tensor step must fail here."""
     config = load_config(composed("experiment=examples/classification", f"transforms={group}"))
     geometries = {"inputs": {"image": Geometry.IMAGE}, "targets": {"mask": Geometry.MASK}, "auxiliary_inputs": {}}
@@ -62,6 +72,26 @@ def test_a_shipped_transforms_group_prepares_a_picture_for_the_declared_size(gro
         image = require_tensor(prepared.inputs["image"], name=stage)
         assert image.shape == (3, 224, 224) and image.dtype.is_floating_point
         assert require_tensor(prepared.targets["mask"], name="mask").shape == (224, 224)
+
+
+def drawn_at(seed: int) -> list[float]:
+    """What the shipped augmented chain brightens one grey image to, four images in a row."""
+    config = load_config(composed("experiment=examples/classification", "transforms=augmented", f"seed={seed}"))
+    geometries = {"inputs": {"image": Geometry.IMAGE}, "targets": {}, "auxiliary_inputs": {}}
+    prepare = build_transforms(config.transforms, geometries)["train"]
+    grey = Sample(inputs={"image": np.full((32, 32, 3), 128, np.uint8)}, targets={})
+    return [float(require_tensor(prepare(grey).inputs["image"], name="train")[0, 0, 0]) for _ in range(4)]
+
+
+def test_the_shipped_augmentations_draw_what_the_runs_seed_settles() -> None:
+    """A run repeated at one seed trains on the same images, and another seed gives another run.
+
+    The chain has to say `seed: ${seed}` for this: measured on albumentationsx 2.3.7, a pipeline draws
+    from a generator of its own that `seed_everything` never reaches, so an interpolation dropped from
+    the group composes perfectly and leaves a run on the shipped loader unrepeatable.
+    """
+    assert drawn_at(123) == drawn_at(123)
+    assert drawn_at(123) != drawn_at(321)
 
 
 def declared_names(config: ExperimentConfig) -> Iterator[tuple[ComponentConfig, Registry[Any] | None]]:

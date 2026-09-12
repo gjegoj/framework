@@ -11,7 +11,7 @@ from typing import Any, override
 
 import lightning as L
 from lightning.pytorch.overrides.distributed import UnrepeatedDistributedSampler
-from torch.utils.data import DataLoader, Dataset, Sampler
+from torch.utils.data import DataLoader, Dataset, IterableDataset, Sampler
 
 from src.core import DatasetInfo, DatasetStatistics, Sample, Stage
 from src.data import DataModule, single_threaded_cv2
@@ -44,7 +44,7 @@ class TrainingData(L.LightningDataModule):
     def info(self) -> DatasetInfo:
         """What the prepared pipeline settled, for whatever the loop attaches that needs to know.
 
-        A page draws a picture as the file held it, which means undoing the statistics the run applied
+        A page draws an image as the file held it, which means undoing the statistics the run applied
         — and those are declared by the input itself, not by the display. This is how a callback
         reaches them: through the object Lightning already hands it, rather than by being told twice.
         """
@@ -68,6 +68,13 @@ class TrainingData(L.LightningDataModule):
 
     def _loader(self, stage: Stage, *, shuffle: bool, drop_last: bool) -> DataLoader[Sample]:
         dataset = self._data.dataset(stage)
+        if isinstance(dataset, IterableDataset):
+            raise TypeError(
+                f"Split {stage!r} arrived as {type(dataset).__name__}, which can only be read front to back. "
+                "Training shuffles its rows and an evaluation takes each device's share of them, and both "
+                "address a row by its index; a stream would need a policy for each, which this adapter has "
+                "none of yet. Serve the split as a map-style dataset."
+            )
         return DataLoader(
             dataset,
             shuffle=shuffle,

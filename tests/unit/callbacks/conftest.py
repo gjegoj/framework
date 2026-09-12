@@ -25,7 +25,7 @@ def table(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 @pytest.fixture
 def declaration(table: Path, tmp_path: Path) -> Mapping[str, Any]:
-    """One classification task over eight pictures, and whatever a test declares beside it."""
+    """One classification task over eight images, and whatever a test declares beside it."""
     return smallest_run(table, tmp_path / "run")
 
 

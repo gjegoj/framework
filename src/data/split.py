@@ -81,6 +81,11 @@ class StratifiedSplit:
 class GroupedSplit:
     """Keep every row of a group on one side, so nothing a group shares leaks between splits.
 
+    A row whose group is missing is refused rather than dropped: ``groupby`` leaves it out of every
+    group, and the parts are gathered from the groups, so it would vanish from the run entirely while
+    both splits stayed satisfyingly non-empty. Whether unknown patients are one patient or none is a
+    question about the data, and it is asked of whoever wrote it.
+
     Parameters:
         by: The column whose equal values belong together — a patient, a scene, a session.
     """
@@ -89,6 +94,13 @@ class GroupedSplit:
 
     def __call__(self, rows: Table, fractions: Mapping[str, float], seed: int) -> dict[str, Table]:
         column = _column(rows, self.by, purpose="group")
+        blank = rows.index[rows[column].isna()]
+        if len(blank):
+            raise ValueError(
+                f"Cannot group by {column!r}: {len(blank)} rows name no group, the first at {blank[0]}. "
+                "Whole groups move together, so a row belonging to none would be dropped from every "
+                "split without a word. Give them a group, or divide by a rule that needs none."
+            )
         sizes = rows.groupby(column, sort=False).size().sample(frac=1, random_state=seed)
         wanted = {name: fraction * len(rows) for name, fraction in fractions.items()}
         members: dict[str, list[object]] = {name: [] for name in fractions}

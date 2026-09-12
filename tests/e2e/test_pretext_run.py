@@ -1,4 +1,4 @@
-"""A run whose supervision nothing annotated: the augmentation draws the answer as it draws the picture.
+"""A run whose supervision nothing annotated: the augmentation draws the answer as it draws the image.
 
 Every seam between the pixel pipeline and the loop is on this path — the geometries the encoders
 publish, the binding that lets one target through a pipeline that otherwise carries only pixels, the

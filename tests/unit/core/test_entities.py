@@ -18,7 +18,7 @@ from src.core import (
     TensorTree,
     class_name,
 )
-from src.core.entities import validate_classes, validate_name
+from src.core.entities import as_children, validate_classes, validate_name
 from tests.unit.core.conftest import leaves
 
 
@@ -75,6 +75,26 @@ class TestBatch:
             batch.count = 3  # type: ignore[misc]
 
 
+class TestChildren:
+    def test_a_mapping_becomes_the_children_of_a_module(self) -> None:
+        children = as_children({"species": torch.nn.Identity()})
+
+        assert isinstance(children, torch.nn.ModuleDict) and set(children) == {"species"}
+
+    @pytest.mark.parametrize("reserved", ["training", "forward", "parameters"])
+    def test_a_name_torch_keeps_for_itself_is_refused_as_the_name_it_came_from(self, reserved: str) -> None:
+        """`validate_name` passes these: they are ordinary words, and the framework's own rules are met.
+
+        Torch's are not — every module already answers to them — and a task carrying one reaches this
+        point after the sources are read, as `KeyError: attribute 'training' already exists`, which
+        names the collision without naming what a reader has to rename.
+        """
+        validate_name(reserved)
+
+        with pytest.raises(ValueError, match=reserved):
+            as_children({reserved: torch.nn.Identity()})
+
+
 class TestClasses:
     @pytest.mark.parametrize(
         "classes",
@@ -85,11 +105,18 @@ class TestClasses:
             pytest.param({"0": "cat"}, id="string index"),
             pytest.param({0: "cat", 1: " "}, id="blank name"),
             pytest.param({0: "cat", 1: 1}, id="non-string name"),
+            pytest.param({0: "cat", 1: "cat"}, id="one name for two classes"),
+            pytest.param({0: "cat", 1: "cat "}, id="one name once padded"),
         ],
     )
     def test_a_vocabulary_is_contiguous_from_zero_with_nonblank_names(self, classes: dict[object, object]) -> None:
         with pytest.raises(ValueError):
             validate_classes(classes)  # type: ignore[arg-type]
+
+    def test_digits_are_a_word_like_any_other_here(self) -> None:
+        """A vocabulary of bin centres names class 9 '10'; whether digits may be read as an index is
+        the business of the one encoder that reads them that way."""
+        validate_classes({index: f"{index + 1}" for index in range(10)})
 
     def test_target_info_counts_its_declared_classes(self) -> None:
         assert TargetInfo(classes={0: "cat", 1: "dog"}).num_classes == 2

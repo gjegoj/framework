@@ -39,7 +39,7 @@ def data_uri(pixels: np.ndarray, max_side: int | None = None) -> str:
     """Encode a uint8 ``[H, W, 3]`` or ``[H, W, 4]`` array as ``data:image/png;base64,...``.
 
     ``max_side`` bounds what goes into the page rather than what the tensor holds: a grid inlines a
-    picture and every mask over it for each cell, so the page's weight is the cell count times the
+    image and every mask over it for each cell, so the page's weight is the cell count times the
     layer count times this. Shrinking averages, because a downscaled photograph that sampled one pixel
     per block would report detail it does not have.
     """
@@ -54,13 +54,13 @@ def data_uri(pixels: np.ndarray, max_side: int | None = None) -> str:
 def shrunk_to(width: int, height: int, max_side: int | None) -> tuple[int, int] | None:
     """The size something is shown at, or ``None`` when it already fits.
 
-    Answered for the picture and for every mask over it, so both land on the same grid of pixels and
+    Answered for the image and for every mask over it, so both land on the same grid of pixels and
     an overlay cannot drift a row off the shape it is explaining.
     """
     if max_side is None or max(width, height) <= max_side:
         return None
     scale = max_side / max(width, height)
-    # A side that rounded to nothing is a picture no decoder will take, and the page would carry the
+    # A side that rounded to nothing is an image no decoder will take, and the page would carry the
     # error instead of the sample.
     return max(1, round(width * scale)), max(1, round(height * scale))
 

@@ -29,7 +29,7 @@ class GeometryAware(Protocol):
 class AnswersTask(Protocol):
     """An augmentation whose draw is the supervision: it names the task it answers.
 
-    Turning a picture makes the turn the answer, and cropping it makes "was this cropped" the answer.
+    Turning an image makes the turn the answer, and cropping it makes "was this cropped" the answer.
     Such an augmentation has to say *which* task it answers, because the pipeline carrying it routes a
     value by its kind and so cannot tell two targets apart — and because a name is what lets the
     binding refuse a typo before the run rather than write nothing for the length of it.

@@ -10,7 +10,7 @@ from tests.support.pixels import decoded
 
 
 class TestDataUri:
-    def test_every_pixel_of_a_picture_survives_the_round_trip(self) -> None:
+    def test_every_pixel_of_a_image_survives_the_round_trip(self) -> None:
         pixels = np.random.default_rng(0).integers(0, 256, size=(7, 5, 3), dtype=np.uint8)
 
         assert np.array_equal(decoded(data_uri(pixels)), pixels)
@@ -20,7 +20,7 @@ class TestDataUri:
 
         assert np.array_equal(decoded(data_uri(pixels)), pixels)
 
-    def test_a_picture_wider_than_the_bound_is_shrunk_to_it(self) -> None:
+    def test_a_image_wider_than_the_bound_is_shrunk_to_it(self) -> None:
         pixels = np.full((40, 80, 3), 200, dtype=np.uint8)
 
         shown = decoded(data_uri(pixels, max_side=20))
@@ -30,7 +30,7 @@ class TestDataUri:
     def test_shrinking_averages_rather_than_samples(self) -> None:
         """Half black, half white, shrunk two-to-one across the divide: the seam reads mid-grey.
 
-        Sampling one pixel of each pair would answer 0 or 255 and lose that a picture had
+        Sampling one pixel of each pair would answer 0 or 255 and lose that an image had
         detail there at all — which is exactly what a downscaled photograph must not do.
         """
         pixels = np.zeros((2, 4, 3), dtype=np.uint8)
@@ -41,7 +41,7 @@ class TestDataUri:
         assert shown.shape == (1, 2, 3)
         assert shown[0, 0, 0] == pytest.approx(128, abs=1)
 
-    def test_a_picture_inside_the_bound_is_left_alone(self) -> None:
+    def test_a_image_inside_the_bound_is_left_alone(self) -> None:
         pixels = np.random.default_rng(2).integers(0, 256, size=(8, 8, 3), dtype=np.uint8)
 
         assert np.array_equal(decoded(data_uri(pixels, max_side=16)), pixels)
@@ -64,7 +64,7 @@ class TestShrunkTo:
         assert shrunk_to(width, height, max_side) == expected
 
     def test_a_side_never_rounds_away_to_nothing(self) -> None:
-        """A very wide strip still has a row; zero would be a picture nobody can decode."""
+        """A very wide strip still has a row; zero would be an image nobody can decode."""
         assert shrunk_to(1000, 1, 10) == (10, 1)
 
 

@@ -22,7 +22,7 @@ from src.data.registry import target_encoder_registry
 class MaskEncoder(FileEncoder, VocabularyEncoder):
     """A mask the model learns: every pixel indexes one of the task's declared classes.
 
-    The pixel pipeline resizes the plane with its picture (nearest neighbour, never normalized) and may hand
+    The pixel pipeline resizes the plane with its image (nearest neighbour, never normalized) and may hand
     it back as a narrower integer tensor; ``encode`` settles the dtype a loss expects.
     """
 

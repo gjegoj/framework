@@ -1,10 +1,10 @@
 """How a computed value reaches whatever can show it: one router, rather than a branch per caller.
 
 A metric's geometry decides the route — a number is logged, a reading per class becomes a graph of
-lines, a picture goes to the backends that draw pictures. The training module hands values over
+lines, an image goes to the backends that draw images. The training module hands values over
 without knowing which is which, and a metric announces what it produced by the type it returns.
 
-The set of shapes is closed, deliberately: a value that means a *new* kind of picture — a curve, a
+The set of shapes is closed, deliberately: a value that means a *new* kind of image — a curve, a
 histogram — arrives with a value type in ``core``, a port beside ``DrawsMatrix`` and a branch here, and
 that is four small edits rather than one. Until a second such shape exists there is nothing to
 generalise over, and the shapes that stay unroutable are named out loud instead of dropped.
@@ -88,7 +88,7 @@ def _draw(key: MetricKey, matrix: Matrix, *, trackers: Sequence[object], step: i
         # Named without its stage, because the answer is the same in every one of them: said once per
         # run rather than once per stage. Silent where a run declared no tracker at all — as asked.
         warnings.warn(
-            f"{key.series} is a picture, and nothing this run records to can draw one: it is the one reading "
+            f"{key.series} is an image, and nothing this run records to can draw one: it is the one reading "
             "that goes unkept. `tracker: clearml` draws it, `tracker: csv` holds numbers only.",
             stacklevel=3,
         )
@@ -97,7 +97,7 @@ def _draw(key: MetricKey, matrix: Matrix, *, trackers: Sequence[object], step: i
 def _unshowable(key: MetricKey, geometry: str) -> None:
     warnings.warn(
         f"{key} returned {geometry}, which is neither a number nor a reading anything was told how to "
-        "draw, so it is not reported. A metric whose value means a picture returns one — see "
+        "draw, so it is not reported. A metric whose value means an image returns one — see "
         "ConfusionMatrix, which returns a Matrix.",
         stacklevel=3,
     )

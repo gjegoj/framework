@@ -1,4 +1,4 @@
-"""albumentations behind the sample seam: one pipeline call moves the picture and its masks together."""
+"""albumentations behind the sample seam: one pipeline call moves the image and its masks together."""
 
 from __future__ import annotations
 
@@ -25,11 +25,11 @@ type Roles = Mapping[str, Mapping[str, Any]]
 
 
 class AlbumentationsTransform:
-    """A declared pipeline; ``with_geometry`` binds it to what the encoders say moves with the picture.
+    """A declared pipeline; ``with_geometry`` binds it to what the encoders say moves with the image.
 
     ``additional_targets`` are derived from those geometries, never declared: the keys a pipeline
     registers cannot then contradict the values it is handed. Measured on albumentationsx 2.3.7:
-    ``Compose`` needs no argument named ``image``, so the picture keeps the name its input has.
+    ``Compose`` needs no argument named ``image``, so the image keeps the name its input has.
     """
 
     def __init__(self, transforms: Sequence[Any], **compose_options: Any) -> None:
@@ -112,7 +112,7 @@ def _answered_tasks(transforms: Sequence[Any], targets: Mapping[str, Geometry]) 
         if targets[name] is not Geometry.NONE:
             raise ValueError(
                 f"An augmentation of this pipeline answers {name!r}, whose target is pixels "
-                f"({targets[name].value}): pixels move with the picture, and an answer is written over."
+                f"({targets[name].value}): pixels move with the image, and an answer is written over."
             )
     return frozenset(answered)
 

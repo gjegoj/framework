@@ -63,5 +63,5 @@ def make_composite(backbone: Encoder) -> CompositeFactory:
 
 @pytest.fixture
 def images() -> dict[str, Tensor]:
-    """Two pictures whose pixels differ, so a gradient through them is observable."""
+    """Two images whose pixels differ, so a gradient through them is observable."""
     return {"image": torch.arange(2 * 3 * SIDE * SIDE, dtype=torch.float32).reshape(2, 3, SIDE, SIDE)}

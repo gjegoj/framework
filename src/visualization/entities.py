@@ -27,7 +27,7 @@ SIDES: tuple[Side, ...] = ("gt", "pred")
 class Image:
     """Pixels ready to show, and where they came from if anywhere.
 
-    ``eq=False`` because an array field breaks the generated ``__eq__``, and nothing compares pictures.
+    ``eq=False`` because an array field breaks the generated ``__eq__``, and nothing compares images.
 
     Parameters:
         pixels: ``[H, W, 3]`` uint8 RGB, already back in the colours a viewer expects.
@@ -114,13 +114,13 @@ class Verdict:
 
 @dataclass(slots=True)
 class SampleView:
-    """One cell: the picture, what each task said about it on each side, and how each one scored.
+    """One cell: the image, what each task said about it on each side, and how each one scored.
 
     ``fields`` is keyed by a structural ``(task, side)`` pair rather than a glued string, so nothing
     here has to split back what something else joined. Mutable on purpose: whoever builds a view
     fills in one task at a time.
     """
 
-    picture: Image
+    image: Image
     fields: dict[tuple[str, Side], Label] = field(default_factory=dict)
     verdicts: dict[str, Verdict] = field(default_factory=dict)

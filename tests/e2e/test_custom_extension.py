@@ -67,9 +67,9 @@ class Tiny(Model):
         self.weights = nn.Conv2d(3, 1, kernel_size=1)
 
     def forward(self, inputs: Mapping[str, TensorTree]) -> ModelOutput:
-        picture = inputs["image"]
-        assert isinstance(picture, Tensor)
-        return ModelOutput(outputs={self.task: self.weights(picture).mean(dim=(1, 2, 3))})
+        image = inputs["image"]
+        assert isinstance(image, Tensor)
+        return ModelOutput(outputs={self.task: self.weights(image).mean(dim=(1, 2, 3))})
 
 
 @pytest.fixture(scope="module")

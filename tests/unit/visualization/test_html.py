@@ -27,9 +27,9 @@ from tests.support.pixels import decoded
 def view(
     said: str = "cat", true: str = "cat", correct: bool | None = None, scores: tuple[Score, ...] = ()
 ) -> SampleView:
-    picture = np.full((4, 6, 3), 120, dtype=np.uint8)
+    image = np.full((4, 6, 3), 120, dtype=np.uint8)
     return SampleView(
-        picture=Image(pixels=picture, source="/data/1.png"),
+        image=Image(pixels=image, source="/data/1.png"),
         fields={("species", "gt"): Classification(true), ("species", "pred"): Classification(said)},
         verdicts={"species": Verdict(correct=correct, scores=scores)},
     )
@@ -188,18 +188,18 @@ class TestBoundsReachThePixels:
         mask = np.zeros((side, side), dtype=bool)
         mask[side // 4 : side // 2, side // 4 : side // 2] = True
         return SampleView(
-            picture=Image(pixels=pixels),
+            image=Image(pixels=pixels),
             fields={("mask", "gt"): Segmentation((SegmentationClass("pet", mask),))},
         )
 
-    def test_a_picture_reaches_the_page_no_larger_than_the_bound(self) -> None:
-        """What the bound is for: a cell inlines its picture and one layer per class per side, so the
+    def test_a_image_reaches_the_page_no_larger_than_the_bound(self) -> None:
+        """What the bound is for: a cell inlines its image and one layer per class per side, so the
         page weighs the product of the three."""
         shown = HtmlRenderer(max_side=16).render([self.big()], title="t", classes={})
 
-        assert decoded(_first(r'class="picture" alt="sample" src="([^"]+)"', shown)).shape == (16, 16, 3)
+        assert decoded(_first(r'class="image" alt="sample" src="([^"]+)"', shown)).shape == (16, 16, 3)
 
-    def test_a_mask_reaches_it_at_the_same_size_as_the_picture_it_explains(self) -> None:
+    def test_a_mask_reaches_it_at_the_same_size_as_the_image_it_explains(self) -> None:
         """Off by a row and the overlay stops landing on the pixels it is about."""
         shown = HtmlRenderer(max_side=16).render([self.big()], title="t", classes={})
 
@@ -208,19 +208,19 @@ class TestBoundsReachThePixels:
     def test_inlining_whole_leaves_the_pixels_as_they_are(self) -> None:
         shown = HtmlRenderer(max_side=None).render([self.big()], title="t", classes={})
 
-        assert decoded(_first(r'class="picture" alt="sample" src="([^"]+)"', shown)).shape == (64, 64, 3)
+        assert decoded(_first(r'class="image" alt="sample" src="([^"]+)"', shown)).shape == (64, 64, 3)
 
 
 class TestTheFrame:
-    def test_a_portrait_picture_keeps_its_shape_inside_a_square_cell(self) -> None:
-        """``aspect-ratio`` alone does not survive the clamp: the picture stretches into the square and
+    def test_a_portrait_image_keeps_its_shape_inside_a_square_cell(self) -> None:
+        """``aspect-ratio`` alone does not survive the clamp: the image stretches into the square and
         every mask stretches with it, which makes nothing look wrong."""
-        tall = SampleView(picture=Image(pixels=np.zeros((8, 4, 3), dtype=np.uint8)))
+        tall = SampleView(image=Image(pixels=np.zeros((8, 4, 3), dtype=np.uint8)))
 
         assert "aspect-ratio:0.5;width:50%" in HtmlRenderer().render([tall], title="t", classes={})
 
-    def test_a_landscape_picture_fills_the_width(self) -> None:
-        wide = SampleView(picture=Image(pixels=np.zeros((4, 8, 3), dtype=np.uint8)))
+    def test_a_landscape_image_fills_the_width(self) -> None:
+        wide = SampleView(image=Image(pixels=np.zeros((4, 8, 3), dtype=np.uint8)))
 
         assert "aspect-ratio:2;width:100%" in HtmlRenderer().render([wide], title="t", classes={})
 

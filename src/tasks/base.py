@@ -21,7 +21,7 @@ from src.core import (
 )
 
 SPATIAL = frozenset({Axis.HEIGHT, Axis.WIDTH})
-"""The axes that make an output a picture of its own — a task with one decides at every pixel."""
+"""The axes that make an output an image of its own — a task with one decides at every pixel."""
 
 type LossDeclaration = str | Mapping[str, object] | Sequence[Mapping[str, object]]
 """A loss as a task declares its default: a registry name, one declaration, or several to weigh together."""

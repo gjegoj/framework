@@ -10,11 +10,11 @@ from torch import nn
 from torch.optim import Optimizer
 
 from src.config import ComponentConfig, SchedulerConfig
-from src.core import TargetInfo
+from src.core import Batch, StepOutput, TargetInfo
 from src.losses.build import build_loss
 from src.tasks import Classification
 from src.training import StandardLearner
-from src.training.base import FitProfile, ParameterGroup
+from src.training.base import FitProfile, Learner, ParameterGroup
 from src.training.build import build_learner, build_optimizer_factory, build_scheduler_factory
 from src.training.registry import optimizer_registry, scheduler_registry
 from tests.support.models import Echo
@@ -159,11 +159,30 @@ class TestLearner:
 
         assert isinstance(built, StandardLearner) and set(built.tasks) == {"species"}
 
+    def test_an_algorithm_that_holds_no_task_losses_is_built_without_them(self) -> None:
+        """`Learner` asks for a model and tasks; an algorithm that owns its objective differently —
+        a distilled one, a self-supervised one — must be buildable against the contract it implements
+        rather than against the one the standard learner happens to have."""
+        declared = ComponentConfig.model_validate({"_target_": "tests.unit.training.test_build.Lonely"})
+        task = Classification("species", TargetInfo(classes={0: "cat", 1: "dog"}))
+        losses = {"species": build_loss(task.default_loss, task.facts())}
+
+        built = build_learner(declared, model=Echo({}), tasks={"species": task}, losses=losses)
+
+        assert isinstance(built, Lonely) and set(built.tasks) == {"species"} and built.loss_of("species") is None
+
     def test_something_that_cannot_take_a_step_is_refused_where_it_was_declared(self) -> None:
         declared = ComponentConfig.model_validate({"_target_": "tests.unit.training.test_build.Bare"})
 
         with pytest.raises(TypeError, match="Learner"):
             build_learner(declared, model=Echo({}), tasks={}, losses={})
+
+
+class Lonely(Learner):
+    """A learner built on nothing but the contract: a model, its tasks, and a step."""
+
+    def step(self, batch: Batch) -> StepOutput:
+        raise NotImplementedError
 
 
 class Bare:

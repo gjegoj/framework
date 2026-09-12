@@ -21,7 +21,7 @@ class RandomBorderCrop(A.CustomTransformsApplyMixin, A.RandomCropFromBorders):
     target must already hold that class throughout, and this writes the other one over it.
 
     Parameters:
-        task: The task this answers; its target says whether the picture was trimmed.
+        task: The task this answers; its target says whether the image was trimmed.
         crop_left: Largest fraction of the width taken from the left; the rest read alike.
         crop_right: Largest fraction of the width taken from the right.
         crop_top: Largest fraction of the height taken from the top.

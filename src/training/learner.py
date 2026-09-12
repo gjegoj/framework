@@ -10,7 +10,7 @@ from typing import cast, override
 import torch
 from torch import nn
 
-from src.core import Batch, LossOutput, ModelOutput, StepOutput
+from src.core import Batch, LossOutput, ModelOutput, StepOutput, as_children
 from src.losses import Loss
 from src.models import Model
 from src.tasks import Task
@@ -33,7 +33,7 @@ class StandardLearner(Learner):
                 f"One loss per task, and one task per loss: the tasks are {', '.join(sorted(self.tasks))}, "
                 f"the losses are {', '.join(sorted(losses))}."
             )
-        self.losses = nn.ModuleDict({name: losses[name] for name in self.tasks})
+        self.losses = as_children({name: losses[name] for name in self.tasks})
 
     @override
     def loss_of(self, task: str) -> Loss | None:

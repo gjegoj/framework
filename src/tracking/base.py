@@ -25,7 +25,7 @@ class DrawsMatrix(Protocol):
 class DrawsBars(Protocol):
     """A backend that can draw grouped bars — a target's class balance across the run's splits.
 
-    A picture and not a table, because a balance is read by comparing bar heights and thirty-seven
+    An image and not a table, because a balance is read by comparing bar heights and thirty-seven
     breeds is a scroll rather than a glance. The table is printed anyway, in the terminal, where the
     exact numbers are what a reader wants.
     """
@@ -37,7 +37,7 @@ class DrawsBars(Protocol):
 class ShowsPage(Protocol):
     """A backend that can carry a self-contained HTML page as part of a run.
 
-    A grid of samples is a page and not a picture: it carries the controls that narrow it, and a
+    A grid of samples is a page and not an image: it carries the controls that narrow it, and a
     backend that could only keep an image would be keeping a screenshot of one.
     """
 

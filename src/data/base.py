@@ -7,7 +7,7 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from typing import ClassVar, Self
 
 import pandas as pd
-from torch.utils.data import Dataset, IterableDataset
+from torch.utils.data import Dataset
 
 from src.core import (
     Batch,
@@ -110,7 +110,7 @@ class Preprocessor(ABC):
 
     @property
     def geometries(self) -> Mapping[str, Mapping[str, Geometry]]:
-        """What moves with the picture under a spatial transform, per ``inputs``/``targets``/``auxiliary_inputs``."""
+        """What moves with the image under a spatial transform, per ``inputs``/``targets``/``auxiliary_inputs``."""
         return {Role.INPUTS: {}, Role.TARGETS: {}, Role.AUXILIARY: {}}
 
     @abstractmethod
@@ -169,8 +169,14 @@ class DataModule(ABC):
         return None
 
     @abstractmethod
-    def dataset(self, split: str) -> Dataset[Sample] | IterableDataset[Sample]:
-        """Prepared samples of one split: the preprocessor with that split's transform."""
+    def dataset(self, split: str) -> Dataset[Sample]:
+        """Prepared samples of one split: the preprocessor with that split's transform.
+
+        Map-style: the loaders shuffle a training split and hand each device its own share of an
+        evaluation one, and both reach a row by index. A stream was named here once and refused by the
+        adapter that reads this, which is a contract promising what nothing keeps; it comes back with
+        the sampling policy that makes one usable, not before.
+        """
 
     def statistics(self) -> DatasetStatistics:
         """How much of each split there is and what its targets hold, for the report before epoch one.

@@ -36,9 +36,9 @@ if TYPE_CHECKING:
 _ASSETS = files(__package__) / "assets"
 
 MAX_DISPLAY_SIDE = 256
-"""How many pixels of a picture or a mask reach the page, on its longest side.
+"""How many pixels of an image or a mask reach the page, on its longest side.
 
-This bounds what the page weighs, not what the model saw. A cell inlines its picture and one layer per
+This bounds what the page weighs, not what the model saw. A cell inlines its image and one layer per
 class per side, so the weight is cells times layers times this — at 512 a segmentation grid runs to
 tens of megabytes, into a tracker that then has to embed it. Cells display at about 230px, so the cost
 lands only on the lightbox.
@@ -73,17 +73,17 @@ class HtmlRenderer:
     """Turns a page's worth of views into markup that carries everything it needs.
 
     Parameters:
-        max_side: Bound every inlined picture and mask to this many pixels on its longest side;
+        max_side: Bound every inlined image and mask to this many pixels on its longest side;
             ``None`` inlines them whole — see :data:`MAX_DISPLAY_SIDE`.
     """
 
     def __init__(self, max_side: int | None = MAX_DISPLAY_SIDE) -> None:
         # Checked here rather than by whoever passes it on: a knob is refused by whoever owns it, and
         # this class is public — a page rendered directly would otherwise take the value unchecked.
-        # `None` rather than zero for "inline whole": at zero every picture and every mask scales to
+        # `None` rather than zero for "inline whole": at zero every image and every mask scales to
         # one pixel, and the page builds a grid of dots without a word.
         if max_side is not None and max_side < 1:
-            raise ValueError(f"A picture needs a pixel a side: needs max_side >= 1 or None, got {max_side}.")
+            raise ValueError(f"An image needs a pixel a side: needs max_side >= 1 or None, got {max_side}.")
         self._max_side = max_side
         self._css = (_ASSETS / "grid.css").read_text(encoding="utf-8")
         self._script = (_ASSETS / "grid.js").read_text(encoding="utf-8")
@@ -121,16 +121,16 @@ class HtmlRenderer:
             for item in render_label(label, self._context(task, side, palettes))
         ]
         covers = "".join(item.overlay for item in items if item.zone == "cover")
-        height, width = view.picture.pixels.shape[:2]
+        height, width = view.image.pixels.shape[:2]
         cell = (
             f'<div class="cell {_standing(view)}" data-verdicts="{attr(json.dumps(_verdicts(view)))}"'
             f' data-scores="{attr(json.dumps(_scores(view)))}">'
-            # The frame is the cell's coordinate system: it takes the picture's own shape, and every
+            # The frame is the cell's coordinate system: it takes the image's own shape, and every
             # overlay fills it. Anything placed in percentages of it lands on the pixels it explains,
             # whatever shape the model was trained at.
             f'<div class="frame" style="{_frame_style(width, height)}">'
-            f'<img class="picture" alt="sample" src="{data_uri(view.picture.pixels, self._max_side)}">'
-            f"{source_pill(view.picture.source)}"
+            f'<img class="image" alt="sample" src="{data_uri(view.image.pixels, self._max_side)}">'
+            f"{source_pill(view.image.source)}"
             f'<div class="cover">{covers}</div></div>'
             f'<div class="stack">{_chip_rows(items)}</div>'
             f"{_badge(view)}{_note(view)}</div>"
@@ -146,7 +146,7 @@ def _frame_style(width: int, height: int) -> str:
 
     ``aspect-ratio`` alone does not survive: with a definite ``width: 100%`` a portrait frame derives
     a height taller than the cell, ``max-height`` clamps it back to a square, and the width is never
-    re-resolved — so the picture is stretched into the square and the masks stretch with it, which
+    re-resolved — so the image is stretched into the square and the masks stretch with it, which
     makes nothing look wrong. The cell is square, so a frame of aspect ``a`` fits at ``min(1, a)`` of
     its width and both orientations keep their proportions.
     """
@@ -214,8 +214,8 @@ def _badge(view: SampleView) -> str:
         return ""
     if matched == judged:
         return '<div class="badge ok">✓ correct</div>'
-    said = "wrong" if judged == 1 else f"{matched}/{judged} matched"
-    return f'<div class="badge bad">✗ {text(said)}</div>'
+    reads = "wrong" if judged == 1 else f"{matched}/{judged} matched"
+    return f'<div class="badge bad">✗ {text(reads)}</div>'
 
 
 def _verdicts(view: SampleView) -> dict[str, str]:
@@ -249,8 +249,8 @@ def _scores(view: SampleView) -> dict[str, float]:
 
 def _note(view: SampleView) -> str:
     """Every measured number this sample earned, printed once and only here."""
-    measured = [f"{score.name} {number(score.value)}" for verdict in view.verdicts.values() for score in verdict.scores]
-    return f'<div class="note">{text(" · ".join(measured))}</div>' if measured else ""
+    printed = [f"{score.name} {number(score.value)}" for verdict in view.verdicts.values() for score in verdict.scores]
+    return f'<div class="note">{text(" · ".join(printed))}</div>' if printed else ""
 
 
 def _tally(views: Sequence[SampleView]) -> tuple[int, int, int]:

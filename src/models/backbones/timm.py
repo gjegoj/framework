@@ -37,8 +37,8 @@ class TimmBackbone(Backbone):
         return {Stream.POOLED: TensorShape(axes=(Axis.CHANNELS,), sizes=(self.width,))}
 
     def forward(self, inputs: Mapping[str, TensorTree]) -> Mapping[str, Tensor]:
-        picture = required_input(inputs, self.input_name, type(self).__name__)
-        pooled = cast(Tensor, self.model(require_tensor(picture, name=self.input_name)))
+        image = required_input(inputs, self.input_name, type(self).__name__)
+        pooled = cast(Tensor, self.model(require_tensor(image, name=self.input_name)))
         if pooled.ndim != 2:
             raise ValueError(
                 f"{self.input_name!r} encoded to {pooled.ndim} axes; this adapter publishes a pooled [batch, "

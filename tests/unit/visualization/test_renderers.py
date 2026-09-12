@@ -103,7 +103,7 @@ class TestChips:
 
 
 class TestMasks:
-    def test_a_class_mask_is_an_image_laid_over_the_picture(self) -> None:
+    def test_a_class_mask_is_an_image_laid_over_the_image(self) -> None:
         (item,) = render_label(Segmentation((SegmentationClass("cat", block(8, 2, 2, 3)),)), context())
 
         assert item.zone == "cover"

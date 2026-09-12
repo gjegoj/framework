@@ -66,7 +66,7 @@ class ClassPresence:
 
     A binary reading names both sides so that a confident "no" reads as an answer on a chip. Only the
     positive side is a class: it is the one ``BinaryJaccardIndex`` scores, and painting the negative
-    one would cover the whole picture in the colour of "not the thing".
+    one would cover the whole image in the colour of "not the thing".
     """
 
 
@@ -158,9 +158,9 @@ class MulticlassReader(Reader[ClassReading]):
     """The highest-scoring class at each position; outputs arrive activated, so there is no softmax here."""
 
     def read_output(self, scores: np.ndarray) -> ClassReading:
-        winner = scores.argmax(axis=0)
+        chosen = scores.argmax(axis=0)
         return ClassReading(
-            presences=tuple(_presence(int(index), winner == index, scores) for index in np.unique(winner)),
+            presences=tuple(_presence(int(index), chosen == index, scores) for index in np.unique(chosen)),
             singular=True,
         )
 
@@ -187,19 +187,19 @@ class MultilabelReader(Reader[ClassReading]):
     """Independent scores: every class above the line holds, and any number of them may."""
 
     def read_output(self, scores: np.ndarray) -> ClassReading:
-        holds = scores >= DECISION
+        positive = scores >= DECISION
         return ClassReading(
             presences=tuple(
-                _presence(index, holds[index], scores) for index in range(holds.shape[0]) if holds[index].any()
+                _presence(index, positive[index], scores) for index in range(positive.shape[0]) if positive[index].any()
             ),
             singular=False,
         )
 
     def read_target(self, target: np.ndarray) -> ClassReading:
-        holds = target >= DECISION
+        positive = target >= DECISION
         return ClassReading(
             presences=tuple(
-                ClassPresence(index, holds[index]) for index in range(holds.shape[0]) if holds[index].any()
+                ClassPresence(index, positive[index]) for index in range(positive.shape[0]) if positive[index].any()
             ),
             singular=False,
         )
@@ -261,10 +261,10 @@ class NumberDrawer(Drawer[ValueReading]):
     """One number for the whole sample: two chips, and how far apart they are."""
 
     def draw(self, view: SampleView, task: Task, truth: ValueReading, predicted: ValueReading) -> None:
-        true_value, said = _one(truth.values), _one(predicted.values)
+        true_value, predicted_value = _scalar(truth.values), _scalar(predicted.values)
         view.fields[(task.name, "gt")] = Regression(true_value)
-        view.fields[(task.name, "pred")] = Regression(said)
-        view.verdicts[task.name] = Verdict(scores=(Score(ERROR, abs(said - true_value)),))
+        view.fields[(task.name, "pred")] = Regression(predicted_value)
+        view.verdicts[task.name] = Verdict(scores=(Score(ERROR, abs(predicted_value - true_value)),))
 
 
 @dataclass(frozen=True, slots=True)
@@ -277,13 +277,13 @@ class Gallery:
 
     tasks: Mapping[str, Task]
     annotators: Mapping[str, AnyAnnotator]
-    alias: str
+    input_name: str
     normalization: Normalization
 
     @classmethod
-    def of(cls, tasks: Mapping[str, Task], alias: str, normalization: Normalization) -> Gallery:
+    def of(cls, tasks: Mapping[str, Task], input_name: str, normalization: Normalization) -> Gallery:
         drawn = {name: annotator for name, task in tasks.items() if (annotator := annotator_for(task)) is not None}
-        return cls(tasks=tasks, annotators=drawn, alias=alias, normalization=normalization)
+        return cls(tasks=tasks, annotators=drawn, input_name=input_name, normalization=normalization)
 
     @property
     def undrawable(self) -> tuple[str, ...]:
@@ -300,11 +300,11 @@ class Gallery:
         return {name: named for name, task in self.tasks.items() if (named := vocabulary_of(task))}
 
     def views(self, batch: Batch, output: StepOutput, count: int) -> list[SampleView]:
-        """The first ``count`` samples of this batch as cells: the picture, and what each task said of it."""
-        sources = _sources(batch, self.alias, count)
+        """The first ``count`` samples of this batch as cells: the image, and what each task said of it."""
+        sources = _sources(batch, self.input_name, count)
         views = []
-        for index, pixels in enumerate(_pictures(batch.inputs[self.alias], self.normalization, count)):
-            view = SampleView(picture=Image(pixels=pixels, source=sources[index]))
+        for index, pixels in enumerate(_images(batch.inputs[self.input_name], self.normalization, count)):
+            view = SampleView(image=Image(pixels=pixels, source=sources[index]))
             for name, annotator in self.annotators.items():
                 predicted, targets = output.predictions.get(name), output.targets.get(name)
                 if predicted is not None and targets is not None:
@@ -330,7 +330,7 @@ def vocabulary_of(task: Task) -> tuple[str, ...]:
 def drawn_input(inputs: Mapping[str, InputInfo]) -> tuple[str, Normalization] | None:
     """Which input a page draws and how to undo what the run did to it, or ``None`` where none can be.
 
-    Declaring the statistics is the whole test. A page shows a picture as the file held it, which means
+    Declaring the statistics is the whole test. A page shows an image as the file held it, which means
     undoing the normalisation the run applied, and an input that never said what it applied cannot be
     undone. Declaration order rather than a preference of ours, so the answer does not move between
     runs. Both halves come back together, because an input that passed the test has both.
@@ -341,31 +341,31 @@ def drawn_input(inputs: Mapping[str, InputInfo]) -> tuple[str, Normalization] | 
     return None
 
 
-def _pictures(values: object, normalization: Normalization, count: int) -> list[np.ndarray]:
+def _images(values: object, normalization: Normalization, count: int) -> list[np.ndarray]:
     """Undo the run's own normalisation and lay the channels out the way a browser reads them."""
-    pictures = _tensor(values)[:count].detach().cpu().float()
+    images = _tensor(values)[:count].detach().cpu().float()
     # The statistics come from the encoder that declared the channels, so there is one of each per
     # channel by construction — the page never has to guess at a pairing the input already settled.
     mean = torch.tensor(normalization.mean).view(1, -1, 1, 1)
     std = torch.tensor(normalization.std).view(1, -1, 1, 1)
     # Rounded rather than truncated: `.byte()` cuts toward zero, which lands a level off the source on
-    # 62 of 256 values — and checking a picture against the original is the whole job here.
-    restored = (pictures * std + mean).clamp(0.0, 1.0).mul(255).round().byte()
+    # 62 of 256 values — and checking an image against the original is the whole job here.
+    restored = (images * std + mean).clamp(0.0, 1.0).mul(255).round().byte()
     if restored.shape[1] == 1:
         restored = restored.repeat(1, 3, 1, 1)
     return list(restored.permute(0, 2, 3, 1).numpy())
 
 
-def _sources(batch: Batch, alias: str, count: int) -> list[str | None]:
+def _sources(batch: Batch, input_name: str, count: int) -> list[str | None]:
     """Where each sample came from, where the pipeline carried it — a path on the cell, not a guess."""
     cells = batch.metadata.get(CELLS)
     if not isinstance(cells, Sequence):
         return [None] * count
-    return [_source_in(cells[index], alias) if index < len(cells) else None for index in range(count)]
+    return [_source_in(cells[index], input_name) if index < len(cells) else None for index in range(count)]
 
 
-def _source_in(row: object, alias: str) -> str | None:
-    found = row.get(alias) if isinstance(row, Mapping) else None
+def _source_in(row: object, input_name: str) -> str | None:
+    found = row.get(input_name) if isinstance(row, Mapping) else None
     return found if isinstance(found, str) else None
 
 
@@ -409,12 +409,13 @@ def _mean_overlap(truth: ClassReading, predicted: ClassReading) -> float | None:
     for that case; a per-sample reading is a different question from an epoch's.
     """
     true_masks = {one.index: one.where for one in truth.presences if one.scored}
-    said_masks = {one.index: one.where for one in predicted.presences if one.scored}
-    shown = sorted(set(true_masks) | set(said_masks))
+    predicted_masks = {one.index: one.where for one in predicted.presences if one.scored}
+    shown = sorted(set(true_masks) | set(predicted_masks))
     if not shown:
         return None
-    empty = np.zeros(next(iter({**true_masks, **said_masks}.values())).shape, dtype=bool)
-    return float(np.mean([_overlap(true_masks.get(index, empty), said_masks.get(index, empty)) for index in shown]))
+    empty = np.zeros(next(iter({**true_masks, **predicted_masks}.values())).shape, dtype=bool)
+    both = [_overlap(true_masks.get(index, empty), predicted_masks.get(index, empty)) for index in shown]
+    return float(np.mean(both))
 
 
 def _overlap(left: np.ndarray, right: np.ndarray) -> float:
@@ -426,7 +427,7 @@ def _overlap(left: np.ndarray, right: np.ndarray) -> float:
     return int((left & right).sum()) / int((left | right).sum())
 
 
-def _one(values: np.ndarray) -> float:
+def _scalar(values: np.ndarray) -> float:
     """The single number a whole-sample reading holds, whether it arrived 0-d or as ``[1]``."""
     return float(values.reshape(-1)[0])
 

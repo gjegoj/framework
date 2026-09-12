@@ -14,7 +14,7 @@ if TYPE_CHECKING:
     from lightning.pytorch.utilities.types import LRSchedulerConfigType
 
 from src.config import ComponentConfig, SchedulerConfig
-from src.config.instantiate import fill_signature, instantiate, resolve_factory, resolve_params
+from src.config.instantiate import fill_signature, instantiate, instantiate_offering, resolve_factory, resolve_params
 from src.losses import Loss
 from src.models import Model
 from src.tasks import Task
@@ -33,8 +33,14 @@ group share one graph, each a line on it.
 def build_learner(
     declared: ComponentConfig, *, model: Model, tasks: Mapping[str, Task], losses: Mapping[str, Loss]
 ) -> Learner:
-    """The algorithm a run trains by, over the parts it has already assembled."""
-    built = instantiate(declared, learner_registry, model=model, tasks=tasks, losses=losses)
+    """The algorithm a run trains by, over the parts it has already assembled.
+
+    Offered rather than imposed: `Learner` asks for a model and its tasks, and an algorithm that owns
+    its objective some other way — one whole model carrying its own loss, a distilled pair — implements
+    that contract and names no `losses`. Imposing them made every such learner take an argument it had
+    no use for, which is the extension point promising one thing and the builder demanding another.
+    """
+    built = instantiate_offering(declared, learner_registry, model=model, tasks=tasks, losses=losses)
     if not isinstance(built, Learner):
         raise TypeError(
             f"{declared.spelled!r} built {type(built).__name__}, which is not a Learner: it cannot turn a "

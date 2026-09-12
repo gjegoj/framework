@@ -98,11 +98,14 @@ over numpy, and nothing of ours at all.
 """
 
 TRAINING_MODULE = "training/module.py"
-TRAINING_MODULE_MAY_IMPORT = ("src.core", "src.training", "src.metrics", "src.tracking")
+TRAINING_MODULE_FACADES = ("src.core", "src.metrics", "src.tracking")
 """The loop asks metrics and tracking for their contracts, through the one door each package publishes.
 
-Facades only: what a metric collection *is* and where a value goes are contracts, while which backend
-draws it and how one is built are not this module's business."""
+Facades only, and matched exactly: what a metric collection *is* and where a value goes are contracts,
+while which backend draws it and how one is built are not this module's business. Read as prefixes
+these three would have admitted `src.metrics.classification` and `src.tracking.clearml` — the two
+imports the rule exists to keep out — so the promise was the docstring's alone. Its own package is
+exempt: reaching into a neighbour is what this forbids, and `src.training.base` is not one."""
 
 
 class Import(NamedTuple):
@@ -301,6 +304,24 @@ def test_only_build_modules_read_config(imports: list[Import]) -> None:
     assert readers == []
 
 
+def test_the_edges_a_package_declares_never_lead_back_to_it() -> None:
+    """Every other rule here reads one package's imports; a cycle is a property of two and passes them all.
+
+    ``a`` may declare ``b`` and ``b`` may declare ``a``, each a legal row on its own, and together they
+    make one unit out of two packages: neither can be read, tested, or lifted out without the other.
+    Asked of the declarations rather than the imports, because a second edge is written here first —
+    the import that needs it does not compile until it is.
+    """
+    reaches = {package: set(edges) for package, edges in CAPABILITY_EDGES.items()}
+    for through, beyond in list(reaches.items()):
+        for edges in reaches.values():
+            if through in edges:
+                edges.update(beyond)
+    looping = sorted(package for package, edges in reaches.items() if package in edges)
+
+    assert looping == [], "these packages can reach themselves"
+
+
 def test_the_training_module_reads_capabilities_through_their_contracts_only(imports: list[Import]) -> None:
     if not any(one.file == TRAINING_MODULE for one in imports):
         pytest.skip(f"{TRAINING_MODULE} is not written yet; this rule has no subject to hold")
@@ -309,7 +330,8 @@ def test_the_training_module_reads_capabilities_through_their_contracts_only(imp
         for one in imports
         if one.file == TRAINING_MODULE
         and one.target is not None
-        and not one.module.startswith(TRAINING_MODULE_MAY_IMPORT)
+        and one.target != Path(TRAINING_MODULE).parts[0]
+        and one.module not in TRAINING_MODULE_FACADES
     )
 
     assert reaching_in == []

@@ -1,0 +1,50 @@
+# @package _global_
+# The classic recipe for a pretrained backbone: `uv run main.py experiment=examples/finetuning`.
+#
+# Two things happen here that a plain run does not do. The backbone is held still while the
+# fresh head learns something worth back-propagating through it — a head starting from noise
+# would otherwise push large, meaningless gradients into weights that already know edges — and
+# it is let go a third of the way in, from where the two learn together. Then the last stretch
+# of weights is averaged, which is most of what separates a good final checkpoint from the one
+# epoch that happened to end the run.
+#
+# Written as a whole list rather than added to `callbacks: default`: a Hydra group replaces a
+# list, never appends to one, so a run choosing its own set writes all of it. The first three
+# are that group's, unchanged.
+# Inherits the shared preset directly rather than the classification example: a Hydra default is
+# resolved relative to the group of the file that names it, so a chain three files long asks for
+# `examples/examples/pet`. One task declared here is cheaper than that surprise.
+defaults:
+  - examples/pet
+  - override /model: resnet18
+
+tasks:
+  label: {kind: classification, target_column: species, classes: {0: cat, 1: dog}}
+
+callbacks:
+  - {name: progress}
+  - {name: model_summary, max_depth: 3}
+  - {name: lr_monitor, logging_interval: epoch}
+  - {name: metric_summary}
+
+  # Held by name, relative to the model — the same path a checkpoint's keys carry.
+  # `train_bn` is left at its default: the normalisation statistics describe *this* data,
+  # and they are the one thing a frozen backbone should still be learning.
+  - {name: freeze, modules: [backbone], until: 0.3}
+
+  # Two samples become one picture and one blended label, which is the cheapest regularisation
+  # there is for a head with few rows to learn from. Stopped before the end on purpose: the last
+  # epochs are worth spending on the data the run will actually be judged on.
+  - name: batch_transform
+    transform: {_target_: src.transforms.MixUp, alpha: 0.4}
+    until: 0.8
+
+  # An average of the weights, standing in for them at validation and in what is saved.
+  # `after` skips the early epochs, where the head is still noise and would poison the average.
+  - {name: ema, decay: 0.999, after: 0.3}
+
+  - name: checkpoint
+    monitor: val/loss
+    mode: min
+    save_top_k: 1
+    dirpath: ${run.directory}/checkpoints

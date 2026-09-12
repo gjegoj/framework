@@ -7,6 +7,7 @@ import torch
 from torch import Tensor
 
 from src.core import Batch, ModelOutput, TargetInfo, require_tensor
+from src.data.encoders.continuous import BinnedEncoder, GaussianBinsEncoder, LinearBinsEncoder
 from src.tasks import Task
 from src.tasks.registry import task_registry
 from tests.support.tasks import info, specimen
@@ -127,6 +128,24 @@ class TestRegression:
         assert task.output_shape(binned).sizes == (3,)
         assert value.tolist() == pytest.approx([10.0, 5.0], abs=0.1)
         assert task.metric_view(batch(distribution)).tolist() == pytest.approx([10.0, 5.0])
+
+    @pytest.mark.parametrize("cls", [LinearBinsEncoder, GaussianBinsEncoder])
+    def test_a_number_the_layout_holds_reaches_a_metric_as_the_number_the_column_wrote(
+        self, cls: type[BinnedEncoder]
+    ) -> None:
+        """What the encoder wrote and what the metric compares are the same number, or the report flatters.
+
+        Not to the last digit for a Gaussian layout: measured, 7.3 over ten bins on [0, 10] reads back
+        as 7.2999, which is the discretisation the encoding *is* — the model is trained to produce that
+        distribution, so both sides of the comparison live in it. What used to differ was a value the
+        layout could not hold at all, and `validate` now refuses those instead.
+        """
+        encoder = cls(bins=10, low=0.0, high=10.0)
+        task = task_registry.get("regression")("t", encoder.info)
+        written = (7.3, 2.0)
+        encoded = torch.stack([require_tensor(encoder.encode(value), name="t") for value in written])
+
+        assert task.metric_view(batch(encoded)).tolist() == pytest.approx(list(written), abs=1e-3)
 
     def test_its_default_loss_follows_the_target_encoder_that_laid_out_the_bins(self) -> None:
         plain = task_registry.get("regression")("t", TargetInfo())

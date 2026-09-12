@@ -28,19 +28,19 @@ HALVES = (0.5, 0.5, 0.5)
 
 
 def pipeline(preprocessor: Preprocessor, size: tuple[int, int] = SIZE) -> SampleTransform:
-    """What a stage declares in `configs/transforms`: resize everything, normalize the picture, cross into tensors."""
+    """What a stage declares in `configs/transforms`: resize everything, normalize the image, cross into tensors."""
     declared = [A.Resize(*size), A.Normalize(mean=HALVES, std=HALVES), ToTensorV2()]
     return AlbumentationsTransform(declared).with_geometry(**preprocessor.geometries)
 
 
 @pytest.fixture(scope="session")
 def images(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    """Three 8x6 RGB pictures and their masks: `a`, `b`, `c` under one root."""
+    """Three 8x6 RGB images and their masks: `a`, `b`, `c` under one root."""
     root = tmp_path_factory.mktemp("images")
     for name, shade in (("a", 30), ("b", 120), ("c", 220)):
-        picture = np.full((6, 8, 3), shade, dtype=np.uint8)
-        picture[..., 0] = 255  # red channel saturated: BGR/RGB order becomes observable
-        cv2.imwrite(str(root / f"{name}.png"), cv2.cvtColor(picture, cv2.COLOR_RGB2BGR))
+        image = np.full((6, 8, 3), shade, dtype=np.uint8)
+        image[..., 0] = 255  # red channel saturated: BGR/RGB order becomes observable
+        cv2.imwrite(str(root / f"{name}.png"), cv2.cvtColor(image, cv2.COLOR_RGB2BGR))
         mask = np.zeros((6, 8), dtype=np.uint8)
         mask[2:, 3:] = 1
         cv2.imwrite(str(root / f"{name}_mask.png"), mask)
@@ -101,7 +101,7 @@ def row() -> Sample:
 
 @pytest.fixture
 def table() -> pd.DataFrame:
-    """Twelve rows over the three pictures, with a label and a number each."""
+    """Twelve rows over the three images, with a label and a number each."""
     return pd.DataFrame(
         {
             "path": [f"{name}.png" for name in "abc" * 4],

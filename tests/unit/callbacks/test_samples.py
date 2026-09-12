@@ -130,7 +130,7 @@ class TestWhatItCannotDraw:
     def test_a_pipeline_this_framework_did_not_prepare_is_named(
         self, declaration: Mapping[str, Any], caplog: pytest.LogCaptureFixture
     ) -> None:
-        """Nothing then knows how a picture was normalised, so nothing can show it as the file held it."""
+        """Nothing then knows how an image was normalised, so nothing can show it as the file held it."""
         built = prepared(declaration)
 
         with caplog.at_level("WARNING"):

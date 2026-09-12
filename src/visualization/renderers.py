@@ -1,4 +1,4 @@
-"""How one thing on a cell becomes markup: a class as a chip, a mask as a layer over the picture.
+"""How one thing on a cell becomes markup: a class as a chip, a mask as a layer over the image.
 
 Adding a kind of label is three edits and the type checker names two of them: the entity joins the
 ``Label`` union in ``entities.py``, and the two matches below stop being exhaustive until it has an
@@ -48,7 +48,7 @@ _SEPARATOR = "::"
 """What joins a key's parts. Named once, so the sidebar and the overlays cannot disagree."""
 
 type Zone = Literal["cover", "chips"]
-"""Which layer of a cell a piece of markup belongs to: stretched over the picture, or stacked below it."""
+"""Which layer of a cell a piece of markup belongs to: stretched over the image, or stacked below it."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,9 +79,9 @@ def render_label(label: Label, context: FieldContext) -> list[FieldItem]:
     """One label as the overlays it puts on a cell; ``html.py`` never asks what kind of thing it drew."""
     match label:
         case Classification():
-            return [_chip(context, label.label, _said(label), label.confidence)]
+            return [_chip(context, label.label, _chip_text(label), label.confidence)]
         case Classifications():
-            return [_chip(context, one.label, _said(one), one.confidence) for one in label.classifications]
+            return [_chip(context, one.label, _chip_text(one), one.confidence) for one in label.classifications]
         case Regression():
             return [_chip(context, VALUE, number(label.value), color=REGRESSION_COLOR)]
         case Segmentation():
@@ -145,7 +145,7 @@ def text(value: str) -> str:
 
 
 def source_pill(source: str | None) -> str:
-    """Where a picture came from: a URL opens in a new tab, a local path copies to the clipboard."""
+    """Where an image came from: a URL opens in a new tab, a local path copies to the clipboard."""
     if source is None:
         return ""
     escaped = attr(source)
@@ -157,19 +157,19 @@ def source_pill(source: str | None) -> str:
     )
 
 
-def _said(item: Classification) -> str:
+def _chip_text(item: Classification) -> str:
     return item.label if item.confidence is None else f"{item.label} {item.confidence:.2f}"
 
 
 def _chip(
-    context: FieldContext, leaf: str, said: str, confidence: float | None = None, color: str | None = None
+    context: FieldContext, leaf: str, caption: str, confidence: float | None = None, color: str | None = None
 ) -> FieldItem:
     color = color if color is not None else context.colors.get(leaf, FALLBACK_COLOR)
     key = field_key(context.task, context.side, leaf)
     overlay = (
-        f'<span class="layer chip {context.side}" data-key="{attr(key)}" data-full="{attr(said)}" '
-        f'style="{_chip_style(color, context.side, confidence)}" title="{attr(said)}">'
-        f"{text(_shortened(said, context.max_chip_chars))}</span>"
+        f'<span class="layer chip {context.side}" data-key="{attr(key)}" data-full="{attr(caption)}" '
+        f'style="{_chip_style(color, context.side, confidence)}" title="{attr(caption)}">'
+        f"{text(_shortened(caption, context.max_chip_chars))}</span>"
     )
     return FieldItem(context.task, context.side, leaf, key, overlay, "chips", color)
 

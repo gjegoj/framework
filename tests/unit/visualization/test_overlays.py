@@ -1,4 +1,4 @@
-"""A mask over a picture: enough colour to read the class, enough edge to see its shape."""
+"""A mask over an image: enough colour to read the class, enough edge to see its shape."""
 
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ class TestMaskOverlay:
         assert tuple(drawn[4, 4]) == (*RED, FILL_ALPHA)
 
     def test_the_shape_is_edged_in_its_own_colour_inside_and_in_black_outside(self) -> None:
-        """Two rims, because one is not enough: a class colour vanishes against a picture of that colour."""
+        """Two rims, because one is not enough: a class colour vanishes against an image of that colour."""
         drawn = decoded(mask_overlay_uri(block(9, 3, 3, 3), RED))
 
         assert tuple(drawn[3, 3]) == (*RED, RIM_ALPHA)
@@ -63,7 +63,7 @@ class TestMaskOverlay:
 
 def test_the_fill_is_faint_beside_the_rim_it_is_drawn_with() -> None:
     """Both numbers are read by the tests above through the constants, so only their relation is left
-    to hold: a fill as solid as the rim covers the picture it was drawn over."""
+    to hold: a fill as solid as the rim covers the image it was drawn over."""
     assert 0 < FILL_ALPHA < RIM_ALPHA // 2
 
 

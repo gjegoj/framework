@@ -31,7 +31,7 @@ class DenseOutput(Task):
 
     @classmethod
     def output_shape(cls, info: TargetInfo) -> TensorShape:
-        """One prediction per pixel; the extent is the picture's, known only when a batch arrives."""
+        """One prediction per pixel; the extent is the image's, known only when a batch arrives."""
         return TensorShape(axes=(Axis.CLASSES, Axis.HEIGHT, Axis.WIDTH), sizes=(cls.out_features(info), None, None))
 
 

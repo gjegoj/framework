@@ -1,4 +1,4 @@
-"""The classification reading whose value means a picture rather than a number."""
+"""The classification reading whose value means an image rather than a number."""
 
 from __future__ import annotations
 

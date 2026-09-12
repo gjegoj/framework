@@ -22,7 +22,7 @@ def build_transforms(
 
     A transform that moves pixels is bound here to what the encoders publish about each value; one that
     does not is taken as declared. There is no registry to reach past: a chain is written out in full,
-    under ``_target_``, because what a stage does to a picture is the stage's own statement.
+    under ``_target_``, because what a stage does to an image is the stage's own statement.
     """
     built: dict[str, SampleTransform] = {}
     for stage, component in declared.items():

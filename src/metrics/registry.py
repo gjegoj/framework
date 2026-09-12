@@ -20,7 +20,7 @@ metric_registry: Registry[Metric] = Registry("metric")
 
 Most entries are torchmetrics classes exactly as they come: a metric that computes a number needs
 nothing from us, and wrapping one only to reach it by decorator would add a class that does nothing.
-The few readings that mean a *picture* are classes of ours, registered beside their definition —
+The few readings that mean a *image* are classes of ours, registered beside their definition —
 what a value means is knowledge the library has no place for.
 
 The list is a convenience rather than a gate: anything torchmetrics offers is one ``_target_`` away

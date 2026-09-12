@@ -71,8 +71,8 @@ class SmpBackbone(Backbone):
         }
 
     def forward(self, inputs: Mapping[str, TensorTree]) -> Mapping[str, Tensor]:
-        pictures = require_tensor(required_input(inputs, self.input_name, type(self).__name__), name=self.input_name)
-        encoded = self.encoder(pictures)
+        images = require_tensor(required_input(inputs, self.input_name, type(self).__name__), name=self.input_name)
+        encoded = self.encoder(images)
         if self.carries_prefix_tokens:
             stages, prefix_tokens = encoded
             return {Stream.ENCODER: stages[-1], Stream.DECODER: self.decoder(stages, prefix_tokens)}
@@ -109,9 +109,9 @@ def _apply_the_encoders_final_norm(encoder: nn.Module, encoder_name: str) -> Non
         )
         return
 
-    def read_with_norm(pictures: Tensor) -> tuple[list[Tensor], list[Tensor]]:
+    def read_with_norm(images: Tensor) -> tuple[list[Tensor], list[Tensor]]:
         stages = inner.forward_intermediates(
-            pictures, indices=indices, intermediates_only=True, return_prefix_tokens=True, norm=True
+            images, indices=indices, intermediates_only=True, return_prefix_tokens=True, norm=True
         )
         return [stage for stage, _ in stages], [tokens for _, tokens in stages]
 
@@ -119,7 +119,7 @@ def _apply_the_encoders_final_norm(encoder: nn.Module, encoder_name: str) -> Non
 
 
 def _map(width: int) -> TensorShape:
-    """A feature map: its width is known at build, its extent only once a picture arrives."""
+    """A feature map: its width is known at build, its extent only once an image arrives."""
     return TensorShape(axes=(Axis.CHANNELS, Axis.HEIGHT, Axis.WIDTH), sizes=(width, None, None))
 
 

@@ -33,8 +33,8 @@ class TrainingModule(L.LightningModule):
 
     Metrics arrive as one collection per task and are kept per stage, each with state of its own, so a
     validation epoch never reads rows a training epoch accumulated. Values are read out at the end of
-    the epoch they were produced in and routed by what they are: numbers to the log, pictures to the
-    trackers that draw pictures.
+    the epoch they were produced in and routed by what they are: numbers to the log, images to the
+    trackers that draw images.
 
     The learner sits under ``learner`` and its network under ``learner.model``, which is what a
     checkpoint's keys and a callback's dot-path are written against.
@@ -91,7 +91,7 @@ class TrainingModule(L.LightningModule):
     def on_after_batch_transfer(self, batch: Batch, dataloader_idx: int) -> Batch:
         """Training reads what was installed; every other stage reads the data as it is.
 
-        A report is about the data a run will be judged on, and a mixed picture is not that.
+        A report is about the data a run will be judged on, and a mixed image is not that.
         """
         return self._transform(batch) if self.training and self._transform is not None else batch
 
@@ -199,7 +199,7 @@ class TrainingModule(L.LightningModule):
         """Read this stage's metrics out, send each value where its shape belongs, and start over.
 
         A sanity check is not an epoch: Lightning suppresses ``self.log`` during one, but nothing
-        suppresses handing a picture straight to a tracker, and an untrained network would be drawn
+        suppresses handing an image straight to a tracker, and an untrained network would be drawn
         at the same iteration as the first real epoch. Its readings are dropped rather than reported.
         """
         for name, collection in self._metrics[stage].items():

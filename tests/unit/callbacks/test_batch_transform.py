@@ -93,3 +93,16 @@ def test_a_task_the_transform_cannot_serve_is_refused_before_the_run_starts(
 def test_something_that_is_not_a_batch_transform_is_refused_where_it_was_declared() -> None:
     with pytest.raises(TypeError, match="Counter"):
         ApplyBatchTransform(transform=__import__("collections").Counter())
+
+
+def test_a_second_one_is_refused_rather_than_left_to_overwrite_the_first(declaration: Mapping[str, Any]) -> None:
+    """The module keeps one rewriting seam, so two of these do not compose — they race.
+
+    Last to install wins, and the first to reach its `until` clears whatever is installed, the other
+    one's included. Which of the two ran, and until when, would then follow from the order Lightning
+    happens to call them in. Refused at setup, before a batch is read.
+    """
+    two = [*applying(Records()), *applying(Records(), until=0.5)]
+
+    with pytest.raises(ValueError, match="one"):
+        fitted(declaration, callbacks=two)

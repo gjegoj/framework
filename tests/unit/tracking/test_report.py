@@ -1,4 +1,4 @@
-"""Where a computed value goes: a number to the log, a picture to whoever can draw one.
+"""Where a computed value goes: a number to the log, an image to whoever can draw one.
 
 The routing is the whole of this module, so these are tests about geometry rather than about metrics —
 what a scalar, a per-class vector and a matrix each become, and what is said about a value that is none
@@ -82,14 +82,14 @@ class TestNumbers:
 
 
 class TestPictures:
-    def test_a_picture_reaches_every_tracker_that_can_draw_one(self, written: Written, matrix: Matrix) -> None:
+    def test_a_image_reaches_every_tracker_that_can_draw_one(self, written: Written, matrix: Matrix) -> None:
         charts = (Chart(), Chart())
 
         send(matrix, written=written, trackers=charts)
 
         assert [[(title, step) for title, _, step in chart.drawn] for chart in charts] == [[("val/species/f1", 3)]] * 2
         assert all(chart.drawn[0][1].value is matrix.value for chart in charts), "the reading itself is untouched"
-        assert written == {}, "a picture is not a number, and the log would refuse it"
+        assert written == {}, "an image is not a number, and the log would refuse it"
 
     def test_a_tracker_that_draws_nothing_is_passed_over_rather_than_asked(
         self, written: Written, matrix: Matrix
@@ -101,14 +101,12 @@ class TestPictures:
 
         assert len(chart.drawn) == 1
 
-    def test_a_picture_nothing_in_the_run_can_draw_is_said_out_loud_once(
-        self, written: Written, matrix: Matrix
-    ) -> None:
+    def test_a_image_nothing_in_the_run_can_draw_is_said_out_loud_once(self, written: Written, matrix: Matrix) -> None:
         """Named without its stage: the answer is the same in train, val and test, so it is said once."""
-        with pytest.warns(UserWarning, match=r"^species/f1 is a picture"):
+        with pytest.warns(UserWarning, match=r"^species/f1 is an image"):
             send(matrix, written=written, trackers=(Plain(),))
 
-    def test_a_picture_is_named_by_the_vocabulary_the_task_declared(self, written: Written, matrix: Matrix) -> None:
+    def test_a_image_is_named_by_the_vocabulary_the_task_declared(self, written: Written, matrix: Matrix) -> None:
         """The metric counts; only the task knows what the classes are called, and the axes read from it."""
         chart = Chart()
 
@@ -116,7 +114,7 @@ class TestPictures:
 
         assert chart.drawn[0][1].labels == ("cat", "dog")
 
-    def test_a_picture_whose_task_named_nothing_is_drawn_as_it_came(self, written: Written, matrix: Matrix) -> None:
+    def test_a_image_whose_task_named_nothing_is_drawn_as_it_came(self, written: Written, matrix: Matrix) -> None:
         chart = Chart()
 
         send(matrix, written=written, trackers=(chart,), classes=None)

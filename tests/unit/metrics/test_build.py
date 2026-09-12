@@ -6,6 +6,7 @@ from collections.abc import Mapping
 
 import pytest
 import torch
+from torchmetrics import Metric
 
 from src.config import ComponentConfig
 from src.core import Semantics
@@ -28,10 +29,38 @@ class TestFacts:
         with pytest.raises(ValueError, match="num_classes"):
             build_metrics({"f1": {"name": "f1", "num_classes": CLASSES}}, VOCABULARY)
 
+    def test_a_fact_torchmetrics_has_no_word_for_still_reaches_a_metric_that_names_it(self) -> None:
+        """One table of facts, two builders: what a loss is offered, a metric is offered too.
+
+        Translating into the library's dialect used to *replace* the run's facts with four keys of
+        torchmetrics', so a metric of the framework's own — or a reader's, reached by `_target_` —
+        could name nothing outside them. The bin centres a binned target settles were the first
+        casualty: no metric could read the numbers its own task is about.
+        """
+        declared = {"spread": {"_target_": "tests.unit.metrics.test_build.Spread"}}
+
+        built = build_metrics(declared, {**VOCABULARY, "values": (0.0, 10.0, 20.0)})
+
+        assert built["spread"].values == (0.0, 10.0, 20.0)
+
     def test_a_metric_the_task_cannot_size_is_named_with_what_it_was_offered(self) -> None:
         """Overlap between predicted and true pixels means nothing for a number; the refusal says so by name."""
         with pytest.raises(ValueError, match="iou"):
             build_metrics({"iou": {"name": "iou"}}, {})
+
+
+class Spread(Metric):
+    """A metric of the framework's own, about the numbers a binned target stands for."""
+
+    def __init__(self, values: tuple[float, ...]) -> None:
+        super().__init__()
+        self.values = values
+
+    def update(self, preds: torch.Tensor, target: torch.Tensor) -> None:
+        return None
+
+    def compute(self) -> torch.Tensor:
+        return torch.tensor(max(self.values) - min(self.values))
 
 
 class TestDeclaration:

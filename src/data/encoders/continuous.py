@@ -65,6 +65,7 @@ class BinnedEncoder(NumericEncoder):
 
     def fit(self, values: Iterable[object]) -> Self:
         if self._declared:
+            self.validate(values)
             return self
         numbers = torch.tensor([float(value) for value in values], dtype=torch.float64)  # type: ignore[arg-type]
         if numbers.numel() == 0:
@@ -80,6 +81,29 @@ class BinnedEncoder(NumericEncoder):
         )
         self._lay_out(low, high)
         return self
+
+    def validate(self, values: Iterable[object]) -> None:
+        """Refuse a number this layout cannot stand for, rather than pulling it to the nearest edge.
+
+        A binned target is learned and read back as a distribution over the centres, so the outermost
+        centre is the largest number the column can either mean or predict. A value past it is encoded
+        as the edge, and the metric then compares two edges: measured over ``[0, 10]`` in ten bins, the
+        target 100 was scored against a prediction of 10 as a perfect answer, hiding all 90 of the
+        error — and the worse the model, the more of it the clamp hid.
+
+        Which is why this refuses instead of warning: the layout, not the data, is what was declared
+        wrongly, and `low` and `high` are the two words that fix it.
+        """
+        centers = self._require_centers()
+        low, high = float(centers[0]), float(centers[-1])
+        outside = sorted({float(value) for value in values if not low <= float(value) <= high})  # type: ignore[arg-type]
+        if outside:
+            named = ", ".join(f"{value:g}" for value in outside[:5])
+            raise ValueError(
+                f"{len(outside)} values are outside the [{low:g}, {high:g}] this layout stands for: {named}"
+                f"{', ...' if len(outside) > 5 else ''}. Declare low and high wide enough to hold them, "
+                "or use the scalar encoder, which needs no layout."
+            )
 
     def _lay_out(self, low: float, high: float) -> None:
         padding = self._padding(low, high)
@@ -150,6 +174,29 @@ class GaussianBinsEncoder(BinnedEncoder):
         if self._declared_sigma is not None:
             return self.SIGMAS_OF_ROOM * self._declared_sigma
         return self.SIGMAS_OF_ROOM * (high - low) / (self.bins - 2 * self.SIGMAS_OF_ROOM)
+
+    def validate(self, values: Iterable[object]) -> None:
+        """Refuse a number this layout cannot stand for, rather than pulling it to the nearest edge.
+
+        A binned target is learned and read back as a distribution over the centres, so the outermost
+        centre is the largest number the column can either mean or predict. A value past it is encoded
+        as the edge, and the metric then compares two edges: measured over ``[0, 10]`` in ten bins, the
+        target 100 was scored against a prediction of 10 as a perfect answer, hiding all 90 of the
+        error — and the worse the model, the more of it the clamp hid.
+
+        Which is why this refuses instead of warning: the layout, not the data, is what was declared
+        wrongly, and `low` and `high` are the two words that fix it.
+        """
+        centers = self._require_centers()
+        low, high = float(centers[0]), float(centers[-1])
+        outside = sorted({float(value) for value in values if not low <= float(value) <= high})  # type: ignore[arg-type]
+        if outside:
+            named = ", ".join(f"{value:g}" for value in outside[:5])
+            raise ValueError(
+                f"{len(outside)} values are outside the [{low:g}, {high:g}] this layout stands for: {named}"
+                f"{', ...' if len(outside) > 5 else ''}. Declare low and high wide enough to hold them, "
+                "or use the scalar encoder, which needs no layout."
+            )
 
     def _lay_out(self, low: float, high: float) -> None:
         super()._lay_out(low, high)

@@ -39,13 +39,13 @@ def image_info(normalization: Normalization = COLOUR) -> InputInfo:
 
 
 class TestDrawnInput:
-    def test_the_picture_a_page_draws_is_the_one_that_says_how_to_undo_its_statistics(self) -> None:
+    def test_the_image_a_page_draws_is_the_one_that_says_how_to_undo_its_statistics(self) -> None:
         assert drawn_input({"tabular": InputInfo(shape=None), PICTURE: image_info()}) == (PICTURE, COLOUR)
 
     def test_a_run_with_nothing_to_draw_says_so_rather_than_guessing(self) -> None:
         assert drawn_input({"tabular": InputInfo(shape=None)}) is None
 
-    def test_the_first_declared_picture_wins_so_the_choice_does_not_move_between_runs(self) -> None:
+    def test_the_first_declared_image_wins_so_the_choice_does_not_move_between_runs(self) -> None:
         found = drawn_input({"a": image_info(), "b": image_info()})
         assert found is not None
         assert found[0] == "a"
@@ -180,7 +180,7 @@ class TestAnnotators:
 
         assert view.verdicts["t"].scores == ()
 
-    def test_the_background_of_a_binary_mask_is_not_painted_over_the_picture(self) -> None:
+    def test_the_background_of_a_binary_mask_is_not_painted_over_the_image(self) -> None:
         """It is the complement of the shape, so drawing it covers everything the page is about."""
         task, _, _ = specimen("binary_segmentation")
         truth = torch.tensor([[1, 1, 0, 0]]).float()
@@ -247,8 +247,8 @@ class TestVocabulary:
 
 
 class TestGallery:
-    def test_the_picture_comes_back_in_the_colours_the_run_took_it_from(self) -> None:
-        """Every byte of it, not merely a picture that looks about right.
+    def test_the_image_comes_back_in_the_colours_the_run_took_it_from(self) -> None:
+        """Every byte of it, not merely an image that looks about right.
 
         Exactly, because the nearest byte is a choice and the obvious alternative is wrong: cutting
         toward zero rather than rounding lands a level low on most values, and comparing a page
@@ -258,25 +258,25 @@ class TestGallery:
 
         views = gallery().views(batch_of(normalized(pixels, COLOUR)), step(), count=COUNT)
 
-        assert np.array_equal(views[0].picture.pixels, pixels[0])
+        assert np.array_equal(views[0].image.pixels, pixels[0])
 
     def test_one_grey_plane_is_shown_as_grey_rather_than_refused(self) -> None:
         grey = np.random.default_rng(1).integers(0, 256, size=(COUNT, 4, 5, 1), dtype=np.uint8)
 
         drawn = gallery(GREY).views(batch_of(normalized(grey, GREY)), step(), count=1)[0]
 
-        assert drawn.picture.pixels.shape == (4, 5, 3)
-        assert np.array_equal(drawn.picture.pixels[..., 0], drawn.picture.pixels[..., 2])
+        assert drawn.image.pixels.shape == (4, 5, 3)
+        assert np.array_equal(drawn.image.pixels[..., 0], drawn.image.pixels[..., 2])
 
     def test_a_cell_names_the_file_it_came_from(self) -> None:
         views = gallery().views(batch_of(torch.zeros(COUNT, 3, 4, 5)), step(), count=1)
 
-        assert views[0].picture.source == "/data/0.png"
+        assert views[0].image.source == "/data/0.png"
 
     def test_a_pipeline_that_carried_no_paths_still_draws(self) -> None:
         plain = Batch(inputs={PICTURE: torch.zeros(COUNT, 3, 4, 5)}, count=COUNT)
 
-        assert gallery().views(plain, step(), count=1)[0].picture.source is None
+        assert gallery().views(plain, step(), count=1)[0].image.source is None
 
     def test_it_draws_no_more_than_it_was_asked_for(self) -> None:
         assert len(gallery().views(batch_of(torch.zeros(COUNT, 3, 4, 5)), step(), count=2)) == 2
@@ -285,7 +285,7 @@ class TestGallery:
         views = gallery().views(batch_of(torch.zeros(COUNT, 3, 4, 5)), StepOutput(loss=None), count=1)
 
         assert views[0].fields == {}
-        assert views[0].picture is not None
+        assert views[0].image is not None
 
     def test_the_whole_vocabulary_travels_with_the_page_so_colours_hold_across_it(self) -> None:
         assert gallery().classes == {"t": tuple(CLASSES[index] for index in sorted(CLASSES))}
@@ -312,7 +312,7 @@ def predictions(task: Any, output: Any) -> torch.Tensor:
 
 
 def blank() -> SampleView:
-    return SampleView(picture=Image(pixels=np.zeros((2, 2, 3), dtype=np.uint8)))
+    return SampleView(image=Image(pixels=np.zeros((2, 2, 3), dtype=np.uint8)))
 
 
 def gallery(normalization: Normalization = COLOUR) -> Gallery:

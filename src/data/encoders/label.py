@@ -18,6 +18,26 @@ SEPARATOR = ","
 """How a cell lists several labels; the splitter reads a column the same way when it stratifies by one."""
 
 
+def _refuse_a_name_spelling_another_index(classes: Mapping[int, str]) -> None:
+    """A column may write either spelling, so no word may point at a class other than its own.
+
+    Here rather than with the rest of the vocabulary's rules, because this one follows from *this*
+    encoder taking both: a vocabulary read only for display — bin centres, where class 9 is called
+    ``'10'`` — has no such ambiguity to have.
+
+    Naming a class after its own index stays legal: a task over quarter turns declares
+    ``{0: "0", 1: "1", 2: "2", 3: "3"}``, and there the two readings agree.
+    """
+    misread = sorted(
+        f"{index}: {name!r}" for index, name in classes.items() if name.strip().isdecimal() and int(name) != index
+    )
+    if misread:
+        raise ValueError(
+            f"A class name may not spell another class's index, and these do: {', '.join(misread)}. "
+            "A column may write either, so the label would be read as the class it is not."
+        )
+
+
 class VocabularyEncoder(TargetEncoder):
     """Shared by encoders built with a declared ``classes`` mapping."""
 
@@ -25,8 +45,14 @@ class VocabularyEncoder(TargetEncoder):
 
     def __init__(self, *, classes: Mapping[int, str]) -> None:
         validate_classes(classes)
+        _refuse_a_name_spelling_another_index(classes)
         self.classes = dict(classes)
-        self._positions = {name: index for index, name in classes.items()} | {str(index): index for index in classes}
+        # Stripped, and the index spelling beside the word: a cell arrives stripped too, and a
+        # vocabulary that names one class two ways is refused where it is validated, so neither
+        # spelling can reach a class the other one named.
+        self._positions = {name.strip(): index for index, name in classes.items()} | {
+            str(index): index for index in classes
+        }
 
     @property
     def info(self) -> TargetInfo:

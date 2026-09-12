@@ -7,7 +7,7 @@ from typing import cast
 
 from torch import Tensor, nn
 
-from src.core import ModelOutput, TensorTree
+from src.core import ModelOutput, TensorTree, as_children
 from src.models.base import Backbone, HeadConnection, Model
 from src.models.registry import model_registry
 
@@ -23,7 +23,7 @@ class CompositeModel(Model):
     def __init__(self, backbone: Backbone, heads: Mapping[str, HeadConnection]) -> None:
         super().__init__()
         self.backbone = backbone
-        self.heads = nn.ModuleDict({name: connection.head for name, connection in heads.items()})
+        self.heads = as_children({name: connection.head for name, connection in heads.items()})
         self._streams = {name: connection.stream for name, connection in heads.items()}
 
     def parameters_of(self, task: str) -> Iterable[nn.Parameter]:

@@ -79,7 +79,7 @@ def experiment(declared: Mapping[str, Any]) -> Experiment:
     return build(load_config(declared))
 
 
-def test_a_picture_on_disk_reaches_a_loss_and_a_gradient_comes_back(experiment: Experiment) -> None:
+def test_a_image_on_disk_reaches_a_loss_and_a_gradient_comes_back(experiment: Experiment) -> None:
     learner = experiment.module.learner
     batch = next(iter(experiment.data.train_dataloader()))
 

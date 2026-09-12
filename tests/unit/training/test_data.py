@@ -6,14 +6,14 @@ makes the batch, and which options are the stage's own rather than the run's.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from types import SimpleNamespace
 from typing import cast
 
 import lightning as L
 import pytest
 import torch
-from torch.utils.data import DataLoader, Dataset, RandomSampler, SequentialSampler
+from torch.utils.data import DataLoader, Dataset, IterableDataset, RandomSampler, SequentialSampler
 from torch.utils.data.distributed import DistributedSampler
 
 from src.core import Batch, DatasetInfo, Sample
@@ -165,3 +165,27 @@ class TestAcrossDevices:
 
     def test_one_device_reads_the_split_as_it_is(self) -> None:
         assert isinstance(self.loader("val", world_size=1).sampler, SequentialSampler)
+
+
+class Streamed(Rows, IterableDataset[Sample]):
+    """A split that yields its samples rather than answering by index."""
+
+    def __iter__(self) -> Iterator[Sample]:
+        return iter(self[index] for index in range(self.size))
+
+
+class Streaming(Prepared):
+    """A pipeline whose splits can only be read from front to back."""
+
+    def dataset(self, split: str) -> Dataset[Sample]:
+        return Streamed(split, SPLITS[split])
+
+
+def test_a_split_that_can_only_be_streamed_is_refused_by_name() -> None:
+    """Training shuffles and evaluation takes each rank's share, and both address rows by index.
+
+    Refused here rather than left to torch, whose own message — "DataLoader with IterableDataset:
+    expected unspecified shuffle option" — names neither the split nor the pipeline that served it.
+    """
+    with pytest.raises(TypeError, match="train"):
+        TrainingData(Streaming(), batch_size=2).train_dataloader()

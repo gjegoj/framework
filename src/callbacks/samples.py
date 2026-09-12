@@ -41,7 +41,7 @@ class SampleGrid(L.Callback):
             augmentation and mixing included.
         title: What the page is called. The stage is appended, so a run's pages sort together and a
             tracker files each stage under its own name.
-        max_side: Bound every inlined picture and mask to this many pixels on its longest side;
+        max_side: Bound every inlined image and mask to this many pixels on its longest side;
             ``None`` inlines them whole, which a dense task turns into a very large page.
     """
 
@@ -125,7 +125,7 @@ class SampleGrid(L.Callback):
             self._say_once(
                 "data",
                 "The samples grid draws nothing: %s is not the pipeline this framework prepares, so "
-                "nothing here knows how a picture was normalised.",
+                "nothing here knows how an image was normalised.",
                 type(data).__name__,
             )
             return None
@@ -134,7 +134,7 @@ class SampleGrid(L.Callback):
             self._say_once(
                 "input",
                 "The samples grid draws nothing: no input of this run declares the statistics it was "
-                "normalised with, so no picture of it can be shown as the file held it.",
+                "normalised with, so no image of it can be shown as the file held it.",
             )
             return None
         return Gallery.of(pl_module.learner.tasks, *drawn)
@@ -152,7 +152,7 @@ class SampleGrid(L.Callback):
         Nothing that happens while drawing is allowed out of here. The loop calls this inside its own
         step, so a page that cannot be built — a mask at a resolution its label does not share, a log
         directory that is full, a tracker that cannot be reached — would otherwise end the fit at
-        whichever epoch it first went wrong. A run losing its pictures is a smaller loss than a run.
+        whichever epoch it first went wrong. A run losing its images is a smaller loss than a run.
         """
         trainer = self._trainer
         if self._gallery is None or trainer is None or not self._watched(trainer, preview):

@@ -17,9 +17,18 @@
 # `applied_label` is written as the table writes it, since encoding runs after the transforms.
 # Both change the picture's size, so they go before the `Resize` that restores it — as below.
 # Declare them on evaluation too, or its answers stay the column's and there is nothing to measure.
+#
+# A stage that draws needs `seed`. Measured on albumentationsx 2.3.7: a pipeline keeps a generator of
+# its own, which seeding `random`, numpy and torch never reaches — so on the shipped loader
+# (`num_workers: 0`) a run repeated at one seed trained on different pictures every time, val loss
+# 0.6146 against 0.6207 from one declaration. With workers the library derives its working seed from
+# this one and torch's per-worker seed, so each worker draws a stream of its own; there the line is
+# what makes a run repeat by its own seed rather than by Lightning's worker seeding alone.
+# The evaluation chain below draws nothing and needs none.
 transforms:
   train:
     _target_: src.transforms.AlbumentationsTransform
+    seed: ${seed}
     transforms:
       - {_target_: albumentations.RandomResizedCrop, size: "${preprocessing.inputs.image.image_size}", scale: [0.7, 1.0]}
       - {_target_: albumentations.HorizontalFlip, p: 0.5}

@@ -40,7 +40,7 @@ def preprocessing_config(**declared: Any) -> PreprocessingConfig:
 
 
 def smallest_run(table: Path, directory: Path) -> dict[str, Any]:
-    """One classification task over eight pictures: what a shipped config says, spelled out.
+    """One classification task over eight images: what a shipped config says, spelled out.
 
     Complete rather than minimal — this is what `build` is handed — so a test that needs a real run to
     watch (a callback, a loop) writes only the line it is about and gets the rest of a run around it.

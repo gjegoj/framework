@@ -82,7 +82,7 @@ class TestCharts:
         )
 
     def test_a_spread_is_left_to_the_table_it_already_fits_in(self) -> None:
-        """Five numbers are five numbers; a picture of them says less than the row does."""
+        """Five numbers are five numbers; an image of them says less than the row does."""
         assert bars_for(SPREAD) is None
 
 

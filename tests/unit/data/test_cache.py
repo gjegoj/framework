@@ -43,16 +43,16 @@ def test_every_registered_cache_serves_the_contract() -> None:
 
 class TestArena:
     def test_round_trips_an_array_and_hands_back_a_copy(self, cache: RamCache) -> None:
-        picture = np.arange(24, dtype=np.uint8).reshape(2, 3, 4)
+        image = np.arange(24, dtype=np.uint8).reshape(2, 3, 4)
         with cache.filling():
-            assert cache.put(KEY, picture)
+            assert cache.put(KEY, image)
 
         hit = stored(cache, KEY)
-        assert np.array_equal(hit, picture) and hit.dtype == picture.dtype
+        assert np.array_equal(hit, image) and hit.dtype == image.dtype
         hit[0, 0, 0] = 99
         assert stored(cache, KEY)[0, 0, 0] == 0
 
-    def test_keys_are_namespaced_so_one_path_may_hold_a_picture_and_a_mask(self, cache: RamCache) -> None:
+    def test_keys_are_namespaced_so_one_path_may_hold_a_image_and_a_mask(self, cache: RamCache) -> None:
         with cache.filling():
             cache.put(("inputs", "image", "a.png"), np.ones((2, 2, 3), np.uint8))
             cache.put(("targets", "mask", "a.png"), np.zeros((2, 2), np.int64))
@@ -196,7 +196,7 @@ class TestWarm:
         for row in rows:
             preprocessor.preprocess(row, prepare)
 
-        assert cache.usage.files == 4  # two pictures + two masks
+        assert cache.usage.files == 4  # two images + two masks
         assert counting.loads == 0
 
     def test_cells_that_are_not_files_never_reach_the_cache_even_as_lists(

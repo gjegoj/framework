@@ -60,7 +60,7 @@ class TestSmp:
         for stream, feature in features.items():
             assert shapes[stream].axes == (Axis.CHANNELS, Axis.HEIGHT, Axis.WIDTH)
             assert feature.shape[1] == shapes[stream].size(Axis.CHANNELS) and feature.ndim == 4
-        assert features[Stream.DECODER].shape[-2:] == (64, 64)  # the decoder returns the picture's own size
+        assert features[Stream.DECODER].shape[-2:] == (64, 64)  # the decoder returns the image's own size
 
     @pytest.mark.parametrize(
         ("stream", "spatial"),
