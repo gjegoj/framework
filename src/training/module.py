@@ -16,7 +16,7 @@ from torch import Tensor, nn
 
 from src.core import Batch, LossOutput, Stage, StepOutput, TensorTree
 from src.tracking import MetricKey, report, series
-from src.training.base import FitProfile, Learner, OptimizerFactory, SchedulerFactory
+from src.training.base import FitProfile, Learner, OptimizerFactory, SchedulerFactory, StepPreview, StepWatcher
 
 if TYPE_CHECKING:
     from lightning.pytorch.utilities.types import OptimizerLRSchedulerConfig
@@ -65,6 +65,7 @@ class TrainingModule(L.LightningModule):
         # is reset at the end of the epoch that produced it.
         self._measured = nn.ModuleList(collection for stage in self._metrics.values() for collection in stage.values())
         self._transform: Callable[[Batch], Batch] | None = None
+        self._watchers: list[StepWatcher] = []
 
     def transform_batches(self, transform: Callable[[Batch], Batch] | None) -> None:
         """Install what rewrites a training batch before a step reads one, or take it back out.
@@ -76,6 +77,16 @@ class TrainingModule(L.LightningModule):
         """
         self._transform = transform
 
+    def preview_steps(self, watcher: StepWatcher) -> None:
+        """Ask to be shown what every step produced, for as long as this module runs.
+
+        Idempotent, because Lightning calls a callback's ``setup`` once per stage and a display that
+        asked in it must not then draw a page twice. Nothing is ever taken back out: a watcher costs a
+        call per step and decides for itself which ones it wants.
+        """
+        if watcher not in self._watchers:
+            self._watchers.append(watcher)
+
     @override
     def on_after_batch_transfer(self, batch: Batch, dataloader_idx: int) -> Batch:
         """Training reads what was installed; every other stage reads the data as it is.
@@ -86,15 +97,15 @@ class TrainingModule(L.LightningModule):
 
     @override
     def training_step(self, batch: Batch, batch_index: int) -> Tensor | None:
-        return self._step(batch, Stage.TRAIN)
+        return self._step(batch, Stage.TRAIN, batch_index)
 
     @override
     def validation_step(self, batch: Batch, batch_index: int) -> Tensor | None:
-        return self._step(batch, Stage.VAL)
+        return self._step(batch, Stage.VAL, batch_index)
 
     @override
     def test_step(self, batch: Batch, batch_index: int) -> Tensor | None:
-        return self._step(batch, Stage.TEST)
+        return self._step(batch, Stage.TEST, batch_index)
 
     @override
     def on_train_epoch_end(self) -> None:
@@ -134,13 +145,15 @@ class TrainingModule(L.LightningModule):
         }
         return optimized
 
-    def _step(self, batch: Batch, stage: Stage) -> Tensor | None:
+    def _step(self, batch: Batch, stage: Stage, batch_index: int) -> Tensor | None:
         output = self.learner.step(batch)
         if output.loss is None and stage is Stage.TRAIN:
             raise ValueError(
                 f"{type(self.learner).__name__} produced no loss on a training step, so there is nothing to "
                 "descend. A learner may leave the loss out in evaluation alone."
             )
+        for watcher in self._watchers:
+            watcher(StepPreview(stage=stage, batch_index=batch_index, batch=batch, output=output))
         for name, collection in self._metrics[stage].items():
             predicted, wanted = self._scored(output, name, stage)
             collection.update(predicted, wanted)

@@ -9,7 +9,18 @@ from typing import ClassVar, Self
 import pandas as pd
 from torch.utils.data import Dataset, IterableDataset
 
-from src.core import Batch, DatasetInfo, Geometry, InputInfo, Role, Sample, TargetInfo, TensorTree
+from src.core import (
+    Batch,
+    DatasetInfo,
+    DatasetStatistics,
+    Distribution,
+    Geometry,
+    InputInfo,
+    Role,
+    Sample,
+    TargetInfo,
+    TensorTree,
+)
 from src.transforms import SampleTransform
 
 
@@ -66,6 +77,15 @@ class TargetEncoder(Encoder):
         """Check a split against what was already learned, without learning from it."""
         return None
 
+    def distribution(self, values: Iterable[object]) -> Distribution | None:
+        """What one split's raw cells of this column look like, for the report a run can print.
+
+        Here rather than worked out from ``info``, because what a cell *holds* is what decides the
+        shape — a binned target declares a vocabulary and still holds numbers, and a mask holds a path
+        to pixels. Nothing by default: a column nobody wrote this for simply has no row on the table.
+        """
+        return None
+
 
 type Collator = Callable[[Sequence[Sample]], Batch]
 
@@ -109,6 +129,15 @@ class Preprocessor(ABC):
         """Check raw cells of another split against the fitted encoders, without refitting."""
         return None
 
+    def describe(self, targets: Mapping[str, Iterable[object]]) -> Mapping[str, Distribution]:
+        """What one split's raw target cells hold, per target that can say — the third reading of them.
+
+        The same shape as ``fit`` and ``validate`` take, and for the same reason: the encoders are
+        here, and raw cells keyed by target name is what a split hands over. A target whose encoder
+        describes nothing is simply absent from the answer.
+        """
+        return {}
+
     def warm(self, samples: Iterable[Sample], label: str) -> None:
         """Load raw samples once so a cache can hold them; a preprocessor without a cache does nothing."""
         return None
@@ -142,3 +171,11 @@ class DataModule(ABC):
     @abstractmethod
     def dataset(self, split: str) -> Dataset[Sample] | IterableDataset[Sample]:
         """Prepared samples of one split: the preprocessor with that split's transform."""
+
+    def statistics(self) -> DatasetStatistics:
+        """How much of each split there is and what its targets hold, for the report before epoch one.
+
+        Concrete with an empty default: a pipeline that cannot describe its data answers with nothing,
+        and whatever asked says so rather than failing.
+        """
+        return DatasetStatistics()

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping, Sequence
+from io import StringIO
 from typing import TYPE_CHECKING, Any, cast
 
 from lightning.pytorch.loggers import Logger
@@ -26,12 +27,15 @@ if TYPE_CHECKING:
     from clearml import Task
     from clearml.logger import Logger as Backend
 
-    from src.core import Matrix
+    from src.core import Bars, Matrix
 
 log = logging.getLogger(__name__)
 
 MATRIX_DECIMALS = 3
 """Matrix cells are read rather than computed with: 0.333 reads, 0.3333333 does not."""
+
+PAGE = "grid"
+"""What a page is filed under inside its title — this service files every medium under a series too."""
 
 DEFAULT_LINE = "value"
 """The line a value that names none of its own is drawn as — `epoch` is a graph with one series."""
@@ -124,6 +128,38 @@ class ClearMLTracker(Logger):
             ylabels=labels,
             xaxis=matrix.xaxis,
             yaxis=matrix.yaxis,
+        )
+
+    @rank_zero_only
+    def log_bars(self, title: str, bars: Bars, iteration: int) -> None:
+        """The ``DrawsBars`` port: one grouped bar chart, a series per split and a bar per class.
+
+        Grouped rather than the stacked default, because the question a class balance answers is how
+        the *splits* compare on one class — stacking puts that comparison inside a single column.
+        """
+        for series, values in zip(bars.series, bars.values, strict=True):
+            self._reporter.report_histogram(
+                title=title,
+                series=series,
+                values=list(values),
+                iteration=iteration,
+                xlabels=list(bars.labels),
+                xaxis=bars.xaxis,
+                yaxis=bars.yaxis,
+                mode="group",
+            )
+
+    @rank_zero_only
+    def log_html(self, title: str, html: str, iteration: int) -> None:
+        """The ``ShowsPage`` port: a page shipped as media, which is what this service renders in place.
+
+        ``report_media`` with an html extension is the one call that opens a page inside the debug
+        samples panel; uploading it as an artifact would give a file to download instead, and nobody
+        downloads a file to look at a batch. The page carries its own styling, so nothing is fetched
+        when it opens — which a panel that forbids a second request is the reason for.
+        """
+        self._reporter.report_media(
+            title=title, series=PAGE, iteration=iteration, stream=StringIO(html), file_extension="html"
         )
 
     @rank_zero_only

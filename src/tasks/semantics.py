@@ -15,6 +15,14 @@ from torch.nn.functional import one_hot
 from src.core import CLASS_AXIS, Batch, ModelOutput, Semantics, TargetInfo, TensorTree, drop_class_axis
 from src.tasks.base import LossDeclaration, Task
 
+DECISION = 0.5
+"""Where a score becomes a decision: at or above this, the label holds.
+
+One home for its two readers. A task hardens its own target here, and a page reads a prediction the
+same way — a page allowed a line of its own would be showing mistakes the run's metrics do not count.
+It is also torchmetrics' own default, so a run that declares no threshold has all three agreeing.
+"""
+
 CLASSIFICATION_METRICS: Mapping[str, Mapping[str, object]] = {
     # `average="none"` asks for the per-class vector; a binary metric ignores it and answers with the
     # positive class alone, so one table serves every label semantics.
@@ -86,7 +94,7 @@ class BinarySemantics(Task):
         return self.target(batch).float()
 
     def metric_view(self, batch: Batch) -> Tensor:
-        return (self.target(batch) >= 0.5).long()
+        return (self.target(batch) >= DECISION).long()
 
     def postprocess(self, output: ModelOutput) -> TensorTree:
         return drop_class_axis(self.raw(output)).sigmoid()
@@ -116,7 +124,7 @@ class MultilabelSemantics(Task):
         return self.target(batch).float()
 
     def metric_view(self, batch: Batch) -> Tensor:
-        return (self.target(batch) >= 0.5).long()
+        return (self.target(batch) >= DECISION).long()
 
     def postprocess(self, output: ModelOutput) -> TensorTree:
         return self.raw(output).sigmoid()

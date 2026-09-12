@@ -126,3 +126,39 @@ def test_warm_feeds_the_rows_of_the_named_splits_to_the_preprocessor(
     module.warm(("train", "val"))
 
     assert recording.warmed == [("train", 6), ("val", 3)]
+
+
+def test_it_says_how_big_each_split_is_and_what_its_targets_hold(
+    make_module: ModuleFactory, make_preprocessor: PreprocessorFactory
+) -> None:
+    """Keyed target first, because that is how it is read: one table per target, a column per split.
+
+    A run's own answer to "is my test set larger than my train set", which is a mistake that shows up
+    in the row counts and nowhere else.
+    """
+    binned = make_preprocessor(targets={"age": LinearBinsEncoder(bins=3)})
+    module = prepared(make_module(preprocessor=binned, targets={"age": "age"}), ("train", "val"))
+
+    found = module.statistics()
+
+    assert set(found.rows) == {"train", "val"}
+    assert sum(found.rows.values()) == len(module.dataset("train")) + len(module.dataset("val"))
+    assert set(found.targets["age"]) == {"train", "val"}
+
+
+def test_a_target_whose_encoder_describes_nothing_is_simply_absent(
+    make_module: ModuleFactory, make_preprocessor: PreprocessorFactory
+) -> None:
+    """A summary shows what can be shown; a column nobody wrote a description for is not a failure."""
+
+    class Silent(LinearBinsEncoder):
+        def distribution(self, values: Iterable[object]) -> None:
+            return None
+
+    module = prepared(
+        make_module(preprocessor=make_preprocessor(targets={"age": Silent(bins=3)}), targets={"age": "age"}),
+        ("train",),
+    )
+
+    assert module.statistics().targets == {}
+    assert module.statistics().rows

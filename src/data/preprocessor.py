@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from itertools import batched
 
 from src.console import track
-from src.core import Batch, DatasetInfo, Geometry, Role, Sample
+from src.core import Batch, DatasetInfo, Distribution, Geometry, Role, Sample
 from src.data.base import Collator, Encoder, InputEncoder, Preprocessor, TargetEncoder
 from src.data.cache import Cache, Key
 from src.data.registry import preprocessor_registry
@@ -101,6 +101,11 @@ class StandardPreprocessor(Preprocessor):
     def validate(self, targets: Mapping[str, Iterable[object]]) -> None:
         for name, values in targets.items():
             self.targets[name].validate(values)
+
+    def describe(self, targets: Mapping[str, Iterable[object]]) -> dict[str, Distribution]:
+        """Every target whose encoder can say what its cells hold; the rest are simply absent."""
+        described = ((name, self.targets[name].distribution(values)) for name, values in targets.items())
+        return {name: found for name, found in described if found is not None}
 
     def warm(self, samples: Iterable[Sample], label: str) -> None:
         """Read every cacheable file of these samples once, a bounded batch of reads at a time."""

@@ -11,7 +11,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from src.core import Matrix
+    from src.core import Bars, Matrix
 
 
 @runtime_checkable
@@ -19,6 +19,29 @@ class DrawsMatrix(Protocol):
     """A backend that can draw a two-dimensional reading — a confusion matrix, above all."""
 
     def log_matrix(self, title: str, matrix: Matrix, iteration: int) -> None: ...
+
+
+@runtime_checkable
+class DrawsBars(Protocol):
+    """A backend that can draw grouped bars — a target's class balance across the run's splits.
+
+    A picture and not a table, because a balance is read by comparing bar heights and thirty-seven
+    breeds is a scroll rather than a glance. The table is printed anyway, in the terminal, where the
+    exact numbers are what a reader wants.
+    """
+
+    def log_bars(self, title: str, bars: Bars, iteration: int) -> None: ...
+
+
+@runtime_checkable
+class ShowsPage(Protocol):
+    """A backend that can carry a self-contained HTML page as part of a run.
+
+    A grid of samples is a page and not a picture: it carries the controls that narrow it, and a
+    backend that could only keep an image would be keeping a screenshot of one.
+    """
+
+    def log_html(self, title: str, html: str, iteration: int) -> None: ...
 
 
 @runtime_checkable

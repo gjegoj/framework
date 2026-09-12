@@ -63,7 +63,10 @@ CAPABILITY_EDGES: dict[str, frozenset[str]] = {
     "cli": frozenset({"build", "console", "experiment"}),
     "experiment": frozenset({"training"}),
     # `losses`, because annealing moves a number of an objective and has to know what one is.
-    "callbacks": frozenset({"losses", "tracking", "training", "transforms"}),
+    # `console`, because a callback that prints a table prints through the one terminal everything shares.
+    "callbacks": frozenset(
+        {"console", "integrations", "losses", "tracking", "training", "transforms", "visualization"}
+    ),
     "data": frozenset({"console", "transforms"}),
     "metrics": frozenset(),
     "tasks": frozenset(),
@@ -74,6 +77,8 @@ CAPABILITY_EDGES: dict[str, frozenset[str]] = {
     "models": frozenset(),
     "config": frozenset(),
     "console": frozenset(),
+    "integrations": frozenset({"tasks", "visualization"}),
+    "visualization": frozenset(),
 }
 """Which capability may import which, besides ``core`` (and ``config`` from a build module)."""
 
@@ -82,6 +87,15 @@ PACKAGES = sorted(path.name for path in SRC.iterdir() if (path / "__init__.py").
 
 CONFIG_READERS = ("build.py", "cli.py", "experiment.py")
 """Only the composition root and a package's own ``build.py`` read declarations."""
+
+VISUALIZATION = "visualization/"
+VISUALIZATION_MAY_IMPORT = ("numpy",)
+"""What the one package meant to leave this tree may reach for, besides the standard library.
+
+An empty edge set would still let it import ``core``, and a package carrying this framework's entities
+is not a library anyone else can use. The rule here is the stronger one it is written to: plain values
+over numpy, and nothing of ours at all.
+"""
 
 TRAINING_MODULE = "training/module.py"
 TRAINING_MODULE_MAY_IMPORT = ("src.core", "src.training", "src.metrics", "src.tracking")
@@ -112,12 +126,27 @@ class Import(NamedTuple):
 
 
 def imports_of(path: Path) -> Iterable[str]:
-    """Every module a file imports, nested imports included: a lazy import is still a dependency."""
+    """Every module a file imports — nested, lazy and relative alike; each of them is a dependency.
+
+    A relative import is resolved to the name it actually reaches, because that is the only form the
+    rules below read. Skipping them made every rule hold for one spelling of an import and not the
+    other, and rewriting a package's imports as relative is the first step of lifting it out — which
+    is the operation ``test_visualization_is_a_library_of_its_own`` exists to protect.
+    """
+    here = ("src", *path.relative_to(SRC).parts[:-1])
     for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
         if isinstance(node, ast.Import):
             yield from (alias.name for alias in node.names)
-        elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
-            yield node.module
+        elif isinstance(node, ast.ImportFrom) and (reached := _reaches(here, node)):
+            yield reached
+
+
+def _reaches(here: tuple[str, ...], node: ast.ImportFrom) -> str:
+    """What a ``from`` import names, written absolute or relative to the package it sits in."""
+    if not node.level:
+        return node.module or ""
+    root = here[: len(here) - node.level + 1]
+    return ".".join((*root, *((node.module,) if node.module else ())))
 
 
 @pytest.fixture(scope="module")
@@ -134,7 +163,7 @@ def files() -> list[str]:
     return [path.relative_to(SRC).as_posix() for path in sorted(SRC.rglob("*.py"))]
 
 
-MINIMUM_IMPORTS = 650
+MINIMUM_IMPORTS = 725
 """What the tree imports today, rounded down.
 
 The rules below all read the same list, so a glob that quietly stopped matching would make every one of
@@ -217,6 +246,20 @@ def test_every_edge_a_package_declares_points_at_a_package_that_exists(files: li
 
 
 @pytest.mark.parametrize(("package", "allowed"), sorted(CAPABILITY_EDGES.items()), ids=sorted(CAPABILITY_EDGES))
+def test_every_edge_a_package_declares_is_one_it_travels(
+    imports: list[Import], package: str, allowed: frozenset[str]
+) -> None:
+    """The rule the quarantine is already held to, applied to the other half of the table.
+
+    An edge nothing travels is a permission about nobody, and it outlives whatever earned it — which
+    is how a layering table drifts from a decision into decoration.
+    """
+    travelled = {one.target for one in imports if one.package == package and one.target is not None}
+
+    assert sorted(allowed - travelled) == [], f"{package} declares edges it does not use"
+
+
+@pytest.mark.parametrize(("package", "allowed"), sorted(CAPABILITY_EDGES.items()), ids=sorted(CAPABILITY_EDGES))
 def test_a_capability_consumes_others_only_along_its_declared_edges(
     imports: list[Import], package: str, allowed: frozenset[str]
 ) -> None:
@@ -227,6 +270,24 @@ def test_a_capability_consumes_others_only_along_its_declared_edges(
     )
 
     assert undeclared == []
+
+
+def test_visualization_is_a_library_of_its_own(imports: list[Import], files: list[str]) -> None:
+    """It is meant to be lifted into a package of its own, and an import of ours is what would stop that.
+
+    Held over the whole directory rather than declared in prose: the cheapest way to reach a task's
+    facts from a drawer is one import, and it would not look wrong in review.
+    """
+    assert any(name.startswith(VISUALIZATION) for name in files), "this rule has no subject"
+    reaching_out = sorted(
+        f"{one.file} imports {one.module}"
+        for one in imports
+        if one.file.startswith(VISUALIZATION)
+        and one.library not in sys.stdlib_module_names
+        and not one.module.startswith((*VISUALIZATION_MAY_IMPORT, "src.visualization"))
+    )
+
+    assert reaching_out == []
 
 
 def test_only_build_modules_read_config(imports: list[Import]) -> None:

@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, NotRequired, Protocol, Self, TypedDict, runtim
 from torch import nn
 from torch.optim import Optimizer
 
-from src.core import Batch, StepOutput
+from src.core import Batch, Stage, StepOutput
 from src.losses import Loss
 from src.models import Model
 from src.tasks import Task
@@ -175,13 +175,22 @@ class DeclaresMetricDirections(Protocol):
     def metric_directions(self) -> Mapping[str, bool | None]: ...
 
 
-@runtime_checkable
-class AcceptsBatchTransform(Protocol):
-    """Something that will let a declared transform rewrite its training batches.
+@dataclass(frozen=True, slots=True)
+class StepPreview:
+    """One step as whatever draws it needs to see it: where it happened, and what came out.
 
-    A capability rather than a class, because the seam has to belong to whoever owns the batch: a
-    ``Batch`` is frozen and Lightning discards whatever a callback's hook returns, so a callback can
-    only hand the rewriting over. ``None`` takes it back again.
+    Offered while the values are still in hand rather than carried out of the loop. Lightning hands a
+    step's return value to the batch-end hooks, but reaching a display that way means holding every
+    prediction alive through the backward pass of every step, on the chance that one of them is drawn —
+    for a dense task that is the largest tensor in the run. Here the loop simply shows what it has, and
+    whatever is listening decides in a line whether this is the batch it wanted.
     """
 
-    def transform_batches(self, transform: Callable[[Batch], Batch] | None) -> None: ...
+    stage: Stage
+    batch_index: int
+    batch: Batch
+    output: StepOutput
+
+
+type StepWatcher = Callable[[StepPreview], None]
+"""Something shown each step. It is called inside the step, so what it does costs the step's own time."""

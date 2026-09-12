@@ -12,8 +12,8 @@ import pytest
 import torch
 from lightning.pytorch.utilities.rank_zero import rank_zero_only
 
-from src.core import Matrix
-from src.tracking import ClearMLTracker, DrawsMatrix, RecordsSummary
+from src.core import Bars, Matrix
+from src.tracking import ClearMLTracker, DrawsBars, DrawsMatrix, RecordsSummary, ShowsPage
 from tests.unit.tracking.conftest import Recorded
 
 
@@ -156,3 +156,43 @@ class TestTheRun:
             logger.finalize("success")
 
         assert "unreachable" in caplog.text
+
+
+def test_a_page_is_shipped_as_media_so_the_service_renders_it_in_place(
+    logger: ClearMLTracker, clearml: Recorded
+) -> None:
+    """The one detail that decides it: an html extension opens the page inside the panel, where any
+    other filing gives a file to download, and nobody downloads a file to look at a batch."""
+    logger.log_html("samples/val", "<html>a page</html>", iteration=3)
+
+    (shipped,) = clearml.media
+    assert shipped["file_extension"] == "html"
+    assert (shipped["title"], shipped["iteration"]) == ("samples/val", 3)
+    assert shipped["read"] == "<html>a page</html>"
+
+
+def test_it_shows_pages_and_says_so_structurally(logger: ClearMLTracker) -> None:
+    assert isinstance(logger, ShowsPage)
+
+
+def test_a_balance_is_one_grouped_chart_with_a_series_per_split(logger: ClearMLTracker, clearml: Recorded) -> None:
+    """Grouped rather than stacked: the question is how the splits compare on one class, and stacking
+    puts that comparison inside a single column."""
+    bars = Bars(
+        series=("train", "val"),
+        values=((3.0, 1.0), (1.0, 1.0)),
+        labels=("cat", "dog"),
+        xaxis="class",
+        yaxis="count",
+    )
+
+    logger.log_bars("dataset/species", bars, iteration=0)
+
+    assert [one["series"] for one in clearml.histograms] == ["train", "val"]
+    assert {one["mode"] for one in clearml.histograms} == {"group"}
+    assert clearml.histograms[0]["values"] == [3.0, 1.0]
+    assert clearml.histograms[0]["xlabels"] == ["cat", "dog"]
+
+
+def test_it_draws_bars_and_says_so_structurally(logger: ClearMLTracker) -> None:
+    assert isinstance(logger, DrawsBars)

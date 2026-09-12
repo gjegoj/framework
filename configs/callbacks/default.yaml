@@ -25,13 +25,17 @@ callbacks:
   - {name: lr_monitor, logging_interval: epoch}
   # The final numbers, once, where a backend keeps a table for them; ClearML does, a CSV file does not.
   - {name: metric_summary}
-  # Four more are declarable and none is a default, because each changes what a run learns rather
-  # than what it shows: `freeze` holds named parts of the model still and lets them go partway in,
+  # Six more are declarable and none is a default. Four of them change what a run learns rather than
+  # what it shows: `freeze` holds named parts of the model still and lets them go partway in,
   # `ema` averages the last stretch of weights and validates and saves in their place,
   # `batch_transform` mixes samples together while training (`transform: {_target_:
   # src.transforms.MixUp, alpha: 0.4}`), and `anneal` moves one number of a task's objective over the
   # run (`{name: anneal, task: label, parameter: focal.gamma, start: 0.0, end: 2.0}`).
   # `experiment=examples/finetuning` runs the first three.
+  # The other two show rather than change, and are declared for a reason of their own. `samples` draws
+  # a batch as a page of pictures — `callbacks=samples` is that set, and it needs a tracker that can
+  # show one. `dataset_summary` prints each target's balance before the first epoch: free for a label
+  # or a number, and a full read of the data for a mask, which is why a run asks for it.
   # A run declaring its own set writes the whole list: a Hydra group replaces a list, never appends.
   - name: checkpoint
     monitor: val/loss

@@ -7,7 +7,17 @@ import math
 import pytest
 import torch
 
-from src.core import Batch, InputInfo, LossOutput, Matrix, Normalization, TargetInfo, TensorTree
+from src.core import (
+    Bars,
+    Batch,
+    InputInfo,
+    LossOutput,
+    Matrix,
+    Normalization,
+    TargetInfo,
+    TensorTree,
+    class_name,
+)
 from src.core.entities import validate_classes, validate_name
 from tests.unit.core.conftest import leaves
 
@@ -181,3 +191,30 @@ class TestNames:
     def test_names_what_kind_of_name_it_was_given(self) -> None:
         with pytest.raises(ValueError, match="Task"):
             validate_name("a/b", label="Task")
+
+
+class TestBars:
+    def test_it_takes_a_row_of_values_per_series(self) -> None:
+        with pytest.raises(ValueError, match="One row of bars per series"):
+            Bars(series=("train", "val"), values=((1.0,),), labels=("cat",), xaxis="class", yaxis="count")
+
+    def test_every_series_spans_the_same_labels(self) -> None:
+        """A backend draws them as one grouped chart; a short row would silently shift every bar after it."""
+        with pytest.raises(ValueError, match="same labels"):
+            Bars(series=("train",), values=((1.0,),), labels=("cat", "dog"), xaxis="class", yaxis="count")
+
+
+class TestClassName:
+    def test_a_declared_class_is_called_what_the_vocabulary_calls_it(self) -> None:
+        assert class_name({0: "cat", 1: "dog"}, 1) == "dog"
+
+    @pytest.mark.parametrize(
+        ("classes", "index"),
+        [pytest.param(None, 2, id="a target with no vocabulary"), pytest.param({0: "cat"}, 3, id="past the end")],
+    )
+    def test_a_class_no_vocabulary_names_is_called_the_same_thing_by_every_reader(
+        self, classes: dict[int, str] | None, index: int
+    ) -> None:
+        """A metric leaf in the tracker and the same class on a page: a run calling it `class3` in one
+        place and `3` in the other would be describing two things."""
+        assert class_name(classes, index) == f"class{index}"

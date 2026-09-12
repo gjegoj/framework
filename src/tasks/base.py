@@ -20,6 +20,9 @@ from src.core import (
     require_tensor,
 )
 
+SPATIAL = frozenset({Axis.HEIGHT, Axis.WIDTH})
+"""The axes that make an output a picture of its own — a task with one decides at every pixel."""
+
 type LossDeclaration = str | Mapping[str, object] | Sequence[Mapping[str, object]]
 """A loss as a task declares its default: a registry name, one declaration, or several to weigh together."""
 
@@ -64,6 +67,15 @@ class Task(ABC):
     def output_shape(cls, info: TargetInfo) -> TensorShape:
         """The shape one prediction has, which is what a head is built to produce."""
         return TensorShape(axes=(Axis.CLASSES,), sizes=(cls.out_features(info),))
+
+    @property
+    def dense(self) -> bool:
+        """Whether this task decides at every pixel rather than once for the whole sample.
+
+        Read off the shape it produces rather than declared a second time: a mixing transform refuses
+        such a task and a page draws it as masks instead of chips, and both ask the same question.
+        """
+        return bool(SPATIAL & set(self.output_shape(self.info).axes))
 
     @property
     @abstractmethod

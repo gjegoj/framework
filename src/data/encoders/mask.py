@@ -10,7 +10,8 @@ import numpy as np
 import torch
 from torch import Tensor
 
-from src.core import Geometry
+from src.console import track
+from src.core import ClassDistribution, Distribution, Geometry, class_name
 from src.data.encoders.files import FileEncoder
 from src.data.encoders.image import read_image
 from src.data.encoders.label import VocabularyEncoder
@@ -37,12 +38,39 @@ class MaskEncoder(FileEncoder, VocabularyEncoder):
     def encode(self, value: object) -> Tensor:
         return torch.as_tensor(value, dtype=torch.long)
 
+    def distribution(self, values: Iterable[object]) -> Distribution | None:
+        """Pixels per class, read from every mask — the imbalance a dense loss spends the run fighting.
+
+        This is the one description that costs a pass over the data: measured at 1.2 ms a mask, which
+        is 9 seconds for Oxford-IIIT Pet and around two minutes for a hundred thousand of them. That is
+        why the summary asking for it is declared rather than given to every run.
+        """
+        counts = self._pixels_per_class(values, "counting mask pixels")
+        return ClassDistribution(
+            counts={class_name(self.classes, index): int(total) for index, total in enumerate(counts)}
+        )
+
     def validate(self, values: Iterable[object]) -> None:
-        """Every pixel indexes a declared class; a stray index is named here, not inside a loss a thousand steps on."""
-        for value in values:
-            highest = int(self.load(value).max(initial=0))
-            if highest >= len(self.classes):
+        """Every pixel indexes a declared class; a stray index is named here, not inside a loss an hour on.
+
+        The check is the count: reading a mask is what costs, and the same read answers both questions.
+        """
+        self._pixels_per_class(values, "checking masks")
+
+    def _pixels_per_class(self, values: Iterable[object], description: str) -> np.ndarray:
+        """Read every mask once, refusing an index the task never declared.
+
+        Behind a bar, because this reads the whole split: a pause with a count on it is a wait, and a
+        silent one is a hang.
+        """
+        totals = np.zeros(len(self.classes), dtype=np.int64)
+        for value in track(list(values), description=description):
+            counts = np.bincount(self.load(value).reshape(-1), minlength=totals.size)
+            if counts.size > totals.size:
                 raise ValueError(
-                    f"Mask {value!r} holds class index {highest}, but the task declares {len(self.classes)} classes "
-                    f"(0..{len(self.classes) - 1}). Declare the missing classes, or remap the mask."
+                    f"Mask {value!r} holds class index {counts.size - 1}, but the task declares "
+                    f"{totals.size} classes (0..{totals.size - 1}). Declare the missing classes, or "
+                    "remap the mask."
                 )
+            totals += counts
+        return totals

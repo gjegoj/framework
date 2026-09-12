@@ -3,9 +3,16 @@
 from __future__ import annotations
 
 from src.core.entities import (
+    CELLS,
+    ERROR,
+    OVERLAP,
     SEGMENT,
+    Bars,
     Batch,
+    ClassDistribution,
     DatasetInfo,
+    DatasetStatistics,
+    Distribution,
     InputInfo,
     LossOutput,
     Matrix,
@@ -14,6 +21,8 @@ from src.core.entities import (
     Sample,
     StepOutput,
     TargetInfo,
+    ValueDistribution,
+    class_name,
     validate_classes,
     validate_name,
 )
@@ -28,11 +37,18 @@ from src.core.types import (
 )
 
 __all__ = [
+    "CELLS",
     "CLASS_AXIS",
+    "ERROR",
+    "OVERLAP",
     "SEGMENT",
     "Axis",
+    "Bars",
     "Batch",
+    "ClassDistribution",
     "DatasetInfo",
+    "DatasetStatistics",
+    "Distribution",
     "Geometry",
     "InputInfo",
     "LossOutput",
@@ -50,6 +66,8 @@ __all__ = [
     "TargetInfo",
     "TensorShape",
     "TensorTree",
+    "ValueDistribution",
+    "class_name",
     "drop_class_axis",
     "require_tensor",
     "validate_classes",

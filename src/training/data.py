@@ -13,7 +13,7 @@ import lightning as L
 from lightning.pytorch.overrides.distributed import UnrepeatedDistributedSampler
 from torch.utils.data import DataLoader, Dataset, Sampler
 
-from src.core import Sample, Stage
+from src.core import DatasetInfo, DatasetStatistics, Sample, Stage
 from src.data import DataModule, single_threaded_cv2
 
 
@@ -39,6 +39,20 @@ class TrainingData(L.LightningDataModule):
         # A default rather than a decree, though from config none can arrive: YAML holds no callables.
         loader_options.setdefault("worker_init_fn", single_threaded_cv2)
         self._options = loader_options
+
+    @property
+    def info(self) -> DatasetInfo:
+        """What the prepared pipeline settled, for whatever the loop attaches that needs to know.
+
+        A page draws a picture as the file held it, which means undoing the statistics the run applied
+        — and those are declared by the input itself, not by the display. This is how a callback
+        reaches them: through the object Lightning already hands it, rather than by being told twice.
+        """
+        return self._data.info
+
+    def statistics(self) -> DatasetStatistics:
+        """What the prepared splits hold, for the report a run can print before its first epoch."""
+        return self._data.statistics()
 
     @override
     def train_dataloader(self) -> DataLoader[Sample]:

@@ -13,7 +13,7 @@ from torchmetrics import (
     Recall,
 )
 
-from src.core import Registry
+from src.core import ERROR, OVERLAP, Registry
 
 metric_registry: Registry[Metric] = Registry("metric")
 """What `tasks.<name>.metrics.<label>` writes, under the names a data scientist already uses.
@@ -31,6 +31,6 @@ metric_registry.register("accuracy")(Accuracy)
 metric_registry.register("f1")(F1Score)
 metric_registry.register("precision")(Precision)
 metric_registry.register("recall")(Recall)
-metric_registry.register("iou")(JaccardIndex)
-metric_registry.register("mae")(MeanAbsoluteError)
+metric_registry.register(OVERLAP)(JaccardIndex)
+metric_registry.register(ERROR)(MeanAbsoluteError)
 metric_registry.register("mse")(MeanSquaredError)

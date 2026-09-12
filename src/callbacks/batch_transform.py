@@ -9,7 +9,7 @@ import lightning as L
 
 from src.callbacks.moment import Boundary, Moment
 from src.callbacks.registry import callback_registry
-from src.training import AcceptsBatchTransform, FitProfile, TrainingModule
+from src.training import FitProfile, TrainingModule
 from src.transforms import BatchTransform
 
 if TYPE_CHECKING:
@@ -78,10 +78,10 @@ class ApplyBatchTransform(L.Callback):
 
     @staticmethod
     def _install(pl_module: L.LightningModule, transform: Callable[[Batch], Batch] | None) -> None:
-        """Hand the rewriting to whoever owns the batch, or say that nobody here does."""
-        if not isinstance(pl_module, AcceptsBatchTransform):
-            raise TypeError(
-                f"{type(pl_module).__name__} takes no batch transform: a frozen batch can only be "
-                "replaced by whoever owns it, and this offers no seam to replace it through."
-            )
+        """Hand the rewriting to whoever owns the batch.
+
+        No second refusal here: ``setup`` already established that this is the module that owns one,
+        and a check that cannot fail reads as a guard while guarding nothing.
+        """
+        assert isinstance(pl_module, TrainingModule)
         pl_module.transform_batches(transform)

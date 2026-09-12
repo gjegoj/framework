@@ -1,6 +1,8 @@
 # @package _global_
-# A local record: scalar metrics land in `${run.directory}/lightning_logs/metrics.csv`.
-# It holds numbers only — a reading that means a picture needs `tracker=clearml`.
+# A local record: scalar metrics land in `${run.directory}/lightning_logs/metrics.csv`, and any page
+# a run draws beside them in `lightning_logs/pages/` — open one in a browser, it needs nothing else.
+# What it cannot do is *draw*: a confusion matrix and a class-balance chart are pictures a plotting
+# backend makes, and those need `tracker=clearml`. A page is not one of them — it carries itself.
 #
 # `version` is emptied because the run directory already *is* the run's identity, and
 # `version_0` beneath it spells that a second time. The folder above it is Lightning's

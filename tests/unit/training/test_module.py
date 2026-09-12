@@ -20,11 +20,11 @@ from torch import Tensor, nn
 from torch.optim import SGD, Optimizer
 from torch.utils.data import DataLoader, Dataset
 
-from src.core import Batch, LossOutput, Matrix, StepOutput, TargetInfo, require_tensor
+from src.core import Batch, LossOutput, Matrix, Stage, StepOutput, TargetInfo, require_tensor
 from src.metrics.build import build_metrics
 from src.tasks import Classification, Task
 from src.training import Learner, TrainingModule
-from src.training.base import FitProfile, ParameterGroup
+from src.training.base import FitProfile, ParameterGroup, StepPreview
 from tests.support.models import Echo
 
 CLASSES = {0: "cat", 1: "dog"}
@@ -318,3 +318,56 @@ class TestAssembly:
 
         assert "val/loss" not in run.logged_metrics
         assert run.logged_metrics["val/species/accuracy"] == 1.0
+
+
+class TestPreviews:
+    """What a step produced, offered to whatever draws it, at the one moment the values exist."""
+
+    @staticmethod
+    def watching() -> tuple[list[StepPreview], Any]:
+        seen: list[StepPreview] = []
+        return seen, seen.append
+
+    def test_every_step_is_offered_to_whoever_asked_to_see_one(self) -> None:
+        seen, watcher = self.watching()
+        under_test = module()
+        under_test.preview_steps(watcher)
+
+        trainer().fit(under_test, train_dataloaders=loader(RIGHT, WRONG), val_dataloaders=loader(RIGHT))
+
+        assert [(one.stage, one.batch_index) for one in seen] == [
+            (Stage.TRAIN, 0),
+            (Stage.TRAIN, 1),
+            (Stage.VAL, 0),
+        ]
+
+    def test_a_preview_carries_the_batch_the_step_read_and_what_it_produced(self) -> None:
+        """Both halves, because a page draws the prediction over the very picture that made it."""
+        seen, watcher = self.watching()
+        under_test = module()
+        under_test.preview_steps(watcher)
+
+        trainer(limit_train_batches=1, limit_val_batches=0).fit(under_test, train_dataloaders=loader(RIGHT))
+
+        (preview,) = seen
+        assert torch.equal(require_tensor(preview.batch.inputs["species"], name="species"), RIGHT)
+        assert set(preview.output.predictions) == {"species"}
+        assert preview.output.loss is not None
+
+    def test_asking_twice_does_not_draw_twice(self) -> None:
+        """Lightning calls a callback's setup once per stage, and a display must not double on it."""
+        seen, watcher = self.watching()
+        under_test = module()
+        under_test.preview_steps(watcher)
+        under_test.preview_steps(watcher)
+
+        trainer(limit_train_batches=1, limit_val_batches=0).fit(under_test, train_dataloaders=loader(RIGHT))
+
+        assert len(seen) == 1
+
+    def test_a_module_nobody_watches_runs_as_it_did(self) -> None:
+        fit = trainer(limit_val_batches=0)
+
+        fit.fit(module(), train_dataloaders=loader(RIGHT))
+
+        assert "train/loss" in fit.logged_metrics

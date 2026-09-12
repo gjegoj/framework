@@ -1,0 +1,35 @@
+# @package _global_
+# What a run gets by default, plus a page of samples in the tracker.
+#
+# A Hydra group replaces a list rather than appending to it, so this repeats `default` and adds the
+# two that show — which is also why the comments there are worth reading before changing anything here.
+#
+# The page needs a tracker that can carry one, which both shipped trackers can: `clearml` renders it
+# in place, `csv` writes it into `${run.directory}/lightning_logs/pages/` to open in a browser. With
+# `tracker: none` the run is told once and draws nothing rather than failing.
+#
+# Nothing about the picture is declared twice: which input is drawn and how its normalisation is undone
+# come from `preprocessing.inputs`, and the classes come from the tasks. Changing the statistics there
+# moves the page with them.
+callbacks:
+  - {name: progress}
+  - {name: model_summary, max_depth: 3}
+  - {name: lr_monitor, logging_interval: epoch}
+  - {name: metric_summary}
+  # `stages: [train]` shows the pixels the run actually trained on — augmentation and mixing included,
+  # which is the only way to see what a batch transform is doing. `batch_index` is fixed on purpose:
+  # two pages of one run are comparable only if they are about the same samples.
+  # `max_side: null` inlines pictures whole; a dense task at full resolution makes a very large page.
+  - name: samples
+    every_n_epochs: 5
+    stages: [train, val, test]
+    num_images: 8
+  # What the run is about to train on, said once before the first epoch. Counting a mask's pixels
+  # means reading every one of them — nine seconds for Oxford-IIIT Pet — so it belongs in the set a
+  # run opts into rather than in `default`.
+  - {name: dataset_summary}
+  - name: checkpoint
+    monitor: val/loss
+    mode: min
+    save_top_k: 1
+    dirpath: ${run.directory}/checkpoints

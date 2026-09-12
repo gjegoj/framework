@@ -12,7 +12,7 @@ import torch
 from torch import Tensor
 from torch.distributions import Beta
 
-from src.core import Axis, Batch, Modality, require_tensor
+from src.core import Batch, Modality, require_tensor
 
 if TYPE_CHECKING:
     from src.tasks import Task
@@ -23,9 +23,6 @@ PAIRED_WITH = 1
 A shuffled loader is what makes that pairing arbitrary, which is what it has to be. Every label rolls
 by the same amount, or a picture would take one neighbour's pixels and another neighbour's label.
 """
-
-SPATIAL = frozenset({Axis.HEIGHT, Axis.WIDTH})
-"""The axes that make an output a picture of its own — a task with one is measured at every pixel."""
 
 
 class LabelMix(ABC):
@@ -57,7 +54,7 @@ class LabelMix(ABC):
         these and keeps it, and an object that is a transform only *after* someone has bound it has a
         state in which calling it is a mistake. There is no such state here.
         """
-        dense = [task.name for task in tasks if SPATIAL & set(task.output_shape(task.info).axes)]
+        dense = [task.name for task in tasks if task.dense]
         if dense:
             raise ValueError(
                 f"{type(self).__name__} makes one picture out of two, and such a picture has no coherent "

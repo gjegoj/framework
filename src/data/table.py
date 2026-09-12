@@ -8,7 +8,7 @@ from typing import Any
 import pandas as pd
 from torch.utils.data import Dataset
 
-from src.core import DatasetInfo, Sample
+from src.core import CELLS, DatasetInfo, DatasetStatistics, Distribution, Sample
 from src.data.base import DataModule, Preprocessor, Table, TableSource
 from src.data.registry import data_module_registry
 from src.data.sources import capped, source_for
@@ -50,7 +50,7 @@ def raw_sample(table: Table, index: int, inputs: Mapping[str, str], targets: Map
     return Sample(
         inputs=cells,
         targets={name: row[column] for name, column in targets.items()},
-        metadata={"row": int(index), "cells": {name: cell for name, cell in cells.items() if isinstance(cell, str)}},
+        metadata={"row": int(index), CELLS: {name: cell for name, cell in cells.items() if isinstance(cell, str)}},
     )
 
 
@@ -138,6 +138,20 @@ class TableDataModule(DataModule):
         return TableDataset(
             self._table_of(split), self._preprocessor, self._inputs, self._targets, self._transforms.get(split)
         )
+
+    def statistics(self) -> DatasetStatistics:
+        """How many rows each prepared split holds, and what each of its target columns looks like.
+
+        Read from the annotation tables rather than from batches, and keyed target-first because that
+        is how it is read: one table per target, a column per split, so an imbalance that differs
+        between train and test is a line rather than two reports to compare.
+        """
+        described = {split: self._preprocessor.describe(self._cells(table)) for split, table in self._tables.items()}
+        targets: dict[str, dict[str, Distribution]] = {}
+        for split, distributions in described.items():
+            for name, distribution in distributions.items():
+                targets.setdefault(name, {})[split] = distribution
+        return DatasetStatistics(rows={split: len(table) for split, table in self._tables.items()}, targets=targets)
 
     def _table_of(self, split: str) -> Table:
         try:

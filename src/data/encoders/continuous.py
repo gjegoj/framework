@@ -10,15 +10,27 @@ from typing import ClassVar, Self
 import torch
 from torch import Tensor
 
-from src.core import TargetInfo
+from src.core import Distribution, TargetInfo
 from src.data.base import TargetEncoder
 from src.data.registry import target_encoder_registry
+from src.data.statistics import measured
 
 log = logging.getLogger(__name__)
 
 
+class NumericEncoder(TargetEncoder):
+    """What the encoders below share: the cells hold numbers, whatever is made of them afterwards.
+
+    A binned target declares a vocabulary of bin centres, and its *column* is still a spread — which
+    is why the shape of a report follows from the cells rather than from the facts an encoder settles.
+    """
+
+    def distribution(self, values: Iterable[object]) -> Distribution | None:
+        return measured(values)
+
+
 @target_encoder_registry.register("scalar")
-class ScalarEncoder(TargetEncoder):
+class ScalarEncoder(NumericEncoder):
     @property
     def info(self) -> TargetInfo:
         return TargetInfo()
@@ -27,7 +39,7 @@ class ScalarEncoder(TargetEncoder):
         return torch.tensor(float(value), dtype=torch.float32)  # type: ignore[arg-type]
 
 
-class BinnedEncoder(TargetEncoder):
+class BinnedEncoder(NumericEncoder):
     """A number as a distribution over ``bins`` centres laid out over a range: declared, or learned on fit."""
 
     MINIMUM_BINS: ClassVar[int] = 2

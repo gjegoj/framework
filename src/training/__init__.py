@@ -5,18 +5,23 @@ Importing this package is what makes its names resolvable: `learner: standard` i
 
 from __future__ import annotations
 
-from src.training.base import AcceptsBatchTransform, DeclaresMetricDirections, FitProfile, Learner
+from src.training.base import (
+    DeclaresMetricDirections,
+    FitProfile,
+    Learner,
+    StepPreview,
+)
 from src.training.checkpoints import load_checkpoint, model_weights, restore_best_weights
 from src.training.data import TrainingData
 from src.training.learner import StandardLearner
 from src.training.module import TrainingModule, module_at
 
 __all__ = [
-    "AcceptsBatchTransform",
     "DeclaresMetricDirections",
     "FitProfile",
     "Learner",
     "StandardLearner",
+    "StepPreview",
     "TrainingData",
     "TrainingModule",
     "load_checkpoint",

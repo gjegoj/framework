@@ -52,6 +52,16 @@ class Batch:
         )
 
 
+def class_name(classes: Mapping[int, str] | None, index: int) -> str:
+    """What one class index is called: the vocabulary's word for it, or a name made from the number.
+
+    One home, because two readers name the same class: a per-class metric leaf in the tracker and the
+    same class on a sample page. A run that called it ``class3`` in one place and ``3`` in the other
+    would be describing two things.
+    """
+    return f"class{index}" if classes is None else classes.get(index, f"class{index}")
+
+
 def validate_classes(classes: Mapping[int, str]) -> None:
     """Validate the user-defined output vocabulary, never infer it from observations."""
     if not classes or any(type(index) is not int for index in classes):
@@ -113,9 +123,27 @@ class DatasetInfo:
     metadata: Mapping[str, object] = field(default_factory=dict)
 
 
+CELLS = "cells"
+"""Where a sample's readable cells are carried in its metadata, keyed as the sample's names are.
+
+A page shows which file a picture came from, and the pipeline is the only thing that ever saw one.
+Named here because the writer and the reader sit in different packages and neither owns the other.
+"""
+
+
 type Prediction = Mapping[str, TensorTree]
 """What a task's output means, per task: the same tree every other value in a batch is."""
 
+
+OVERLAP = "iou"
+ERROR = "mae"
+"""What two measurements are called, wherever a run names one of them.
+
+Here rather than in ``metrics``, because two packages name the same quantity and neither may import
+the other: the registry a config writes these into, and a page that measures the same thing per sample
+so a reader can filter on it. The same argument :func:`class_name` is built on — renaming one of these
+in the registry alone would leave a page calling the new quantity by the old word.
+"""
 
 CONTRIBUTION = "contribution"
 """The leaf a term's weighted share is reported under, beside the term reporting itself.
@@ -220,6 +248,89 @@ class Matrix:
             raise ValueError(
                 f"A matrix is labelled row by row: {self.value.shape[0]} rows against {len(self.labels)} labels."
             )
+
+
+@dataclass(frozen=True, slots=True)
+class ClassDistribution:
+    """How many of each class a target column holds — the imbalance, before it surprises anyone.
+
+    Classes nobody produced are kept at zero: a class the training split never shows is the most
+    useful line on the table. The counts sum to the row count for a single-label column, to more for a
+    multilabel one, and to pixels for a mask — which is why a reader is never asked to add them up.
+    """
+
+    counts: Mapping[str, int]
+
+    @property
+    def total(self) -> int:
+        return sum(self.counts.values())
+
+    @property
+    def shares(self) -> Mapping[str, float]:
+        """Each class as a fraction of the total; all zero where there is nothing to divide."""
+        total = self.total
+        return {name: (count / total if total else 0.0) for name, count in self.counts.items()}
+
+
+@dataclass(frozen=True, slots=True)
+class ValueDistribution:
+    """The five-number summary of a numeric column, plus its mean and deviation.
+
+    Quantiles rather than a histogram: the shape of a target is read from where its mass sits, and the
+    quartiles say that in five numbers that fit one row — where a histogram would need a bin count
+    nobody has a principled value for.
+    """
+
+    count: int
+    mean: float
+    deviation: float
+    minimum: float
+    q25: float
+    median: float
+    q75: float
+    maximum: float
+
+
+type Distribution = ClassDistribution | ValueDistribution
+"""What one target column looks like, in whichever of the two shapes fits what it holds."""
+
+
+@dataclass(frozen=True, slots=True)
+class DatasetStatistics:
+    """What a run is about to train on: how much of it there is, and what it holds, per split.
+
+    Row counts are here because a split that went wrong — an empty stage, a test set larger than
+    train — shows up there and nowhere else.
+    """
+
+    rows: Mapping[str, int] = field(default_factory=dict)
+    targets: Mapping[str, Mapping[str, Distribution]] = field(default_factory=dict)
+
+    def __bool__(self) -> bool:
+        """Whether there is anything at all to report."""
+        return bool(self.rows or self.targets)
+
+
+@dataclass(frozen=True, slots=True)
+class Bars:
+    """Named quantities drawn as grouped bars — a class balance across splits, above all.
+
+    One series per group and one value per label within it, so a class missing from one split is a gap
+    a reader sees rather than a number to hunt for.
+    """
+
+    series: tuple[str, ...]
+    values: tuple[tuple[float, ...], ...]
+    labels: tuple[str, ...]
+    xaxis: str
+    yaxis: str
+
+    def __post_init__(self) -> None:
+        if len(self.series) != len(self.values):
+            raise ValueError(f"One row of bars per series: {len(self.series)} series against {len(self.values)} rows.")
+        odd = [len(row) for row in self.values if len(row) != len(self.labels)]
+        if odd:
+            raise ValueError(f"Every series spans the same labels: {len(self.labels)} of them against rows of {odd}.")
 
 
 @dataclass(frozen=True, slots=True)

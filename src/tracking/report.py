@@ -19,7 +19,7 @@ from typing import Any
 
 from torch import Tensor
 
-from src.core import Matrix
+from src.core import Matrix, class_name
 from src.tracking.base import DrawsMatrix
 from src.tracking.keys import MEAN, SEGMENT, MetricKey
 
@@ -69,7 +69,7 @@ def _per_class(key: MetricKey, values: Tensor, *, scalar_log: ScalarLog, classes
     named = classes if classes is not None and len(classes) == len(values) else None
     scalar_log(str(_leaf(key, MEAN)), values.float().mean())
     for index, value in enumerate(values):
-        scalar_log(str(_leaf(key, _named(index, named))), value.float())
+        scalar_log(str(_leaf(key, class_name(named, index))), value.float())
 
 
 def _named_rows(matrix: Matrix, classes: Mapping[int, str] | None) -> Matrix:
@@ -105,7 +105,3 @@ def _unshowable(key: MetricKey, geometry: str) -> None:
 
 def _leaf(key: MetricKey, name: str) -> MetricKey:
     return replace(key, name=f"{key.name}{SEGMENT}{name}")
-
-
-def _named(index: int, classes: Mapping[int, str] | None) -> str:
-    return f"class{index}" if classes is None else classes.get(index, f"class{index}")

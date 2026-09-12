@@ -9,8 +9,9 @@ without a glossary.
 
 Classification, segmentation and regression, several of them on one backbone,
 with EMA, freezing, MixUp/CutMix, loss-parameter annealing and per-task learning
-rates. Export, prediction grids and the metric-learning and detection families
-are not here yet; what is written below is what runs.
+rates, a grid of samples and a summary of the data a run is about to read. Export
+and the metric-learning and detection families are not here yet; what is written
+below is what runs.
 
 ## Quick start
 
@@ -46,7 +47,8 @@ does not declare needs Hydra's `+` (`+trainer.precision=bf16-mixed`).
 cli.py + build.py    composition root: Hydra composes, one grammar builds
       │ creates and wires
 capability packages  data · transforms · models · tasks · losses · metrics ·
-      │              training · tracking · callbacks
+      │              training · tracking · callbacks · integrations
+      │              (visualization is a library of its own beside them)
       │ implement and consume
 core/                entities · taxonomy · the registry — torch and stdlib only
 ```

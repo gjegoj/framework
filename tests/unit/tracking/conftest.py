@@ -18,6 +18,8 @@ class Recorded:
     scalars: list[tuple[str, str, float, int]] = field(default_factory=list)
     matrices: list[dict[str, Any]] = field(default_factory=list)
     singles: dict[str, float] = field(default_factory=dict)
+    media: list[dict[str, Any]] = field(default_factory=list)
+    histograms: list[dict[str, Any]] = field(default_factory=list)
     started: dict[str, Any] = field(default_factory=dict)
     connected: dict[str, Any] = field(default_factory=dict)
     flushes: int = 0
@@ -43,6 +45,12 @@ def clearml(monkeypatch: pytest.MonkeyPatch) -> Recorded:
 
         def report_single_value(self, name: str, value: float) -> None:
             recorded.singles[name] = value
+
+        def report_media(self, **reported: Any) -> None:
+            recorded.media.append({**reported, "read": reported["stream"].read()})
+
+        def report_histogram(self, **reported: Any) -> None:
+            recorded.histograms.append(reported)
 
     class Task:
         name = "a-run"
