@@ -51,11 +51,27 @@ class TestDrawnInput:
         assert found[0] == "a"
 
 
+LEFT_OFF = {"metric_learning"}
+"""The registered kinds a cell has no way to show, named rather than discovered from the code under test.
+
+A direction in a space is not a reading of a sample: what it means is only visible against a gallery,
+which a single cell is not. Drawing it as the number it superficially resembles would be worse than
+leaving it out, which is the same judgement the heat-map case below records.
+"""
+
+
 class TestAnnotators:
     @pytest.mark.parametrize("kind", sorted(task_registry))
-    def test_every_kind_a_run_can_declare_says_something_about_a_sample(self, kind: str) -> None:
-        """A specimen of each kind, annotated: both sides of the cell filled, and a verdict recorded."""
+    def test_every_kind_a_run_can_declare_is_drawn_or_deliberately_left_off(self, kind: str) -> None:
+        """Either a specimen fills both sides of its cell and records a verdict, or nothing draws it.
+
+        The second half is a decision rather than an omission, which is why the kinds it covers are
+        named above instead of read back from the answer.
+        """
         task, output, batch = specimen(kind)
+        if kind in LEFT_OFF:
+            assert annotator_for(task) is None, f"{kind!r} draws after all; take it out of LEFT_OFF"
+            return
         view = blank()
 
         drawing(task).annotate(view, task, predictions(task, output), task.metric_view(batch), index=0)

@@ -24,6 +24,9 @@ CLASSES = 3
 NUMBERS = (torch.randn(4), torch.tensor([1.0, 2.0, 3.0, 4.0]))
 SCORES = (torch.randn(4), torch.tensor([0.0, 1.0, 1.0, 0.0]))
 REGIONS = (torch.randn(4, CLASSES, 6, 6), torch.zeros(4, 6, 6, dtype=torch.long))
+WIDTH = 5
+IDENTITIES = torch.tensor([0, 1, 2, 0])
+"""An embedding's width, and which identity each of four samples is — what an angular loss compares."""
 
 SPECIMENS: dict[str, tuple[Tensor, Tensor]] = {
     "cross_entropy": (torch.randn(4, CLASSES), torch.tensor([0, 1, 2, 0])),
@@ -38,6 +41,9 @@ SPECIMENS: dict[str, tuple[Tensor, Tensor]] = {
     "mae": NUMBERS,
     "huber": NUMBERS,
     "smooth_l1": NUMBERS,
+    # Cosines against prototypes a head already holds, and the raw embeddings a loss holds them for.
+    "arcface": (torch.rand(4, CLASSES) * 2 - 1, IDENTITIES),
+    "arcface_proxy": (torch.randn(4, WIDTH), IDENTITIES),
 }
 """Raw outputs and the target each family compares them with: a newly registered loss needs a row here."""
 
@@ -56,6 +62,9 @@ BINS = TargetInfo(classes={0: "low", 1: "mid", 2: "high"}, values=(0.0, 1.0, 2.0
 REGIONAL = {"dice", "iou", "tversky"}
 """The losses that score a region, and so are the ones a task's label semantics reaches."""
 
+ANGULAR = {"arcface", "arcface_proxy"}
+"""The losses over an identity, which are sized by how many there are and how wide an embedding is."""
+
 
 def settled(info: TargetInfo | None = None, semantics: Semantics | None = None) -> dict[str, object]:
     """What a task answers about its target — the one table a loss is sized from."""
@@ -66,6 +75,8 @@ def settled(info: TargetInfo | None = None, semantics: Semantics | None = None) 
 def facts(name: str) -> dict[str, object]:
     """The same table, for whichever registered loss is under test."""
     info = BINS if name == "expectation" else TargetInfo()
+    if name in ANGULAR:
+        return {**settled(TargetInfo(classes=THREE)), "embedding_dim": WIDTH}
     return settled(info, Semantics.MULTICLASS if name in REGIONAL else None)
 
 
@@ -95,6 +106,111 @@ class TestContract:
         assert outputs.grad is not None and torch.any(outputs.grad != 0)
 
 
+class TestAngular:
+    """An angular margin: the prototypes it compares against, and the penalty that is the whole point."""
+
+    @pytest.mark.parametrize("name", sorted(ANGULAR))
+    def test_a_margin_makes_the_identity_a_sample_already_is_harder_to_keep(self, name: str) -> None:
+        """Without this the loss is ordinary cross-entropy wearing the name of one that separates."""
+        outputs, targets = specimen(name)
+
+        with_margin = build_loss(ComponentConfig(name=name, margin=0.5), facts(name))
+        flat = build_loss(ComponentConfig(name=name, margin=0.0), facts(name))
+        flat.load_state_dict(with_margin.state_dict())
+
+        assert float(with_margin(outputs, targets).total) > float(flat(outputs, targets).total)
+
+    def test_the_prototypes_a_proxy_objective_compares_against_are_learned_with_the_run(self) -> None:
+        """One per identity, held by the objective — so what a run ships carries none of them."""
+        outputs, targets = specimen("arcface_proxy")
+
+        built = build_loss(ComponentConfig(name="arcface_proxy"), facts("arcface_proxy"))
+        built(outputs, targets).total.backward()
+
+        prototypes = dict(built.named_parameters())["prototypes"]
+        assert prototypes.shape == (len(THREE), WIDTH)
+        assert prototypes.grad is not None and torch.any(prototypes.grad != 0)
+
+    def test_an_objective_reading_a_head_that_already_holds_them_carries_no_parameters(self) -> None:
+        """`head: cosine` puts the prototypes in the network, and then they ship with it."""
+        assert list(build_loss(ComponentConfig(name="arcface"), facts("arcface")).parameters()) == []
+
+    @pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float16], ids=["bfloat16", "float16"])
+    def test_the_angle_is_taken_where_the_bound_that_keeps_it_finite_can_be_held(self, dtype: torch.dtype) -> None:
+        """Half precision rounds the bound to exactly 1.0, and the derivative of arccos there is infinite.
+
+        The loss reads a clean 0.0 while every gradient is NaN, so a run under mixed precision destroys
+        its weights on the first step and reports nothing about it.
+        """
+        cosines = torch.eye(2, dtype=dtype, requires_grad=True)
+
+        build_loss(ComponentConfig(name="arcface"), facts("arcface"))(cosines, torch.tensor([0, 1])).total.backward()
+
+        assert cosines.grad is not None and bool(torch.isfinite(cosines.grad).all())
+
+    @pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float16], ids=["bfloat16", "float16"])
+    @pytest.mark.parametrize("name", sorted(ANGULAR))
+    def test_the_angle_is_taken_in_single_precision_even_where_the_module_was_cast_to_half(
+        self, name: str, dtype: torch.dtype
+    ) -> None:
+        """`precision=16-true` casts the parameters too, and an objective holding its own must still run.
+
+        Upcasting only what arrives leaves a half prototype on the other side of the comparison, which
+        is not a wrong number but a refusal to multiply at all — a run that dies on its first step.
+        """
+        objective = build_loss(ComponentConfig(name=name), facts(name)).to(dtype)
+        outputs, targets = specimen(name)
+        outputs = outputs.to(dtype).requires_grad_()
+
+        objective(outputs, targets).total.backward()
+
+        assert outputs.grad is not None and bool(torch.isfinite(outputs.grad).all())
+
+    def test_a_target_a_mix_softened_is_refused_rather_than_flattened_into_zeros(self) -> None:
+        """An angular margin is added to one identity, so it needs to be told which; a share is not one.
+
+        Taken as it stands, `.long()` turns a distribution into zeros and broadcasting lets
+        cross-entropy accept the result: two different mixes then report the very same number.
+        """
+        built = build_loss(ComponentConfig(name="arcface"), facts("arcface"))
+
+        mixed = torch.tensor([[0.25, 0.75, 0.0], [0.75, 0.25, 0.0]])
+
+        with pytest.raises(ValueError, match="identity"):
+            built(torch.tensor([[0.9, -0.9, 0.0], [-0.9, 0.9, 0.0]]), mixed)
+
+    def test_an_objective_reading_cosines_refuses_a_head_that_produces_something_else(self) -> None:
+        """`head: linear` under this loss trains, saturates and reports a plausible number forever."""
+        built = build_loss(ComponentConfig(name="arcface"), facts("arcface"))
+
+        with pytest.raises(ValueError, match="cosines"):
+            built(torch.randn(4, CLASSES) * 10, IDENTITIES)
+
+    @pytest.mark.parametrize(
+        ("declared", "refused"),
+        [
+            pytest.param({"margin": -0.1}, "radians", id="a margin that is not an angle"),
+            pytest.param({"margin": 4.0}, "radians", id="a margin past half a turn"),
+            pytest.param({"scale": 0.0}, "scale", id="a scale that cannot make a bounded score confident"),
+        ],
+    )
+    def test_a_knob_that_could_not_do_its_work_is_refused_where_it_is_declared(
+        self, declared: dict[str, object], refused: str
+    ) -> None:
+        with pytest.raises(ValueError, match=refused):
+            build_loss(ComponentConfig.model_validate({"name": "arcface", **declared}), facts("arcface"))
+
+    def test_an_objective_holding_prototypes_is_refused_on_a_target_with_no_identities(self) -> None:
+        """Declared on a regression task it would otherwise build a zero-wide table and fail in a matmul."""
+        with pytest.raises(ValueError, match="classes"):
+            build_loss(ComponentConfig(name="arcface_proxy"), {**settled(), "embedding_dim": WIDTH})
+
+    @pytest.mark.parametrize("restated", ["embedding_dim", "num_classes"])
+    def test_a_width_the_task_settled_is_refused_where_a_declaration_restates_it(self, restated: str) -> None:
+        with pytest.raises(ValueError, match=restated):
+            build_loss(ComponentConfig.model_validate({"name": "arcface_proxy", restated: 9}), facts("arcface_proxy"))
+
+
 class TestSemantics:
     """What a task's labels mean is settled once, by the task, and reaches whoever is sized from it."""
 
@@ -113,7 +229,7 @@ class TestSemantics:
 
     @pytest.mark.parametrize("kind", list(task_registry))
     def test_every_kinds_default_objective_scores_the_output_its_own_head_produces(self, kind: str) -> None:
-        """The seam between a task and its loss: shapes, dtypes and the class axis agree with no help."""
+        """The seam between a task and its loss: shapes, dtypes and the feature axis agree with no help."""
         task, output, batch = task_specimen(kind)
 
         result = build_loss(task.default_loss, task.facts())(task.raw(output), task.loss_target(batch))

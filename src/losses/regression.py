@@ -8,7 +8,7 @@ from typing import ClassVar
 import torch
 from torch import Tensor, nn
 
-from src.core import CLASS_AXIS, LossOutput
+from src.core import FEATURE_AXIS, LossOutput
 from src.losses.base import Loss, TorchLoss
 from src.losses.registry import loss_registry
 
@@ -71,11 +71,11 @@ class Expectation(Loss):
 
     def forward(self, outputs: Tensor, targets: Tensor) -> LossOutput:
         bins = self.values.numel()
-        if outputs.shape[CLASS_AXIS] != bins:
+        if outputs.shape[FEATURE_AXIS] != bins:
             raise ValueError(
                 f"An expectation over {bins} bins reads a score per bin, but the output has "
-                f"{outputs.shape[CLASS_AXIS]}. The head is sized from the encoder that laid them out."
+                f"{outputs.shape[FEATURE_AXIS]}. The head is sized from the encoder that laid them out."
             )
-        predicted = outputs.softmax(dim=CLASS_AXIS) @ self.values
+        predicted = outputs.softmax(dim=FEATURE_AXIS) @ self.values
         wanted = targets.float() @ self.values
         return self.reported(self.distance(predicted, wanted).total)

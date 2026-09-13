@@ -24,6 +24,9 @@ from tests.unit.data.conftest import PreprocessorFactory, pipeline
 
 KEY = ("inputs", "image", "a.png")
 
+CHILD_PATIENCE = 60
+"""How long the parent waits for a spawned child, at every point it could wait forever instead."""
+
 
 @pytest.fixture
 def cache() -> RamCache:
@@ -112,15 +115,30 @@ class TestArena:
         assert original is not None and copied is not None and np.array_equal(copied, original)
 
     def test_a_spawned_process_writes_into_the_arena_the_parent_reads(self, cache: RamCache) -> None:
-        """Real sharing, not equal copies: the child pokes a byte and the parent sees it."""
+        """Real sharing, not equal copies: the child pokes a byte and the parent sees it.
+
+        Every wait is bounded. Read straight off the pipe, a child that died before writing — shared
+        memory refused by a sandbox is how this turned up — leaves the parent blocked forever, and the
+        join that was meant to time out is never reached: the whole gate hangs with nothing said.
+        """
         with cache.filling():
             cache.put(KEY, np.arange(16, dtype=np.uint8))
         context = mp.get_context("spawn")
         parent, child = context.Pipe()
         process = context.Process(target=_poke_in_child, args=(cache, child))
         process.start()
-        received = parent.recv()
-        process.join(timeout=60)
+        try:
+            # The parent's copy of the writing end, so a child that dies without writing reads as an
+            # end of file rather than as a message still to come.
+            child.close()
+            assert parent.poll(CHILD_PATIENCE), f"the child wrote nothing within {CHILD_PATIENCE}s"
+            received = parent.recv()
+            process.join(timeout=CHILD_PATIENCE)
+            assert process.exitcode == 0, f"the child exited with {process.exitcode}"
+        finally:
+            if process.is_alive():
+                process.terminate()
+            process.join(timeout=CHILD_PATIENCE)
 
         assert received == list(range(16))
         assert stored(cache, KEY)[0] == 42

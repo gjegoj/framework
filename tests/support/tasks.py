@@ -20,6 +20,9 @@ COUNT = 3
 EXTENT = {Axis.HEIGHT: 4, Axis.WIDTH: 5}
 """How many samples a specimen batch holds, and the extent a dense prediction has where its shape is open."""
 
+WIDTH = 4
+"""How wide a specimen embedding is — a choice of the model, so a kind that has one declares it."""
+
 PIXELS = torch.arange(COUNT * EXTENT[Axis.HEIGHT] * EXTENT[Axis.WIDTH]).reshape(
     COUNT, EXTENT[Axis.HEIGHT], EXTENT[Axis.WIDTH]
 )
@@ -31,6 +34,9 @@ def info(**overrides: Any) -> TargetInfo:
     return TargetInfo(**{"classes": CLASSES, **overrides})
 
 
+ON_THE_KIND: dict[str, dict[str, Any]] = {"metric_learning": {"embedding_dim": WIDTH}}
+"""What a kind takes in its own declaration, where the data cannot settle it: read by ``specimen`` alone."""
+
 SPECIMENS: dict[str, tuple[TargetInfo, Tensor]] = {
     "classification": (info(), torch.tensor([0, 1, 2])),
     "binary_classification": (TargetInfo(), torch.tensor([0.0, 1.0, 0.0])),
@@ -38,6 +44,7 @@ SPECIMENS: dict[str, tuple[TargetInfo, Tensor]] = {
     "segmentation": (info(), PIXELS % len(CLASSES)),
     "binary_segmentation": (TargetInfo(), (PIXELS % 2).float()),
     "regression": (TargetInfo(), torch.tensor([1.5, 2.5, 3.5])),
+    "metric_learning": (info(), torch.tensor([0, 1, 2])),
 }
 """What each kind's target says and how its own encoder hands it over: a new kind needs a row here.
 
@@ -51,8 +58,8 @@ def specimen(kind: str, name: str = "t") -> tuple[Task, ModelOutput, Batch]:
     if kind not in SPECIMENS:
         raise LookupError(f"{kind!r} is registered but has no specimen; add a row to SPECIMENS in {__name__}.")
     declared, target = SPECIMENS[kind]
-    task = task_registry.get(kind)(name, declared)
-    shape = task.output_shape(declared)
+    task = task_registry.get(kind)(name, declared, **ON_THE_KIND.get(kind, {}))
+    shape = task.output_shape()
     declared_sizes = zip(shape.axes, shape.sizes, strict=True)
     sizes = [size if size is not None else EXTENT[Axis(axis)] for axis, size in declared_sizes]
     output = ModelOutput(outputs={name: torch.rand(COUNT, *sizes)})

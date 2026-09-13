@@ -7,7 +7,7 @@ from typing import ClassVar
 import torch
 from torch import Tensor, nn
 
-from src.core import CLASS_AXIS, LossOutput
+from src.core import FEATURE_AXIS, LossOutput
 from src.losses.base import Loss, TorchLoss, aligned
 from src.losses.registry import loss_registry
 
@@ -74,7 +74,7 @@ class Focal(Loss):
                 outputs, targets.float(), weight=self._per_position(targets), reduction="none"
             )
         else:
-            given = outputs.softmax(dim=CLASS_AXIS).gather(CLASS_AXIS, targets.long().unsqueeze(CLASS_AXIS))
-            given = given.squeeze(CLASS_AXIS)
+            given = outputs.softmax(dim=FEATURE_AXIS).gather(FEATURE_AXIS, targets.long().unsqueeze(FEATURE_AXIS))
+            given = given.squeeze(FEATURE_AXIS)
             terms = nn.functional.cross_entropy(outputs, targets.long(), weight=self.alpha, reduction="none")
         return self.reported((terms * (1 - given).pow(self.gamma)).mean())

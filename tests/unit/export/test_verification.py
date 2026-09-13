@@ -16,7 +16,7 @@ from src.export.backends.tensorrt import TensorRtExporter
 from src.export.verification import Parity, verify
 from src.models import Model
 from src.tasks.regression import Regression
-from tests.unit.export.test_backends import RUNNABLE, deployable, example, exporter
+from tests.unit.export.test_backends import RUNNABLE, Heads, deployable, example, exporter
 
 WRITTEN_AT = 2
 
@@ -47,6 +47,24 @@ def truthfully(graph: DeployableModel, *, off_by: float = 0.0) -> Runnable:
     return answer
 
 
+def unusably(graph: DeployableModel, *, everywhere: bool) -> Runnable:
+    """An artifact answering NaN: in every value, or in one among values that are otherwise the model's."""
+
+    def answer(tensors: tuple[Tensor, ...]) -> tuple[Tensor, ...]:
+        with torch.no_grad():
+            outputs = as_outputs(graph(*tensors))
+        if everywhere:
+            return tuple(torch.full_like(one, float("nan")) for one in outputs)
+        spoiled = []
+        for one in outputs:
+            copy = one.clone()
+            copy.view(-1)[0] = float("nan")
+            spoiled.append(copy)
+        return tuple(spoiled)
+
+    return answer
+
+
 def proven(graph: DeployableModel, answer: Runnable, tmp_path: Path, **tolerances: float) -> Parity:
     backend = Fake(answer, **tolerances)
     return verify(backend, backend.export(graph, example(WRITTEN_AT), tmp_path / "model"), graph, example(WRITTEN_AT))
@@ -64,6 +82,47 @@ def test_an_artifact_that_is_the_model_is_proven_on_every_batch_it_has_to_serve(
 
     assert parity.within_tolerance
     assert parity.batches == (WRITTEN_AT, 1)
+
+
+def test_an_exact_answer_where_nothing_is_allowed_is_read_as_a_match(tmp_path: Path) -> None:
+    """With ``atol`` at zero and a reference of zero there is no allowance, and agreeing uses none of it.
+
+    Left to the division that element reads 0/0, which wins ``argmax`` over every real disagreement —
+    including an infinite one — and then compares false against the worst seen, so the whole output is
+    recorded as no disagreement at all. Here the artifact is wrong by 5.0 beside values it matches.
+    """
+    task = Regression("weight", TargetInfo())
+    # Two values per sample, so every batch size holds a matched one beside the spoiled one; at width
+    # one the smallest batch is the error alone, and nothing is left for a 0/0 to hide it behind.
+    model = Heads("features", {task.name: 2})
+    for parameter in model.parameters():
+        torch.nn.init.zeros_(parameter)
+    graph = DeployableModel(model, [task], input_names=("features",)).eval()
+
+    def answer(tensors: tuple[Tensor, ...]) -> tuple[Tensor, ...]:
+        with torch.no_grad():
+            spoiled = as_outputs(graph(*tensors))[0].clone()
+        spoiled.view(-1)[-1] = 5.0
+        return (spoiled,)
+
+    with pytest.raises(RuntimeError, match="disagrees by 5"):
+        proven(graph, answer, tmp_path, atol=0.0, rtol=1e-3)
+
+
+@pytest.mark.parametrize("everywhere", [True, False], ids=["in every value", "in one value among good ones"])
+def test_an_artifact_that_answers_with_no_number_is_refused_rather_than_proven(
+    everywhere: bool, tmp_path: Path
+) -> None:
+    """NaN is below every bound because it is below nothing, so the worst reading never rises above 0.0.
+
+    Reported as an exact match, and the one value spoils the reading for its whole output: the element
+    that used the most allowance is the NaN, so a real disagreement beside it is recorded as none. A run
+    whose weights went to NaN would write an artifact and ship it under a passing verdict.
+    """
+    graph = deployable()
+
+    with pytest.raises(RuntimeError, match="not a number"):
+        proven(graph, unusably(graph, everywhere=everywhere), tmp_path)
 
 
 def test_an_artifact_that_drifted_is_refused_naming_it_and_how_far(tmp_path: Path) -> None:

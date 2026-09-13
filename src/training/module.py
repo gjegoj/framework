@@ -40,7 +40,10 @@ class TrainingModule(L.LightningModule):
     checkpoint's keys and a callback's dot-path are written against.
     """
 
-    MODEL: ClassVar[str] = "learner.model"
+    LEARNER: ClassVar[str] = "learner"
+    """Where the algorithm sits in this module: the network and any objective carrying parameters of its own."""
+
+    MODEL: ClassVar[str] = f"{LEARNER}.model"
     """Where the network sits in this module: what a checkpoint's keys carry and a config's path names."""
 
     def __init__(

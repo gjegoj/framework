@@ -59,7 +59,7 @@ def run(experiment: Experiment) -> Manifest:
         load_checkpoint(model, config.run.checkpoint_path)
     if config.run.train:
         experiment.trainer.fit(experiment.module, datamodule=experiment.data, ckpt_path=config.run.resume_path)
-        restore_best_weights(experiment.trainer, model)
+        restore_best_weights(experiment.trainer, experiment.module.learner)
     if config.run.test:
         experiment.trainer.test(experiment.module, datamodule=experiment.data, verbose=False)
     return _ship(experiment)

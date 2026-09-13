@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import ClassVar
 
-from src.core import OVERLAP, Axis, Stream, TargetInfo, TensorShape
+from src.core import OVERLAP, Axis, Stream, TensorShape
 from src.tasks.base import Task
 from src.tasks.registry import task_registry
 from src.tasks.semantics import CLASSIFICATION_METRICS, BinarySemantics, MulticlassSemantics
@@ -29,10 +29,9 @@ class DenseOutput(Task):
 
     default_head: ClassVar[Mapping[str, object]] = {"name": "conv", "stream": Stream.DECODER}
 
-    @classmethod
-    def output_shape(cls, info: TargetInfo) -> TensorShape:
+    def output_shape(self) -> TensorShape:
         """One prediction per pixel; the extent is the image's, known only when a batch arrives."""
-        return TensorShape(axes=(Axis.CLASSES, Axis.HEIGHT, Axis.WIDTH), sizes=(cls.out_features(info), None, None))
+        return TensorShape(axes=(self.output_axis, Axis.HEIGHT, Axis.WIDTH), sizes=(self.out_features(), None, None))
 
 
 @task_registry.register("segmentation")

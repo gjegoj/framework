@@ -12,7 +12,7 @@ from typing import ClassVar, override
 from torch import Tensor
 from torch.nn.functional import one_hot
 
-from src.core import CLASS_AXIS, Batch, ModelOutput, Semantics, TargetInfo, TensorTree, drop_class_axis
+from src.core import FEATURE_AXIS, Batch, ModelOutput, Semantics, TensorTree, drop_feature_axis
 from src.tasks.base import LossDeclaration, Task
 
 DECISION = 0.5
@@ -44,14 +44,13 @@ class MulticlassSemantics(Task):
     def default_loss(self) -> LossDeclaration:
         return "cross_entropy"
 
-    @classmethod
-    def out_features(cls, info: TargetInfo) -> int:
-        if info.num_classes is None or info.num_classes < 2:
+    def out_features(self) -> int:
+        if self.info.num_classes is None or self.info.num_classes < 2:
             raise ValueError(
-                f"{cls.__name__} chooses between classes, so it needs at least two; the target declares "
-                f"{info.num_classes if info.num_classes is not None else 'none'}."
+                f"{type(self).__name__} chooses between classes, so it needs at least two; the target "
+                f"declares {self.info.num_classes if self.info.num_classes is not None else 'none'}."
             )
-        return info.num_classes
+        return self.info.num_classes
 
     def loss_target(self, batch: Batch) -> Tensor:
         """An index as it stands; a share of each class, once a batch transform mixed two samples, as it stands too."""
@@ -61,17 +60,17 @@ class MulticlassSemantics(Task):
     def metric_view(self, batch: Batch) -> Tensor:
         """The class the sample mostly is: a metric ranks against one class, however soft the target became."""
         target = self.target(batch)
-        return target.argmax(dim=CLASS_AXIS) if target.is_floating_point() else target.long()
+        return target.argmax(dim=FEATURE_AXIS) if target.is_floating_point() else target.long()
 
     @override
     def soften(self, target: Tensor) -> Tensor:
         """An index widened into the share of each class it stands for: all of one, none of the rest."""
         if target.is_floating_point():
             return target
-        return one_hot(target.long(), num_classes=self.out_features(self.info)).movedim(-1, CLASS_AXIS).float()
+        return one_hot(target.long(), num_classes=self.out_features()).movedim(-1, FEATURE_AXIS).float()
 
     def postprocess(self, output: ModelOutput) -> TensorTree:
-        return self.raw(output).softmax(dim=CLASS_AXIS)
+        return self.raw(output).softmax(dim=FEATURE_AXIS)
 
 
 class BinarySemantics(Task):
@@ -85,8 +84,7 @@ class BinarySemantics(Task):
     def default_loss(self) -> LossDeclaration:
         return "bce"
 
-    @classmethod
-    def out_features(cls, info: TargetInfo) -> int:
+    def out_features(self) -> int:
         return 1
 
     def loss_target(self, batch: Batch) -> Tensor:
@@ -97,7 +95,7 @@ class BinarySemantics(Task):
         return (self.target(batch) >= DECISION).long()
 
     def postprocess(self, output: ModelOutput) -> TensorTree:
-        return drop_class_axis(self.raw(output)).sigmoid()
+        return drop_feature_axis(self.raw(output)).sigmoid()
 
 
 class MultilabelSemantics(Task):
@@ -114,11 +112,10 @@ class MultilabelSemantics(Task):
     def default_loss(self) -> LossDeclaration:
         return "bce"
 
-    @classmethod
-    def out_features(cls, info: TargetInfo) -> int:
-        if info.num_classes is None:
-            raise ValueError(f"{cls.__name__} scores one output per label, so its classes must be declared.")
-        return info.num_classes
+    def out_features(self) -> int:
+        if self.info.num_classes is None:
+            raise ValueError(f"{type(self).__name__} scores one output per label, so its classes must be declared.")
+        return self.info.num_classes
 
     def loss_target(self, batch: Batch) -> Tensor:
         return self.target(batch).float()

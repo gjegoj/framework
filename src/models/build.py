@@ -8,7 +8,7 @@ from torch import nn
 
 from src.config import ComponentConfig, HeadConfig, ModelConfig
 from src.config.instantiate import instantiate
-from src.core import Axis, TensorShape
+from src.core import SPATIAL, Axis, TensorShape
 from src.models.base import Backbone, HeadConnection, Model, ShapeAware
 from src.models.registry import backbone_registry, head_registry, model_registry
 
@@ -114,10 +114,20 @@ def _refuse_a_head_that_cannot_read(
 
 
 def _out_features(task: str, shape: TensorShape) -> int:
-    """How many values a head produces per position: one per class, or one when a task has no classes."""
-    if Axis.CLASSES not in shape.axes:
-        return 1
-    classes = shape.size(Axis.CLASSES)
-    if classes is None:
-        raise ValueError(f"Task {task!r} outputs classes without a count; a head cannot be sized for it.")
-    return classes
+    """How many values a head produces per position: the one axis of the output that is not spatial.
+
+    A rule rather than a list of axis names, because each kind of output names its width with an axis of
+    its own. A shape naming no width, or two, is refused with the axes it was handed rather than guessed
+    at — a silently assumed 1 is a head built for the wrong task.
+    """
+    widths = [axis for axis in shape.axes if axis not in SPATIAL]
+    if len(widths) != 1:
+        named = ", ".join(shape.axes) or "nothing"
+        raise ValueError(
+            f"Task {task!r} outputs [{named}]; a head is sized by how many values it makes per position, "
+            f"which is the one axis of an output that is neither height nor width, and this names {len(widths)}."
+        )
+    size = shape.size(widths[0])
+    if size is None:
+        raise ValueError(f"Task {task!r} outputs {widths[0]!r} without a count; a head cannot be sized for it.")
+    return size

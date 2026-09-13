@@ -12,7 +12,7 @@ from typing import Any, ClassVar, cast, get_args
 import torch
 from torch import Tensor, nn
 
-from src.core import LossOutput, drop_class_axis
+from src.core import LossOutput, drop_feature_axis
 
 
 class Loss(nn.Module, ABC):
@@ -99,8 +99,8 @@ def tensor_arguments(loss: type[TorchLoss]) -> frozenset[str]:
 
 
 def aligned(outputs: Tensor, targets: Tensor) -> Tensor:
-    """The head's output as its target is shaped: one output per position carries a class axis, a target none."""
-    return drop_class_axis(outputs) if outputs.ndim == targets.ndim + 1 else outputs
+    """The head's output as its target is shaped: one value per position carries a feature axis, a target none."""
+    return drop_feature_axis(outputs) if outputs.ndim == targets.ndim + 1 else outputs
 
 
 def snake_case(name: str) -> str:

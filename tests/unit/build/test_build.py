@@ -59,7 +59,32 @@ class TestFactsTravel:
         task = experiment(declaration, tasks=tasks).module.learner.tasks["species"]
 
         assert isinstance(task, Classification) and (task.weight, task.lr) == (0.5, 1.0e-4)
-        assert task.output_shape(task.info).size(Axis.CLASSES) == 2
+        assert task.output_shape().size(Axis.CLASSES) == 2
+
+    def test_a_head_holding_the_prototypes_and_the_objective_that_reads_them_fit_with_nothing_written_twice(
+        self, declaration: Mapping[str, Any]
+    ) -> None:
+        """The other metric-learning arrangement, assembled: an ordinary classification task throughout.
+
+        Only the root sees both halves, and the halves are what could disagree — the head has to produce
+        cosines, the objective refuses anything else, and the prototype table has to be as wide as the
+        space the head projects into. None of those three numbers is written in the declaration twice.
+        """
+        tasks = dict(declaration["tasks"])
+        tasks["species"] = {
+            **tasks["species"],
+            "head": {"name": "cosine", "stream": "pooled", "embedding_dim": 16},
+            "loss": {"name": "arcface", "margin": 0.5},
+        }
+        built = experiment(declaration, tasks=tasks)
+
+        batch = next(iter(built.data.train_dataloader()))
+        step = built.module.learner.step(batch)
+
+        head = built.module.learner.model.heads["species"]
+        assert head.prototypes.shape == (2, 16), "one per declared class, as wide as the head projects"
+        assert step.loss is not None and bool(step.loss.total.isfinite())
+        assert not list(built.module.learner.losses["species"].parameters()), "they are the network's here"
 
     def test_a_task_that_declares_no_loss_is_learned_by_the_one_its_kind_implies(
         self, declaration: Mapping[str, Any]

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping
 from pathlib import Path
@@ -99,16 +100,19 @@ def _refuse_an_allowance_that_proves_nothing(atol: float, rtol: float) -> None:
     Negative, and every share of the allowance is negative too: the worst value a comparison finds is
     still below zero, the reported figure stays at 0.0, and a file nobody has compared is described as
     standing exactly on the model. Zero on both, and an artifact that answers to the last bit of float
-    is refused for using infinitely much of nothing.
+    is refused for using infinitely much of nothing. Infinite, and every artifact is inside it. Not a
+    number, and it is below no bound at all, so the comparisons that would catch the other three are
+    each false and it is accepted as though it were ordinary.
 
     Here rather than in the run that declares it, because both are the format's own contract and this is
     where every format's is: `tensorrt.yaml` is the shipped file that invites a run to raise them.
     """
-    if atol < 0 or rtol < 0 or atol + rtol <= 0:
+    if not (math.isfinite(atol) and math.isfinite(rtol)) or atol < 0 or rtol < 0 or atol + rtol <= 0:
         raise ValueError(
             f"An allowance of atol {atol} and rtol {rtol} proves nothing: a negative one reports every "
-            "artifact as exact whatever it answers, and one of zero refuses an artifact that is exact. "
-            "Declare both at or above zero, and at least one of them above it."
+            "artifact as exact whatever it answers, one of zero refuses an artifact that is exact, and "
+            "an infinite one holds every artifact there is. Declare both finite and at or above zero, "
+            "and at least one of them above it."
         )
 
 

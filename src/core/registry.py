@@ -25,14 +25,17 @@ class Registry[T]:
         self._label = label
         self._entries: dict[str, type[T]] = {}
 
-    def register(self, name: str, *aliases: str) -> Callable[[type[T]], type[T]]:
-        """Return a decorator registering a class under ``name`` and every alias."""
+    def register(self, name: str) -> Callable[[type[T]], type[T]]:
+        """Return a decorator registering a class under ``name``, and refusing a name already taken.
+
+        One name per class and no second spelling, so a thing cannot be written two ways in two configs
+        and read as two things in a report.
+        """
 
         def decorator(cls: type[T]) -> type[T]:
-            for key in (name, *aliases):
-                if key in self._entries:
-                    raise ValueError(f"{self._label} {key!r} is already registered.")
-                self._entries[key] = cls
+            if name in self._entries:
+                raise ValueError(f"{self._label} {name!r} is already registered.")
+            self._entries[name] = cls
             return cls
 
         return decorator

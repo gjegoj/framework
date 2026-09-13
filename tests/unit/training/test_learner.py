@@ -6,13 +6,14 @@ from collections.abc import Mapping
 
 import pytest
 import torch
-from torch import Tensor, nn
+from torch import Tensor
 
-from src.core import Batch, LossOutput, TargetInfo, require_tensor
+from src.core import Batch, TargetInfo, require_tensor
 from src.losses import Loss
 from src.losses.build import build_loss
 from src.tasks import Classification, Regression, Task
 from src.training import StandardLearner
+from tests.support.losses import LearnedMargin
 from tests.support.models import Echo
 
 CLASSES = {0: "cat", 1: "dog", 2: "bird"}
@@ -115,33 +116,22 @@ class TestViews:
         assert require_tensor(step.targets["species"], name="species").tolist() == [1, 0]
 
 
-class Prototypes(Loss):
-    """A loss carrying parameters of its own, as an angular margin carries its class prototypes."""
-
-    def __init__(self, classes: int) -> None:
-        super().__init__()
-        self.prototypes = nn.Parameter(torch.zeros(classes))
-
-    def forward(self, outputs: Tensor, targets: Tensor) -> LossOutput:
-        return self.reported((outputs * self.prototypes).sum())
-
-
 def test_a_loss_that_carries_parameters_trains_with_the_run_and_stays_out_of_the_model() -> None:
     """ArcFace and its family keep the class prototypes in the loss: they belong to the run, not to the network."""
     declared = tasks()
     owner = StandardLearner(
         Echo({"species": LOGITS, "age": YEARS}),
         declared,
-        {"species": Prototypes(len(CLASSES)), "age": losses_for(declared)["age"]},
+        {"species": LearnedMargin(len(CLASSES)), "age": losses_for(declared)["age"]},
     )
 
     step = owner.step(BATCH)
     assert step.loss is not None
     step.loss.total.backward()
 
-    trained = dict(owner.named_parameters())["losses.species.prototypes"]
+    trained = dict(owner.named_parameters())["losses.species.margin"]
     assert trained.grad is not None and torch.any(trained.grad != 0)
-    assert not any("prototypes" in key for key in owner.model.state_dict())
+    assert not any("margin" in key for key in owner.model.state_dict())
 
 
 class TestParameterGroups:
@@ -169,12 +159,12 @@ class TestParameterGroups:
         owner = StandardLearner(
             Echo({"species": LOGITS, "age": YEARS}),
             declared,
-            {"species": Prototypes(len(CLASSES)), "age": losses_for(declared)["age"]},
+            {"species": LearnedMargin(len(CLASSES)), "age": losses_for(declared)["age"]},
         )
 
         grouped = {group["name"]: {id(one) for one in group["params"]} for group in owner.parameter_groups()}
 
-        assert id(dict(owner.named_parameters())["losses.species.prototypes"]) in grouped["species"]
+        assert id(dict(owner.named_parameters())["losses.species.margin"]) in grouped["species"]
 
     def test_a_task_that_declares_a_rate_carries_it_on_its_group(self) -> None:
         rated = Classification("species", INFO, lr=1e-2)

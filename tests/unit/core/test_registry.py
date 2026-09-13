@@ -25,13 +25,12 @@ def test_a_decorator_registers_and_returns_the_class_unchanged(registry: Registr
     assert CrossEntropy.__name__ == "CrossEntropy"
 
 
-def test_aliases_reach_the_same_class(registry: Registry[Base]) -> None:
-    @registry.register("cross_entropy", "ce")
-    class CrossEntropy(Base):
-        pass
+def test_the_names_it_lists_come_out_in_one_order(registry: Registry[Base]) -> None:
+    """Tests parametrise over a registry, so the order it lists in is the order their ids appear in."""
+    registry.register("focal")(Base)
+    registry.register("cross_entropy")(Base)
 
-    assert registry.get("ce") is registry.get("cross_entropy")
-    assert list(registry) == ["ce", "cross_entropy"]
+    assert list(registry) == ["cross_entropy", "focal"]
 
 
 def test_an_unknown_name_is_refused_with_the_known_names_listed(registry: Registry[Base]) -> None:

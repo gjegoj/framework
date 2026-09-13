@@ -175,7 +175,7 @@ def files() -> list[str]:
     return [path.relative_to(SRC).as_posix() for path in sorted(SRC.rglob("*.py"))]
 
 
-MINIMUM_IMPORTS = 800
+MINIMUM_IMPORTS = 900
 """What the tree imports today, rounded down.
 
 The rules below all read the same list, so a glob that quietly stopped matching would make every one of

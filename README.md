@@ -7,13 +7,14 @@ Built around a strict dependency discipline — a thin core, capability packages
 around it, one composition root — and a vocabulary any data scientist can read
 without a glossary.
 
-Classification, segmentation and regression, several of them on one backbone,
-with EMA, freezing, MixUp/CutMix, loss-parameter annealing and per-task learning
-rates, a grid of samples and a summary of the data a run is about to read. What a
-run ends with is deployable: ONNX, PT2, TorchScript, ncnn or a TensorRT engine,
-each proven against the model it was written from and described by a record a
-deployment reads. The metric-learning and detection families are not here yet;
-what is written below is what runs.
+Classification, segmentation, regression and metric learning, several of them on
+one backbone, with EMA, freezing, MixUp/CutMix, loss-parameter annealing and
+per-task learning rates, a grid of samples and a summary of the data a run is
+about to read. What a run ends with is deployable: ONNX, PT2, TorchScript, ncnn
+or a TensorRT engine, each proven against the model it was written from and
+described by a record a deployment reads. Detection is not here yet, and metric
+learning trains and measures on one vocabulary — holding identities out of
+training is not something a run can declare. What is written below is what runs.
 
 ## Quick start
 
@@ -32,6 +33,7 @@ they live:
 uv run main.py experiment=examples/classification
 uv run main.py experiment=examples/segmentation
 uv run main.py experiment=examples/finetuning
+uv run main.py experiment=examples/metric_learning
 uv run main.py experiment=examples/classification lr=3e-4 epochs=50 loader=performance scheduler=onecycle
 ```
 
@@ -118,6 +120,3 @@ make check       # typecheck + full tests — the gate
 make pre-commit  # every hook: file hygiene, typos, ruff check, ruff format, mypy, the test gate
 make clean       # caches and temporary files
 ```
-
-`make pre-commit` runs over the files git tracks, so `git add` a new file before
-trusting a green run.

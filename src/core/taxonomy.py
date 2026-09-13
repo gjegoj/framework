@@ -27,6 +27,15 @@ class Axis(StrEnum):
     CHANNELS = "channels"
     HEIGHT = "height"
     WIDTH = "width"
+    EMBEDDING = "embedding"
+
+
+SPATIAL = frozenset({Axis.HEIGHT, Axis.WIDTH})
+"""The axes that give a value an extent of its own: a task with one decides at every pixel.
+
+Read from both sides of one rule — a task asks whether it is dense, a head is sized by the one axis of
+an output that is *not* one of these.
+"""
 
 
 class Stream(StrEnum):

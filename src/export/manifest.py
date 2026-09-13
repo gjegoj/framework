@@ -41,7 +41,8 @@ class OutputRecord:
 
     ``classes`` is the vocabulary in index order, which is what turns a position in the tensor into a
     word; ``values`` is what each position stands for where a number was learned as a distribution over
-    bins. A task that means neither — a plain number — carries no vocabulary and needs none.
+    bins. A task that means neither carries no vocabulary and needs none: a plain number, and an
+    embedding, whose positions are a direction and stand for nothing one at a time.
     """
 
     name: str
@@ -170,12 +171,18 @@ def _inputs(info: DatasetInfo, graph: DeployableModel, example: tuple[Tensor, ..
 
 
 def _outputs(graph: DeployableModel) -> tuple[OutputRecord, ...]:
+    """What each position of the answer means — and, for a direction, that it means no position at all.
+
+    Read off what the task publishes rather than off what its target held: a task answering with an
+    embedding may still have been *trained* against a vocabulary, and writing that here would tell a
+    deployment to read the first number of a unit vector as the first identity.
+    """
     return tuple(
         OutputRecord(
             name=task.name,
             semantics=task.semantics,
-            classes=_vocabulary(task.info.classes),
-            values=task.info.values,
+            classes=None if task.embeds else _vocabulary(task.info.classes),
+            values=None if task.embeds else task.info.values,
         )
         for task in graph.tasks
     )

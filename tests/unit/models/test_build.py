@@ -54,10 +54,21 @@ class TestSizing:
         assert (sizes.in_channels if isinstance(sizes, nn.Conv2d) else sizes.in_features) == width
         assert (sizes.out_channels if isinstance(sizes, nn.Conv2d) else sizes.out_features) == 3
 
-    def test_a_task_with_no_classes_gets_one_output(self) -> None:
-        model = build_model(composite(), {"age": head()}, {"age": SCALAR})
+    def test_a_task_whose_output_names_no_width_is_refused_rather_than_given_one(self) -> None:
+        """A head makes some number of values per position; a shape naming none cannot size one.
 
-        assert isinstance(model, CompositeModel) and projection(model.heads["age"]).out_features == 1
+        Answering 1 would be a guess that builds, trains and reports — the silent fallback this
+        framework treats as a defect — so a shape it cannot read is named instead.
+        """
+        with pytest.raises(ValueError, match="age"):
+            build_model(composite(), {"age": head()}, {"age": SCALAR})
+
+    def test_a_task_whose_output_names_two_widths_is_refused_by_name(self) -> None:
+        """Which of them a head is built at is not the framework's to pick; both are named."""
+        both = TensorShape(axes=(Axis.CLASSES, Axis.CHANNELS), sizes=(3, 8))
+
+        with pytest.raises(ValueError, match="classes, channels"):
+            build_model(composite(), {"t": head()}, {"t": both})
 
     def test_the_built_graph_runs_every_head_it_was_given(self, images: dict[str, Tensor]) -> None:
         model = build_model(

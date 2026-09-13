@@ -34,6 +34,9 @@ def test_a_format_adds_its_suffix_rather_than_replacing_whatever_the_name_alread
         pytest.param(-1.0, 1e-3, id="a negative absolute allowance"),
         pytest.param(1e-4, -1.0, id="a negative relative allowance"),
         pytest.param(0.0, 0.0, id="no allowance at all"),
+        pytest.param(float("nan"), 1e-3, id="an absolute allowance that is not a number"),
+        pytest.param(1e-4, float("nan"), id="a relative allowance that is not a number"),
+        pytest.param(float("inf"), 0.0, id="an allowance without a bound"),
     ],
 )
 def test_a_tolerance_that_could_prove_nothing_is_refused_where_it_is_declared(atol: float, rtol: float) -> None:

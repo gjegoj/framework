@@ -28,22 +28,23 @@ from src.core.entities import (
     validate_name,
 )
 from src.core.registry import Registry
-from src.core.taxonomy import Axis, Geometry, Modality, Role, Semantics, Stage, Stream
+from src.core.taxonomy import SPATIAL, Axis, Geometry, Modality, Role, Semantics, Stage, Stream
 from src.core.types import (
-    CLASS_AXIS,
+    FEATURE_AXIS,
     ShapeTree,
     TensorShape,
     TensorTree,
-    drop_class_axis,
+    drop_feature_axis,
     require_tensor,
 )
 
 __all__ = [
     "CELLS",
-    "CLASS_AXIS",
     "ERROR",
+    "FEATURE_AXIS",
     "OVERLAP",
     "SEGMENT",
+    "SPATIAL",
     "Axis",
     "Bars",
     "Batch",
@@ -72,7 +73,7 @@ __all__ = [
     "ValueDistribution",
     "as_children",
     "class_name",
-    "drop_class_axis",
+    "drop_feature_axis",
     "require_tensor",
     "validate_classes",
     "validate_name",

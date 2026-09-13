@@ -9,6 +9,7 @@ from typing import ClassVar
 from torch import Tensor
 
 from src.core import (
+    SPATIAL,
     Axis,
     Batch,
     ModelOutput,
@@ -19,9 +20,6 @@ from src.core import (
     TensorTree,
     require_tensor,
 )
-
-SPATIAL = frozenset({Axis.HEIGHT, Axis.WIDTH})
-"""The axes that make an output an image of its own — a task with one decides at every pixel."""
 
 type LossDeclaration = str | Mapping[str, object] | Sequence[Mapping[str, object]]
 """A loss as a task declares its default: a registry name, one declaration, or several to weigh together."""
@@ -47,6 +45,13 @@ class Task(ABC):
             can mean; None where the target is a number rather than a label.
     """
 
+    output_axis: ClassVar[str] = Axis.CLASSES
+    """Which axis of this task's output carries its width — the one a head is built at.
+
+    Classes for anything read against a vocabulary, which is every kind but one; a kind whose answer is
+    a direction says so here, and the shape it produces follows without restating the width.
+    """
+
     default_head: ClassVar[Mapping[str, object]] = {"name": "linear", "stream": Stream.POOLED}
     default_target_encoder: ClassVar[str | None] = None
     default_metrics: ClassVar[Mapping[str, Mapping[str, object]]] = {}
@@ -58,15 +63,17 @@ class Task(ABC):
         self.weight = weight
         self.lr = lr
 
-    @classmethod
     @abstractmethod
-    def out_features(cls, info: TargetInfo) -> int:
-        """How many values the model produces per position — per sample, or per pixel for a dense task."""
+    def out_features(self) -> int:
+        """How many values the model produces per position — per sample, or per pixel for a dense task.
 
-    @classmethod
-    def output_shape(cls, info: TargetInfo) -> TensorShape:
+        An instance method because the width is not always a fact of the target: an embedding's is a
+        choice of the model, declared on the kind and read from ``self``.
+        """
+
+    def output_shape(self) -> TensorShape:
         """The shape one prediction has, which is what a head is built to produce."""
-        return TensorShape(axes=(Axis.CLASSES,), sizes=(cls.out_features(info),))
+        return TensorShape(axes=(self.output_axis,), sizes=(self.out_features(),))
 
     @property
     def dense(self) -> bool:
@@ -75,7 +82,16 @@ class Task(ABC):
         Read off the shape it produces rather than declared a second time: a mixing transform refuses
         such a task and a page draws it as masks instead of chips, and both ask the same question.
         """
-        return bool(SPATIAL & set(self.output_shape(self.info).axes))
+        return bool(SPATIAL & set(self.output_shape().axes))
+
+    @property
+    def embeds(self) -> bool:
+        """Whether this task answers with a direction in a space rather than a reading of the sample.
+
+        Read off the shape it produces, as ``dense`` is, and for the same reason: a page has no way to
+        draw one and a mixing transform has no way to average two, and both ask this same question.
+        """
+        return Axis.EMBEDDING in self.output_shape().axes
 
     @property
     @abstractmethod

@@ -17,7 +17,7 @@ from torch import Tensor, nn
 
 from src.build import build
 from src.config import load_config
-from src.core import Batch, ModelOutput, TargetInfo, TensorTree, drop_class_axis
+from src.core import Batch, ModelOutput, TensorTree, drop_feature_axis
 from src.experiment import run
 from src.models import Model
 from src.tasks import Task
@@ -40,8 +40,7 @@ class Doubling(Task):
     default_target_encoder: ClassVar[str | None] = "scalar"
     default_metrics: ClassVar[Mapping[str, Mapping[str, object]]] = {"mae": {"name": "mae"}}
 
-    @classmethod
-    def out_features(cls, info: TargetInfo) -> int:
+    def out_features(self) -> int:
         return 1
 
     @property
@@ -55,7 +54,7 @@ class Doubling(Task):
         return self.loss_target(batch)
 
     def postprocess(self, output: ModelOutput) -> TensorTree:
-        return drop_class_axis(self.raw(output))
+        return drop_feature_axis(self.raw(output))
 
 
 class Tiny(Model):

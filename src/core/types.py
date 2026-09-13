@@ -31,21 +31,23 @@ def require_tensor(value: object, *, name: str) -> Tensor:
     return value
 
 
-CLASS_AXIS = 1
-"""Where the class axis sits in a batched value: ``[B, C]`` and ``[B, C, H, W]`` alike.
+FEATURE_AXIS = 1
+"""Where the values a head makes per position sit in a batched tensor: ``[B, C]`` and ``[B, C, H, W]``.
 
-Batch first, classes next is the layout every head produces and every loss reads, so its position is a
-property of the tensors packages exchange rather than of any one package that acts on them.
+Batch first, then whatever the head produces, which is the layout every head writes and every loss
+reads — so its position belongs to the tensors packages exchange rather than to any one of them.
+``Task.out_features`` is how many values sit here; ``Axis.CLASSES`` and ``Axis.EMBEDDING`` are the
+shape's own words for what they mean.
 """
 
 
-def drop_class_axis(values: Tensor) -> Tensor:
-    """Drop a width-one class axis: ``[B, 1]`` becomes ``[B]``, ``[B, 1, H, W]`` becomes ``[B, H, W]``.
+def drop_feature_axis(values: Tensor) -> Tensor:
+    """Drop a width-one feature axis: ``[B, 1]`` becomes ``[B]``, ``[B, 1, H, W]`` becomes ``[B, H, W]``.
 
-    One output per position means the class axis carries no information, while a target never has one;
+    One value per position means the axis carries no information, while a target never has one;
     dropping it is what keeps a prediction comparable with what it is scored against.
     """
-    return values.squeeze(CLASS_AXIS) if values.ndim > 1 and values.size(CLASS_AXIS) == 1 else values
+    return values.squeeze(FEATURE_AXIS) if values.ndim > 1 and values.size(FEATURE_AXIS) == 1 else values
 
 
 @dataclass(frozen=True, slots=True)

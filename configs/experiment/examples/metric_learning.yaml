@@ -1,0 +1,65 @@
+# @package _global_
+# Identities rather than classes: `uv run main.py experiment=examples/metric_learning`.
+#
+# A classifier can only answer about the vocabulary it was trained on. This example learns a
+# *direction* per picture instead — samples of one breed pointing the same way — so the same
+# artifact can be searched against breeds it never saw: faces, products, re-identification.
+#
+# **The honest limit of this example.** Pet breeds are a closed set: every breed is seen in
+# training, so `val/identity/recall_at_1` measures the pipeline rather than the open-set
+# generalisation the method exists for. Pointing `target_column` at real identities trains the
+# same way, but measuring what the method is for needs identities held out of training — and the
+# label encoder fits its vocabulary on the train split, so an evaluation split holding identities
+# outside it is refused before the first batch. Holding identities out is not yet something this
+# framework can declare.
+#
+# What the run reads back:
+#   recall_at_1   how often the nearest other picture of the epoch is the same breed
+#   recall_at_5   the same, five deep — a fairer reading when a breed has many close cousins
+# Random is 1/37 ≈ 0.027 at k=1, so anything above a few percent is the model working. Read the
+# validation and test columns: the training one ranks against a gallery the encoder moved under.
+defaults:
+  - examples/pet
+  - override /model: resnet18
+
+tasks:
+  identity:
+    # How wide a space the identities are separated in is a choice of the model, not of the data,
+    # so the kind carries it. Written once: the head is sized from it and the objective sizes its
+    # prototypes from the same number.
+    kind: {name: metric_learning, embedding_dim: 128}
+    target_column: breed
+    # A training device here rather than the meaning of the output: the objective keeps one
+    # prototype per breed and the exported model carries none of them.
+    classes: {
+      0: Abyssinian, 1: Bengal, 2: Birman, 3: Bombay, 4: British_Shorthair, 5: Egyptian_Mau,
+      6: Maine_Coon, 7: Persian, 8: Ragdoll, 9: Russian_Blue, 10: Siamese, 11: Sphynx,
+      12: american_bulldog, 13: american_pit_bull_terrier, 14: basset_hound, 15: beagle, 16: boxer,
+      17: chihuahua, 18: english_cocker_spaniel, 19: english_setter, 20: german_shorthaired,
+      21: great_pyrenees, 22: havanese, 23: japanese_chin, 24: keeshond, 25: leonberger,
+      26: miniature_pinscher, 27: newfoundland, 28: pomeranian, 29: pug, 30: saint_bernard,
+      31: samoyed, 32: scottish_terrier, 33: shiba_inu, 34: staffordshire_bull_terrier,
+      35: wheaten_terrier, 36: yorkshire_terrier}
+    # The default, written out to show its knobs. `margin` is the angle, in radians, the true
+    # identity is pushed away by before scoring — what forces the run to leave a gap behind.
+    loss: {name: arcface_proxy, margin: 0.5, scale: 64.0}
+    metrics:
+      recall_at_1: {name: recall_at_k, k: 1}
+      recall_at_5: {name: recall_at_k, k: 5}
+
+# The other arrangement: put the prototypes in the *network*, and the artifact classifies breeds
+# directly instead of answering with a direction. It is then an ordinary classification task,
+# judged by the ordinary classification metrics:
+#
+#   tasks:
+#     breed:
+#       kind: classification
+#       target_column: breed
+#       classes: ...
+#       head: {name: cosine, embedding_dim: 128}
+#       loss: {name: arcface, margin: 0.5, scale: 64.0}
+#       metrics: {accuracy: {name: accuracy}, recall_at_3: {name: recall, top_k: 3}}
+#
+# `recall_at_k` above ranks the other pictures of the epoch; `recall` with `top_k` here ranks the
+# declared breeds. Different readings, and neither substitutes for the other. Which to declare is a
+# deployment question: ship the identities with the model, or ship an encoder that outlives them.

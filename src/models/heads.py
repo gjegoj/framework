@@ -6,9 +6,11 @@ from __future__ import annotations
 
 from typing import ClassVar, cast
 
+import torch
 from torch import Tensor, nn
+from torch.nn.functional import normalize
 
-from src.core import Axis
+from src.core import FEATURE_AXIS, Axis
 from src.models.registry import head_registry
 
 
@@ -41,3 +43,33 @@ class ConvHead(nn.Module):
 
     def forward(self, features: Tensor) -> Tensor:
         return cast(Tensor, self.projection(features))
+
+
+@head_registry.register("cosine")
+class CosineHead(nn.Module):
+    """The angle between a pooled feature and one prototype per class, both read as directions alone.
+
+    Declared under an angular objective, which needs a cosine to add its margin to — a plain projection
+    would saturate and the margin would mean nothing. Its prototypes are parameters of the *network*,
+    so they are exported with it and the artifact classifies; ``kind: metric_learning`` is the same
+    arrangement made the other way.
+
+    ``embedding_dim`` narrows the feature before the angles are taken, for a backbone far wider than
+    the space the identities need; left out, the stream's own width is that space.
+    """
+
+    reads: ClassVar[tuple[str, ...]] = (Axis.CHANNELS,)
+
+    def __init__(self, in_features: int, out_features: int, embedding_dim: int | None = None) -> None:
+        if embedding_dim is not None and embedding_dim < 1:
+            raise ValueError(f"'embedding_dim' is the width the angles are taken in; it was {embedding_dim}.")
+        super().__init__()
+        # No bias: a shift would move the origin the angles are measured from, which is the one thing
+        # a direction cannot carry.
+        self.projection = nn.Identity() if embedding_dim is None else nn.Linear(in_features, embedding_dim, bias=False)
+        self.prototypes = nn.Parameter(torch.empty(out_features, embedding_dim or in_features))
+        nn.init.xavier_uniform_(self.prototypes)
+
+    def forward(self, features: Tensor) -> Tensor:
+        projected = cast(Tensor, self.projection(features))
+        return normalize(projected, dim=FEATURE_AXIS) @ normalize(self.prototypes, dim=-1).T

@@ -8,7 +8,7 @@ from typing import ClassVar
 import torch
 from torch import Tensor
 
-from src.core import CLASS_AXIS, ERROR, Batch, ModelOutput, TargetInfo, TensorTree, drop_class_axis
+from src.core import ERROR, FEATURE_AXIS, Batch, ModelOutput, TensorTree, drop_feature_axis
 from src.tasks.base import LossDeclaration, Task
 from src.tasks.registry import task_registry
 
@@ -31,9 +31,8 @@ class Regression(Task):
         """The value each bin stands for, when the encoder laid the target out in bins."""
         return self.info.values
 
-    @classmethod
-    def out_features(cls, info: TargetInfo) -> int:
-        return 1 if info.values is None else len(info.values)
+    def out_features(self) -> int:
+        return 1 if self.binned is None else len(self.binned)
 
     @property
     def default_loss(self) -> LossDeclaration:
@@ -55,8 +54,8 @@ class Regression(Task):
     def postprocess(self, output: ModelOutput) -> TensorTree:
         scores = self.raw(output)
         if self.binned is None:
-            return drop_class_axis(scores)
-        return scores.softmax(dim=CLASS_AXIS) @ _values(self.binned, scores)
+            return drop_feature_axis(scores)
+        return scores.softmax(dim=FEATURE_AXIS) @ _values(self.binned, scores)
 
 
 def _values(bins: tuple[float, ...], like: Tensor) -> Tensor:

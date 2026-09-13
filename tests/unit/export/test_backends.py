@@ -55,7 +55,7 @@ def deployable(tasks: int = 2) -> DeployableModel:
         Classification("species", TargetInfo(classes={0: "cat", 1: "dog"})),
         Regression("weight", TargetInfo()),
     ][:tasks]
-    widths = {task.name: task.out_features(task.info) for task in served}
+    widths = {task.name: task.out_features() for task in served}
     return DeployableModel(Heads("features", widths), served, input_names=("features",)).eval()
 
 
@@ -63,7 +63,7 @@ def wide() -> DeployableModel:
     """A graph with weights worth writing beside it: under a kilobyte the library keeps them inside."""
     task = Classification("species", TargetInfo(classes={index: f"class{index}" for index in range(300)}))
     return DeployableModel(
-        Heads("features", {task.name: task.out_features(task.info)}), [task], input_names=("features",)
+        Heads("features", {task.name: task.out_features()}), [task], input_names=("features",)
     ).eval()
 
 

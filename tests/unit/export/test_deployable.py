@@ -9,7 +9,7 @@ import torch
 from torch import Tensor
 
 from src.core import (
-    CLASS_AXIS,
+    FEATURE_AXIS,
     Axis,
     DatasetInfo,
     InputInfo,
@@ -61,8 +61,8 @@ def test_each_tensor_reaches_the_model_under_the_name_the_graph_takes_it_by() ->
 
     left, right = graph(first, second)
 
-    assert torch.equal(left, first.squeeze(CLASS_AXIS))
-    assert torch.equal(right, second.squeeze(CLASS_AXIS))
+    assert torch.equal(left, first.squeeze(FEATURE_AXIS))
+    assert torch.equal(right, second.squeeze(FEATURE_AXIS))
 
 
 def test_a_call_with_another_number_of_tensors_is_refused_naming_both_counts() -> None:
@@ -80,7 +80,7 @@ def test_an_output_means_what_its_task_says_rather_than_what_the_head_produced()
 
     shipped = graph(logits)
 
-    assert torch.allclose(shipped.sum(dim=CLASS_AXIS), torch.ones(2))
+    assert torch.allclose(shipped.sum(dim=FEATURE_AXIS), torch.ones(2))
     assert not torch.allclose(shipped, logits)
 
 

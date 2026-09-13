@@ -26,8 +26,9 @@ from src.export.base import beside
 from src.export.build import build_exporters
 from src.export.manifest import MANIFEST_SUFFIX, Manifest, ship
 from src.models import Model
+from src.tasks import MetricLearning
 from src.tasks.regression import Regression
-from tests.unit.export.test_backends import FEATURES, deployable, wide
+from tests.unit.export.test_backends import FEATURES, Heads, deployable, wide
 
 NORMALIZATION = Normalization(mean=(0.485, 0.456, 0.374, 0.5), std=(0.229, 0.224, 0.225, 0.5))
 
@@ -62,6 +63,23 @@ def test_a_manifest_says_what_every_output_means_in_the_order_the_artifact_answe
     assert outputs[0].classes == ("cat", "dog")
     assert outputs[1].semantics is None
     assert outputs[1].classes is None
+
+
+def test_a_record_of_a_model_answering_with_a_direction_claims_no_vocabulary(tmp_path: Path) -> None:
+    """The identities it was separated by are a training device, and the artifact carries none of them.
+
+    Written as classes, a deployment would read position 0 of a 128-wide unit vector as the first breed
+    and index a gallery by it — the record describing a model that was never built.
+    """
+    identity = MetricLearning("identity", TargetInfo(classes={0: "cat", 1: "dog"}), embedding_dim=FEATURES)
+    graph = DeployableModel(
+        Heads("features", {identity.name: identity.out_features()}), [identity], input_names=("features",)
+    ).eval()
+
+    (built,) = shipped(tmp_path, {"name": "onnx"}, graph=graph).outputs
+
+    assert built.name == "identity"
+    assert built.classes is None and built.values is None
 
 
 def test_a_manifest_says_which_file_is_the_artifact_and_which_only_travel_with_it(tmp_path: Path) -> None:

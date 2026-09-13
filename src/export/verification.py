@@ -50,8 +50,9 @@ def verify(exporter: Exporter, path: Path, graph: DeployableModel, example: tupl
     answers the size it was written from perfectly and fails at the single row a deployment sends.
 
     Raises:
-        RuntimeError: If the artifact answers with another shape, another number of outputs, or values
-            outside the allowance — naming the file and how far out it was.
+        RuntimeError: If the artifact answers with another shape, another number of outputs, values
+            that are not numbers, or values outside the allowance — naming the file and how far out it
+            was.
     """
     runnable = exporter.load(path)
     batches = exporter.answers_at(written_at=int(example[0].shape[BATCH_AXIS]))
@@ -62,9 +63,13 @@ def verify(exporter: Exporter, path: Path, graph: DeployableModel, example: tupl
             expected = as_outputs(graph(*given))
         written = runnable(given)
         _refuse_an_answer_of_another_shape(path, graph.output_names, written, expected)
+        _refuse_an_answer_that_is_not_a_number(path, graph.output_names, written, expected)
         for one, other in zip(written, expected, strict=True):
             gap = (one - other).abs().flatten()
-            share = gap / (exporter.atol + exporter.rtol * other.abs().flatten())
+            allowance = exporter.atol + exporter.rtol * other.abs().flatten()
+            # Where there is nothing to allow, no allowance was used — said here rather than left to
+            # 0/0, whose NaN would then be picked as the worst value and compare false against it.
+            share = torch.where(gap > 0, gap / allowance, torch.zeros_like(gap))
             worst = int(share.argmax())
             if float(share[worst]) > used:
                 used, difference = float(share[worst]), float(gap[worst])
@@ -76,6 +81,28 @@ def verify(exporter: Exporter, path: Path, graph: DeployableModel, example: tupl
             "artifact is written; it is the run that cannot claim it serves this model."
         )
     return parity
+
+
+def _refuse_an_answer_that_is_not_a_number(
+    path: Path, names: tuple[str, ...], written: tuple[Tensor, ...], expected: tuple[Tensor, ...]
+) -> None:
+    """A value that is not a number is below every bound, because it is below nothing.
+
+    Every comparison that would catch it is therefore false: the share it used stays at its starting
+    0.0 and the artifact is reported as standing exactly on the model. It also takes its whole output
+    down with it — being the largest share, it is the element the reading is taken from, so a real
+    disagreement beside it is recorded as none. Both sides are read, because a model that went unstable
+    answers this way too and an artifact faithfully copying it would otherwise agree with it perfectly.
+    """
+    for name, one, other in zip(names, written, expected, strict=True):
+        for source, values in ((path.name, one), ("the model it was written from", other)):
+            unusable = int((~torch.isfinite(values)).sum())
+            if unusable:
+                raise RuntimeError(
+                    f"{source} answers {name!r} with {unusable} of {values.numel()} values that are not "
+                    "a number, so there is nothing to compare by. A comparison against one is false "
+                    "however it is written, which would report this artifact as exactly the model."
+                )
 
 
 def _refuse_an_answer_of_another_shape(

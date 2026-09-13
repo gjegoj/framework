@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from src.tasks.base import Task
 from src.tasks.classification import BinaryClassification, Classification, MultilabelClassification
+from src.tasks.metric_learning import MetricLearning
 from src.tasks.regression import Regression
 from src.tasks.segmentation import BinarySegmentation, DenseOutput, Segmentation
 from src.tasks.semantics import DECISION, BinarySemantics, MulticlassSemantics, MultilabelSemantics
@@ -18,6 +19,7 @@ __all__ = [
     "BinarySemantics",
     "Classification",
     "DenseOutput",
+    "MetricLearning",
     "MulticlassSemantics",
     "MultilabelClassification",
     "MultilabelSemantics",

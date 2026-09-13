@@ -28,6 +28,18 @@ def experiment(declaration: Mapping[str, Any], **overrides: Any) -> Experiment:
     return build(load_config({**declaration, **overrides}))
 
 
+class Learned(nn.Module):
+    """A learner as a checkpoint names one: the network under ``model``, and whatever learned beside it.
+
+    What ``restore_best_weights`` is handed, spelled out rather than assembled — a run's own learner
+    carries a backbone and a loss per task, and none of that is what these tests are about.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.model = nn.Linear(2, 2)
+
+
 class TestWeights:
     def test_a_checkpoint_of_ours_gives_up_the_models_own_keys(self, tmp_path: Path) -> None:
         path = written(tmp_path / "one.ckpt", {"weight": torch.zeros(2, 2)})
@@ -43,27 +55,26 @@ class TestWeights:
     def test_weights_that_do_not_fit_are_refused_rather_than_half_loaded(self, tmp_path: Path) -> None:
         """A model with a loaded encoder and a fresh head looks trained and is not."""
         path = written(tmp_path / "other.ckpt", {"weight": torch.zeros(3, 3), "bias": torch.zeros(3)})
-        model = nn.Linear(2, 2)
 
         with pytest.raises(ValueError, match="does not fit"):
-            restore_best_weights(_kept(path), model)
+            restore_best_weights(_kept(path), Learned())
 
     def test_the_checkpoint_a_run_kept_is_what_it_ends_holding(self, tmp_path: Path) -> None:
         """Lightning reloads nothing when the module is passed explicitly, so the run would ship its last epoch."""
-        model = nn.Linear(2, 2)
+        learner = Learned()
         path = written(tmp_path / "best.ckpt", {"weight": torch.zeros(2, 2), "bias": torch.zeros(2)})
 
-        restore_best_weights(_kept(path), model)
+        restore_best_weights(_kept(path), learner)
 
-        assert torch.equal(model.weight, torch.zeros(2, 2))
+        assert torch.equal(learner.model.weight, torch.zeros(2, 2))
 
     def test_a_run_that_kept_nothing_ends_holding_what_it_trained(self) -> None:
-        model = nn.Linear(2, 2)
-        before = model.weight.clone()
+        learner = Learned()
+        before = learner.model.weight.clone()
 
-        restore_best_weights(_kept(""), model)
+        restore_best_weights(_kept(""), learner)
 
-        assert torch.equal(model.weight, before)
+        assert torch.equal(learner.model.weight, before)
 
 
 class TestRun:
@@ -116,6 +127,41 @@ class TestRun:
         assert "epoch=0" in kept.name, "the run got worse, so the epoch it kept is not the one it ended on"
         held = built.module.learner.model.state_dict()
         assert all(torch.equal(held[name], value) for name, value in model_weights(str(kept)).items())
+
+    def test_a_run_ends_holding_everything_it_learned_at_that_epoch_not_the_network_alone(
+        self, declaration: Mapping[str, Any], tmp_path: Path
+    ) -> None:
+        """A loss with parameters of its own is learned by the run, so the epoch it keeps is the whole of it.
+
+        Restoring the network alone leaves an angular margin's prototypes at the last epoch while every
+        weight beside them comes from another one — a model that never existed at any point of the run.
+        """
+        declared = {
+            **declaration,
+            "epochs": 2,
+            # As above: the rate is multiplied by a thousand once the first epoch is over, so the epoch
+            # this run keeps is certainly not the one it ends on.
+            "scheduler": {"name": "step", "step_size": 1, "gamma": 1000},
+            "tasks": {
+                name: {**task, "loss": {"_target_": "tests.support.losses.LearnedMargin"}}
+                for name, task in declaration["tasks"].items()
+            },
+            "callbacks": [
+                {"name": "checkpoint", "monitor": "val/loss", "mode": "min", "dirpath": str(tmp_path / "kept")}
+            ],
+        }
+        built = experiment(declared)
+
+        run(built)
+
+        kept = Path(str(getattr(built.trainer.checkpoint_callback, "best_model_path", "")))
+        assert "epoch=0" in kept.name, "the run got worse, so the epoch it kept is not the one it ended on"
+        saved = torch.load(kept, map_location="cpu", weights_only=True)["state_dict"]
+        margin = saved["learner.losses.species.margin"]
+        assert torch.any(margin != 0), "the margin moved, so holding the kept one is a claim about something"
+        held = built.module.learner.state_dict()
+        adrift = [one for one, value in saved.items() if not torch.equal(held[one.removeprefix("learner.")], value)]
+        assert not adrift, f"the run ended holding something the epoch it kept did not: {adrift}"
 
     def test_a_run_continues_from_a_checkpoint_the_shipped_saver_wrote(
         self, declaration: Mapping[str, Any], tmp_path: Path

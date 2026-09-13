@@ -17,5 +17,6 @@ from __future__ import annotations
 from torchmetrics import MetricCollection
 
 from src.metrics.classification import ConfusionMatrix
+from src.metrics.metric_learning import RecallAtK
 
-__all__ = ["ConfusionMatrix", "MetricCollection"]
+__all__ = ["ConfusionMatrix", "MetricCollection", "RecallAtK"]

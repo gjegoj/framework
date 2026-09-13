@@ -137,9 +137,10 @@ type AnyAnnotator = Annotator[ClassReading] | Annotator[ValueReading]
 def annotator_for(task: Task) -> AnyAnnotator | None:
     """How this task is drawn, read off what it already declares — or ``None`` where nothing draws it.
 
-    Two facts decide it and neither is new: what its labels mean, and whether it decides at every pixel.
-    The one pairing with no answer is a number per pixel, which is a heat map — a shape the display
-    vocabulary has no label for yet, so a page leaves it off and says so rather than drawing it wrong.
+    Three facts decide it and none is new: what its labels mean, whether it decides at every pixel, and
+    whether its answer is a direction. Two of those have no answer here — a number per pixel is a heat
+    map, and a direction means nothing except against a gallery, which one cell is not — so a page
+    leaves them off and says so rather than drawing either as the thing it superficially resembles.
     """
     reader: Reader[ClassReading]
     match task.semantics:
@@ -150,7 +151,7 @@ def annotator_for(task: Task) -> AnyAnnotator | None:
         case Semantics.MULTILABEL:
             reader = MultilabelReader()
         case None:
-            return None if task.dense else Annotator(ValueReader(), NumberDrawer())
+            return None if task.dense or task.embeds else Annotator(ValueReader(), NumberDrawer())
         case _:
             assert_never(task.semantics)
     return Annotator(reader, MaskDrawer() if task.dense else ChipDrawer())
@@ -174,7 +175,7 @@ class MulticlassReader(Reader[ClassReading]):
 
 
 class BinaryReader(Reader[ClassReading]):
-    """One score per position, read against the line. There is no class axis to take a maximum over."""
+    """One score per position, read against the line. There is no feature axis to take a maximum over."""
 
     def read_output(self, scores: np.ndarray) -> ClassReading:
         # `scores` *is* the probability of the positive class — the activation dropped the one channel

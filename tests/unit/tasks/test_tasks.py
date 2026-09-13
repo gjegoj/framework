@@ -8,7 +8,7 @@ from torch import Tensor
 
 from src.core import Batch, ModelOutput, TargetInfo, require_tensor
 from src.data.encoders.continuous import BinnedEncoder, GaussianBinsEncoder, LinearBinsEncoder
-from src.tasks import Task
+from src.tasks import MetricLearning, Task
 from src.tasks.registry import task_registry
 from tests.support.tasks import info, specimen
 
@@ -67,12 +67,12 @@ class TestClassification:
     def test_the_output_a_head_must_produce_follows_from_the_semantics_and_the_vocabulary(
         self, kind: str, declared: TargetInfo, shape: tuple[int | None, ...]
     ) -> None:
-        assert task_registry.get(kind).output_shape(declared).sizes == shape
+        assert task_registry.get(kind)("t", declared).output_shape().sizes == shape
 
     @pytest.mark.parametrize("kind", ["classification", "segmentation"])
     def test_a_vocabulary_too_small_to_choose_from_is_refused(self, kind: str) -> None:
         with pytest.raises(ValueError, match="two"):
-            task_registry.get(kind).output_shape(TargetInfo(classes={0: "only"}))
+            task_registry.get(kind)("t", TargetInfo(classes={0: "only"})).output_shape()
 
     def test_probabilities_come_back_over_the_class_axis(self) -> None:
         task = task_registry.get("classification")("t", info())
@@ -109,13 +109,51 @@ class TestClassification:
         assert task.loss_target(batch(torch.tensor([2, 0]))).dtype is torch.long
 
 
+class TestMetricLearning:
+    """A kind whose output is a direction rather than a reading: the one width the data cannot settle."""
+
+    def test_it_is_sized_by_the_width_it_declares_rather_than_by_how_many_identities_there_are(self) -> None:
+        """How wide an embedding is, is a choice of the model; how many identities there are is the data's."""
+        task = MetricLearning("identity", info(), embedding_dim=8)
+
+        assert task.output_shape().sizes == (8,) and task.info.num_classes == 3
+
+    def test_the_width_it_declares_reaches_its_objective_as_a_fact_rather_than_as_a_second_declaration(self) -> None:
+        """The prototypes have to be as wide as the embeddings; writing that twice is how they drift apart."""
+        task = MetricLearning("identity", info(), embedding_dim=8)
+
+        assert task.facts()["embedding_dim"] == 8
+
+    def test_a_kind_learning_one_prototype_per_identity_is_refused_without_a_vocabulary(self) -> None:
+        with pytest.raises(ValueError, match="classes"):
+            MetricLearning("identity", TargetInfo(), embedding_dim=8)
+
+    def test_a_width_that_is_no_width_is_refused_where_it_is_declared(self) -> None:
+        with pytest.raises(ValueError, match="embedding_dim"):
+            MetricLearning("identity", info(), embedding_dim=0)
+
+    def test_what_it_publishes_is_a_direction_so_a_gallery_can_be_searched_by_angle(self) -> None:
+        """The artifact answers with unit vectors: what the output *means* is settled by the task."""
+        task = MetricLearning("t", info(), embedding_dim=4)
+
+        published = require_tensor(task.postprocess(prediction(torch.rand(2, 4) * 10)), name="t")
+
+        assert torch.allclose(published.norm(dim=1), torch.ones(2), atol=1e-6)
+
+    def test_an_identity_is_not_a_label_that_two_samples_can_be_averaged_into(self) -> None:
+        """Read off the shape, as `dense` is: a page cannot draw one and a mix cannot blend two."""
+        task = MetricLearning("t", info(), embedding_dim=4)
+
+        assert task.embeds and not task_registry.get("classification")("t", info()).embeds
+
+
 class TestRegression:
     def test_a_plain_target_is_one_number_per_sample(self) -> None:
         task = task_registry.get("regression")("t", TargetInfo())
 
         prepared = require_tensor(task.postprocess(prediction(torch.tensor([[1.5], [2.5]]))), name="t")
 
-        assert task.output_shape(TargetInfo()).sizes == (1,) and prepared.tolist() == [1.5, 2.5]
+        assert task.output_shape().sizes == (1,) and prepared.tolist() == [1.5, 2.5]
 
     def test_a_binned_target_is_learned_as_a_distribution_and_read_back_as_the_value_it_stands_for(self) -> None:
         """The same number, two views: bins for the loss, the value they average to for a metric."""
@@ -125,7 +163,7 @@ class TestRegression:
 
         value = require_tensor(task.postprocess(prediction(distribution.log())), name="t")
 
-        assert task.output_shape(binned).sizes == (3,)
+        assert task.output_shape().sizes == (3,)
         assert value.tolist() == pytest.approx([10.0, 5.0], abs=0.1)
         assert task.metric_view(batch(distribution)).tolist() == pytest.approx([10.0, 5.0])
 

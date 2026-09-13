@@ -9,7 +9,7 @@ import torch
 from torch import Tensor
 
 from src.core import Batch, TargetInfo
-from src.tasks import Task
+from src.tasks import MetricLearning, Task
 from src.tasks.registry import task_registry
 from src.transforms import BatchTransform, CutMix, MixUp
 
@@ -110,6 +110,13 @@ class TestBinding:
         """A blended image has no coherent per-pixel target, and this is known before the first batch."""
         with pytest.raises(ValueError, match="mask"):
             MixUp().for_tasks([task(), task(kind="segmentation", name="mask")])
+
+    def test_a_task_answering_with_a_direction_is_refused_by_name(self) -> None:
+        """An average of two identities names a third that neither sample was, and nothing would say so."""
+        identity = MetricLearning("identity", TargetInfo(classes=CLASSES), embedding_dim=4)
+
+        with pytest.raises(ValueError, match="identity"):
+            MixUp().for_tasks([task(), identity])
 
     def test_binding_leaves_the_declared_transform_as_it_was(self) -> None:
         """The binding lives in what comes back, not in the object: what a declaration built stays what

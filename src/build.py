@@ -64,7 +64,7 @@ def build(config: ExperimentConfig) -> Experiment:
     model = build_model(
         config.model,
         heads={name: head_for(config.tasks[name], task) for name, task in tasks.items()},
-        outputs={name: task.output_shape(task.info) for name, task in tasks.items()},
+        outputs={name: task.output_shape() for name, task in tasks.items()},
     )
     learner = build_learner(
         config.learner,
