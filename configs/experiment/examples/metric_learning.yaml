@@ -16,8 +16,9 @@
 # What the run reads back:
 #   recall_at_1   how often the nearest other picture of the epoch is the same breed
 #   recall_at_5   the same, five deep — a fairer reading when a breed has many close cousins
-# Random is 1/37 ≈ 0.027 at k=1, so anything above a few percent is the model working. Read the
-# validation and test columns: the training one ranks against a gallery the encoder moved under.
+# Random is 1/37 ≈ 0.027 at k=1, so anything above a few percent is the model working. Both are read
+# on validation and test only — ranking a gallery the encoder was still moving under measures the
+# drift rather than the model, so the metric declares the stages it means something in.
 defaults:
   - examples/pet
   - override /model: resnet18

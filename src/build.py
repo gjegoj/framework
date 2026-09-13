@@ -20,7 +20,7 @@ from lightning import seed_everything
 
 from src.callbacks.build import build_callbacks
 from src.config import ExperimentConfig, TaskConfig
-from src.core import InputInfo, Stage
+from src.core import Stage
 from src.data.build import build_data_module, build_preprocessor
 from src.experiment import Experiment
 from src.export.build import build_exporters
@@ -31,8 +31,6 @@ from src.tasks.build import build_task_kinds, build_tasks, default_target_encode
 from src.tracking.build import build_tracker
 from src.training import TrainingData, TrainingModule
 from src.training.build import build_learner, build_optimizer_factory, build_profiler, build_scheduler_factory
-from src.transforms import SampleTransform
-from src.transforms.base import AppliesNormalization, is_the_same_scaling
 from src.transforms.build import build_transforms
 
 if TYPE_CHECKING:
@@ -41,6 +39,7 @@ if TYPE_CHECKING:
     from src.data import DataModule
     from src.losses import Loss
     from src.metrics import MetricCollection
+    from src.models import Model
     from src.tasks import Task
 
 log = logging.getLogger(__name__)
@@ -66,12 +65,9 @@ def build(config: ExperimentConfig) -> Experiment:
         heads={name: head_for(config.tasks[name], task) for name, task in tasks.items()},
         outputs={name: task.output_shape() for name, task in tasks.items()},
     )
-    learner = build_learner(
-        config.learner,
-        model=model,
-        tasks=tasks,
-        losses={name: loss_for(config.tasks[name], task) for name, task in tasks.items()},
-    )
+    losses = {name: loss_for(config.tasks[name], task) for name, task in tasks.items()}
+    _refuse_a_head_and_an_objective_that_disagree(model, losses)
+    learner = build_learner(config.learner, model=model, tasks=tasks, losses=losses)
     return Experiment(
         module=TrainingModule(
             learner,
@@ -108,42 +104,8 @@ def prepare_data(config: ExperimentConfig, kinds: Mapping[str, type[Task]]) -> D
     data.setup(splits)
     if Stage.TRAIN in splits:
         data.fit_preprocessing(Stage.TRAIN)
-    # After fitting rather than before: what an input declares is settled from the start, but the facts
-    # are published together, and the encoder that learns its layout from the training split has not.
-    _refuse_a_chain_that_does_not_apply_the_declared_scaling(data.info.inputs, transforms)
     data.warm(splits)
     return data
-
-
-def _refuse_a_chain_that_does_not_apply_the_declared_scaling(
-    inputs: Mapping[str, InputInfo], transforms: Mapping[str, SampleTransform]
-) -> None:
-    """An input's declared scaling has to be the one its stage's chain applies, or every reader of it lies.
-
-    Two sections own the two halves: `preprocessing.inputs.<name>` says what the model was trained under,
-    `transforms.<stage>` says what the pixels actually go through. Both are read elsewhere as fact — the
-    manifest a deployment builds its input from, the sample page that undoes the scaling to show an image
-    — and a run whose halves disagree makes both of them describe a model that never existed.
-
-    A transform that cannot say what it applies is not asked: the capability is optional, and one a run
-    wrote itself is its own business.
-    """
-    declared = {name: info.normalization for name, info in inputs.items() if info.normalization is not None}
-    for stage, transform in transforms.items():
-        if not isinstance(transform, AppliesNormalization):
-            continue
-        applied = transform.normalization
-        for name, one in declared.items():
-            if not is_the_same_scaling(one, applied):
-                says = "no fixed scaling of its own" if applied is None else f"mean {applied.mean}, std {applied.std}"
-                raise ValueError(
-                    f"Input {name!r} is declared to be scaled by mean {one.mean}, std {one.std}, and the "
-                    f"'{stage}' chain applies {says}. What reads the declaration — the record an export "
-                    "ships, the page that undoes the scaling to show an image — would be describing a model "
-                    "trained on something else. The shipped groups interpolate "
-                    "`${preprocessing.inputs.<name>.mean}` into `albumentations.Normalize` so the two "
-                    "cannot drift apart."
-                )
 
 
 def needed_splits(config: ExperimentConfig) -> tuple[Stage, ...]:
@@ -167,6 +129,27 @@ def loss_for(declared: TaskConfig, task: Task) -> Loss:
     losses, so the root is the only place holding both a declaration and the facts to size it from.
     """
     return build_loss(declared.loss if declared.loss is not None else task.default_loss, task.facts())
+
+
+def _refuse_a_head_and_an_objective_that_disagree(model: Model, losses: Mapping[str, Loss]) -> None:
+    """The network and the objective over it are built apart and have to agree about one tensor.
+
+    Here because only the root holds both. Why neither the shape nor the values tell a projection and
+    an angle apart is ``Representation``, which is the word the two declare in.
+
+    Compared by value rather than by identity: ``Representation`` is a ``StrEnum`` so that a head a run
+    wrote itself may spell ``produces = "cosines"`` and be taken at its word.
+    """
+    for name, loss in losses.items():
+        answered = model.produces(name)
+        if loss.reads != answered:
+            raise ValueError(
+                f"Task {name!r}: the network serving it answers with {answered}, and objective "
+                f"{loss.log_name!r} reads {loss.reads}. Nothing in a tensor says which of the two it "
+                f"holds, so this pair would train and report a number that looks like work. Declare "
+                f"`tasks.{name}.loss` that reads {answered}, or a head that answers with {loss.reads} — "
+                f"`tasks.{name}.head` where the run composes one, `produces` on a network arriving whole."
+            )
 
 
 def metrics_for(declared: TaskConfig, task: Task) -> MetricCollection:

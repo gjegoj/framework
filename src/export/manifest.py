@@ -27,6 +27,12 @@ class InputRecord:
 
     ``shape`` is one sample's. The batch is the axis in front of it, and how many rows a given artifact
     will take is that artifact's own business, recorded with it below.
+
+    ``normalization`` is what the input's encoder declares, and nothing at build compares it against
+    what the stage chain applies. It is true because the two are not written twice: a shipped chain
+    interpolates ``${preprocessing.inputs.image.mean}`` rather than repeating the numbers, so there is
+    one declaration and nothing to disagree with it. A run spelling its own numbers into its own chain
+    is the one case this record can be wrong about, and writing them once is what keeps it right.
     """
 
     name: str

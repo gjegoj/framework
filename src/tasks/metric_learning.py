@@ -78,7 +78,8 @@ class MetricLearning(Task):
         return "arcface_proxy"
 
     def loss_target(self, batch: Batch) -> Tensor:
-        """Which identity the sample is; an index, and never softened — see ``embeds``."""
+        """Which identity the sample is, as one index; whether a share of two may stand here is the
+        objective's to declare."""
         return self.target(batch).long()
 
     def metric_view(self, batch: Batch) -> Tensor:

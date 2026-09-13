@@ -105,9 +105,9 @@ def _refuse_a_head_that_cannot_read(
     task: str, spelled: str, head: nn.Module, published: TensorShape, stream: str
 ) -> None:
     """A head that declares its axes meets a stream that declares its own; a mismatch dies here, not in a matmul."""
-    if isinstance(head, ShapeAware) and tuple(head.reads) != published.axes:
+    if isinstance(head, ShapeAware) and tuple(head.reads_axes) != published.axes:
         raise ValueError(
-            f"Task {task!r}: head {spelled!r} reads a [{', '.join(head.reads)}] feature, but {stream!r} is "
+            f"Task {task!r}: head {spelled!r} reads a [{', '.join(head.reads_axes)}] feature, but {stream!r} is "
             f"[{', '.join(published.axes)}]. Read a stream of that shape, or a head that takes this one "
             "(a feature map needs 'conv', or the backbone's own head through 'native')."
         )

@@ -54,23 +54,13 @@ class LabelMix(ABC):
         these and keeps it, and an object that is a transform only *after* someone has bound it has a
         state in which calling it is a mistake. There is no such state here.
         """
-        self._refuse(
-            [task.name for task in tasks if task.dense],
-            "one image made of two has no coherent per-pixel target",
-        )
-        self._refuse(
-            [task.name for task in tasks if task.embeds],
-            "an average of two identities names a third that neither sample was",
-        )
-        return partial(self._applied, tasks={task.name: task for task in tasks})
-
-    def _refuse(self, named: Sequence[str], because: str) -> None:
-        """One sentence for every task this cannot serve, with the reason it cannot serve that one."""
-        if named:
+        if dense := [task.name for task in tasks if task.dense]:
             raise ValueError(
-                f"{type(self).__name__} blends two samples and weighs their targets together, and "
-                f"{because}: {', '.join(named)}. Drop the transform, or the task it cannot serve."
+                f"{type(self).__name__} blends two samples and weighs their targets together, and one "
+                f"image made of two has no coherent per-pixel target: {', '.join(dense)}. Drop the "
+                "transform, or the task it cannot serve."
             )
+        return partial(self._applied, tasks={task.name: task for task in tasks})
 
     def _applied(self, batch: Batch, tasks: Mapping[str, Task]) -> Batch:
         """A new batch; the one handed over is never written into."""

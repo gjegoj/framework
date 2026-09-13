@@ -179,12 +179,16 @@ class TestAngular:
         with pytest.raises(ValueError, match="identity"):
             built(torch.tensor([[0.9, -0.9, 0.0], [-0.9, 0.9, 0.0]]), mixed)
 
-    def test_an_objective_reading_cosines_refuses_a_head_that_produces_something_else(self) -> None:
-        """`head: linear` under this loss trains, saturates and reports a plausible number forever."""
-        built = build_loss(ComponentConfig(name="arcface"), facts("arcface"))
+    def test_terms_summed_over_one_output_are_refused_when_they_disagree_about_what_it_holds(self) -> None:
+        """A head answers with one thing, so two terms reading it cannot both be right about what it is.
 
-        with pytest.raises(ValueError, match="cosines"):
-            built(torch.randn(4, CLASSES) * 10, IDENTITIES)
+        Left to stand, whichever term is wrong trains alongside the right one and reports a number of
+        ordinary size; the run would be learning partly against a reading of its output that never was.
+        """
+        declared = [{"loss": {"name": "cross_entropy"}}, {"loss": {"name": "arcface"}}]
+
+        with pytest.raises(ValueError, match="disagree"):
+            build_loss(declared, facts("arcface"))
 
     @pytest.mark.parametrize(
         ("declared", "refused"),

@@ -59,6 +59,24 @@ class Semantics(StrEnum):
     MULTILABEL = "multilabel"
 
 
+class Representation(StrEnum):
+    """What a head's numbers are, which the shape they arrive in does not say.
+
+    Read where two separately built parts have to agree about one tensor. An angular margin is added to
+    an angle and has nothing to add to a projection; an ordinary cross-entropy needs the opposite, and
+    over values bounded by one it can never become confident. Neither mistake shows in a shape, and
+    neither shows reliably in the values either — measured, a projection whose weights start small
+    reaches 0.34, well inside the range a cosine occupies.
+
+    ``PROJECTED`` is the feature mapped and nothing more: logits where the output axis is classes, the
+    coordinates of a direction where it is an embedding. ``COSINES`` is bounded to ±1 — the angle
+    between the feature and one prototype per class, both read as directions alone.
+    """
+
+    PROJECTED = "projected"
+    COSINES = "cosines"
+
+
 class Modality(StrEnum):
     """What an input is; conventional names, as ``Stream``'s are — a custom encoder may say anything."""
 

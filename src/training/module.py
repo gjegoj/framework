@@ -15,6 +15,7 @@ import lightning as L
 from torch import Tensor, nn
 
 from src.core import Batch, LossOutput, Stage, StepOutput, TensorTree
+from src.metrics import DeclaresStages, Metric, MetricCollection
 from src.tracking import MetricKey, report, series
 from src.training.base import FitProfile, Learner, OptimizerFactory, SchedulerFactory, StepPreview, StepWatcher
 
@@ -59,7 +60,9 @@ class TrainingModule(L.LightningModule):
         self._scheduler_factory = scheduler_factory
         declared = dict(metrics or {})
         self._refuse_metrics_for_a_task_that_is_not_learned(declared)
-        self._metrics = {stage: {name: collection.clone() for name, collection in declared.items()} for stage in Stage}
+        self._metrics = {
+            stage: {name: _as_read_in(collection, stage) for name, collection in declared.items()} for stage in Stage
+        }
         # Registered so Lightning moves them with the model between devices; the mapping above is what
         # reads them back, because torch's containers answer as plain modules. Flat, and not nested by
         # stage, because a container keyed by stage cannot be built: `train` is a method every module
@@ -126,13 +129,18 @@ class TrainingModule(L.LightningModule):
         """Which way each measured value is better, as the metric producing it declares.
 
         Keyed by series rather than by logged key, because a direction is a fact about the
-        measurement and holds in every stage it is measured in — any stage answers the same, since
+        measurement and holds in every stage it is measured in — each stage answers the same, since
         they are clones of one declaration. ``None`` is a reading with no better direction at all:
         a confusion matrix is not improved, it is read.
+
+        Every stage is walked rather than the training one alone: a reading taken only in evaluation
+        is absent from training, and a monitor that cannot find a direction assumes one — `mode="min"`
+        over a recall keeps the worst epoch of the run and says nothing about it.
         """
         return {
             series(task, label): metric.higher_is_better
-            for task, collection in self._metrics[Stage.TRAIN].items()
+            for stage in Stage
+            for task, collection in self._metrics[stage].items()
             for label, metric in collection.items()
         }
 
@@ -228,6 +236,26 @@ class TrainingModule(L.LightningModule):
                 f"Metrics are declared for {', '.join(unknown)}, which this run does not learn: it has "
                 f"{', '.join(sorted(self.learner.tasks)) or 'no tasks'}. Nothing would ever update them."
             )
+
+
+def _as_read_in(declared: MetricCollection, stage: Stage) -> MetricCollection:
+    """This stage's own copy of one task's collection, holding only what is read in this stage.
+
+    Cloned before it is narrowed and never after: measured on torchmetrics 1.9.0, a collection built
+    from another's live members shares their state, so two stages would accumulate into one reading.
+    Rebuilt rather than emptied in place, measured on the same version: deleting a member leaves the
+    compute groups still naming it, and the next ``update`` raises on the name that is gone.
+    """
+    kept = declared.clone()
+    read: dict[str, Metric | MetricCollection] = {
+        label: metric for label, metric in kept.items() if _is_read_in(metric, stage)
+    }
+    return MetricCollection(read)
+
+
+def _is_read_in(metric: object, stage: Stage) -> bool:
+    """Whether this stage is one the metric is meaningful in; a metric that says nothing is read in all."""
+    return stage in metric.read_on if isinstance(metric, DeclaresStages) else True
 
 
 def module_at(pl_module: L.LightningModule, path: str, *, reader: str) -> nn.Module:

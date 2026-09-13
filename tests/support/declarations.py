@@ -11,9 +11,8 @@ CLASSES = {0: "cat", 1: "dog"}
 SIZE = [8, 8]
 NORMALIZATION = {"mean": [0.5] * 3, "std": [0.5] * 3}
 """What these fixtures scale an image by — one source, read by the encoder that declares it and by the
-chain that applies it. The shipped groups interpolate the same two numbers for the same reason: a run
-whose halves disagree is refused, because everything reading the declaration would then be describing
-a model trained on something else."""
+chain that applies it. The shipped groups interpolate the same two numbers from one place for the same
+reason: nothing checks that the halves agree, so writing them twice is how they come to differ."""
 
 
 def pixel_pipeline(size: list[int]) -> dict[str, Any]:

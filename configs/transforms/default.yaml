@@ -3,6 +3,8 @@
 # masks, normalized with the statistics `preprocessing` declares, and crossed into tensors — the raw-to-
 # tensor boundary is crossed exactly once, here. Nothing is added behind this file: what a stage does to
 # pixels is what a stage declares. Swap to `augmented` to add train-time augmentation before this tail.
+# The statistics are interpolated rather than written again: nothing compares what an encoder declares
+# against what a chain applies, and a second copy of two numbers is how the two come to differ.
 transforms:
   train: &pipeline
     _target_: src.transforms.AlbumentationsTransform

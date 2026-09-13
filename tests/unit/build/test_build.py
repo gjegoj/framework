@@ -6,7 +6,7 @@ what a task gets when it declares nothing, which splits a run prepares, and what
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -19,7 +19,7 @@ from src.config import TaskConfig, load_config
 from src.core import Axis, TargetInfo
 from src.tasks import Classification, Segmentation
 from src.tasks.build import head_for
-from tests.support.declarations import pixel_pipeline
+from tests.support.declarations import NORMALIZATION
 from tests.unit.build.conftest import SIZE
 
 
@@ -107,6 +107,61 @@ class TestFactsTravel:
         config = TaskConfig.model_validate({"kind": "classification", "target_column": "species", **declared})
 
         assert set(metrics_for(config, task)) == expected
+
+
+class TestWhatTheHeadAnswersWith:
+    """One tensor, two separately built readers: only the root sees both, so only the root can refuse.
+
+    A head's numbers are a projection or an angle, and nothing about their shape says which. Every
+    objective here would train on either and report a plausible number for the length of a run.
+    """
+
+    @pytest.fixture
+    def tasks(self, declaration: Mapping[str, Any]) -> dict[str, Any]:
+        return dict(declaration["tasks"])
+
+    def test_an_objective_that_reads_angles_refuses_a_head_that_only_projects(
+        self, declaration: Mapping[str, Any], tasks: dict[str, Any]
+    ) -> None:
+        """`loss: arcface` over the default head adds its margin to something that is not an angle.
+
+        Matched on the ordered pair and not on the word `cosines`, which the message carries whichever
+        way round the mismatch is: this test and the one below would otherwise each pass on the other's
+        failure, and neither would be watching the direction its name claims.
+        """
+        tasks["species"] = {**tasks["species"], "loss": {"name": "arcface"}}
+
+        with pytest.raises(ValueError, match="answers with projected, and objective 'arcface' reads cosines"):
+            experiment(declaration, tasks=tasks)
+
+    def test_an_ordinary_objective_refuses_a_head_that_answers_with_angles(
+        self, declaration: Mapping[str, Any], tasks: dict[str, Any]
+    ) -> None:
+        """The other way round, which nothing was watching: cross-entropy over values bounded by one.
+
+        Such a run trains and its argmax is even right, while the confidence it reports can never
+        leave the neighbourhood of uniform — the scale that would fix that belongs to an objective
+        this task did not declare.
+        """
+        tasks["species"] = {**tasks["species"], "head": {"name": "cosine", "stream": "pooled"}}
+
+        with pytest.raises(ValueError, match="answers with cosines, and objective 'cross_entropy' reads projected"):
+            experiment(declaration, tasks=tasks)
+
+    def test_a_head_the_run_wrote_itself_is_taken_at_the_word_it_declares(
+        self, declaration: Mapping[str, Any], tasks: dict[str, Any]
+    ) -> None:
+        """No list of shipped classes anywhere: a head reached by import path says what it answers with."""
+        tasks["species"] = {
+            **tasks["species"],
+            "head": {"_target_": "tests.support.models.OwnCosineHead", "stream": "pooled"},
+            "loss": {"name": "arcface"},
+        }
+
+        built = experiment(declaration, tasks=tasks)
+
+        step = built.module.learner.step(next(iter(built.data.train_dataloader())))
+        assert step.loss is not None and bool(step.loss.total.isfinite())
 
 
 class TestTwoTasks:
@@ -238,10 +293,15 @@ class TestDeclarationsThatCannotHold:
     def test_inputs_bound_to_columns_and_inputs_encoded_are_one_vocabulary(
         self, declaration: Mapping[str, Any]
     ) -> None:
-        """Left to itself the mismatch surfaces on the first batch, inside a loader worker."""
-        preprocessing = {"name": "standard", "inputs": {"image": {"name": "image", "image_size": SIZE}}}
+        """Left to itself the mismatch surfaces on the first batch, inside a loader worker.
 
-        with pytest.raises(ValueError, match="image"):
+        Named differently rather than merely declared differently: `data.inputs` and
+        `preprocessing.inputs` are two halves of one vocabulary, and it is the names that have to meet.
+        """
+        encoded = {"name": "image", "image_size": SIZE, **NORMALIZATION}
+        preprocessing = {"name": "standard", "inputs": {"picture": encoded}}
+
+        with pytest.raises(ValueError, match=r"data\.inputs has image, preprocessing\.inputs has picture"):
             experiment(declaration, preprocessing=preprocessing)
 
     def test_a_task_named_after_something_torch_keeps_for_itself_is_refused(
@@ -256,37 +316,6 @@ class TestDeclarationsThatCannotHold:
 
         with pytest.raises(ValueError, match="training"):
             experiment(declaration, tasks=tasks)
-
-    @pytest.mark.parametrize(
-        ("change", "expected"),
-        [
-            (lambda chain: chain["transforms"][1].update({"mean": [0.1] * 3}), "0.1"),
-            (lambda chain: chain["transforms"].pop(1), "no fixed scaling"),
-        ],
-        ids=["scaled by other numbers", "not scaled at all"],
-    )
-    def test_a_chain_that_does_not_apply_the_scaling_its_input_declares_is_refused(
-        self, declaration: Mapping[str, Any], change: Callable[[dict[str, Any]], object], expected: str
-    ) -> None:
-        """The encoder's `mean` and `std` are shipped in the export record and undone to draw a sample page,
-        so a chain doing something else makes both of those describe a model that was never trained."""
-        chain = pixel_pipeline(SIZE)
-        change(chain)
-
-        with pytest.raises(ValueError, match=expected):
-            experiment(declaration, transforms=dict.fromkeys(("train", "val", "test"), chain))
-
-    def test_one_number_in_a_chain_is_the_same_scaling_as_that_number_per_channel(
-        self, declaration: Mapping[str, Any]
-    ) -> None:
-        """Refusing this would be refusing a run that is right: albumentations spreads a single number
-        over every channel, so the two halves do say the same thing, written two ways."""
-        chain = pixel_pipeline(SIZE)
-        chain["transforms"][1] = {"_target_": "albumentations.Normalize", "mean": 0.5, "std": 0.5}
-
-        built = experiment(declaration, transforms=dict.fromkeys(("train", "val", "test"), chain))
-
-        assert built.data.info.inputs["image"].normalization is not None
 
     def test_a_head_declared_against_a_model_that_arrives_whole_is_refused(
         self, declaration: Mapping[str, Any]

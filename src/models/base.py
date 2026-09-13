@@ -9,7 +9,7 @@ from typing import ClassVar, Protocol, runtime_checkable
 
 from torch import Tensor, nn
 
-from src.core import ModelOutput, TensorShape, TensorTree
+from src.core import ModelOutput, Representation, TensorShape, TensorTree
 
 
 class Model(nn.Module, ABC):
@@ -23,6 +23,16 @@ class Model(nn.Module, ABC):
     def forward(self, inputs: Mapping[str, TensorTree]) -> ModelOutput:
         """Named outputs, one per task the model serves, beside the features they were read from."""
         raise NotImplementedError
+
+    def produces(self, task: str) -> Representation:
+        """What this network's numbers for one task are, where that is not a plain projection.
+
+        Shaped like ``parameters_of`` below: a default that is right for every network the framework
+        composes itself, and the family that can answer better overrides it. The objective built over
+        the same task is checked against this, so a head answering with angles and one answering with a
+        projection cannot stand in for each other in silence.
+        """
+        return Representation.PROJECTED
 
     def parameters_of(self, task: str) -> Iterable[nn.Parameter]:
         """The parameters this network devotes to one task, or nothing when it shares everything.
@@ -78,7 +88,20 @@ class ShapeAware(Protocol):
     steps into a run, into a message naming the task, the head and the stream.
     """
 
-    reads: ClassVar[tuple[str, ...]]
+    reads_axes: ClassVar[tuple[str, ...]]
+
+
+@runtime_checkable
+class Produces(Protocol):
+    """A head whose numbers are already a reading rather than a projection, and says which.
+
+    Optional, as ``ShapeAware`` is: a head that maps the feature and does nothing else declares nothing
+    and is read as a projection. Declaring costs one line and is what lets an objective needing angles
+    refuse a head that cannot make them — at build, by name, rather than by how large the values
+    happened to come out at the step somebody looked.
+    """
+
+    produces: ClassVar[Representation]
 
 
 def required_input(inputs: Mapping[str, TensorTree], name: str, reader: str) -> TensorTree:

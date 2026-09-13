@@ -46,6 +46,11 @@ default = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+# pytest's own default list carries the pattern `build`, and a folder whose name matches one is walked
+# past in silence — no error, no skip, nothing in the report. This is that list with the one pattern
+# taken out, so that `tests/unit/build/` is collected at all; what it cost while it was not, and what
+# holds it now, is `test_no_folder_of_tests_is_one_pytest_walks_past`.
+norecursedirs = ["*.egg", ".*", "_darcs", "CVS", "dist", "node_modules", "venv", "{arch}"]
 markers = [
     "e2e: full-flow integration (training smoke, export round-trip, full wiring); applied to tests/e2e/ by the root conftest",
     "slow: long-running tests excluded from the pre-commit gate",

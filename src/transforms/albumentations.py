@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from typing import Any
 
 import albumentations as A
 
-from src.core import Geometry, Normalization, Role, Sample
+from src.core import Geometry, Role, Sample
 from src.transforms.base import AnswersTask, SampleTransform
 
 PIPELINE_KIND = {Geometry.IMAGE: "image", Geometry.MASK: "mask"}
@@ -17,12 +17,6 @@ PIPELINE_KIND = {Geometry.IMAGE: "image", Geometry.MASK: "mask"}
 Which is the whole of the rule, and the reason there is no refusal beside it: ``Geometry`` names what
 a raw value is, and the two entries here are everything it can be besides ``NONE``. A third kind —
 boxes, keypoints — arrives with the ``Compose`` argument it travels as, and adds its line here."""
-
-STANDARD = "standard"
-"""The one ``Normalize`` mode that is a fixed scaling a deployment could repeat.
-
-Measured on albumentationsx 2.3.7: the others ("image", "min_max", and the per-channel variants) scale
-by each image's own statistics, so there is no constant to declare and none is reported."""
 
 LABEL = "label"
 """How a value that is not pixels travels, for the one case there is: a target an augmentation writes."""
@@ -41,13 +35,6 @@ class AlbumentationsTransform:
     def __init__(self, transforms: Sequence[Any], **compose_options: Any) -> None:
         if "additional_targets" in compose_options:
             raise ValueError("'additional_targets' is derived from the encoders' geometries; do not declare it.")
-        scalings = sum(isinstance(one, A.Normalize) for one in transforms)
-        if scalings > 1:
-            raise ValueError(
-                f"This chain normalizes {scalings} times, and two scalings compose into a third: no single "
-                "mean and std describes what an image ends up in, so nothing could declare it or ship it. "
-                "Normalize once."
-            )
         self.transforms = list(transforms)
         self.compose_options = compose_options
 
@@ -85,20 +72,6 @@ class BoundPipeline:
     def __init__(self, pipeline: A.Compose, roles: Roles) -> None:
         self.pipeline = pipeline
         self.roles = {role: dict(names) for role, names in roles.items()}
-
-    @property
-    def normalization(self) -> Normalization | None:
-        """What this chain leaves an image's values in — the ``AppliesNormalization`` port.
-
-        Read off the built pipeline rather than stated a second time, which is the whole point: the
-        declaration it is checked against lives in the encoder, and a copy here could drift from both.
-        A chain that scales by each image's own statistics reports nothing, because there is no constant
-        for a deployment to repeat.
-        """
-        for one in self.pipeline.transforms:
-            if isinstance(one, A.Normalize) and one.normalization == STANDARD and None not in (one.mean, one.std):
-                return Normalization(mean=_per_channel(one.mean), std=_per_channel(one.std))
-        return None
 
     def __call__(self, sample: Sample) -> Sample:
         present = [(role, held, [n for n in self.roles[role] if n in held]) for role, held in _values(sample)]
@@ -159,12 +132,3 @@ def _refuse_a_name_under_two_roles(roles: Roles) -> None:
     duplicated = sorted({name for name in declared if declared.count(name) > 1})
     if duplicated:
         raise ValueError(f"{duplicated} declared under more than one role; each name is one pipeline argument.")
-
-
-def _per_channel(value: Any) -> tuple[float, ...]:
-    """What ``Normalize`` was given, as the per-channel numbers it uses.
-
-    A single number is one it applies to every channel; it stays a single number here, and whoever
-    compares this with a declaration reads it the same way albumentations does.
-    """
-    return tuple(float(one) for one in value) if isinstance(value, Iterable) else (float(value),)

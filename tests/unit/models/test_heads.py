@@ -23,7 +23,7 @@ FEATURES: dict[tuple[str, ...], tuple[int, ...]] = {
 def test_every_registered_head_is_built_from_two_widths_and_reads_what_it_declares(name: str) -> None:
     """The whole head contract: two widths in, and a feature of the shape it says it reads."""
     head = head_registry.get(name)(in_features=WIDTH, out_features=CLASSES)
-    reads = tuple(head.reads) if isinstance(head, ShapeAware) else (Axis.CHANNELS,)
+    reads = tuple(head.reads_axes) if isinstance(head, ShapeAware) else (Axis.CHANNELS,)
     assert reads in FEATURES, f"{name!r} reads {reads}, which has no specimen; add one to FEATURES."
 
     produced = head(torch.zeros(*FEATURES[reads]))

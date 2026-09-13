@@ -10,7 +10,7 @@ import torch
 from torch import Tensor, nn
 from torch.nn.functional import normalize
 
-from src.core import FEATURE_AXIS, Axis
+from src.core import FEATURE_AXIS, Axis, Representation
 from src.models.registry import head_registry
 
 
@@ -18,7 +18,7 @@ from src.models.registry import head_registry
 class LinearHead(nn.Module):
     """One projection of a pooled vector — the default for a whole-sample output."""
 
-    reads: ClassVar[tuple[str, ...]] = (Axis.CHANNELS,)
+    reads_axes: ClassVar[tuple[str, ...]] = (Axis.CHANNELS,)
 
     def __init__(self, in_features: int, out_features: int) -> None:
         super().__init__()
@@ -35,7 +35,7 @@ class ConvHead(nn.Module):
     ``[B, in, H, W]`` becomes ``[B, out, H, W]``; a wider kernel keeps the size through same-padding.
     """
 
-    reads: ClassVar[tuple[str, ...]] = (Axis.CHANNELS, Axis.HEIGHT, Axis.WIDTH)
+    reads_axes: ClassVar[tuple[str, ...]] = (Axis.CHANNELS, Axis.HEIGHT, Axis.WIDTH)
 
     def __init__(self, in_features: int, out_features: int, kernel_size: int = 1) -> None:
         super().__init__()
@@ -58,7 +58,8 @@ class CosineHead(nn.Module):
     the space the identities need; left out, the stream's own width is that space.
     """
 
-    reads: ClassVar[tuple[str, ...]] = (Axis.CHANNELS,)
+    reads_axes: ClassVar[tuple[str, ...]] = (Axis.CHANNELS,)
+    produces: ClassVar[Representation] = Representation.COSINES
 
     def __init__(self, in_features: int, out_features: int, embedding_dim: int | None = None) -> None:
         if embedding_dim is not None and embedding_dim < 1:

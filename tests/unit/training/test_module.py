@@ -10,11 +10,12 @@ from __future__ import annotations
 import operator
 from collections.abc import Mapping, Sequence
 from functools import reduce
-from typing import Any, cast
+from typing import Any, ClassVar, cast
 
 import lightning as L
 import pytest
 import torch
+import torchmetrics
 from lightning.pytorch.loggers import Logger
 from torch import Tensor, nn
 from torch.optim import SGD, Optimizer
@@ -111,6 +112,28 @@ class Recorder(Logger):
         self.drawn.append((title, matrix, iteration))
 
 
+class WhenStill(torchmetrics.Metric):
+    """A reading that means nothing while the model is still moving, as ranking against a gallery does.
+
+    Counts its own updates, so a stage it should never be read on is visible as a number rather than
+    only as an absence.
+    """
+
+    read_on: ClassVar[frozenset[Stage]] = frozenset({Stage.VAL, Stage.TEST})
+    higher_is_better = True
+    seen: Tensor
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.add_state("seen", default=torch.tensor(0.0), dist_reduce_fx="sum")
+
+    def update(self, predictions: Tensor, targets: Tensor) -> None:
+        self.seen += 1
+
+    def compute(self) -> Tensor:
+        return self.seen
+
+
 def plain(groups: Sequence[ParameterGroup]) -> list[dict[str, Any]]:
     """torch takes group dicts, and a TypedDict is one — a distinction only a type checker draws."""
     return [cast("dict[str, Any]", group) for group in groups]
@@ -124,12 +147,16 @@ def module(
     tasks: Mapping[str, Task] | None = None,
     *,
     measured: bool = True,
+    also: Mapping[str, type[torchmetrics.Metric]] | None = None,
     scheduler: Any = None,
     optimizer: Any = None,
     **learner_options: Any,
 ) -> TrainingModule:
     declared = task() if tasks is None else tasks
     metrics = {name: build_metrics(METRICS, one.facts()) for name, one in declared.items() if measured}
+    if also:
+        for collection in metrics.values():
+            collection.add_metrics({label: metric() for label, metric in also.items()})
     return TrainingModule(
         Answers(declared, **learner_options),
         optimizer_factory=optimizer or (lambda groups: SGD(plain(groups), lr=0.1)),
@@ -259,6 +286,40 @@ class TestDirections:
 
     def test_a_run_that_measures_nothing_declares_nothing(self) -> None:
         assert module(measured=False).metric_directions() == {}
+
+
+class TestStages:
+    """A measurement is not always meaningful in every stage, and the one that is not says so."""
+
+    def test_a_reading_declared_for_some_stages_is_not_taken_in_the_others(self) -> None:
+        """Ranking against a gallery the encoder is still moving measures the drift, not the model.
+
+        Left in, a run reports a number under a name that means something else in that column, and a
+        reader comparing the three columns is comparing two different questions.
+        """
+        under_test = module(also={"still": WhenStill})
+        fit = trainer()
+        fit.fit(under_test, train_dataloaders=loader(RIGHT), val_dataloaders=loader(RIGHT))
+
+        assert "val/species/still" in fit.logged_metrics
+        assert "train/species/still" not in fit.logged_metrics
+
+    def test_what_a_stage_does_read_is_untouched_by_what_it_does_not(self) -> None:
+        """The rest of the table is the point: one reading stepping aside takes none of the others."""
+        under_test = module(also={"still": WhenStill})
+        fit = trainer()
+        fit.fit(under_test, train_dataloaders=loader(RIGHT), val_dataloaders=loader(RIGHT))
+
+        assert fit.logged_metrics["train/species/accuracy"] == 1.0
+        assert fit.logged_metrics["val/species/accuracy"] == 1.0
+
+    def test_a_reading_absent_from_training_still_declares_which_way_it_is_better(self) -> None:
+        """Directions were read off the training stage alone, so a reading missing there had none.
+
+        A monitor that cannot find a direction takes the one it assumes, and `mode="min"` over a
+        recall is a run that keeps its worst epoch and says nothing.
+        """
+        assert module(also={"still": WhenStill}).metric_directions()["species/still"] is True
 
 
 class TestOptimization:

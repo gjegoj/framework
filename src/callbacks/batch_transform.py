@@ -9,7 +9,7 @@ import lightning as L
 
 from src.callbacks.moment import Boundary, Moment
 from src.callbacks.registry import callback_registry
-from src.training import FitProfile, TrainingModule
+from src.training import FitProfile, Learner, TrainingModule
 from src.transforms import BatchTransform
 
 if TYPE_CHECKING:
@@ -69,7 +69,29 @@ class ApplyBatchTransform(L.Callback):
                 f"{type(self._declared).__name__} rewrites the targets of a run's tasks, and "
                 f"{type(pl_module).__name__} holds none to rewrite."
             )
+        self._refuse_an_objective_that_cannot_read_a_blended_target(pl_module.learner)
         self._bound = self._declared.for_tasks(list(pl_module.learner.tasks.values()))
+
+    def _refuse_an_objective_that_cannot_read_a_blended_target(self, learner: Learner) -> None:
+        """A batch transform leaves a share of two targets where there was one, and some cannot read that.
+
+        Here because this is what holds both the transform and the run's objectives; which of them can
+        read a share is ``Loss.reads_soft_targets``. A learner answering ``None`` for a task keeps its
+        objective inside itself and has none to ask — no family does yet, so this passes over what it
+        cannot see rather than refusing it.
+        """
+        refusing = {
+            name: loss
+            for name in learner.tasks
+            if (loss := learner.loss_of(name)) is not None and not loss.reads_soft_targets
+        }
+        if refusing:
+            named = ", ".join(f"{name}, learned by {loss.log_name}" for name, loss in refusing.items())
+            raise ValueError(
+                f"{type(self._declared).__name__} blends two samples and weighs their targets together, "
+                f"and these objectives compare against the one thing a sample is rather than a share of "
+                f"two: {named}. Drop the transform, or the objective."
+            )
 
     @override
     def on_fit_start(self, trainer: L.Trainer, pl_module: L.LightningModule) -> None:

@@ -12,9 +12,9 @@ import torch
 from albumentations.pytorch import ToTensorV2
 from torch import Tensor
 
-from src.core import Geometry, Normalization, Sample
+from src.core import Geometry, Sample
 from src.transforms import AlbumentationsTransform
-from src.transforms.base import AppliesNormalization, GeometryAware
+from src.transforms.base import GeometryAware
 
 GEOMETRIES = {
     "inputs": {"image": Geometry.IMAGE},
@@ -114,50 +114,3 @@ def test_a_declared_seed_settles_which_images_the_pipeline_draws() -> None:
     """
     assert _drawn(7) == _drawn(7)
     assert _drawn(7) != _drawn(8)
-
-
-def test_a_chain_says_what_fixed_scaling_it_leaves_an_image_in() -> None:
-    """The other half of a promise: an encoder declares what a model was trained under, and this is what
-    the pixels actually go through. Nothing but a run holding both can see the two disagree."""
-    bound = AlbumentationsTransform([A.Resize(3, 4), A.Normalize(mean=HALVES, std=HALVES), ToTensorV2()])
-
-    applied = bound.with_geometry(inputs={"image": Geometry.IMAGE}, targets={}, auxiliary_inputs={})
-
-    assert isinstance(applied, AppliesNormalization)
-    assert applied.normalization == Normalization(mean=HALVES, std=HALVES)
-
-
-@pytest.mark.parametrize(
-    "declared",
-    [
-        [A.Resize(3, 4), ToTensorV2()],
-        [A.Resize(3, 4), A.Normalize(normalization="image"), ToTensorV2()],
-    ],
-    ids=["a chain that does not scale", "a chain scaled by each image's own statistics"],
-)
-def test_a_chain_with_no_fixed_scaling_of_its_own_says_so_rather_than_guessing(declared: list[Any]) -> None:
-    """Per-image statistics are a scaling nobody can write down: there is no constant to declare, and a
-    deployment given one would be repeating a number this run never applied twice."""
-    applied = AlbumentationsTransform(declared).with_geometry(
-        inputs={"image": Geometry.IMAGE}, targets={}, auxiliary_inputs={}
-    )
-
-    assert isinstance(applied, AppliesNormalization)
-    assert applied.normalization is None
-
-
-def test_a_single_number_scales_every_channel_the_way_the_library_reads_it() -> None:
-    """`Normalize(mean=0.5)` spreads one number over every channel, and a declaration naming it per
-    channel says the same thing — so it stays one number here and whoever compares them reads it so."""
-    bound = AlbumentationsTransform([A.Normalize(mean=0.5, std=0.25), ToTensorV2()])
-
-    applied = bound.with_geometry(inputs={"image": Geometry.IMAGE}, targets={}, auxiliary_inputs={})
-
-    assert isinstance(applied, AppliesNormalization)
-    assert applied.normalization == Normalization(mean=(0.5,), std=(0.25,))
-
-
-def test_a_chain_that_normalizes_twice_is_refused_because_no_single_pair_describes_it() -> None:
-    """Two scalings compose into a third, so reporting either would be a number nobody applied."""
-    with pytest.raises(ValueError, match="normalizes 2 times"):
-        AlbumentationsTransform([A.Normalize(mean=HALVES, std=HALVES), A.Normalize(), ToTensorV2()])

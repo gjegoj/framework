@@ -8,7 +8,7 @@ from typing import cast
 
 from torch import Tensor, nn
 
-from src.core import LossOutput
+from src.core import LossOutput, Representation
 from src.losses.base import Loss
 
 
@@ -25,9 +25,28 @@ class WeightedSum(Loss):
             raise ValueError("A weighted sum needs at least one loss.")
         self.parts = nn.ModuleList(loss for loss, _ in parts)
         self.weights = [float(weight) for _, weight in parts]
+        self.reads = _one_reading(parts)
+        self.reads_soft_targets = all(loss.reads_soft_targets for loss, _ in parts)
 
     def forward(self, outputs: Tensor, targets: Tensor) -> LossOutput:
         weighted = [
             weight * cast(Loss, part)(outputs, targets) for part, weight in zip(self.parts, self.weights, strict=True)
         ]
         return reduce(lambda total, term: total + term, weighted)
+
+
+def _one_reading(parts: Sequence[tuple[Loss, float]]) -> Representation:
+    """What these terms agree the head's numbers are; they all read the same tensor, so they must agree.
+
+    A head produces one thing. Terms disagreeing about what that is could not both be right, and the
+    one that is wrong would train and report a plausible number — so the disagreement is the refusal,
+    stated here rather than left to whichever term happens to be checked against the head.
+    """
+    readings = {loss.reads for loss, _ in parts}
+    if len(readings) > 1:
+        named = ", ".join(f"{loss.log_name} reads {loss.reads}" for loss, _ in parts)
+        raise ValueError(
+            f"These objectives are summed over one and the same output and disagree about what it "
+            f"holds: {named}. One head answers with one thing; declare terms that read it."
+        )
+    return readings.pop()

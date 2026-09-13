@@ -88,8 +88,9 @@ class Task(ABC):
     def embeds(self) -> bool:
         """Whether this task answers with a direction in a space rather than a reading of the sample.
 
-        Read off the shape it produces, as ``dense`` is, and for the same reason: a page has no way to
-        draw one and a mixing transform has no way to average two, and both ask this same question.
+        Read off the shape it produces, as ``dense`` is, and for the same reason: a page has no cell to
+        draw one in and a deployment record has no vocabulary to publish for one, and both ask this
+        same question.
         """
         return Axis.EMBEDDING in self.output_shape().axes
 

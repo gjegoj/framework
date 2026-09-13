@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
-from src.core import Batch, Geometry, Normalization, Sample
+from src.core import Batch, Geometry, Sample
 
 if TYPE_CHECKING:
     from src.tasks import Task
@@ -57,37 +57,3 @@ class BatchTransform(Protocol):
     def for_tasks(self, tasks: Sequence[Task]) -> Callable[[Batch], Batch]:
         """The transform bound to these tasks; a new one, so what a declaration built stays as declared."""
         ...
-
-
-@runtime_checkable
-class AppliesNormalization(Protocol):
-    """A transform that can say what fixed scaling it leaves an image's values in.
-
-    Two declarations own the two halves of one fact — an encoder says what a model was trained under,
-    a stage's chain says what the pixels actually go through — and nothing but a run assembling both can
-    see them disagree. This is how the second half answers.
-
-    Optional, as a capability with no sensible default is: a transform that cannot say is not asked, and
-    one reached by ``_target_`` is the run's own business.
-    """
-
-    @property
-    def normalization(self) -> Normalization | None: ...
-
-
-def is_the_same_scaling(declared: Normalization, applied: Normalization | None) -> bool:
-    """Whether a chain applies what an input declares, reading a single number the way the library does.
-
-    ``albumentations.Normalize(mean=0.5)`` spreads one number over every channel, and this package keeps
-    it as the single number it was given — see ``_per_channel`` — because only here is it known that this
-    is what the library means by it. Whoever compares the two halves of the scaling therefore asks this
-    rather than restating the rule: a run that declares the same number per channel is a run that is
-    right, and refusing it would be refusing the truth.
-    """
-    if applied is None:
-        return False
-    return _spread(declared.mean, applied.mean) and _spread(declared.std, applied.std)
-
-
-def _spread(declared: tuple[float, ...], applied: tuple[float, ...]) -> bool:
-    return applied == declared or (len(applied) == 1 and set(declared) == set(applied))

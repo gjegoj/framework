@@ -28,7 +28,17 @@ from src.core.entities import (
     validate_name,
 )
 from src.core.registry import Registry
-from src.core.taxonomy import SPATIAL, Axis, Geometry, Modality, Role, Semantics, Stage, Stream
+from src.core.taxonomy import (
+    SPATIAL,
+    Axis,
+    Geometry,
+    Modality,
+    Representation,
+    Role,
+    Semantics,
+    Stage,
+    Stream,
+)
 from src.core.types import (
     FEATURE_AXIS,
     ShapeTree,
@@ -60,6 +70,7 @@ __all__ = [
     "ModelOutput",
     "Normalization",
     "Registry",
+    "Representation",
     "Role",
     "Sample",
     "Semantics",

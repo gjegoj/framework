@@ -12,7 +12,7 @@ from typing import Any, ClassVar, cast, get_args
 import torch
 from torch import Tensor, nn
 
-from src.core import LossOutput, drop_feature_axis
+from src.core import LossOutput, Representation, drop_feature_axis
 
 
 class Loss(nn.Module, ABC):
@@ -24,7 +24,18 @@ class Loss(nn.Module, ABC):
     Attributes:
         log_name: What this term is called in a report. It starts as the loss's own name and is replaced
             by the name the declaration used, so a run reads `loss: dice` and finds `dice` in its metrics.
+        reads: What the head's numbers have to be for this objective to mean anything. Almost every one
+            of them reads a projection, which is why that is the default; an angular margin is added to
+            an angle and has nothing to add to anything else. The pair is checked where both are built.
+        reads_soft_targets: Whether a target blended from two samples — what a mixing transform leaves
+            behind — is something this can compare. An objective scoring the one class a sample *is*
+            cannot, and says so here rather than discovering it on a batch. Declared by the objective
+            rather than read off the task: the same task under an ordinary cross-entropy blends
+            perfectly well, so nothing about the task settles it.
     """
+
+    reads: Representation = Representation.PROJECTED
+    reads_soft_targets: bool = True
 
     def __init__(self) -> None:
         super().__init__()

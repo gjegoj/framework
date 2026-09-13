@@ -15,7 +15,7 @@ import torch
 from torch import Tensor, nn
 from torch.nn.functional import cross_entropy, normalize, one_hot
 
-from src.core import FEATURE_AXIS, LossOutput
+from src.core import FEATURE_AXIS, LossOutput, Representation
 from src.losses.base import Loss
 from src.losses.registry import loss_registry
 
@@ -26,13 +26,6 @@ COSINE_LIMIT = 1.0 - 1e-7
 gradient through the embedding is infinite. Float32 on purpose: in bfloat16 and float16 this value
 rounds to exactly 1.0, the clamp stops clamping, and gradients come back NaN under a loss still
 reading 0.0 — hence the float32 region in ``forward``. Both measured.
-"""
-
-COSINE_CEILING = 1.01
-"""Above this, what arrived is a projection rather than a cosine that drifted.
-
-Slack rather than exactly one, because a normalized product lands a float step past the bound; wide
-slack, because the two cases this tells apart differ by orders of magnitude rather than by rounding.
 """
 
 
@@ -48,6 +41,9 @@ class ArcFace(Loss):
         scale: What the cosines are multiplied by. Cross-entropy over values bounded by ±1 can never
             become confident, so the softmax needs a temperature; the customary value is this one.
     """
+
+    reads = Representation.COSINES
+    reads_soft_targets = False
 
     def __init__(self, margin: float = 0.5, scale: float = 64.0) -> None:
         if not 0.0 <= margin < math.pi:
@@ -86,19 +82,11 @@ class ArcFace(Loss):
         return targets.long()
 
     def _cosines(self, outputs: Tensor) -> Tensor:
-        """What the head already produced, held to what a cosine can be.
+        """What the head already produced; ``reads`` above is what holds it to being angles.
 
-        Checked every step rather than at build, because no declaration says what a head's values mean.
-        A plain projection would otherwise train: every angle saturates at the bound, the margin means
-        nothing, and the reported number goes on looking like an objective doing its work.
+        Nothing is measured here. The pair is settled at build from what the two declare, for the
+        reason ``Representation`` gives.
         """
-        largest = float(outputs.detach().abs().amax()) if outputs.numel() else 0.0
-        if largest > COSINE_CEILING:
-            raise ValueError(
-                f"{type(self).__name__} scores the angle between a sample and each identity, so it reads "
-                f"cosines; what it was handed reaches {largest:.3g}. Declare `head: cosine` to compare "
-                "against prototypes the network holds, or `loss: arcface_proxy` to hold them here instead."
-            )
         return outputs
 
     def _penalized(self, cosines: Tensor, labels: Tensor) -> Tensor:
@@ -126,6 +114,9 @@ class ArcFaceProxy(ArcFace):
     They are parameters of the run rather than of the network: optimized with it, written to its
     checkpoints, restored with the epoch it keeps, and absent from everything it ships.
     """
+
+    reads = Representation.PROJECTED
+    """The embedding itself: this objective normalizes both sides and takes the angles here."""
 
     def __init__(self, embedding_dim: int, num_classes: int, margin: float = 0.5, scale: float = 64.0) -> None:
         super().__init__(margin=margin, scale=scale)

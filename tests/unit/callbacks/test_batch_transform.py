@@ -10,6 +10,7 @@ import pytest
 from src.callbacks.batch_transform import ApplyBatchTransform
 from src.core import Batch
 from src.tasks import Task
+from src.transforms import MixUp
 from tests.unit.callbacks.conftest import prepared
 
 TRAIN_BATCHES = 2
@@ -106,3 +107,35 @@ def test_a_second_one_is_refused_rather_than_left_to_overwrite_the_first(declara
 
     with pytest.raises(ValueError, match="one"):
         fitted(declaration, callbacks=two)
+
+
+@pytest.mark.parametrize(
+    ("kind", "declared"),
+    [
+        pytest.param(
+            "classification",
+            {"head": {"name": "cosine", "stream": "pooled"}, "loss": {"name": "arcface"}},
+            id="prototypes in the network",
+        ),
+        pytest.param(
+            {"name": "metric_learning", "embedding_dim": 8},
+            {},
+            id="prototypes in the objective",
+        ),
+    ],
+)
+def test_an_objective_that_cannot_read_a_blended_target_is_refused_before_the_first_batch(
+    declaration: Mapping[str, Any], kind: Any, declared: Mapping[str, Any]
+) -> None:
+    """An angular margin is added to the one identity a sample is, and a blend leaves a share of two.
+
+    Asked of the objective rather than read off the task's shape: the very same task under an ordinary
+    cross-entropy blends perfectly well, so the shape of what it answers with does not settle this. Both
+    arrangements are refused, because where the prototypes live does not change what the margin needs.
+    """
+    tasks = dict(declaration["tasks"])
+    tasks["species"] = {**tasks["species"], "kind": kind, **declared}
+    mixing = MixUp()
+
+    with pytest.raises(ValueError, match="species, learned by arcface"):
+        fitted(declaration, tasks=tasks, callbacks=applying(mixing))

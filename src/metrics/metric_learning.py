@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+from typing import ClassVar
+
 import torch
 import torchmetrics
 from torch import Tensor
 from torch.nn.functional import normalize
 from torchmetrics.utilities.data import dim_zero_cat
 
-from src.core import FEATURE_AXIS
+from src.core import FEATURE_AXIS, Stage
 from src.metrics.registry import metric_registry
 
 QUERY_BLOCK = 1024
@@ -28,14 +30,15 @@ class RecallAtK(torchmetrics.Metric):
     calls this one HitRate@K. The registry writes the field's word; ``RetrievalHitRate`` is the
     library's equal of it and is what the tests score this against.
 
-    Read it on validation and test. A gallery accumulated while the encoder is still moving holds
-    vectors from several states of it, so the reading measures drift as much as separation; evaluation
-    stages hold the model still. Confining a metric to a stage is not yet something a declaration says.
+    Read on validation and test, as ``read_on`` below declares. A gallery accumulated while
+    the encoder is still moving holds vectors from several states of it, so the reading would measure
+    drift as much as separation; evaluation stages hold the model still.
 
     Attributes:
         k: How far down the ranking a match still counts.
     """
 
+    read_on: ClassVar[frozenset[Stage]] = frozenset({Stage.VAL, Stage.TEST})
     higher_is_better = True
     full_state_update = False
 
