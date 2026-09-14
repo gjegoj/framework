@@ -12,9 +12,11 @@ one backbone, with EMA, freezing, MixUp/CutMix, loss-parameter annealing and
 per-task learning rates, a grid of samples and a summary of the data a run is
 about to read. What a run ends with is deployable: ONNX, PT2, TorchScript, ncnn
 or a TensorRT engine, each proven against the model it was written from and
-described by a record a deployment reads. Detection is not here yet, and metric
-learning trains and measures on one vocabulary — holding identities out of
-training is not something a run can declare. What is written below is what runs.
+described by a record a deployment reads. Metric learning learns its identities
+from the training split alone, so a run can hold whole identities out and be
+judged on ones it never saw — by retrieval and by verification, since the
+objective over the learned identities says nothing about the others. Detection is
+not here yet. What is written below is what runs.
 
 ## Quick start
 

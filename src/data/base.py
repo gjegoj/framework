@@ -30,7 +30,9 @@ class Encoder(ABC):
     ``load`` prepares a raw cell for sample transforms (a path becomes pixels); ``encode``
     turns the transformed value into its tensor. Vocabularies are declared, never discovered:
     an encoder that reads one says so with ``takes_classes`` and receives ``classes`` from the
-    task that declares them.
+    task that declares them. The one exception is ``IdentityEncoder``, and what makes it one is
+    that its vocabulary is never published — no output position is indexed by it, and nothing a
+    deployment reads carries it; the reason is written where that encoder is.
     """
 
     geometry: ClassVar[Geometry] = Geometry.NONE
@@ -74,7 +76,12 @@ class TargetEncoder(Encoder):
         return self
 
     def validate(self, values: Iterable[object]) -> None:
-        """Check a split against what was already learned, without learning from it."""
+        """Check a split against what was already learned, without learning from it.
+
+        One encoder reads this differently and is allowed to: reading a split may widen what this can
+        ``encode``, and may never widen what ``info`` publishes. That line is what keeps whatever is
+        sized from a target — a head, an objective, a metric — sized by the training split alone.
+        """
         return None
 
     def distribution(self, values: Iterable[object]) -> Distribution | None:

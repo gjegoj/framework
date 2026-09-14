@@ -76,6 +76,25 @@ class TestChips:
 
         assert _rim_alpha(unsure.overlay) < _rim_alpha(sure.overlay)
 
+    @pytest.mark.parametrize("confidence", [-1.0, -0.03, 0.0, 1.0, 1.5])
+    def test_a_rim_is_a_rim_whatever_number_the_side_that_said_it_expressed(self, confidence: float) -> None:
+        """``confidence`` arrives as a bare float, and only this module knows a rim is drawn as an alpha.
+
+        Not every answer a model can give is a share of one: a network answering with angles hands over
+        numbers on ±1. Measured before this held — a cosine of -1.0 put the alpha at -0.40, and one of
+        -0.03 at 0.28, under the floor this module declares so that every prediction keeps an edge.
+        """
+        (chip,) = render_label(Classification("cat", confidence=confidence), context("pred"))
+
+        assert 0.0 < _rim_alpha(chip.overlay) <= 1.0
+
+    def test_a_class_the_model_points_away_from_is_edged_like_one_it_merely_doubted(self) -> None:
+        """The band saturates rather than running past its own end: below nothing there is no fainter rim."""
+        (floor,) = render_label(Classification("cat", confidence=0.0), context("pred"))
+        (below,) = render_label(Classification("cat", confidence=-1.0), context("pred"))
+
+        assert _rim_alpha(below.overlay) == _rim_alpha(floor.overlay)
+
     def test_a_number_is_shown_as_itself_in_the_one_colour_outside_every_palette(self) -> None:
         (chip,) = render_label(Regression(1.25), context())
 

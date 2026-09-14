@@ -9,14 +9,14 @@ import pytest
 import torch
 from torchmetrics import JaccardIndex
 
-from src.core import Batch, InputInfo, Normalization, StepOutput, TargetInfo, TensorShape, require_tensor
+from src.core import Batch, InputInfo, Normalization, StepOutput, TargetInfo, TensorShape
 from src.core.taxonomy import Axis, Modality
 from src.integrations.visualization import AnyAnnotator, Gallery, annotator_for, drawn_input, vocabulary_of
 from src.tasks.registry import task_registry
 from src.tasks.regression import Regression as RegressionTask
 from src.tasks.segmentation import DenseOutput
 from src.visualization import Classification, Classifications, Image, Regression, SampleView, Segmentation
-from tests.support.tasks import CLASSES, COUNT, specimen
+from tests.support.tasks import CLASSES, COUNT, published, specimen
 
 GREY = Normalization(mean=(0.5,), std=(0.25,))
 COLOUR = Normalization(mean=(0.5, 0.5, 0.5), std=(0.25, 0.25, 0.25))
@@ -324,7 +324,7 @@ def drawing(task: Any) -> AnyAnnotator:
 
 
 def predictions(task: Any, output: Any) -> torch.Tensor:
-    return require_tensor(task.postprocess(output), name=task.name)
+    return published(task, output)
 
 
 def blank() -> SampleView:

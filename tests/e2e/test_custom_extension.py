@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any, ClassVar, override
 
 import pytest
 import torch
@@ -17,7 +17,7 @@ from torch import Tensor, nn
 
 from src.build import build
 from src.config import load_config
-from src.core import Batch, ModelOutput, TensorTree, drop_feature_axis
+from src.core import Batch, ModelOutput, Representation, TensorTree, drop_feature_axis
 from src.experiment import run
 from src.models import Model
 from src.tasks import Task
@@ -37,6 +37,7 @@ class Doubling(Task):
     loss compares, what a metric scores, what the output means — and by nothing else.
     """
 
+    publishes: ClassVar[Representation] = Representation.VALUE
     default_target_encoder: ClassVar[str | None] = "scalar"
     default_metrics: ClassVar[Mapping[str, Mapping[str, object]]] = {"mae": {"name": "mae"}}
 
@@ -53,8 +54,9 @@ class Doubling(Task):
     def metric_view(self, batch: Batch) -> Tensor:
         return self.loss_target(batch)
 
-    def postprocess(self, output: ModelOutput) -> TensorTree:
-        return drop_feature_axis(self.raw(output))
+    @override
+    def publish(self, projected: Tensor) -> TensorTree:
+        return drop_feature_axis(projected)
 
 
 class Tiny(Model):

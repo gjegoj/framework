@@ -11,12 +11,13 @@ from src.training.base import (
     Learner,
     StepPreview,
 )
-from src.training.checkpoints import load_checkpoint, model_weights, restore_best_weights
+from src.training.checkpoints import load_checkpoint, load_learned, model_weights, restore_best_weights
 from src.training.data import TrainingData
 from src.training.learner import StandardLearner
-from src.training.module import TrainingModule, module_at
+from src.training.module import LOSS, TrainingModule, module_at
 
 __all__ = [
+    "LOSS",
     "DeclaresMetricDirections",
     "FitProfile",
     "Learner",
@@ -25,6 +26,7 @@ __all__ = [
     "TrainingData",
     "TrainingModule",
     "load_checkpoint",
+    "load_learned",
     "model_weights",
     "module_at",
     "restore_best_weights",

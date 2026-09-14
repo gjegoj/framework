@@ -18,6 +18,22 @@ from torchmetrics import Metric, MetricCollection
 
 from src.metrics.base import DeclaresStages
 from src.metrics.classification import ConfusionMatrix
-from src.metrics.metric_learning import RecallAtK
+from src.metrics.metric_learning import (
+    GalleryReading,
+    MeanAveragePrecision,
+    RecallAtK,
+    VerificationAccuracy,
+    VerificationThreshold,
+)
 
-__all__ = ["ConfusionMatrix", "DeclaresStages", "Metric", "MetricCollection", "RecallAtK"]
+__all__ = [
+    "ConfusionMatrix",
+    "DeclaresStages",
+    "GalleryReading",
+    "MeanAveragePrecision",
+    "Metric",
+    "MetricCollection",
+    "RecallAtK",
+    "VerificationAccuracy",
+    "VerificationThreshold",
+]

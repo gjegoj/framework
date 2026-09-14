@@ -18,8 +18,11 @@ def counted(classes: Mapping[int, str] | None, labels: Iterable[str]) -> ClassDi
     """Count labels, starting from every declared class so the unused ones still show.
 
     The vocabulary seeds the count, because a class the split never produced is the most useful row on
-    the table. A label outside it is still counted rather than dropped: the encoders refuse those when
-    they are fitted, and a report should not be the thing that hides the diagnosis.
+    the table. A label outside it is still counted rather than dropped, and which of two things that
+    means is the encoder's to know: for a declared vocabulary it is a diagnosis, refused when the split
+    is validated, and a report should not be what hides it; for one the training split settled it is the
+    ordinary picture of an open split — the identities held out are exactly the rows the seed cannot
+    hold. Counting either as zero would describe a split that was not read.
 
     Parameters:
         classes: The declared vocabulary, seeded at zero; ``None`` counts only what is there.

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import operator
-from collections.abc import Iterable, Mapping
+from collections.abc import Collection, Iterable, Mapping
 from functools import reduce
 from typing import cast, override
 
@@ -26,14 +26,26 @@ class StandardLearner(Learner):
     margin, a learned uncertainty — is optimized and checkpointed with the model rather than beside it.
     """
 
-    def __init__(self, model: Model, tasks: Mapping[str, Task], losses: Mapping[str, Loss]) -> None:
+    def __init__(
+        self,
+        model: Model,
+        tasks: Mapping[str, Task],
+        losses: Mapping[str, Loss],
+        learned_only: Collection[str] = (),
+    ) -> None:
         super().__init__(model, tasks)
         if set(losses) != set(self.tasks):
             raise ValueError(
                 f"One loss per task, and one task per loss: the tasks are {', '.join(sorted(self.tasks))}, "
                 f"the losses are {', '.join(sorted(losses))}."
             )
+        if strangers := sorted(set(learned_only) - set(self.tasks)):
+            raise ValueError(
+                f"{', '.join(strangers)} are not tasks this learner was given, so there is nothing to "
+                f"leave unscored; it holds {', '.join(sorted(self.tasks))}."
+            )
         self.losses = as_children({name: losses[name] for name in self.tasks})
+        self._learned_only = frozenset(learned_only)
 
     @override
     def loss_of(self, task: str) -> Loss | None:
@@ -46,14 +58,28 @@ class StandardLearner(Learner):
         return cast("Loss", self.losses[task])
 
     def step(self, batch: Batch) -> StepOutput:
+        """Every task answers; the ones whose objective only means something while learning are scored then.
+
+        ``self.training`` rather than a stage: a step is not told which one it is in, and the distinction
+        this needs is exactly the one every module already carries. A run whose every objective is a
+        learning device answers with no loss at all outside training, which the loop is written for —
+        and it is what keeps a total from meaning one thing in training and another in evaluation.
+        """
         output = self.model(batch.inputs)
-        losses = [self._weighted(name, task, output, batch) for name, task in self.tasks.items()]
+        scored = (
+            self.tasks
+            if self.training
+            else {name: task for name, task in self.tasks.items() if name not in self._learned_only}
+        )
+        losses = [self._weighted(name, task, output, batch) for name, task in scored.items()]
         with torch.no_grad():
             # Metrics and displays never go backward, and a prediction built inside the graph would hold
             # every task's activations alive until the optimizer step.
-            predictions = {name: task.postprocess(output) for name, task in self.tasks.items()}
+            predictions = {
+                name: task.postprocess(output, self.model.produces(name)) for name, task in self.tasks.items()
+            }
         return StepOutput(
-            loss=reduce(operator.add, losses),
+            loss=reduce(operator.add, losses) if losses else None,
             predictions=predictions,
             targets={name: task.metric_view(batch) for name, task in self.tasks.items()},
         )

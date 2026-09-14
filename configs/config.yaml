@@ -37,3 +37,7 @@ run:
   train: true
   test: true
   directory: ${hydra:run.dir}
+  # `checkpoint_path` and `resume_path` are not declared here and arrive from the command line with
+  # a `+`. Quote the value: every file the shipped saver writes carries `=` in its name, and Hydra
+  # reads the first one as the end of the key —
+  # `+run.checkpoint_path='"runs/pet/…/epoch=3-step=92.ckpt"'`, shell quotes around Hydra's own.

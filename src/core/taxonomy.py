@@ -60,21 +60,29 @@ class Semantics(StrEnum):
 
 
 class Representation(StrEnum):
-    """What a head's numbers are, which the shape they arrive in does not say.
+    """What a tensor's numbers are, which the shape they arrive in does not say.
 
-    Read where two separately built parts have to agree about one tensor. An angular margin is added to
-    an angle and has nothing to add to a projection; an ordinary cross-entropy needs the opposite, and
-    over values bounded by one it can never become confident. Neither mistake shows in a shape, and
-    neither shows reliably in the values either — measured, a projection whose weights start small
-    reaches 0.34, well inside the range a cosine occupies.
+    Read at both ends of a run. Inside it, where two separately built parts have to agree about one
+    tensor: an angular margin is added to an angle and has nothing to add to a projection; an ordinary
+    cross-entropy needs the opposite, and over values bounded by one it can never become confident.
+    Neither mistake shows in a shape, and neither shows reliably in the values either — measured, a
+    projection whose weights start small reaches 0.34, well inside the range a cosine occupies. At the
+    run's edge, where the record beside an artifact tells a deployment what it is reading back.
 
     ``PROJECTED`` is the feature mapped and nothing more: logits where the output axis is classes, the
     coordinates of a direction where it is an embedding. ``COSINES`` is bounded to ±1 — the angle
-    between the feature and one prototype per class, both read as directions alone.
+    between the feature and one prototype per class, both read as directions alone. Those two are what
+    a network can produce, and the three below are what a run publishes once a task has read a
+    projection as what it means: a share per class or per label, a number in the target's own units, a
+    unit vector. Numbers that were never a projection keep the word they arrived under, which is why
+    ``COSINES`` is spoken on both sides and neither list is closed to the other.
     """
 
     PROJECTED = "projected"
     COSINES = "cosines"
+    PROBABILITIES = "probabilities"
+    VALUE = "value"
+    DIRECTION = "direction"
 
 
 class Modality(StrEnum):

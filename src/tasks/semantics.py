@@ -12,7 +12,7 @@ from typing import ClassVar, override
 from torch import Tensor
 from torch.nn.functional import one_hot
 
-from src.core import FEATURE_AXIS, Batch, ModelOutput, Semantics, TensorTree, drop_feature_axis
+from src.core import FEATURE_AXIS, Batch, Representation, Semantics, TensorTree, drop_feature_axis
 from src.tasks.base import LossDeclaration, Task
 
 DECISION = 0.5
@@ -37,6 +37,7 @@ class MulticlassSemantics(Task):
     """One class per position, chosen from a declared vocabulary; the model scores every class."""
 
     semantics: ClassVar[Semantics | None] = Semantics.MULTICLASS
+    publishes: ClassVar[Representation] = Representation.PROBABILITIES
     default_target_encoder: ClassVar[str | None] = "label"
     default_metrics: ClassVar[Mapping[str, Mapping[str, object]]] = CLASSIFICATION_METRICS
 
@@ -69,14 +70,17 @@ class MulticlassSemantics(Task):
             return target
         return one_hot(target.long(), num_classes=self.out_features()).movedim(-1, FEATURE_AXIS).float()
 
-    def postprocess(self, output: ModelOutput) -> TensorTree:
-        return self.raw(output).softmax(dim=FEATURE_AXIS)
+    @override
+    def publish(self, projected: Tensor) -> TensorTree:
+        """A share of every class, over the axis the head projected along."""
+        return projected.softmax(dim=FEATURE_AXIS)
 
 
 class BinarySemantics(Task):
     """One score per position: whether the thing is there. No vocabulary, one output."""
 
     semantics: ClassVar[Semantics | None] = Semantics.BINARY
+    publishes: ClassVar[Representation] = Representation.PROBABILITIES
     default_target_encoder: ClassVar[str | None] = "scalar"
     default_metrics: ClassVar[Mapping[str, Mapping[str, object]]] = CLASSIFICATION_METRICS
 
@@ -94,14 +98,17 @@ class BinarySemantics(Task):
     def metric_view(self, batch: Batch) -> Tensor:
         return (self.target(batch) >= DECISION).long()
 
-    def postprocess(self, output: ModelOutput) -> TensorTree:
-        return drop_feature_axis(self.raw(output)).sigmoid()
+    @override
+    def publish(self, projected: Tensor) -> TensorTree:
+        """One score, without the axis it was projected along: there is only ever the one."""
+        return drop_feature_axis(projected).sigmoid()
 
 
 class MultilabelSemantics(Task):
     """Any number of labels per sample: one independent score for each of the declared classes."""
 
     semantics: ClassVar[Semantics | None] = Semantics.MULTILABEL
+    publishes: ClassVar[Representation] = Representation.PROBABILITIES
     default_target_encoder: ClassVar[str | None] = "multilabel"
     # A multilabel confusion matrix is one small matrix per label, which reports as nothing useful.
     default_metrics: ClassVar[Mapping[str, Mapping[str, object]]] = {
@@ -123,5 +130,7 @@ class MultilabelSemantics(Task):
     def metric_view(self, batch: Batch) -> Tensor:
         return (self.target(batch) >= DECISION).long()
 
-    def postprocess(self, output: ModelOutput) -> TensorTree:
-        return self.raw(output).sigmoid()
+    @override
+    def publish(self, projected: Tensor) -> TensorTree:
+        """A score per label, each answering about its own label and none of them about the rest."""
+        return projected.sigmoid()

@@ -8,7 +8,7 @@ from typing import ClassVar, override
 from torch import Tensor
 from torch.nn.functional import normalize
 
-from src.core import FEATURE_AXIS, Axis, Batch, ModelOutput, TargetInfo, TensorTree
+from src.core import FEATURE_AXIS, Axis, Batch, Representation, TargetInfo, TensorTree
 from src.tasks.base import LossDeclaration, Task
 from src.tasks.registry import task_registry
 
@@ -21,17 +21,28 @@ class MetricLearning(Task):
     identities at deployment are not the ones at training — a face, a product, a re-identified vehicle —
     and what it produces is a direction that any gallery can be searched with by angle.
 
-    Two things follow, and they are what make this kind unlike the others. The width of the answer is a
+    Three things follow, and they are what make this kind unlike the others. The width of the answer is a
     choice of the *model* rather than something the data settles, so it is declared on the kind and
-    published as a fact for whoever is sized from it. And it has no semantics: the vocabulary is a
-    training device rather than the meaning of the output, so a run declaring metrics that score against
-    one is refused at build by the library they come from — rather than reporting a plausible-looking f1
-    over identities the model never answers about.
+    published as a fact for whoever is sized from it. It has no semantics: the vocabulary is a training
+    device rather than the meaning of the output, so a run declaring metrics that score against one is
+    refused at build by the library they come from — rather than reporting a plausible-looking f1 over
+    identities the model never answers about.
+
+    And that vocabulary is the one in this framework that is *learned* rather than declared, which is
+    what lets a run hold identities out of training and measure the thing the method exists for. The
+    objective is then sized by the identities it can actually learn, and an evaluation split naming its
+    own is not held to them. ``IdentityEncoder`` carries the reason and the measurement.
     """
 
     output_axis: ClassVar[str] = Axis.EMBEDDING
-    default_target_encoder: ClassVar[str | None] = "label"
-    default_metrics: ClassVar[Mapping[str, Mapping[str, object]]] = {"recall_at_1": {"name": "recall_at_k", "k": 1}}
+    publishes: ClassVar[Representation] = Representation.DIRECTION
+    default_target_encoder: ClassVar[str | None] = "identity"
+    default_metrics: ClassVar[Mapping[str, Mapping[str, object]]] = {
+        "recall_at_1": {"name": "recall_at_k", "k": 1},
+        # Recall asks whether a match turned up first; this asks how every picture of the identity was
+        # ranked, which is the reading that separates a model finding one of six from one finding six.
+        "map": {"name": "map"},
+    }
 
     def __init__(
         self,
@@ -50,7 +61,9 @@ class MetricLearning(Task):
         if info.num_classes is None:
             raise ValueError(
                 f"Task {name!r} is learned by separating identities, one prototype each, so it needs to "
-                "know how many there are; declare `tasks.<name>.classes`."
+                "know how many there are, and nothing it reads its column with says. Leave "
+                "`tasks.<name>.target_encoder` to this kind's own, which learns them from the training "
+                "split, or declare `label` together with `tasks.<name>.classes` to pin them."
             )
         super().__init__(name, info, weight=weight, lr=lr)
         self.embedding_dim = embedding_dim
@@ -86,6 +99,7 @@ class MetricLearning(Task):
         """The same index: a retrieval reading asks whether a neighbour turned out to be the same one."""
         return self.target(batch).long()
 
-    def postprocess(self, output: ModelOutput) -> TensorTree:
+    @override
+    def publish(self, projected: Tensor) -> TensorTree:
         """A unit vector: only the direction carries the identity, and this is what the artifact emits."""
-        return normalize(self.raw(output), dim=FEATURE_AXIS)
+        return normalize(projected, dim=FEATURE_AXIS)

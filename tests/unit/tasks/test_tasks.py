@@ -6,11 +6,14 @@ import pytest
 import torch
 from torch import Tensor
 
-from src.core import Batch, ModelOutput, TargetInfo, require_tensor
+from src.core import FEATURE_AXIS, Batch, ModelOutput, Representation, Semantics, TargetInfo, require_tensor
 from src.data.encoders.continuous import BinnedEncoder, GaussianBinsEncoder, LinearBinsEncoder
 from src.tasks import MetricLearning, Task
 from src.tasks.registry import task_registry
-from tests.support.tasks import info, specimen
+from tests.support.tasks import info, published, specimen
+
+PRODUCIBLE = [Representation.PROJECTED, Representation.COSINES]
+"""What a network can put in front of a task: the two readings a head is allowed to declare."""
 
 
 def batch(target: Tensor) -> Batch:
@@ -38,8 +41,38 @@ class TestContract:
         task, output, step = specimen(kind)
 
         assert isinstance(task.loss_target(step), Tensor)
-        assert isinstance(require_tensor(task.postprocess(output), name=task.name), Tensor)
+        assert isinstance(published(task, output), Tensor)
         assert isinstance(task.metric_view(step), Tensor)
+
+    @pytest.mark.parametrize("produced", PRODUCIBLE)
+    @pytest.mark.parametrize("kind", list(task_registry))
+    def test_every_kind_publishes_numbers_that_are_what_it_calls_them(
+        self, kind: str, produced: Representation
+    ) -> None:
+        """The record beside an artifact names what the numbers are, and that name is a claim about them.
+
+        One rule has two halves — the tensor ``postprocess`` answers with and the word ``answers_with``
+        puts on it — and this is what holds them together: a kind that changes one without the other
+        ships a record that is untrue about its own output.
+
+        ``VALUE`` and ``PROJECTED`` claim nothing a tensor can be held to, so they are exercised here
+        and asserted about nowhere. Compared by value rather than by identity, as every reading in this
+        framework is: a kind a run wrote itself may spell its word as a plain string.
+        """
+        task, output, _ = specimen(kind)
+
+        values = require_tensor(task.postprocess(output, produced), name=task.name)
+        word = task.answers_with(produced)
+
+        if word == Representation.PROBABILITIES:
+            assert values.min() >= 0.0 and values.max() <= 1.0
+            if task.semantics == Semantics.MULTICLASS:
+                over_classes = values.sum(FEATURE_AXIS)
+                assert torch.allclose(over_classes, torch.ones_like(over_classes))
+        elif word == Representation.COSINES:
+            assert values.min() >= -1.0 and values.max() <= 1.0
+        elif word == Representation.DIRECTION:
+            assert torch.allclose(values.norm(dim=FEATURE_AXIS), torch.ones(len(values)), atol=1e-6)
 
     def test_a_task_carries_its_name_its_facts_and_its_weight(self) -> None:
         task = task_registry.get("classification")("species", info(), weight=0.5)
@@ -77,21 +110,38 @@ class TestClassification:
     def test_probabilities_come_back_over_the_class_axis(self) -> None:
         task = task_registry.get("classification")("t", info())
 
-        probabilities = require_tensor(task.postprocess(prediction(torch.rand(2, 3))), name="t")
+        probabilities = published(task, prediction(torch.rand(2, 3)))
 
         assert probabilities.shape == (2, 3) and torch.allclose(probabilities.sum(-1), torch.ones(2))
+
+    def test_a_reading_the_network_already_made_is_published_as_it_stands(self) -> None:
+        """A softmax over cosines is not a probability, and this side of the run cannot make it one.
+
+        Measured on the arrangement `examples/metric_learning.yaml` documents — 37 breeds, a `cosine`
+        head under `arcface`: a converged sample softmaxes to 0.0720, and nothing at 37 classes can
+        exceed 0.1703 (0.0073 at a thousand identities), while the objective, which holds the
+        temperature those cosines are scored at, reads the very same numbers at 1.0000. This would be
+        untrue if an artifact published a bounded reading as though it were confidence.
+        """
+        task = task_registry.get("classification")("t", info())
+        cosines = torch.tensor([[1.0, -1.0, -1.0], [0.2, 0.1, 0.0]])
+
+        answered = require_tensor(task.postprocess(prediction(cosines), Representation.COSINES), name="t")
+
+        assert torch.equal(answered, cosines)
+        assert task.answers_with(Representation.COSINES) == Representation.COSINES
 
     def test_a_dense_task_keeps_the_map_and_normalizes_each_pixel(self) -> None:
         task = task_registry.get("segmentation")("t", info())
 
-        probabilities = require_tensor(task.postprocess(prediction(torch.rand(2, 3, 4, 5))), name="t")
+        probabilities = published(task, prediction(torch.rand(2, 3, 4, 5)))
 
         assert probabilities.shape == (2, 3, 4, 5) and torch.allclose(probabilities.sum(1), torch.ones(2, 4, 5))
 
     def test_a_binary_task_scores_between_zero_and_one(self) -> None:
         task = task_registry.get("binary_classification")("t", TargetInfo())
 
-        scores = require_tensor(task.postprocess(prediction(torch.randn(4, 1))), name="t")
+        scores = published(task, prediction(torch.randn(4, 1)))
 
         assert scores.min() >= 0.0 and scores.max() <= 1.0
 
@@ -136,9 +186,9 @@ class TestMetricLearning:
         """The artifact answers with unit vectors: what the output *means* is settled by the task."""
         task = MetricLearning("t", info(), embedding_dim=4)
 
-        published = require_tensor(task.postprocess(prediction(torch.rand(2, 4) * 10)), name="t")
+        direction = published(task, prediction(torch.rand(2, 4) * 10))
 
-        assert torch.allclose(published.norm(dim=1), torch.ones(2), atol=1e-6)
+        assert torch.allclose(direction.norm(dim=1), torch.ones(2), atol=1e-6)
 
     def test_an_identity_is_not_a_label_that_two_samples_can_be_averaged_into(self) -> None:
         """Read off the shape, as `dense` is: a page cannot draw one and a mix cannot blend two."""
@@ -151,7 +201,7 @@ class TestRegression:
     def test_a_plain_target_is_one_number_per_sample(self) -> None:
         task = task_registry.get("regression")("t", TargetInfo())
 
-        prepared = require_tensor(task.postprocess(prediction(torch.tensor([[1.5], [2.5]]))), name="t")
+        prepared = published(task, prediction(torch.tensor([[1.5], [2.5]])))
 
         assert task.output_shape().sizes == (1,) and prepared.tolist() == [1.5, 2.5]
 
@@ -161,7 +211,7 @@ class TestRegression:
         task = task_registry.get("regression")("t", binned)
         distribution = torch.tensor([[0.0, 1.0, 0.0], [0.5, 0.5, 0.0]])
 
-        value = require_tensor(task.postprocess(prediction(distribution.log())), name="t")
+        value = published(task, prediction(distribution.log()))
 
         assert task.output_shape().sizes == (3,)
         assert value.tolist() == pytest.approx([10.0, 5.0], abs=0.1)

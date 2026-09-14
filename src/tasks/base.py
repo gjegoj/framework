@@ -13,6 +13,7 @@ from src.core import (
     Axis,
     Batch,
     ModelOutput,
+    Representation,
     Semantics,
     Stream,
     TargetInfo,
@@ -50,6 +51,14 @@ class Task(ABC):
 
     Classes for anything read against a vocabulary, which is every kind but one; a kind whose answer is
     a direction says so here, and the shape it produces follows without restating the width.
+    """
+
+    publishes: ClassVar[Representation] = Representation.PROJECTED
+    """What this kind answers with once it has read a projection as what that projection means.
+
+    The word a deployment is handed for the numbers it reads back, which no tensor carries. It is paired
+    with ``publish`` below and the two are declared together: the default reads a projection as nothing,
+    so what such a kind answers with *is* the projection, and saying so is true rather than a fallback.
     """
 
     default_head: ClassVar[Mapping[str, object]] = {"name": "linear", "stream": Stream.POOLED}
@@ -115,9 +124,45 @@ class Task(ABC):
     def metric_view(self, batch: Batch) -> Tensor:
         """The same target as a metric scores it — hard where the loss reads a share."""
 
-    @abstractmethod
-    def postprocess(self, output: ModelOutput) -> TensorTree:
-        """What the model's raw output means: probabilities, a value, a mask. Never the loss's view."""
+    def postprocess(self, output: ModelOutput, produced: Representation) -> TensorTree:
+        """What this task's numbers mean, given what the network made of them. Never the loss's view.
+
+        A projection is read as what this kind means; numbers that are *already* a reading are handed
+        on as they stand, because nothing this side of the run can turn them into another one. Measured
+        on the arrangement `examples/metric_learning.yaml` documents — 37 breeds, a ``cosine`` head
+        under ``arcface`` — a softmax over cosines answers 0.0720 for a converged sample and can never
+        exceed 0.1703 (0.0073 at a thousand identities), while the objective reads those very numbers
+        at 1.0000. The difference is a temperature the objective holds and a task cannot see; borrowing
+        it would put a training hyperparameter into an artifact as a calibration nobody measured.
+
+        Concrete rather than abstract, and the one home for the rule ``answers_with`` states in words:
+        a kind that overrides this instead of ``publish`` takes the numbers and the word that describes
+        them apart, and the record shipped beside an artifact is the half that then lies.
+        """
+        raw = self.raw(output)
+        return self.publish(raw) if produced == Representation.PROJECTED else raw
+
+    def answers_with(self, produced: Representation) -> Representation:
+        """The word for what ``postprocess`` just answered with, for the record beside an artifact.
+
+        The other half of the rule above, in the only form a record can carry: a tensor says nothing
+        about which of these it holds, which is the whole reason ``Representation`` exists. A reading
+        the network already made keeps the word it arrived under, exactly as the numbers do.
+
+        Compared by value rather than by identity, as every reading in this framework is: a network a
+        run wrote itself may spell ``produces = "projected"`` and be taken at its word.
+        """
+        return self.publishes if produced == Representation.PROJECTED else produced
+
+    def publish(self, projected: Tensor) -> TensorTree:
+        """This kind's reading of a projection: a share per class, a number, a direction, a mask.
+
+        Handed the projection alone rather than the output it came in, so a kind cannot reach past its
+        own task. The default reads it as nothing, which is what ``publishes`` above says it answers
+        with — a pair, and a kind changing one of them without the other is what the contract test over
+        every kind exists to catch.
+        """
+        return projected
 
     def soften(self, target: Tensor) -> Tensor:
         """This task's target in the shape a weighted sum of two of them needs.

@@ -14,7 +14,7 @@ from torch import Tensor
 
 from src.core import DatasetInfo, Normalization, class_name
 from src.export.base import BATCH_AXIS, WRITTEN_FROM, Exporter, beside
-from src.export.deployable import DeployableModel, example_inputs
+from src.export.deployable import DeployableModel, as_outputs, example_inputs
 from src.export.verification import Parity, verify
 
 MANIFEST_SUFFIX = "json"
@@ -45,6 +45,12 @@ class InputRecord:
 class OutputRecord:
     """One tensor a deployment reads back, and what the numbers in it mean.
 
+    ``representation`` is what the numbers themselves are — a share per class, a number in the target's
+    own units, a direction, an angle — which no tensor carries and which decides whether a deployment
+    may threshold them at all. ``shape`` is one row's, as an input record's is, and is read off what
+    the graph actually answered: reading a projection as what it means changes the rank, so a shape
+    worked out from what the head produces would be a second statement about the same file.
+
     ``classes`` is the vocabulary in index order, which is what turns a position in the tensor into a
     word; ``values`` is what each position stands for where a number was learned as a distribution over
     bins. A task that means neither carries no vocabulary and needs none: a plain number, and an
@@ -52,6 +58,8 @@ class OutputRecord:
     """
 
     name: str
+    representation: str
+    shape: tuple[int, ...]
     semantics: str | None
     classes: tuple[str, ...] | None
     values: tuple[float, ...] | None
@@ -115,8 +123,9 @@ def ship(graph: DeployableModel, info: DatasetInfo, exporters: Sequence[Exporter
         return Manifest(inputs=(), outputs=(), artifacts=())
     example = example_inputs(info, graph.input_names, WRITTEN_FROM)
     with _as_it_is_shipped(graph):
+        answered = _answered(graph, example)
         artifacts = tuple(_written(exporter, graph, example, destination) for exporter in exporters)
-    manifest = Manifest(inputs=_inputs(info, graph, example), outputs=_outputs(graph), artifacts=artifacts)
+    manifest = Manifest(inputs=_inputs(info, graph, example), outputs=_outputs(graph, answered), artifacts=artifacts)
     beside(destination, MANIFEST_SUFFIX).write_text(json.dumps(manifest.as_record(), indent=2), encoding="utf-8")
     return manifest
 
@@ -168,7 +177,7 @@ def _inputs(info: DatasetInfo, graph: DeployableModel, example: tuple[Tensor, ..
     return tuple(
         InputRecord(
             name=name,
-            shape=tuple(int(size) for size in tensor.shape[BATCH_AXIS + 1 :]),
+            shape=_one_row(tensor),
             dtype=str(tensor.dtype).removeprefix("torch."),
             normalization=info.inputs[name].normalization,
         )
@@ -176,7 +185,26 @@ def _inputs(info: DatasetInfo, graph: DeployableModel, example: tuple[Tensor, ..
     )
 
 
-def _outputs(graph: DeployableModel) -> tuple[OutputRecord, ...]:
+def _one_row(tensor: Tensor) -> tuple[int, ...]:
+    """What one row of a tensor measures, which is what both sides of a record are written in.
+
+    The batch is the axis in front of it: how many rows a given artifact takes is that artifact's own
+    business, recorded with it rather than with the tensor it reads or answers with.
+    """
+    return tuple(int(size) for size in tensor.shape[BATCH_AXIS + 1 :])
+
+
+def _answered(graph: DeployableModel, example: tuple[Tensor, ...]) -> tuple[Tensor, ...]:
+    """What the graph itself answers to the example every artifact was written from.
+
+    A pass of its own rather than the oracle's inside ``verify``: threading one out of the other would
+    tie what the record says about an output to how many formats the run happened to declare.
+    """
+    with torch.no_grad():
+        return as_outputs(graph(*example))
+
+
+def _outputs(graph: DeployableModel, answered: tuple[Tensor, ...]) -> tuple[OutputRecord, ...]:
     """What each position of the answer means — and, for a direction, that it means no position at all.
 
     Read off what the task publishes rather than off what its target held: a task answering with an
@@ -186,11 +214,13 @@ def _outputs(graph: DeployableModel) -> tuple[OutputRecord, ...]:
     return tuple(
         OutputRecord(
             name=task.name,
+            representation=task.answers_with(produced),
+            shape=_one_row(tensor),
             semantics=task.semantics,
             classes=None if task.embeds else _vocabulary(task.info.classes),
             values=None if task.embeds else task.info.values,
         )
-        for task in graph.tasks
+        for task, produced, tensor in zip(graph.tasks, graph.produced, answered, strict=True)
     )
 
 

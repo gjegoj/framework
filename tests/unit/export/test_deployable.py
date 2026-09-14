@@ -25,6 +25,7 @@ from src.models import Model
 from src.tasks import Task
 from src.tasks.classification import Classification
 from src.tasks.regression import Regression
+from tests.support.models import Angles
 
 CLASSES = {0: "cat", 1: "dog", 2: "bird"}
 IMAGE = TensorShape(axes=(Axis.CHANNELS, Axis.HEIGHT, Axis.WIDTH), sizes=(3, 8, 8))
@@ -52,6 +53,27 @@ def two_tasks() -> DeployableModel:
     """Two plain regressions, each reading an input of its own: postprocessing barely changes the value."""
     tasks = [Regression("left", TargetInfo()), Regression("right", TargetInfo())]
     return graph_of({"left": "first", "right": "second"}, tasks)
+
+
+def test_numbers_the_network_already_made_a_reading_of_are_shipped_as_they_stand() -> None:
+    """An artifact hands on what its task means, and a bounded reading does not mean confidence.
+
+    Measured at 37 classes: a softmax over cosines answers 0.0720 for a converged sample and cannot
+    exceed 0.1703, while the objective that holds their temperature reads the same numbers at 1.0000.
+    This would be untrue if the graph squashed a reading its own network had already made — and the
+    second half says the squash is still there for a network that hands over a projection.
+    """
+    task = Classification("species", TargetInfo(classes=CLASSES))
+    network = Angles(task.name, reads="features", in_features=6, out_features=len(CLASSES))
+    features = torch.randn(2, 6)
+
+    angular = DeployableModel(network, [task], input_names=("features",)).eval()
+    shipped = require_tensor(angular(features), name=task.name)
+
+    assert torch.allclose(shipped, network.head(features))
+    assert shipped.min() >= -1.0 and shipped.max() <= 1.0
+    projecting = graph_of({task.name: "features"}, [task])
+    assert torch.allclose(require_tensor(projecting(shipped), name=task.name).sum(FEATURE_AXIS), torch.ones(2))
 
 
 def test_each_tensor_reaches_the_model_under_the_name_the_graph_takes_it_by() -> None:

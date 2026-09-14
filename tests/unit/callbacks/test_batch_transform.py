@@ -119,7 +119,9 @@ def test_a_second_one_is_refused_rather_than_left_to_overwrite_the_first(declara
         ),
         pytest.param(
             {"name": "metric_learning", "embedding_dim": 8},
-            {},
+            # No vocabulary: this kind reads its column with the encoder that learns the identities of
+            # the training split, and a declared one is refused where it is written.
+            {"classes": None},
             id="prototypes in the objective",
         ),
     ],
@@ -134,7 +136,10 @@ def test_an_objective_that_cannot_read_a_blended_target_is_refused_before_the_fi
     arrangements are refused, because where the prototypes live does not change what the margin needs.
     """
     tasks = dict(declaration["tasks"])
-    tasks["species"] = {**tasks["species"], "kind": kind, **declared}
+    # A `None` in the parametrisation takes a key *out* of the declaration, which is how the kind that
+    # learns its own vocabulary says it declares none.
+    written = {**tasks["species"], "kind": kind, **declared}
+    tasks["species"] = {key: value for key, value in written.items() if value is not None}
     mixing = MixUp()
 
     with pytest.raises(ValueError, match="species, learned by arcface"):

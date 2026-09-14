@@ -8,7 +8,7 @@ from typing import cast
 import torch
 from torch import Tensor, nn
 
-from src.core import DatasetInfo, TensorShape, TensorTree, require_tensor
+from src.core import DatasetInfo, Representation, TensorShape, TensorTree, require_tensor
 from src.models import Model
 from src.tasks import Task
 
@@ -20,10 +20,12 @@ class DeployableModel(nn.Module):
     here — once, for every model family and every format — and the names travel with the graph, where a
     backend that writes them reads them off the module itself.
 
-    What comes out is what each task *means* — probabilities, a value, a mask — because ``postprocess``
-    already states that, and a deployment left to apply a softmax of its own would be a second home for
-    a decision the run has made. The outputs come in the order the tasks were declared and are named
-    after them, so neither order nor names are written down a second time.
+    What comes out is what each task *means* — a share per class, a value, a mask, an angle — because
+    ``postprocess`` already states that, and a deployment left to apply a softmax of its own would be a
+    second home for a decision the run has made. Which of them it is depends on what the network made
+    of the numbers as well as on the task, so the graph asks the model rather than assuming, and the
+    record beside the artifact is written from the same answer. The outputs come in the order the tasks
+    were declared and are named after them, so neither order nor names are written down a second time.
 
     Measured on torch 2.13: ``torch.jit.script`` cannot compile this, and for reasons that are v2's own
     contracts rather than anything this module could avoid. ``Model.forward`` is annotated
@@ -49,6 +51,19 @@ class DeployableModel(nn.Module):
         """What this graph's outputs are called: the run's task names, in the order it serves them."""
         return tuple(task.name for task in self.tasks)
 
+    @property
+    def produced(self) -> tuple[Representation, ...]:
+        """What the network made of each task's numbers, in the order this graph answers in.
+
+        Asked of the model every time rather than kept from construction: a run may put adapters around
+        its network between the build and the export, and a fact copied out of a module at construction
+        is a fact that can go stale without saying so. It costs a mapping lookup per task.
+
+        A property, and public, because two readers need the same answer: the graph, to hand each task
+        what its numbers are, and the record beside the artifact, to say what a deployment is reading.
+        """
+        return tuple(self.model.produces(task.name) for task in self.tasks)
+
     def forward(self, *tensors: Tensor) -> Tensor | tuple[Tensor, ...]:
         """One tensor per task, and a bare tensor where the run serves a single one.
 
@@ -65,7 +80,10 @@ class DeployableModel(nn.Module):
             )
         inputs = cast(Mapping[str, TensorTree], dict(zip(self.input_names, tensors, strict=True)))
         output = self.model(inputs)
-        shipped = tuple(require_tensor(task.postprocess(output), name=task.name) for task in self.tasks)
+        shipped = tuple(
+            require_tensor(task.postprocess(output, produced), name=task.name)
+            for task, produced in zip(self.tasks, self.produced, strict=True)
+        )
         return shipped[0] if len(shipped) == 1 else shipped
 
 

@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 
 from src.export import DeployableModel, Manifest, ship
 from src.tracking import KeepsRecord
-from src.training import load_checkpoint, restore_best_weights
+from src.training import load_checkpoint, load_learned, restore_best_weights
 
 if TYPE_CHECKING:
     import lightning as L
@@ -54,12 +54,17 @@ def run(experiment: Experiment) -> Manifest:
     # module holds built objects rather than the declaration they came from.
     if experiment.trainer.logger is not None:
         experiment.trainer.logger.log_hyperparams(config.model_dump(mode="json"))
-    model = experiment.module.learner.model
+    learner = experiment.module.learner
     if config.run.checkpoint_path is not None:
-        load_checkpoint(model, config.run.checkpoint_path)
+        # A run that trains starts from these weights and learns its own objective over them; a run that
+        # only scores is reporting on this file, so the objective has to come out of it too.
+        if config.run.scores_without_training:
+            load_learned(learner, config.run.checkpoint_path)
+        else:
+            load_checkpoint(learner.model, config.run.checkpoint_path)
     if config.run.train:
         experiment.trainer.fit(experiment.module, datamodule=experiment.data, ckpt_path=config.run.resume_path)
-        restore_best_weights(experiment.trainer, experiment.module.learner)
+        restore_best_weights(experiment.trainer, learner)
     if config.run.test:
         experiment.trainer.test(experiment.module, datamodule=experiment.data, verbose=False)
     return _ship(experiment)

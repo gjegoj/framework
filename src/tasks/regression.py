@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import ClassVar
+from typing import ClassVar, override
 
 import torch
 from torch import Tensor
 
-from src.core import ERROR, FEATURE_AXIS, Batch, ModelOutput, TensorTree, drop_feature_axis
+from src.core import ERROR, FEATURE_AXIS, Batch, Representation, TensorTree, drop_feature_axis
 from src.tasks.base import LossDeclaration, Task
 from src.tasks.registry import task_registry
 
@@ -23,6 +23,7 @@ class Regression(Task):
     two by changing its encoder and nothing else.
     """
 
+    publishes: ClassVar[Representation] = Representation.VALUE
     default_target_encoder: ClassVar[str | None] = "scalar"
     default_metrics: ClassVar[Mapping[str, Mapping[str, object]]] = {ERROR: {"name": ERROR}}
 
@@ -51,11 +52,12 @@ class Regression(Task):
         target = self.target(batch).float()
         return target if self.binned is None else target @ _values(self.binned, target)
 
-    def postprocess(self, output: ModelOutput) -> TensorTree:
-        scores = self.raw(output)
+    @override
+    def publish(self, projected: Tensor) -> TensorTree:
+        """The number itself, or the one its distribution over the bins averages to."""
         if self.binned is None:
-            return drop_feature_axis(scores)
-        return scores.softmax(dim=FEATURE_AXIS) @ _values(self.binned, scores)
+            return drop_feature_axis(projected)
+        return projected.softmax(dim=FEATURE_AXIS) @ _values(self.binned, projected)
 
 
 def _values(bins: tuple[float, ...], like: Tensor) -> Tensor:

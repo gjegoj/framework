@@ -5,23 +5,41 @@
 # *direction* per picture instead — samples of one breed pointing the same way — so the same
 # artifact can be searched against breeds it never saw: faces, products, re-identification.
 #
-# **The honest limit of this example.** Pet breeds are a closed set: every breed is seen in
-# training, so `val/identity/recall_at_1` measures the pipeline rather than the open-set
-# generalisation the method exists for. Pointing `target_column` at real identities trains the
-# same way, but measuring what the method is for needs identities held out of training — and the
-# label encoder fits its vocabulary on the train split, so an evaluation split holding identities
-# outside it is refused before the first batch. Holding identities out is not yet something this
-# framework can declare.
+# **The breeds are held out, and that is the whole point.** `GroupedSplit` below keeps every
+# picture of one breed on one side, so validation and test name breeds training never showed —
+# which is the only arrangement in which `recall_at_1` measures the thing this method exists for
+# rather than the pipeline around it. The identities are learned from the training split, so
+# nothing here lists them and nothing is held to a list.
 #
-# What the run reads back:
+# What the run reads back — the first three ask who a picture is nearest to, the last two ask
+# whether two pictures are the same breed at all, which is the question a door or a turnstile asks:
 #   recall_at_1   how often the nearest other picture of the epoch is the same breed
 #   recall_at_5   the same, five deep — a fairer reading when a breed has many close cousins
-# Random is 1/37 ≈ 0.027 at k=1, so anything above a few percent is the model working. Both are read
-# on validation and test only — ranking a gallery the encoder was still moving under measures the
-# drift rather than the model, so the metric declares the stages it means something in.
+#   map           how every picture of the breed was ranked, not merely whether one came first —
+#                 the reading that separates finding one of six from finding all six
+#   verification  the share of picture pairs one cosine tells apart correctly, at the best cosine there is
+#   threshold     that cosine — the number a deployment compares against, and the one thing here
+#                 that leaves with the model rather than describing it
+# All five are read on validation and test only — a gallery the encoder was still moving under holds
+# vectors from several models, so the reading declares the stages it means something in.
+#
+# **Read them against the right baseline, which moves.** Recall is a function of how many identities
+# the gallery holds, and holding breeds out makes that number small: measured on an untrained
+# encoder over 148 pictures, recall@1 reads 0.054 over 37 identities, 0.196 over five, and 1.0000
+# over one — where it cannot fail at all. Verification moves the other way and is worse to misread:
+# with nothing learned, no cosine beats calling every pair strangers, so the reading is the share of
+# pairs that *are* strangers — approaching one minus the reciprocal of however many breeds the split
+# holds, 0.80 over five and 0.97 over thirty — and an untrained encoder reads high, not near zero. So neither reading here is comparable with one
+# taken over the closed set, and two runs are comparable with each other only over the same split.
 defaults:
   - examples/pet
   - override /model: resnet18
+
+data:
+  split:
+    # Whole breeds move together, so no breed is on both sides. The preset divides by species
+    # instead, which is right for every other example on this page and wrong for this one.
+    rule: {_target_: src.data.GroupedSplit, by: breed}
 
 tasks:
   identity:
@@ -30,23 +48,38 @@ tasks:
     # prototypes from the same number.
     kind: {name: metric_learning, embedding_dim: 128}
     target_column: breed
-    # A training device here rather than the meaning of the output: the objective keeps one
-    # prototype per breed and the exported model carries none of them.
-    classes: {
-      0: Abyssinian, 1: Bengal, 2: Birman, 3: Bombay, 4: British_Shorthair, 5: Egyptian_Mau,
-      6: Maine_Coon, 7: Persian, 8: Ragdoll, 9: Russian_Blue, 10: Siamese, 11: Sphynx,
-      12: american_bulldog, 13: american_pit_bull_terrier, 14: basset_hound, 15: beagle, 16: boxer,
-      17: chihuahua, 18: english_cocker_spaniel, 19: english_setter, 20: german_shorthaired,
-      21: great_pyrenees, 22: havanese, 23: japanese_chin, 24: keeshond, 25: leonberger,
-      26: miniature_pinscher, 27: newfoundland, 28: pomeranian, 29: pug, 30: saint_bernard,
-      31: samoyed, 32: scottish_terrier, 33: shiba_inu, 34: staffordshire_bull_terrier,
-      35: wheaten_terrier, 36: yorkshire_terrier}
+    # No `classes` here, and that is the point. This kind reads its column with the one encoder that
+    # *learns* its vocabulary, from the training split alone — so the objective keeps one prototype per
+    # identity it can actually learn, and the breeds held out below are not held to a list. Nothing of
+    # that vocabulary leaves the run: the artifact answers with a direction and `model.json` writes no
+    # classes for it. To pin it instead, declare `target_encoder: label` with `classes`.
     # The default, written out to show its knobs. `margin` is the angle, in radians, the true
     # identity is pushed away by before scoring — what forces the run to leave a gap behind.
     loss: {name: arcface_proxy, margin: 0.5, scale: 64.0}
     metrics:
       recall_at_1: {name: recall_at_k, k: 1}
       recall_at_5: {name: recall_at_k, k: 5}
+      map: {name: map}
+      verification: {name: verification_accuracy}
+      threshold: {name: verification_threshold}
+
+# The default set, with the one line this example cannot take from it: what to keep the weights by.
+# A Hydra group replaces a list rather than appending to it, so the whole list is written out — and a
+# shipped group could not carry this anyway, because the key names *this run's task*.
+#
+# `val/loss` is the framework's default monitor and it is the wrong one here: the objective is over the
+# training identities, and validation names others, so its number is not about this model. Retrieval on
+# the held-out breeds is, so that is what the kept epoch is chosen by.
+callbacks:
+  - {name: progress}
+  - {name: model_summary, max_depth: 3}
+  - {name: lr_monitor, logging_interval: epoch}
+  - {name: metric_summary}
+  - name: checkpoint
+    monitor: val/identity/recall_at_1
+    mode: max
+    save_top_k: 1
+    dirpath: ${run.directory}/checkpoints
 
 # The other arrangement: put the prototypes in the *network*, and the artifact classifies breeds
 # directly instead of answering with a direction. It is then an ordinary classification task,
@@ -64,3 +97,9 @@ tasks:
 # `recall_at_k` above ranks the other pictures of the epoch; `recall` with `top_k` here ranks the
 # declared breeds. Different readings, and neither substitutes for the other. Which to declare is a
 # deployment question: ship the identities with the model, or ship an encoder that outlives them.
+#
+# One thing that arrangement's artifact does *not* answer with is a probability, and `model.json` says
+# so: `representation: cosines`. A cosine is bounded to ±1, and the temperature that turns one into a
+# confidence belongs to the objective — measured over these 37 breeds, a softmax of them reads 0.0720
+# for a sample the model is certain about and can never exceed 0.1703. Rank by these numbers; do not
+# threshold them.

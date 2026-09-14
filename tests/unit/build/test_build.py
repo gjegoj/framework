@@ -326,6 +326,16 @@ class TestDeclarationsThatCannotHold:
             experiment(declaration, model={"_target_": "tests.e2e.test_custom_extension.Tiny"}, tasks=tasks)
 
 
+def identities() -> dict[str, Any]:
+    """One task judged on identities the training split settles, which is what makes the run open."""
+    return {"identity": {"kind": {"name": "metric_learning", "embedding_dim": 4}, "target_column": "species"}}
+
+
+def watching(monitor: str, mode: str) -> list[dict[str, Any]]:
+    """The shipped set's own saver, written out, because a group replaces a list rather than patching it."""
+    return [{"name": "checkpoint", "monitor": monitor, "mode": mode, "save_top_k": 1}]
+
+
 class TestTheTrainer:
     def test_a_run_that_declares_no_tracker_records_nowhere_at_all(self, declaration: Mapping[str, Any]) -> None:
         """Left to itself Lightning would start a logger of its own, which is not what `tracker: none` says."""
@@ -351,6 +361,75 @@ class TestTheTrainer:
 
         declared = [one for one in built.trainer.callbacks if isinstance(one, LearningRateMonitor | ModelCheckpoint)]
         assert [type(one).__name__ for one in declared] == ["LearningRateMonitor", "ModelCheckpoint"]
+
+    def test_a_monitor_naming_an_objective_this_run_never_scores_is_refused_before_it_trains(
+        self, declaration: Mapping[str, Any]
+    ) -> None:
+        """A run judged on identities it never learned scores no objective outside training.
+
+        Lightning does refuse this itself — measured, `MisconfigurationException` at the end of the first
+        validation, listing the keys that do exist. What this buys is when and what: while the run is
+        still being assembled rather than an epoch into it, and naming the readings to watch instead,
+        which Lightning has no way to know.
+        """
+        with pytest.raises(ValueError, match="val/loss"):
+            experiment(declaration, tasks=identities(), callbacks=watching("val/loss", "min"))
+
+    def test_a_monitor_naming_one_task_s_own_objective_is_refused_like_the_total(
+        self, declaration: Mapping[str, Any]
+    ) -> None:
+        """The total is not the only key that goes unwritten: each task's own term goes with it.
+
+        A multitask run would be watched by the term rather than the sum, which is the same key missing
+        under a different name — so both halves of what a run will not write are held to this rule.
+        """
+        with pytest.raises(ValueError, match="arcface_proxy"):
+            experiment(declaration, tasks=identities(), callbacks=watching("val/identity/arcface_proxy", "min"))
+
+    def test_the_refusal_names_the_direction_to_watch_in_and_not_only_the_reading(
+        self, declaration: Mapping[str, Any]
+    ) -> None:
+        """A key on its own is half an instruction, and the missing half is the defect being refused.
+
+        The shipped set watches `val/loss` with `mode: min`. A reader who takes this message at its word
+        and swaps only the key keeps the epoch whose recall was *worst* — silently, with a green run and
+        a shipped artifact, which is exactly what this phase exists to make impossible.
+        """
+        with pytest.raises(ValueError, match=r"val/identity/recall_at_1.*mode: max"):
+            experiment(declaration, tasks=identities(), callbacks=watching("val/loss", "min"))
+
+    def test_a_reading_with_no_better_direction_is_not_offered_as_something_to_keep_an_epoch_by(
+        self, declaration: Mapping[str, Any]
+    ) -> None:
+        """A cosine to compare against is measured in evaluation and is still not an answer to this.
+
+        Kept by a threshold, a run would choose the epoch whose separation drifted furthest from the
+        others — so the reading says it has no better direction, and the offer reads that rather than
+        listing everything the run happens to measure.
+        """
+        declared = identities()
+        declared["identity"]["metrics"] = {
+            "recall_at_1": {"name": "recall_at_k", "k": 1},
+            "cosine_threshold": {"name": "verification_threshold"},
+        }
+
+        with pytest.raises(ValueError, match="recall_at_1") as refusal:
+            experiment(declaration, tasks=declared, callbacks=watching("val/loss", "min"))
+
+        assert "cosine_threshold" not in str(refusal.value), "a threshold is measured, not watched"
+
+    def test_a_schedule_waiting_on_the_same_absent_number_is_refused_by_the_same_rule(
+        self, declaration: Mapping[str, Any]
+    ) -> None:
+        """One question asked twice: a saver keeps an epoch by a number, a plateau reacts to one."""
+        with pytest.raises(ValueError, match="val/loss"):
+            experiment(declaration, tasks=identities(), scheduler={"name": "plateau", "monitor": "val/loss"})
+
+    def test_a_run_that_scores_its_objective_everywhere_still_monitors_it(self, declaration: Mapping[str, Any]) -> None:
+        """The rule is about one run's own keys, not a ban on the name every other run is watched by."""
+        built = experiment(declaration, callbacks=watching("val/loss", "min"))
+
+        assert built.trainer.checkpoint_callback is not None
 
     def test_the_run_is_as_long_as_the_declaration_says(self, declaration: Mapping[str, Any]) -> None:
         assert experiment(declaration, epochs=3).trainer.max_epochs == 3

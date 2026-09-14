@@ -188,6 +188,11 @@ def _chip_style(color: str, side: Side, confidence: float | None) -> str:
     Both sides carry one hue, so they read as one class, and what tells them apart is solid against
     outlined rather than a shade nobody can hold in mind. Confidence is the rim: faint where the model
     hesitated, solid where it did not.
+
+    The rim reads a share of one, and a number outside that band says only which end of it the model is
+    at — not every answer a model can give is a share. A network answering with angles hands over
+    numbers on ±1, and the band is what keeps an alpha an alpha: measured, a cosine of -1.0 put this
+    at -0.40, which is not a colour any browser has to agree about.
     """
     written = ink(color)
     if side == "gt":
@@ -195,7 +200,8 @@ def _chip_style(color: str, side: Side, confidence: float | None) -> str:
         # rather than a value computed per chip; what varies is only which colour it is written on.
         return f"background:{written}"
     red, green, blue = hex_to_rgb(color)
-    alpha = _NO_CONFIDENCE_RIM if confidence is None else _MIN_RIM_ALPHA + _RIM_ALPHA_SPAN * confidence
+    share = None if confidence is None else min(1.0, max(0.0, confidence))
+    alpha = _NO_CONFIDENCE_RIM if share is None else _MIN_RIM_ALPHA + _RIM_ALPHA_SPAN * share
     return f"color:{written};border-color:rgba({red},{green},{blue},{alpha:.2f})"
 
 

@@ -27,7 +27,9 @@ from src.export.build import build_exporters
 from src.export.manifest import MANIFEST_SUFFIX, Manifest, ship
 from src.models import Model
 from src.tasks import MetricLearning
+from src.tasks.classification import Classification
 from src.tasks.regression import Regression
+from tests.support.models import Angles
 from tests.unit.export.test_backends import FEATURES, Heads, deployable, wide
 
 NORMALIZATION = Normalization(mean=(0.485, 0.456, 0.374, 0.5), std=(0.229, 0.224, 0.225, 0.5))
@@ -63,6 +65,37 @@ def test_a_manifest_says_what_every_output_means_in_the_order_the_artifact_answe
     assert outputs[0].classes == ("cat", "dog")
     assert outputs[1].semantics is None
     assert outputs[1].classes is None
+
+
+def test_a_manifest_says_what_an_outputs_numbers_are_and_how_many_of_them_a_row_holds(tmp_path: Path) -> None:
+    """A deployment allocating a buffer and reading a position needs both, and a tensor carries neither.
+
+    The shape is one row's, as an input record's is, and it is read off what the graph actually
+    answered rather than off what the task declared: reading a projection as what it means changes the
+    rank — a score per sample comes back without the axis it was projected along — so `weight` is a
+    bare number here while the head serving it produces `[1]`.
+    """
+    species, weight = shipped(tmp_path, {"name": "onnx"}).outputs
+
+    assert (species.representation, species.shape) == ("probabilities", (2,))
+    assert (weight.representation, weight.shape) == ("value", ())
+
+
+def test_a_record_of_numbers_the_network_already_read_calls_them_by_the_name_they_have(tmp_path: Path) -> None:
+    """A bounded reading published under the word `probabilities` is a record of a model nobody built.
+
+    Measured at 37 classes: a converged sample softmaxes to 0.0720 and nothing can exceed 0.1703, so a
+    deployment thresholding this artifact at anything at all would reject every picture it is shown —
+    while the ranking, which is what the numbers are for, was right the whole time.
+    """
+    task = Classification("species", TargetInfo(classes={0: "cat", 1: "dog"}))
+    network = Angles(task.name, reads="features", in_features=FEATURES, out_features=task.out_features())
+    graph = DeployableModel(network, [task], input_names=("features",)).eval()
+
+    (built,) = shipped(tmp_path, {"name": "onnx"}, graph=graph).outputs
+
+    assert built.representation == "cosines"
+    assert built.classes == ("cat", "dog") and built.semantics == "multiclass"
 
 
 def test_a_record_of_a_model_answering_with_a_direction_claims_no_vocabulary(tmp_path: Path) -> None:

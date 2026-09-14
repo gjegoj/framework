@@ -14,7 +14,7 @@ from src.config import ComponentConfig
 from src.core import DatasetInfo, Geometry, Sample
 from src.data import DataModule, StandardPreprocessor
 from src.data.build import build_data_module, build_preprocessor, build_target_encoder
-from src.data.encoders import LabelEncoder, ScalarEncoder
+from src.data.encoders import IdentityEncoder, LabelEncoder, ScalarEncoder
 from src.data.table import TableDataModule
 from tests.support.declarations import CLASSES, component, preprocessing_config, task_config
 
@@ -27,6 +27,17 @@ class TestTargetEncoder:
         encoder = build_target_encoder("species", task(classes=CLASSES), ComponentConfig(name="label"))
 
         assert isinstance(encoder, LabelEncoder) and encoder.info.num_classes == 2
+
+    def test_a_kind_whose_vocabulary_the_training_split_settles_needs_no_declared_classes(self) -> None:
+        """Identities are learned rather than written, so a run naming fifty thousand of them names none.
+
+        This is also what keeps the closed arrangement expressible: a run that wants the vocabulary
+        pinned declares `target_encoder: label` with `classes`, and the row below still refuses the pair
+        this one leaves out.
+        """
+        encoder = build_target_encoder("identity", task(), ComponentConfig(name="identity"))
+
+        assert isinstance(encoder, IdentityEncoder)
 
     def test_a_declared_encoder_wins_over_the_default(self) -> None:
         assert isinstance(

@@ -36,9 +36,22 @@ class RunConfig(BaseModel):
     name: str | None = None
     train: bool = True
     test: bool = True
-    checkpoint_path: str | None = Field(None, min_length=1, description="Initial model weights; starts a fresh run.")
+    checkpoint_path: str | None = Field(
+        None, min_length=1, description="Weights to start from, or the run being reported on where none are learned."
+    )
     resume_path: str | None = Field(None, min_length=1, description="Continue weights, optimizer, scheduler and epoch.")
     directory: str = Field("runs", min_length=1)
+
+    @property
+    def scores_without_training(self) -> bool:
+        """Whether this run will report numbers about a model it has no chance to learn anything about.
+
+        Derived rather than declared: a scoring stage is the only thing that reports, and a run that
+        does not train can only have got what it reports on out of a file. Read where a checkpoint is
+        opened, because that is where the difference between a starting point and the subject of a
+        report has to be made.
+        """
+        return self.test and not self.train
 
     @model_validator(mode="after")
     def restoration(self) -> RunConfig:

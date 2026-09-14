@@ -21,6 +21,7 @@ from src.data.encoders import (
     ScalarEncoder,
 )
 from src.data.encoders.continuous import BinnedEncoder
+from src.data.encoders.identity import IdentityEncoder
 from src.data.registry import input_encoder_registry, target_encoder_registry
 from tests.support.declarations import CLASSES
 
@@ -120,6 +121,77 @@ class TestMultilabel:
         assert (
             require_tensor(MultilabelEncoder(classes=CLASSES, separator="|").encode("cat|dog"), name="tags").sum() == 2
         )
+
+
+class TestIdentity:
+    """A vocabulary the training split settles, and evaluation splits that are not held to it."""
+
+    def test_it_learns_one_index_per_identity_the_training_split_showed(self) -> None:
+        encoder = IdentityEncoder().fit(["bob", "ann", "bob", "cid"])
+
+        assert encoder.info == TargetInfo(classes={0: "ann", 1: "bob", 2: "cid"}, open_set=True)
+
+    def test_it_indexes_identities_in_an_order_no_row_order_can_change(self) -> None:
+        """An objective keeps one prototype per index, a checkpoint holds them, and a run restores them.
+
+        An order that followed the rows would pair a restored prototype with a different identity after a
+        reshuffle, a different split seed or a different `max_samples` — a model that existed at no point.
+        """
+        assert IdentityEncoder().fit(["cid", "ann", "bob"]).info == IdentityEncoder().fit(["bob", "cid", "ann"]).info
+
+    def test_an_identity_the_training_split_never_showed_is_encoded_rather_than_refused(self) -> None:
+        """Holding identities out of training is the whole point; refusing them is what forbade it."""
+        encoder = IdentityEncoder().fit(["ann", "bob"])
+
+        encoder.validate(["dee", "eve"])
+
+        given = [int(require_tensor(encoder.encode(name), name="t")) for name in ("dee", "eve")]
+
+        assert given[0] != given[1], "two identities training never showed are still two"
+
+    def test_an_identity_training_never_showed_never_takes_a_learned_ones_index(self) -> None:
+        """They share one column, and a reading that confused the two would count a match that never was."""
+        encoder = IdentityEncoder().fit(["ann", "bob"])
+        encoder.validate(["dee", "eve"])
+
+        assert {int(require_tensor(encoder.encode(name), name="t")) for name in ("dee", "eve")}.isdisjoint({0, 1})
+
+    def test_what_it_publishes_is_what_training_settled_however_much_it_can_encode(self) -> None:
+        """Reading a split widens what the encoder can encode; it never widens what the objective is sized by."""
+        encoder = IdentityEncoder().fit(["ann", "bob"])
+
+        encoder.validate(["dee", "eve", "fay"])
+
+        assert encoder.info.num_classes == 2
+
+    def test_an_identity_no_split_was_read_for_is_refused_rather_than_given_an_index_here(self) -> None:
+        """Encoding happens once per sample, in whichever worker holds a copy of this encoder.
+
+        Two workers inventing an index for the same unread identity would invent two, and the reading
+        would count them as different pictures of different things.
+        """
+        encoder = IdentityEncoder().fit(["ann", "bob"])
+
+        with pytest.raises(LookupError, match="dee"):
+            encoder.encode("dee")
+
+    def test_an_unfitted_encoder_names_what_would_need_no_fitting(self) -> None:
+        with pytest.raises(ValueError, match="classes"):
+            _ = IdentityEncoder().info
+
+    def test_a_training_split_holding_no_identity_at_all_is_refused(self) -> None:
+        with pytest.raises(ValueError, match="empty"):
+            IdentityEncoder().fit([])
+
+    @pytest.mark.parametrize("read", ["fit", "validate"], ids=["learning them", "checking a split"])
+    def test_a_cell_naming_no_identity_is_refused_where_the_split_is_read(self, read: str) -> None:
+        """A blank identity is not one identity and not none of them; whose it is, is a question for the data."""
+        encoder = IdentityEncoder()
+        if read == "validate":
+            encoder.fit(["ann", "bob"])
+
+        with pytest.raises(ValueError, match="names no identity"):
+            getattr(encoder, read)(["ann", " "])
 
 
 class TestScalarAndBins:

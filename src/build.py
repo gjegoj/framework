@@ -28,8 +28,9 @@ from src.losses.build import build_loss
 from src.metrics.build import build_metrics
 from src.models.build import build_model
 from src.tasks.build import build_task_kinds, build_tasks, default_target_encoder, head_for
+from src.tracking import MetricKey
 from src.tracking.build import build_tracker
-from src.training import TrainingData, TrainingModule
+from src.training import LOSS, TrainingData, TrainingModule
 from src.training.build import build_learner, build_optimizer_factory, build_profiler, build_scheduler_factory
 from src.transforms.build import build_transforms
 
@@ -66,14 +67,16 @@ def build(config: ExperimentConfig) -> Experiment:
         outputs={name: task.output_shape() for name, task in tasks.items()},
     )
     losses = {name: loss_for(config.tasks[name], task) for name, task in tasks.items()}
+    measured = {name: metrics_for(config.tasks[name], task) for name, task in tasks.items()}
     _refuse_a_head_and_an_objective_that_disagree(model, losses)
+    _refuse_watching_an_objective_this_run_never_scores(config, tasks, losses, measured)
     learner = build_learner(config.learner, model=model, tasks=tasks, losses=losses)
     return Experiment(
         module=TrainingModule(
             learner,
             optimizer_factory=build_optimizer_factory(config.optimizer, config.lr),
             scheduler_factory=build_scheduler_factory(config.scheduler),
-            metrics={name: metrics_for(config.tasks[name], task) for name, task in tasks.items()},
+            metrics=measured,
         ),
         data=TrainingData(data, batch_size=config.batch_size, **config.loader.model_dump()),
         trainer=build_trainer(config),
@@ -150,6 +153,81 @@ def _refuse_a_head_and_an_objective_that_disagree(model: Model, losses: Mapping[
                 f"`tasks.{name}.loss` that reads {answered}, or a head that answers with {loss.reads} — "
                 f"`tasks.{name}.head` where the run composes one, `produces` on a network arriving whole."
             )
+
+
+def _refuse_watching_an_objective_this_run_never_scores(
+    config: ExperimentConfig,
+    tasks: Mapping[str, Task],
+    losses: Mapping[str, Loss],
+    measured: Mapping[str, MetricCollection],
+) -> None:
+    """A run is kept by the number it is watched by, and some of them it will never write.
+
+    Here because only the root holds both sides: which objectives stop outside training — a task judged
+    on a vocabulary the training split settled has one, and ``build_learner`` reads the same fact — and
+    what the declaration asked to be watched. Both watchers are held to it, the saver that keeps an
+    epoch and the schedule that reacts to one, because it is one question asked twice.
+
+    Lightning refuses this itself, and not badly: measured, ``MisconfigurationException`` at the end of
+    the first validation, listing the keys that do exist. What this buys is when and what — while the run
+    is still being assembled rather than an epoch into it, and naming the readings to watch instead,
+    which a library that knows nothing of retrieval cannot.
+
+    Not earlier than that, and the reason is the order above: which objectives stop is read off what the
+    encoders settled, so this cannot come before the data is prepared. Measured on the shipped example
+    over 256 rows, the refusal lands at 5.9 s against a training epoch spent before Lightning's — and
+    what stands between the two on a real dataset is every minute of that epoch.
+
+    Only keys that certainly will not exist. The full set a run logs is not knowable here: a per-class
+    metric's leaves appear when it computes, and a composite objective's terms come out of its own
+    breakdown. This answers the narrower question — a stage in which nothing is scored writes no
+    objective at all — and says nothing about a misspelled metric, which Lightning still catches late.
+    """
+    if not all(task.info.open_set for task in tasks.values()):
+        return
+    unwritten = {str(MetricKey(stage, LOSS)) for stage in (Stage.VAL, Stage.TEST)} | {
+        str(MetricKey(stage, loss.log_name, task=name))
+        for stage in (Stage.VAL, Stage.TEST)
+        for name, loss in losses.items()
+    }
+    watchers = [("callbacks", one.params.get("monitor")) for one in config.callbacks] + [
+        ("scheduler", config.scheduler.monitor if config.scheduler else None)
+    ]
+    for section, watched in watchers:
+        if watched in unwritten:
+            raise ValueError(
+                f"`{section}` watches {watched!r}, and this run never writes it: {', '.join(sorted(tasks))} "
+                f"is judged on a vocabulary the training split settled, so its objective is scored while "
+                f"it is being learned and nowhere else. Keep the run by what evaluation does measure"
+                f"{_watchable_in_evaluation(measured)}, or pin the vocabulary with "
+                f"`tasks.<name>.target_encoder: label` and `tasks.<name>.classes`, and the objective is "
+                f"then scored in every stage."
+            )
+
+
+def _watchable_in_evaluation(measured: Mapping[str, MetricCollection]) -> str:
+    """What the refusal above offers instead: each reading a run could be kept by, and which way.
+
+    The direction as well as the key, because a key alone is half an instruction and the shipped saver
+    watches with ``mode: min`` — a reader who swaps only the key keeps the epoch that scored *worst*,
+    which is the defect being refused wearing different clothes. Read off the metrics themselves, which
+    is where a direction is declared and the same answer ``TrainingModule.metric_directions`` reports.
+
+    A reading that declares no direction is not offered at all. It is measured in evaluation and still
+    not an answer to this question: kept by a verification threshold, a run would choose the epoch whose
+    separation drifted furthest from the rest.
+
+    Answers with the clause that goes into the sentence, empty where a run measures nothing it could be
+    kept by — the offer is then simply not made, rather than made of nothing.
+    """
+    by_direction: dict[str, list[str]] = {}
+    for name, collection in measured.items():
+        for label, metric in collection.items():
+            if metric.higher_is_better is not None:
+                mode = "max" if metric.higher_is_better else "min"
+                by_direction.setdefault(mode, []).append(f"`{MetricKey(Stage.VAL, label, task=name)}`")
+    offered = "; ".join(f"{', '.join(keys)} with `mode: {mode}`" for mode, keys in sorted(by_direction.items()))
+    return f" — {offered}" if offered else ""
 
 
 def metrics_for(declared: TaskConfig, task: Task) -> MetricCollection:

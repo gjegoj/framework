@@ -128,13 +128,26 @@ class InputInfo:
 
 @dataclass(frozen=True, slots=True)
 class TargetInfo:
-    """Resolved facts about one target: its per-sample shape, its vocabulary, and the number each class stands for."""
+    """Resolved facts about one target: its per-sample shape, its vocabulary, and the number each class stands for.
+
+    ``open_set`` says the vocabulary is what the *training split* held rather than everything this run
+    will meet: an evaluation split may name something outside it. Closed by default, because every other
+    vocabulary here is declared whole and a declaration is met in every split or refused. Read by the
+    composition root, which is the only place holding both the prepared data and the objectives built
+    over it — an objective keeping one parameter per class has nothing to say about a class it never saw.
+    """
 
     shape: ShapeTree = None
     classes: Mapping[int, str] | None = None
     values: tuple[float, ...] | None = None
+    open_set: bool = False
 
     def __post_init__(self) -> None:
+        if self.open_set and self.classes is None:
+            raise ValueError(
+                "An open vocabulary says these classes were learned and others may arrive, and this one "
+                "holds no classes at all; there is nothing for the rest to be outside of."
+            )
         if self.classes is not None:
             validate_classes(self.classes)
         if self.values is not None:
@@ -145,6 +158,13 @@ class TargetInfo:
 
     @property
     def num_classes(self) -> int | None:
+        """How many classes this target has — or, where ``open_set``, how many the training split showed.
+
+        The same word for a narrower thing, which is the reason ``open_set`` stands beside it rather than
+        replacing it. Whatever is sized from this keeps one entry per class, and under an open vocabulary
+        those entries are what the run could learn rather than what it will meet: an angular margin's
+        prototypes are one per *learned* identity, and the evaluation splits name others on purpose.
+        """
         return None if self.classes is None else len(self.classes)
 
 
@@ -251,6 +271,15 @@ class LossOutput:
 
 @dataclass(frozen=True, slots=True)
 class ModelOutput:
+    """One pass over a batch: what each task was answered with, beside the features it was read from.
+
+    What those numbers *are* is deliberately not here. ``Model.produces`` states it already, both
+    callers of a task's ``postprocess`` hold the model to ask, and it is settled when a run is
+    assembled rather than per batch. A copy of it in here would be a second statement that every family
+    answering with anything but a projection has to keep in step — and the run would report, and ship,
+    whichever of the two a given reader happened to consult.
+    """
+
     outputs: Mapping[str, TensorTree] = field(default_factory=dict)
     features: Mapping[str, TensorTree] = field(default_factory=dict)
 

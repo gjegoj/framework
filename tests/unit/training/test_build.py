@@ -12,7 +12,7 @@ from torch.optim import Optimizer
 from src.config import ComponentConfig, SchedulerConfig
 from src.core import Batch, StepOutput, TargetInfo
 from src.losses.build import build_loss
-from src.tasks import Classification
+from src.tasks import Classification, MetricLearning
 from src.training import StandardLearner
 from src.training.base import FitProfile, Learner, ParameterGroup
 from src.training.build import build_learner, build_optimizer_factory, build_scheduler_factory
@@ -21,6 +21,12 @@ from tests.support.models import Echo
 
 RATE = 1e-3
 PROFILE = FitProfile(total_steps=100, epochs=5)
+IDENTITIES = {0: "ann", 1: "bob"}
+
+
+def identities() -> Batch:
+    """A batch of two, each some identity the training split showed."""
+    return Batch(inputs={}, targets={"identity": torch.tensor([0, 1])}, count=2)
 
 
 def groups(**rates: float) -> list[ParameterGroup]:
@@ -170,6 +176,35 @@ class TestLearner:
         built = build_learner(declared, model=Echo({}), tasks={"species": task}, losses=losses)
 
         assert isinstance(built, Lonely) and set(built.tasks) == {"species"} and built.loss_of("species") is None
+
+    def test_a_task_judged_on_identities_it_never_learned_is_scored_while_learning_and_not_after(self) -> None:
+        """Derived from what the data settled, not declared: the encoder said its vocabulary is open."""
+        task = MetricLearning("identity", TargetInfo(classes=IDENTITIES, open_set=True), embedding_dim=4)
+
+        built = build_learner(
+            ComponentConfig(name="standard"),
+            model=Echo({"identity": torch.zeros(2, 4)}),
+            tasks={"identity": task},
+            losses={"identity": build_loss(task.default_loss, task.facts())},
+        )
+
+        assert built.eval().step(identities()).loss is None
+        assert built.train().step(identities()).loss is not None
+
+    def test_a_run_whose_total_would_mean_two_things_in_two_stages_is_refused_by_name(self) -> None:
+        """One objective stops in evaluation and one does not, so `val/loss` would total less than
+        `train/loss` under the same name, on the same chart, with nothing saying so."""
+        open_set = MetricLearning("identity", TargetInfo(classes=IDENTITIES, open_set=True), embedding_dim=4)
+        closed = Classification("species", TargetInfo(classes={0: "cat", 1: "dog"}))
+        tasks = {"identity": open_set, "species": closed}
+
+        with pytest.raises(ValueError, match="identity"):
+            build_learner(
+                ComponentConfig(name="standard"),
+                model=Echo({"identity": torch.zeros(2, 4), "species": torch.zeros(2, 2)}),
+                tasks=tasks,
+                losses={name: build_loss(one.default_loss, one.facts()) for name, one in tasks.items()},
+            )
 
     def test_something_that_cannot_take_a_step_is_refused_where_it_was_declared(self) -> None:
         declared = ComponentConfig.model_validate({"_target_": "tests.unit.training.test_build.Bare"})

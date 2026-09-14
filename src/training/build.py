@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from functools import partial
 from inspect import signature
 from typing import TYPE_CHECKING, Any
@@ -39,14 +39,42 @@ def build_learner(
     its objective some other way — one whole model carrying its own loss, a distilled pair — implements
     that contract and names no `losses`. Imposing them made every such learner take an argument it had
     no use for, which is the extension point promising one thing and the builder demanding another.
+
+    ``learned_only`` is offered the same way and derived rather than declared: a target whose vocabulary
+    the training split settled says so, and an objective keeping one parameter per entry of it has
+    nothing to say about an entry no split it learned from held.
     """
-    built = instantiate_offering(declared, learner_registry, model=model, tasks=tasks, losses=losses)
+    learned_only = sorted(name for name, task in tasks.items() if task.info.open_set)
+    _refuse_a_total_that_would_mean_two_things(tasks, learned_only)
+    built = instantiate_offering(
+        declared, learner_registry, model=model, tasks=tasks, losses=losses, learned_only=learned_only
+    )
     if not isinstance(built, Learner):
         raise TypeError(
             f"{declared.spelled!r} built {type(built).__name__}, which is not a Learner: it cannot turn a "
             "batch into a loss, and a trainer has nothing to ask it for."
         )
     return built
+
+
+def _refuse_a_total_that_would_mean_two_things(tasks: Mapping[str, Task], learned_only: Sequence[str]) -> None:
+    """A run whose objective stops for one task and not for another totals two different things.
+
+    Here because the set of tasks is what settles it, and this is the builder that reads that set. The
+    total is logged under one name in every stage, so a run mixing the two would put a training sum and
+    a smaller evaluation sum on one chart with nothing saying which is which — and a checkpoint
+    monitoring it would choose on half the objective. The per-task terms stay readable either way; it is
+    the total that cannot be made honest without saying, per stage, what it totalled.
+    """
+    if learned_only and len(learned_only) != len(tasks):
+        scored = sorted(set(tasks) - set(learned_only))
+        raise ValueError(
+            f"{', '.join(learned_only)} is judged on a vocabulary the training split settled, so its "
+            f"objective stops outside training, while {', '.join(scored)} is scored in every stage. The "
+            f"run's total would mean one thing in training and another in evaluation, under one name. "
+            f"Train them as separate runs, or pin the vocabulary with `tasks.<name>.target_encoder: "
+            f"label` and `tasks.<name>.classes` so every objective is scored everywhere."
+        )
 
 
 def build_optimizer_factory(declared: ComponentConfig, lr: float) -> OptimizerFactory:

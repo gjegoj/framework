@@ -1,5 +1,8 @@
 # Reactive: waits on a logged metric instead of counting time.
-# `val/loss` is the total validation loss — every run logs it.
+# `val/loss` is the total validation loss, which nearly every run logs. The exception is a run judged on
+# a vocabulary its training split settled — metric learning over held-out identities — where the
+# objective is scored while it is learned and nowhere else; such a run is refused this by name at build
+# and waits on a retrieval reading instead.
 name: plateau
 monitor: val/loss
 mode: min

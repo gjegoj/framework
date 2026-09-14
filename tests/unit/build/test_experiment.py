@@ -15,13 +15,28 @@ from src.build import build
 from src.config import load_config
 from src.experiment import Experiment, run
 from src.training import model_weights, restore_best_weights
-from src.training.checkpoints import MODEL_PREFIX
+from src.training.checkpoints import LEARNER_PREFIX, MODEL_PREFIX
+
+LEARNED_MARGIN = "losses.species.margin"
+"""Where an objective that carries parameters sits inside a learner, for a run declaring one below."""
 
 
 def written(path: Path, weights: Mapping[str, Any]) -> str:
     """A checkpoint shaped as a run writes one: the whole module's state, the model inside it."""
     torch.save({"state_dict": {f"{MODEL_PREFIX}{name}": value for name, value in weights.items()}}, path)
     return str(path)
+
+
+def written_run(path: Path, state: Mapping[str, Any]) -> str:
+    """A checkpoint holding everything a run learned: its network, and an objective's own parameters."""
+    torch.save({"state_dict": {f"{LEARNER_PREFIX}{name}": value for name, value in state.items()}}, path)
+    return str(path)
+
+
+def learning_its_objective(declaration: Mapping[str, Any]) -> dict[str, Any]:
+    """The same run under an objective that carries parameters, which most of them do not."""
+    task = {**declaration["tasks"]["species"], "loss": {"_target_": "tests.support.losses.LearnedMargin"}}
+    return {**declaration, "tasks": {"species": task}}
 
 
 def experiment(declaration: Mapping[str, Any], **overrides: Any) -> Experiment:
@@ -181,13 +196,20 @@ class TestRun:
 
         assert second.trainer.current_epoch == 2, "it continued from the epoch the file was written at"
 
+    @pytest.mark.parametrize("learns", [False, True], ids=["a plain objective", "an objective that learns"])
     def test_a_run_starts_from_the_weights_it_was_pointed_at(
-        self, declaration: Mapping[str, Any], tmp_path: Path
+        self, declaration: Mapping[str, Any], tmp_path: Path, learns: bool
     ) -> None:
-        shaped = experiment(declaration)
+        """Wrapping somebody else's network into an artifact reports no number, and is refused nothing.
+
+        The other edge of the rule below: what a run has to restore follows from what it is going to
+        say. A file holding the network alone is all this one needs, whatever its objective carries.
+        """
+        declared = learning_its_objective(declaration) if learns else declaration
+        shaped = experiment(declared)
         weights = {name: torch.zeros_like(value) for name, value in shaped.module.learner.model.state_dict().items()}
         built = experiment(
-            declaration,
+            declared,
             run={
                 **declaration["run"],
                 "train": False,
@@ -199,6 +221,66 @@ class TestRun:
         run(built)
 
         assert all(torch.equal(value, torch.zeros_like(value)) for value in built.module.learner.model.parameters())
+
+    def test_a_run_that_only_scores_takes_the_objective_out_of_the_file_it_reports_on(
+        self, declaration: Mapping[str, Any], tmp_path: Path
+    ) -> None:
+        """An objective's own parameters are learned, written and restored with the run that learned them.
+
+        A run that does not train has nothing to learn them with, so leaving them at whatever `seed`
+        produced makes every number it reports under that objective's name a reading of the seed rather
+        than of this file. Measured on a five-epoch metric-learning run: the same checkpoint read back
+        reported 33.11, 43.00 and 41.80 at seeds 42, 7 and 1234, against the 33.04 the run itself
+        reported — while recall@1 was 0.3333 in all four, because that is read off the network, which
+        was restored.
+        """
+        declared = learning_its_objective(declaration)
+        learned = experiment(declared).module.learner.state_dict()
+        state = {**learned, LEARNED_MARGIN: torch.full_like(learned[LEARNED_MARGIN], 0.25)}
+        built = experiment(
+            declared,
+            run={**declaration["run"], "train": False, "checkpoint_path": written_run(tmp_path / "run.ckpt", state)},
+        )
+
+        run(built)
+
+        restored = dict(built.module.learner.named_parameters())[LEARNED_MARGIN]
+        assert torch.allclose(restored, torch.full_like(restored, 0.25))
+
+    def test_a_run_that_only_scores_is_refused_a_file_that_holds_no_objective(
+        self, declaration: Mapping[str, Any], tmp_path: Path
+    ) -> None:
+        """Refused rather than scored: the alternative is one line of the report being about nothing."""
+        declared = learning_its_objective(declaration)
+        weights = experiment(declared).module.learner.model.state_dict()
+        built = experiment(
+            declared,
+            run={**declaration["run"], "train": False, "checkpoint_path": written(tmp_path / "net.ckpt", weights)},
+        )
+
+        with pytest.raises(ValueError, match=LEARNED_MARGIN):
+            run(built)
+
+    def test_a_run_that_trains_starts_from_the_network_and_learns_its_own_objective(
+        self, declaration: Mapping[str, Any], tmp_path: Path
+    ) -> None:
+        """Somebody else's weights are a starting point, and what a run is going to learn is its own.
+
+        The other half of the rule above: a file may legitimately come from a run that was learned under
+        a different objective, and holding this one to it would refuse the case the knob exists for.
+        """
+        declared = learning_its_objective(declaration)
+        learned = experiment(declared).module.learner.state_dict()
+        state = {**learned, LEARNED_MARGIN: torch.full_like(learned[LEARNED_MARGIN], 0.25)}
+        built = experiment(
+            declared,
+            run={**declaration["run"], "test": False, "checkpoint_path": written_run(tmp_path / "run.ckpt", state)},
+        )
+
+        run(built)
+
+        started = dict(built.module.learner.named_parameters())[LEARNED_MARGIN]
+        assert not torch.allclose(started, torch.full_like(started, 0.25))
 
 
 class TestWhatARunShips:

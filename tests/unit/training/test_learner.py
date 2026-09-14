@@ -8,13 +8,13 @@ import pytest
 import torch
 from torch import Tensor
 
-from src.core import Batch, TargetInfo, require_tensor
+from src.core import Batch, LossOutput, TargetInfo, require_tensor
 from src.losses import Loss
 from src.losses.build import build_loss
 from src.tasks import Classification, Regression, Task
 from src.training import StandardLearner
 from tests.support.losses import LearnedMargin
-from tests.support.models import Echo
+from tests.support.models import Angles, Echo
 
 CLASSES = {0: "cat", 1: "dog", 2: "bird"}
 INFO = TargetInfo(classes=CLASSES)
@@ -53,7 +53,8 @@ def batch(species: Tensor) -> Batch:
     )
 
 
-BATCH = batch(torch.tensor([0, 1]))
+SPECIES = torch.tensor([0, 1])
+BATCH = batch(SPECIES)
 
 
 class TestObjective:
@@ -106,6 +107,65 @@ class TestViews:
         probabilities = require_tensor(learner().step(BATCH).predictions["species"], name="species")
 
         assert probabilities.shape == (2, 3) and torch.allclose(probabilities.sum(-1), torch.ones(2))
+
+    def test_a_prediction_is_what_the_artifact_would_ship_rather_than_a_reading_of_the_steps_own(self) -> None:
+        """A step and an artifact publish one task's numbers through one rule, so they cannot disagree.
+
+        The page draws what a step answered with. A step that read a network's angles as though they
+        were a projection would put a chip reading 7% under a picture the model is certain about —
+        measured at 37 classes it could never read above 17% — while the artifact shipped beside it
+        publishes the angle itself, and the two would be describing different models.
+        """
+        task = Classification("species", INFO)
+        network = Angles(task.name, reads="image", in_features=6, out_features=task.out_features())
+        step = StandardLearner(network, {task.name: task}, {task.name: build_loss("arcface", task.facts())})
+        features = torch.randn(2, 6)
+
+        answered = step.step(Batch(inputs={"image": features}, targets={"species": SPECIES}, count=2))
+
+        assert torch.allclose(require_tensor(answered.predictions[task.name], name=task.name), network.head(features))
+
+    def test_a_task_whose_identities_evaluation_does_not_share_is_not_scored_there(self) -> None:
+        """Its objective keeps one prototype per training identity, and evaluation names others.
+
+        Not a preference — arithmetic. Measured live on the shipped example: the encoder learned 26
+        identities from the training split, and the first validation batch stopped the run with
+        "Class values must be smaller than num_classes". There is no number to report here, so none is.
+        """
+        declared = tasks()
+        step = StandardLearner(
+            Echo({"species": LOGITS, "age": YEARS}), declared, losses_for(declared), learned_only=["species"]
+        ).eval()
+
+        answered = step.step(BATCH)
+
+        assert answered.loss is not None
+        assert set(answered.loss.breakdown()) == {"age/mse"}
+        assert set(answered.predictions) == {"species", "age"}, "every task still answers what a metric scores"
+
+    def test_the_same_task_is_scored_while_the_run_is_learning_it(self) -> None:
+        """Training is where those prototypes are learned, so training is where the number means something."""
+        declared = tasks()
+        learning = StandardLearner(
+            Echo({"species": LOGITS, "age": YEARS}), declared, losses_for(declared), learned_only=["species"]
+        ).train()
+
+        assert ENTROPY in (learning.step(BATCH).loss or LossOutput(torch.zeros(()))).breakdown()
+
+    def test_a_step_left_with_no_objective_at_all_answers_with_no_loss_rather_than_a_zero(self) -> None:
+        """What every run of this kind does outside training: `val/loss` is absent, not nought."""
+        declared: dict[str, Task] = {"species": Classification("species", INFO)}
+        objective = {"species": build_loss("cross_entropy", declared["species"].facts())}
+        alone = StandardLearner(Echo({"species": LOGITS}), declared, objective, learned_only=["species"]).eval()
+
+        assert alone.step(batch(torch.tensor([0, 1]))).loss is None
+
+    def test_a_learner_told_of_a_task_it_does_not_learn_says_so(self) -> None:
+        declared = tasks()
+        with pytest.raises(ValueError, match="breed"):
+            StandardLearner(
+                Echo({"species": LOGITS, "age": YEARS}), declared, losses_for(declared), learned_only=["breed"]
+            )
 
     def test_the_target_it_answers_with_is_the_one_a_metric_scores(self) -> None:
         """MixUp leaves a share of each class in the batch; a metric ranks against the class it mostly is."""

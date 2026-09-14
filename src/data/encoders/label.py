@@ -77,8 +77,8 @@ class VocabularyEncoder(TargetEncoder):
         A vocabulary accepts a name and the index behind it, so a column written as indices trains and
         validates exactly like one written as words. Counting the raw cell instead would file those
         rows under ``0`` and ``1`` and report every declared class as one the data never shows — on a
-        perfectly balanced column. A cell outside the vocabulary keeps its own spelling: the encoders
-        refuse those when they are fitted, and a report should not be what hides the diagnosis.
+        perfectly balanced column. A cell outside the vocabulary keeps its own spelling: this encoder
+        refuses those when it is fitted, and a report should not be what hides the diagnosis.
         """
         try:
             return class_name(self.classes, self.position(label))

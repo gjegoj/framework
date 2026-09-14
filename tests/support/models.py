@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
-from typing import ClassVar
+from typing import ClassVar, override
 
 import torch
 from torch import Tensor, nn
 from torch.nn.functional import normalize
 
-from src.core import FEATURE_AXIS, Axis, ModelOutput, TensorTree
+from src.core import FEATURE_AXIS, Axis, ModelOutput, Representation, TensorTree, require_tensor
 from src.models import Model
+from src.models.heads import CosineHead
 
 
 class Echo(Model):
@@ -33,6 +34,29 @@ class Echo(Model):
 
     def parameters_of(self, task: str) -> Iterable[nn.Parameter]:
         return [self.heads[task]] if task in self.heads else ()
+
+
+class Angles(Model):
+    """A network whose numbers are already a reading: one ``cosine`` head over one input, and nothing else.
+
+    Here rather than in either suite that reads it, because two of them do — what a graph ships and what
+    the record beside it calls those numbers are the two halves of one promise, and a network that
+    answers with angles is what puts the promise under strain.
+    """
+
+    def __init__(self, task: str, reads: str, in_features: int, out_features: int) -> None:
+        super().__init__()
+        self.task = task
+        self.reads = reads
+        self.head = CosineHead(in_features, out_features)
+
+    @override
+    def produces(self, task: str) -> Representation:
+        """Asked of the head, as a composite asks of its own: the declaration has one home either way."""
+        return self.head.produces
+
+    def forward(self, inputs: Mapping[str, TensorTree]) -> ModelOutput:
+        return ModelOutput(outputs={self.task: self.head(require_tensor(inputs[self.reads], name=self.reads))})
 
 
 class OwnCosineHead(nn.Module):

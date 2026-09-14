@@ -11,7 +11,7 @@ from typing import Any
 import torch
 from torch import Tensor
 
-from src.core import Axis, Batch, ModelOutput, TargetInfo
+from src.core import Axis, Batch, ModelOutput, Representation, TargetInfo, require_tensor
 from src.tasks import Task
 from src.tasks.registry import task_registry
 
@@ -44,13 +44,26 @@ SPECIMENS: dict[str, tuple[TargetInfo, Tensor]] = {
     "segmentation": (info(), PIXELS % len(CLASSES)),
     "binary_segmentation": (TargetInfo(), (PIXELS % 2).float()),
     "regression": (TargetInfo(), torch.tensor([1.5, 2.5, 3.5])),
-    "metric_learning": (info(), torch.tensor([0, 1, 2])),
+    "metric_learning": (info(), torch.tensor([0, 1, 0])),
 }
 """What each kind's target says and how its own encoder hands it over: a new kind needs a row here.
 
 Every class of a kind's vocabulary appears in its target, so a metric normalised over the true classes
 has no empty row to divide by — a specimen leaving a class unseen would measure a case no split has.
+
+The one row that breaks that on purpose is the kind judged by retrieval: its readings rank samples
+against each other rather than normalise over a vocabulary, and what they need instead is an identity
+that *repeats*, since a picture with nobody of its own to find is left out of them.
 """
+
+
+def published(task: Task, output: ModelOutput) -> Tensor:
+    """What a task answers with for a plain projection, which is what every specimen output is.
+
+    One home for the three suites that ask it — tasks, metrics and the page — so a change to what a
+    task is handed is one line here rather than a search for every caller of ``postprocess``.
+    """
+    return require_tensor(task.postprocess(output, Representation.PROJECTED), name=task.name)
 
 
 def specimen(kind: str, name: str = "t") -> tuple[Task, ModelOutput, Batch]:

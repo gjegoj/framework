@@ -5,7 +5,9 @@
 # `progress` and `model_summary` stand in for Lightning's own bar and summary — declared here, they
 # replace them rather than adding to them, because Lightning only adds a default where a run has none.
 #
-# `monitor` names a key the run logs: `val/loss` is the total, and every run has one.
+# `monitor` names a key the run logs: `val/loss` is the total, and nearly every run has one. A run whose
+# objective is scored only while it is being learned — metric learning over identities held out of
+# training — writes none, and is refused this by name at build, with the readings it does write.
 # Per-task keys are `val/<task>/<metric>` and `val/<task>/<loss term>` — e.g. `val/label/accuracy`.
 # `lr_monitor` needs somewhere to write: this group with `tracker: none` is refused by Lightning.
 #

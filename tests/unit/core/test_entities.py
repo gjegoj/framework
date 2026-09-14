@@ -126,6 +126,20 @@ class TestClasses:
         with pytest.raises(ValueError):
             TargetInfo(classes={5: "cat"})
 
+    def test_a_vocabulary_can_say_it_holds_only_what_the_training_split_showed(self) -> None:
+        """What a run is judged on is then not what it learned, and the objective over it has no say there.
+
+        Read by the composition root, which is the only place holding both the prepared data and the
+        objectives built over it. Closed by default: every other vocabulary is declared whole.
+        """
+        assert TargetInfo(classes={0: "ann", 1: "bob"}, open_set=True).open_set
+        assert not TargetInfo(classes={0: "cat", 1: "dog"}).open_set
+
+    def test_an_open_vocabulary_with_no_vocabulary_at_all_is_unrepresentable(self) -> None:
+        """Open means *these* were learned and others may arrive; with none learned there is no 'these'."""
+        with pytest.raises(ValueError, match="open"):
+            TargetInfo(open_set=True)
+
 
 class TestLossOutput:
     @pytest.fixture
