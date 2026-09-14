@@ -1,6 +1,10 @@
 # @package _global_
-# Train adds geometry and colour before the deterministic tail; evaluation keeps the tail alone.
+# A moderate baseline for natural-image classification: `transforms=augmented`.
+# Train varies geometry, colour and image quality; evaluation keeps the deterministic tail alone.
+# Flip/crop/colour changes assume the class survives them: tune these for text, orientation labels,
+# small defects or tasks where colour is the label. Masks follow geometry with nearest interpolation.
 # `RandomResizedCrop` already sizes the picture, so no `Resize` follows it.
+# Parameters use the installed AlbumentationsX 2.3.7 API (`std_range`, `blur_range`, `*_range`).
 #
 # Two augmentations here answer a task instead of leaving its answer alone, which is how a folder of
 # unannotated pictures becomes one. Each names the task it answers, and one pipeline carries one of
@@ -30,9 +34,41 @@ transforms:
     _target_: src.transforms.AlbumentationsTransform
     seed: ${seed}
     transforms:
-      - {_target_: albumentations.RandomResizedCrop, size: "${preprocessing.inputs.image.image_size}", scale: [0.7, 1.0]}
+      - _target_: albumentations.RandomResizedCrop
+        size: "${preprocessing.inputs.image.image_size}"
+        scale: [0.8, 1.0]
+        ratio: [0.9, 1.1]
       - {_target_: albumentations.HorizontalFlip, p: 0.5}
-      - {_target_: albumentations.ColorJitter, p: 0.3}
+      # One resampling for shift, scale and rotation. Reflected borders avoid a fixed black frame.
+      - _target_: albumentations.Affine
+        scale: [0.9, 1.1]
+        translate_percent: {x: [-0.05, 0.05], y: [-0.05, 0.05]}
+        rotate: [-15, 15]
+        keep_ratio: true
+        border_mode: 4  # cv2.BORDER_REFLECT_101
+        p: 0.5
+      - _target_: albumentations.ColorJitter
+        brightness_range: [0.85, 1.15]
+        contrast_range: [0.85, 1.15]
+        saturation_range: [0.9, 1.1]
+        hue_range: [-0.02, 0.02]
+        p: 0.4
+      # At most one blur per image; child probabilities are weights within OneOf.
+      - _target_: albumentations.OneOf
+        p: 0.2
+        transforms:
+          - {_target_: albumentations.GaussianBlur, blur_range: [3, 5], sigma_range: [0.2, 1.0], p: 0.75}
+          - {_target_: albumentations.MotionBlur, blur_range: [3, 5], allow_shifted: false, p: 0.25}
+      # Noise follows blur, at the final resolution. Gaussian std is a fraction of the pixel range.
+      - _target_: albumentations.OneOf
+        p: 0.2
+        transforms:
+          - {_target_: albumentations.GaussNoise, std_range: [0.01, 0.04], per_channel: true, p: 0.75}
+          - _target_: albumentations.MultiplicativeNoise
+            multiplier: [0.97, 1.03]
+            per_channel: true
+            elementwise: true
+            p: 0.25
       - {_target_: albumentations.Normalize, mean: "${preprocessing.inputs.image.mean}", std: "${preprocessing.inputs.image.std}"}
       - {_target_: albumentations.pytorch.ToTensorV2}
   val: &evaluation

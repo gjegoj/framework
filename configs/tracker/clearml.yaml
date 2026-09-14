@@ -32,11 +32,16 @@ tracker:
   task_name: ${run.name}
   # Where a page drawn by `callbacks=samples` is uploaded. Left out, it goes to `api.files_server`,
   # and there is no other way to move it: `output_uri` is for models and artifacts, and no key of
-  # clearml.conf reaches a debug sample. Worth knowing because the failure is not local to the page —
-  # the SDK sends numbers and files through one queue and one worker, so a file server that hangs on
-  # a page of one or two megabytes holds every scalar queued behind it, and the run then looks as
-  # though it records nothing at all. Credentials are clearml.conf's, and a destination this run
+  # clearml.conf reaches a debug sample. Credentials are clearml.conf's, and a destination this run
   # cannot write to is refused when the run is created rather than at the epoch that first draws.
+  #
+  # If a run that draws pages records nothing at all — scalars included — this is the second thing to
+  # suspect, not the first. Numbers and files do share one queue and one worker in the SDK, so an
+  # upload that stalls holds every reading behind it; but measured 2026-09-14, the upload was not the
+  # cause. On Linux the SDK reports from a subprocess (`sdk.development.report_use_subprocess`, on by
+  # default), a container with a small /dev/shm wedges it the moment a file event is queued, and the
+  # SDK's own recovery misses that: it catches a reporter that died, never one alive and stuck.
+  # `report_use_subprocess: false` in clearml.conf brought that run back.
   # media_uri: s3://bucket/clearml-media
   tags:
     - ${oc.select:model.backbone.name,''}          # the family the heads are built over: timm / smp / hf_text

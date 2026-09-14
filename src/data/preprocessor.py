@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from itertools import batched
 
@@ -15,6 +15,10 @@ from src.data.registry import preprocessor_registry
 from src.transforms import SampleTransform
 
 log = logging.getLogger(__name__)
+
+BATCH_PER_WORKER = 8
+"""Reads handed to the pool at once, per worker: enough to keep every worker busy across a batch boundary,
+and the most that is read past a full budget before the warm-up notices and stops."""
 
 
 @preprocessor_registry.register("standard")
@@ -108,9 +112,17 @@ class StandardPreprocessor(Preprocessor):
         return {name: found for name, found in described if found is not None}
 
     def warm(self, samples: Iterable[Sample], label: str) -> None:
-        """Read every cacheable file of these samples once, a bounded batch of reads at a time."""
+        """Read every cacheable file of these samples once, a bounded batch of reads at a time.
+
+        Reading ends with the budget: what did not fit is read from disk each epoch, and so is everything
+        behind it, so decoding that now would only pay the cost warming exists to remove. A split the
+        budget filled before is not even walked, and either case is said in the log.
+        """
         cache = self.cache
         if cache is None:
+            return
+        if cache.usage.full:
+            log.info("%s: not cached, the budget is already full; read from disk each epoch.", label)
             return
         pending: dict[Key, tuple[Role, str, object]] = {}
         for sample in samples:
@@ -124,14 +136,19 @@ class StandardPreprocessor(Preprocessor):
                     if key is not None and key not in cache and key not in pending:
                         pending[key] = (role, name, cell)
         with cache.filling(), ThreadPoolExecutor(max_workers=cache.workers) as pool:
-            reads = (
-                done
-                for chunk in batched(pending.values(), cache.workers * 8)
-                for done in pool.map(lambda task: self._read_quietly(*task), chunk)
-            )
-            for _ in track(reads, f"Caching {label}", total=len(pending), status=cache.status):
-                pass
-        log.info("%s: %s", label, cache.summary())
+            reads = self._reads(cache, pending, pool)
+            read = sum(1 for _ in track(reads, f"Caching {label}", total=len(pending), status=cache.status))
+        where = f"stopped at {read} of {len(pending)} file(s). " if read < len(pending) else ""
+        log.info("%s: %s%s", label, where, cache.summary())
+
+    def _reads(
+        self, cache: Cache, pending: Mapping[Key, tuple[Role, str, object]], pool: ThreadPoolExecutor
+    ) -> Iterator[None]:
+        """A batch at a time, none after the budget fills; the batch in flight is finished and shows as declined."""
+        for chunk in batched(pending.values(), cache.workers * BATCH_PER_WORKER):
+            if cache.usage.full:
+                return
+            yield from pool.map(lambda task: self._read_quietly(*task), chunk)
 
     def _key(self, role: Role, name: str, cell: object) -> Key | None:
         encoder = self._by_role[role].get(name)

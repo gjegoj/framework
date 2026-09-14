@@ -9,14 +9,16 @@ from multiprocessing.reduction import ForkingPickler
 from pathlib import Path
 from typing import Any, ClassVar
 
+import cv2
 import numpy as np
 import pytest
 from torch.utils.data import DataLoader, Dataset
 
 from src.core import Sample, require_tensor
 from src.data import StandardPreprocessor
-from src.data.cache import Cache, Key, RamCache
+from src.data.cache import BYTES_PER_GIB, Cache, Key, RamCache
 from src.data.encoders import ImageEncoder, MaskEncoder, MultilabelEncoder
+from src.data.preprocessor import BATCH_PER_WORKER
 from src.data.registry import cache_registry
 from src.transforms import SampleTransform
 from tests.support.declarations import CLASSES
@@ -26,6 +28,21 @@ KEY = ("inputs", "image", "a.png")
 
 CHILD_PATIENCE = 60
 """How long the parent waits for a spawned child, at every point it could wait forever instead."""
+
+PICTURE = (6, 8, 3)
+"""What every picture written by `pictures` decodes to; a budget is sized against it."""
+
+
+def pictures(root: Path, count: int) -> list[str]:
+    """``count`` distinct ONGs under ``root``, named by number."""
+    for i in range(count):
+        cv2.imwrite(str(root / f"{i}.png"), np.full(PICTURE, i, dtype=np.uint8))
+    return [f"{i}.png" for i in range(count)]
+
+
+def room_for_one_picture() -> float:
+    """A budget, in GiB, that holds one decoded picture and not two."""
+    return 1.5 * int(np.prod(PICTURE)) / BYTES_PER_GIB
 
 
 @pytest.fixture
@@ -230,6 +247,51 @@ class TestWarm:
         preprocessor.warm([Sample(inputs={"image": "missing.png"})], label="val")
 
         assert cache.usage.files == 0
+
+    def test_a_full_budget_ends_the_reading_and_not_only_the_storing(
+        self,
+        tmp_path: Path,
+        make_preprocessor: PreprocessorFactory,
+        counting: type[CountingImage],
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Every file after the one that did not fit would be decoded only to be declined — the cost warming
+        exists to remove. The batch already in flight is finished, and the line says where reading stopped."""
+        names = pictures(tmp_path, count=3 * BATCH_PER_WORKER)
+        cache = RamCache(max_gib=room_for_one_picture(), workers=1)
+        preprocessor = make_preprocessor(
+            inputs={"image": counting(image_size=(4, 4), root=tmp_path)}, targets={}, cache=cache
+        )
+
+        with caplog.at_level("INFO"):
+            preprocessor.warm([Sample(inputs={"image": name}) for name in names], label="train")
+
+        assert cache.usage.full and cache.usage.files == 1
+        assert counting.loads == cache.workers * BATCH_PER_WORKER
+        assert any(f"{counting.loads} of {len(names)}" in one.message for one in caplog.records)
+
+    def test_a_split_the_budget_filled_before_is_not_walked_and_says_so(
+        self,
+        tmp_path: Path,
+        make_preprocessor: PreprocessorFactory,
+        counting: type[CountingImage],
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Its rows would be built from the table one by one, for a cache that declines every one of them;
+        and a skip nobody hears of looks like a warmed cache that is not."""
+        names = pictures(tmp_path, count=2)
+        cache = RamCache(max_gib=room_for_one_picture(), workers=1)
+        preprocessor = make_preprocessor(
+            inputs={"image": counting(image_size=(4, 4), root=tmp_path)}, targets={}, cache=cache
+        )
+        preprocessor.warm([Sample(inputs={"image": name}) for name in names], label="train")
+        later = iter([Sample(inputs={"image": names[1]})])
+
+        with caplog.at_level("INFO"):
+            preprocessor.warm(later, label="val")
+
+        assert next(later, None) is not None
+        assert any("val" in one.message and "not cached" in one.message for one in caplog.records)
 
 
 class CountingImage(ImageEncoder):
