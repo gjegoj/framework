@@ -26,8 +26,13 @@ batch_size: 16
 data:
   name: table
   source: ???
-  inputs:
-    image: {column: image}
+  # Which inputs this run carries and which column holds each: declared, never defaulted. These are
+  # the same names `preprocessing.inputs` encodes, and the two halves are checked against each other
+  # before a row is read. A run over pictures writes `inputs: {image: {column: image_path}}`; one over
+  # captions writes `inputs: {text: {column: caption}}`. Left as a template here, the picture would
+  # merge into every run that has none — a dictionary declared above can be added to and never taken
+  # away, so a run reading no pixels could not be written at all.
+  inputs: ???
   split: {train: 0.7, val: 0.15, test: 0.15}
 
 tasks: {}

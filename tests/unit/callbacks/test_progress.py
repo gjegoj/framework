@@ -9,10 +9,12 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from io import StringIO
+from pathlib import Path
 
 import lightning as L
 import pytest
 import torch
+from lightning.pytorch.loggers import CSVLogger
 from rich.console import Console
 from rich.table import Table
 from torch import nn
@@ -47,7 +49,7 @@ class Measured(L.LightningModule):
 
     def training_step(self, batch: Sequence[torch.Tensor], index: int) -> torch.Tensor:
         loss: torch.Tensor = self.layer(batch[0]).mean()
-        self.log(str(LOSS), loss, on_step=False, on_epoch=True)
+        self.log(str(LOSS), loss, on_step=False, on_epoch=True, prog_bar=True)
         return loss
 
     def validation_step(self, batch: Sequence[torch.Tensor], index: int) -> None:
@@ -167,6 +169,26 @@ class TestTheBar:
         )
 
         assert "label/accuracy" in screen.getvalue()
+
+    def test_nothing_is_shown_beside_the_bar_that_the_table_under_it_already_shows(self, tmp_path: Path) -> None:
+        """A number twice in one live region is a number a reader has to check against itself.
+
+        A logger is given so that Lightning has its own answer to offer — the version it would show as
+        ``v_num`` — and the module asks for its loss beside the bar, so both halves of what is dropped
+        are really on offer here.
+        """
+        bar, module = MetricsProgressBar(), Measured()
+        trainer = L.Trainer(
+            max_epochs=1,
+            callbacks=[bar],
+            logger=CSVLogger(tmp_path),
+            enable_checkpointing=False,
+            accelerator="cpu",
+        )
+        trainer.fit(module, rows(), rows())
+
+        assert str(LOSS) in trainer.progress_bar_metrics, "the module did ask for one to be shown"
+        assert bar.get_metrics(trainer, module) == {}
 
     def test_it_takes_the_direction_of_each_measurement_from_the_module(self) -> None:
         """Declared `higher_is_better`, never guessed from a name: a guess shows the wrong best."""

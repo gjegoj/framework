@@ -44,6 +44,9 @@ SPECIMENS: dict[str, tuple[Tensor, Tensor]] = {
     # Cosines against prototypes a head already holds, and the raw embeddings a loss holds them for.
     "arcface": (torch.rand(4, CLASSES) * 2 - 1, IDENTITIES),
     "arcface_proxy": (torch.randn(4, WIDTH), IDENTITIES),
+    # Two draws of each of four samples, and the row each draw came from — which this kind derives from
+    # the batch rather than reading, so the target here is exactly what a run would build.
+    "info_nce": (torch.randn(4 * 2, WIDTH), torch.arange(4)),
 }
 """Raw outputs and the target each family compares them with: a newly registered loss needs a row here."""
 

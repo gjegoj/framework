@@ -38,6 +38,16 @@ class AlbumentationsTransform:
         self.transforms = list(transforms)
         self.compose_options = compose_options
 
+    @property
+    def answers(self) -> frozenset[str]:
+        """The tasks this chain's own augmentations write, derived from them and never declared beside them.
+
+        Read twice: by the binding below, which refuses an answer this run has nowhere to put, and by a
+        wrapper that draws this chain more than once — where one answer per sample and one draw per view
+        cannot both hold.
+        """
+        return frozenset(one.task for one in self.transforms if isinstance(one, AnswersTask))
+
     def with_geometry(
         self, inputs: Mapping[str, Geometry], targets: Mapping[str, Geometry], auxiliary_inputs: Mapping[str, Geometry]
     ) -> SampleTransform:
@@ -47,7 +57,7 @@ class AlbumentationsTransform:
             Role.TARGETS: dict(targets),
         }
         _refuse_a_name_under_two_roles(roles)
-        answered = _answered_tasks(self.transforms, targets)
+        answered = _refuse_an_answer_nobody_can_carry(self.answers, targets)
         carried: Roles = {
             role: {
                 name: kind
@@ -88,14 +98,14 @@ def _values(sample: Sample) -> tuple[tuple[str, Mapping[str, object]], ...]:
     )
 
 
-def _answered_tasks(transforms: Sequence[Any], targets: Mapping[str, Geometry]) -> frozenset[str]:
-    """The tasks the pipeline's own augmentations answer — derived from them, never declared beside them.
+def _refuse_an_answer_nobody_can_carry(answers: frozenset[str], targets: Mapping[str, Geometry]) -> frozenset[str]:
+    """The tasks this pipeline writes, once it is settled that this run has somewhere to put each.
 
     Measured on albumentationsx 2.3.7: a pipeline routes a value by its kind, and every value of one
     kind is put through every rule for it. Two writers in one pipeline would therefore each rewrite
     the other's target, so the second one is refused rather than named as a caveat.
     """
-    answered = sorted(one.task for one in transforms if isinstance(one, AnswersTask))
+    answered = sorted(answers)
     if len(answered) > 1:
         raise ValueError(
             f"{answered} are answered by augmentations of one pipeline, which routes a value by its kind "

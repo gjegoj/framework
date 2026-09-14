@@ -74,3 +74,27 @@ class CosineHead(nn.Module):
     def forward(self, features: Tensor) -> Tensor:
         projected = cast(Tensor, self.projection(features))
         return normalize(projected, dim=FEATURE_AXIS) @ normalize(self.prototypes, dim=-1).T
+
+
+class ExpandedHead(nn.Module):
+    """A class space that grew: rows carried from a file beside fresh ones for the classes added since.
+
+    Two submodules rather than one wider projection, and that is the whole design. ``requires_grad``
+    lives on whole tensors, so one matrix would make "hold what was learned still" and "hold the new
+    classes still" the same instruction; with the boundary as a path, ``freeze``, the optimizer's
+    per-task groups and the averaging callback all address them apart, unchanged — ``modules:
+    [heads.<task>.base]`` is that contract, and the submodule names are what a declaration writes.
+
+    Not in the head registry: nobody declares one. It is assembled around a classifier a weight file
+    carried, by the builder that knows both how many rows arrived and how many the task asks for.
+    """
+
+    def __init__(self, base: nn.Module, novel: nn.Module) -> None:
+        super().__init__()
+        self.base = base
+        self.novel = novel
+
+    def forward(self, features: Tensor) -> Tensor:
+        # The same axis carries classes for a flat output and for a dense one, which is why growing a
+        # segmentation head and growing a classifier are one rule rather than two.
+        return torch.cat((cast(Tensor, self.base(features)), cast(Tensor, self.novel(features))), dim=FEATURE_AXIS)

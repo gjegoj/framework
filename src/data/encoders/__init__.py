@@ -7,6 +7,7 @@ from src.data.encoders.identity import IdentityEncoder
 from src.data.encoders.image import ImageEncoder, single_threaded_cv2
 from src.data.encoders.label import LabelEncoder, MultilabelEncoder
 from src.data.encoders.mask import MaskEncoder
+from src.data.encoders.text import TextEncoder
 
 __all__ = [
     "GaussianBinsEncoder",
@@ -17,5 +18,6 @@ __all__ = [
     "MaskEncoder",
     "MultilabelEncoder",
     "ScalarEncoder",
+    "TextEncoder",
     "single_threaded_cv2",
 ]

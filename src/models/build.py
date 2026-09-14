@@ -2,16 +2,20 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+import logging
+from collections.abc import Callable, Mapping
 
-from torch import nn
+from torch import Tensor, nn
 
 from src.config import ComponentConfig, HeadConfig, ModelConfig
 from src.config.instantiate import instantiate
 from src.core import SPATIAL, Axis, TensorShape
 from src.models.adapters import Adapter
 from src.models.base import Backbone, HeadConnection, Model, ShapeAware
+from src.models.heads import ExpandedHead
 from src.models.registry import adapter_registry, backbone_registry, head_registry, model_registry
+
+log = logging.getLogger(__name__)
 
 NATIVE = "native"
 """The reserved head name: the head the backbone itself brings, built by the backbone."""
@@ -41,6 +45,7 @@ def build_model(declared: ModelConfig, heads: Mapping[str, HeadConfig], outputs:
     if set(heads) != set(outputs):
         raise ValueError(f"Heads are declared for {sorted(heads)}, but outputs are known for {sorted(outputs)}.")
     backbone = build_backbone(declared.backbone)
+    _refuse_a_carried_classifier_with_two_claimants(backbone, heads)
     connections = {name: build_head(name, head, outputs[name], backbone) for name, head in heads.items()}
     composed: Model = instantiate(declared, model_registry, backbone=backbone, heads=connections)
     return composed
@@ -79,14 +84,116 @@ def build_head(task: str, declared: HeadConfig, output_shape: TensorShape, backb
     if declared.stream is None:
         raise ValueError(f"Task {task!r}: head {declared.spelled!r} names no feature stream to read.")
     stream, out_features = declared.stream, _out_features(task, output_shape)
+    at = _sized(task, declared, stream, backbone)
+    if not backbone.carried_head:
+        return HeadConnection(at(out_features), stream=stream)
+    return HeadConnection(_started_from(task, at, backbone.carried_head, out_features), stream=stream)
+
+
+def _sized(task: str, declared: HeadConfig, stream: str, backbone: Backbone) -> Callable[[int], nn.Module]:
+    """The declared head at any number of outputs, which is asked for twice by a run whose class space grew.
+
+    A factory rather than one head, because growing means building the same declaration at two counts —
+    the rows a file carried and the classes added since — and a second spelling of "what this task's
+    head is" would be free to disagree with the first.
+    """
     if declared.name == NATIVE:
-        return HeadConnection(_native_head(task, declared, stream, out_features, backbone), stream=stream)
+        return lambda count: _native_head(task, declared, stream, count, backbone)
     published = _published(task, stream, backbone)
-    head: nn.Module = instantiate(
-        declared, head_registry, in_features=_width(published, stream, backbone), out_features=out_features
-    )
-    _refuse_a_head_that_cannot_read(task, declared.spelled, head, published, stream)
-    return HeadConnection(head, stream=stream)
+    width = _width(published, stream, backbone)
+
+    def built(count: int) -> nn.Module:
+        head: nn.Module = instantiate(declared, head_registry, in_features=width, out_features=count)
+        _refuse_a_head_that_cannot_read(task, declared.spelled, head, published, stream)
+        return head
+
+    return built
+
+
+def _started_from(task: str, at: Callable[[int], nn.Module], carried: Mapping[str, Tensor], declared: int) -> nn.Module:
+    """The declared head holding the rows a weight file carried, grown where the task declares more classes.
+
+    By index, because the vocabulary is declared: `classes` pins a name to a position, so a run that
+    added names to the end reads the carried rows as the run that wrote them did. Narrowing is refused
+    instead — dropping rows is a mapping from old positions to new, and a transplant that guessed one
+    would report every class under another's name.
+    """
+    rows = _carried_classes(task, carried)
+    if rows > declared:
+        raise ValueError(
+            f"Task {task!r}: the weights this backbone started from carry {rows} classes and the task "
+            f"declares {declared}. Which of the {rows} stay, and at which positions, is a mapping nobody "
+            f"has written; declare the {rows} classes the file was trained on, in their order, and add to "
+            f"the end of them."
+        )
+    base = at(rows)
+    _fill(task, base, carried, rows)
+    if rows == declared:
+        log.info("Task %r starts every one of its %d classes from the weights the backbone carried.", task, rows)
+        return base
+    log.info("Task %r starts %d of its %d classes from the weights carried; the rest are fresh.", task, rows, declared)
+    return ExpandedHead(base=base, novel=at(declared - rows))
+
+
+def _carried_classes(task: str, carried: Mapping[str, Tensor]) -> int:
+    """How many classes the carried classifier answers for, which every one of its tensors agrees on.
+
+    Read off the tensors rather than told: a classifier is weights and biases indexed by class, whatever
+    the family shaped them like — timm's ``[classes, width]`` and smp's ``[classes, width, k, k]`` alike.
+    """
+    counts = {int(value.shape[0]) for value in carried.values() if value.ndim}
+    if len(counts) != 1:
+        raise ValueError(
+            f"Task {task!r}: the weights this backbone started from carry more than one head — "
+            f"{', '.join(sorted(carried))} answer for {sorted(counts)} classes between them — and which of "
+            f"them this task continues is not written anywhere. Point the run at a file with one head."
+        )
+    return counts.pop()
+
+
+def _fill(task: str, head: nn.Module, carried: Mapping[str, Tensor], rows: int) -> None:
+    """Put the carried tensors into the head built for them, matched by shape, or refuse naming both sides.
+
+    By shape, because the two names come from different vocabularies — the file writes the library's
+    (``fc.weight``, ``segmentation_head.0.weight``) and the head writes this framework's — while the
+    shapes are the same fact on both sides. A carried tensor matching nothing is a classifier read off
+    another feature space, and one matching two is a head this transplant cannot tell apart.
+    """
+    held = head.state_dict()
+    wanted = {name: tensor.shape for name, tensor in held.items() if tuple(tensor.shape[:1]) == (rows,)}
+    landed: dict[str, Tensor] = {}
+    for name, value in carried.items():
+        matched = [key for key, shape in wanted.items() if shape == value.shape and key not in landed]
+        if len(matched) != 1:
+            raise ValueError(
+                f"Task {task!r}: the carried {name!r} is {tuple(value.shape)}, and this head has "
+                f"{'no part' if not matched else 'more than one part'} of that shape "
+                f"({', '.join(f'{key} {tuple(shape)}' for key, shape in wanted.items()) or 'none'}). "
+                f"A classifier over another feature space is not this one's to start from."
+            )
+        landed[matched[0]] = value
+    if set(landed) != set(wanted):
+        raise ValueError(
+            f"Task {task!r}: the weights carried fill {', '.join(sorted(landed)) or 'nothing'} and leave "
+            f"{', '.join(sorted(set(wanted) - set(landed)))} at whatever `seed` produced. A head half from "
+            f"a file is not that file's head."
+        )
+    head.load_state_dict({**held, **landed})
+
+
+def _refuse_a_carried_classifier_with_two_claimants(backbone: Backbone, heads: Mapping[str, HeadConfig]) -> None:
+    """One file carries one classifier, and a run of several tasks gives it more than one place to land.
+
+    Refused rather than shared or guessed: every one of them would be starting from rows trained to
+    answer another question, and the run would report it as a warm start. Named here because this is
+    where all of a run's tasks are visible at once.
+    """
+    if backbone.carried_head and len(heads) > 1:
+        raise ValueError(
+            f"The weights 'model.backbone.checkpoint_path' names carry one classifier, and this run "
+            f"declares {', '.join(sorted(heads))}: which of them it was trained to answer is not written "
+            f"anywhere. Point a single-task run at that file, or drop the path and let the heads start fresh."
+        )
 
 
 def _native_head(task: str, declared: HeadConfig, stream: str, out_features: int, backbone: Backbone) -> nn.Module:

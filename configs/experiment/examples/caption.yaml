@@ -1,0 +1,47 @@
+# @package _global_
+# Cat or dog read from the sentence instead of the picture: `uv run main.py experiment=examples/caption`.
+#
+# **What the number means.** `caption` is written by `scripts/prepare_pet.py` from `breed` and
+# `species`, so the answer stands in the sentence in so many words. A run over it should be nearly
+# perfect, and that says the text half of the pipeline tokenizes, batches, encodes and reports — it
+# says nothing whatever about reading language. Real captions are collected; this dataset has none.
+# `random_age` is the same idea from the other side: it carries no signal at all, and is named so.
+#
+# **What is different from every other example here.** It declares its own `data` rather than
+# inheriting `examples/pet`, because its inputs are not the same ones: Hydra merges dictionaries, so
+# inheriting would leave `image` beside `text` and every batch would decode a picture nothing reads.
+#
+# **What cannot be declared.** An artifact is written from one example tensor per input, and a caption
+# reaches the model as several — ids beside the mask that says which of them are words. So a run over
+# text keeps `export: none`, and says so at build rather than after the last epoch.
+defaults:
+  - override /preprocessing: text
+  - override /transforms: none
+  - override /model: text
+  - override /callbacks: default
+  - override /tracker: csv
+
+lr: 3.0e-4
+epochs: 3
+batch_size: 32
+
+data:
+  name: table
+  source: data/pet/data.csv
+  inputs:
+    text: {column: caption}
+  split:
+    train: 0.7
+    val: 0.15
+    test: 0.15
+    rule: {_target_: src.data.StratifiedSplit, by: species}
+
+tasks:
+  species:
+    kind: classification
+    target_column: species
+    classes: {0: cat, 1: dog}
+
+run:
+  project: pet
+  name: caption

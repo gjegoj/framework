@@ -1,0 +1,15 @@
+# @package _global_
+# A sentence encoder and one head per task. Pooled to a single vector, so every head this framework
+# has is built over it exactly as it is built over a pooled picture.
+#
+# `model_name` is deliberately not written here: it is the family whose tokenizer `preprocessing`
+# declares, read from that one place. Swap families by editing that line alone.
+model:
+  name: composite
+  backbone:
+    name: hf_text
+    model_name: "${preprocessing.inputs.text.model_name}"
+    # `mean` reads every word of the sentence, padding excluded by the mask that travels with it;
+    # `cls` takes the one vector a family pretrained to summarise with. This family publishes the
+    # mean as its own recipe, which is why that is what stands here.
+    pooling: mean

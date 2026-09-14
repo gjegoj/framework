@@ -1,0 +1,18 @@
+# @package _global_
+# One text input declares how a caption reaches the model: whose tokenizer reads it, and how many
+# tokens it becomes. The family is declared here, once — the model group interpolates this same name,
+# because a tokenizer and weights from two families agree on a vocabulary only by accident, and the
+# run that got it wrong says nothing about it except by reporting a worse number.
+preprocessing:
+  name: standard
+  inputs:
+    text:
+      name: text
+      model_name: sentence-transformers/all-MiniLM-L6-v2
+      # Every caption becomes this many tokens — shorter ones padded, longer ones cut — because a
+      # batch stacks. Which of them are words rides in the input itself, so nothing downstream has to
+      # work it out from a padding id.
+      max_length: 32
+  collator: stack
+  # Nothing to hold: a cache keeps decoded files, and a caption is already in the table.
+  cache: null

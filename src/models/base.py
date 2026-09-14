@@ -50,6 +50,18 @@ class Backbone(nn.Module, ABC):
     ``[C]`` vector and a ``[C, H, W]`` map are told apart before a head is built for either.
     """
 
+    def __init__(self) -> None:
+        super().__init__()
+        self.carried_head: Mapping[str, Tensor] = {}
+        """What a file this backbone started from carried that this backbone has no place for.
+
+        A trained file brings a classifier, and every backbone here is built headless, so those rows
+        arrive with nowhere to go. Kept rather than dropped because they are what a run growing its
+        class space starts from, and read by ``build_head`` through the backbone it already holds — a
+        plain mapping rather than a buffer, so that nothing a run writes down carries a head it never
+        ran. Empty for a backbone built from its library's own weights, which is every ordinary run.
+        """
+
     @property
     @abstractmethod
     def feature_shapes(self) -> Mapping[str, TensorShape]:

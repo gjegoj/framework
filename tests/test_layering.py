@@ -23,11 +23,13 @@ QUARANTINE: dict[str, tuple[str, ...]] = {
     "pydantic": ("config/",),
     "hydra": ("config/instantiate.py", "cli.py"),
     "omegaconf": ("cli.py",),
+    "yaml": ("cli.py",),
     "albumentations": ("transforms/albumentations.py", "transforms/augmentations/"),
     "peft": ("models/adapters.py",),
     "timm": ("models/backbones/",),
     "segmentation_models_pytorch": ("models/backbones/", "losses/segmentation.py"),
     "torchmetrics": ("metrics/",),
+    "transformers": ("data/encoders/", "models/backbones/"),
     "clearml": ("tracking/",),
     "ncnn": ("export/backends/ncnn.py",),
     "pnnx": ("export/backends/ncnn.py",),
@@ -48,6 +50,13 @@ a row written ahead of its code cannot sit here looking like a rule while holdin
 arrives with what it permits. A ban is exempt from the second half — its whole point is to hold for
 something absent.
 """
+
+SPOKEN_EVERYWHERE = ("torch", "numpy")
+"""The two stacks this framework speaks in rather than adapts: tensors, and the arrays they come from.
+
+Every other third-party library is quarantined, and the rule below is what makes that true rather
+than customary: a table that only *permits* leaves a library nobody wrote a row for free to be
+imported anywhere, which is how the first import of a new stack gets in unnoticed."""
 
 CORE_MAY_IMPORT = ("torch", "src.core")
 """Besides the standard library: ``core/`` is the vocabulary every package speaks, so it knows no package."""
@@ -210,6 +219,26 @@ def test_every_home_a_quarantine_names_is_a_place_in_the_tree(
     missing = sorted(home for home in homes if not any(name.startswith(home) for name in files))
 
     assert missing == [], f"{library} is quarantined to paths that do not exist"
+
+
+def test_every_third_party_stack_the_tree_imports_has_a_home(imports: list[Import]) -> None:
+    """The other half of the table: a library with no row is quarantined nowhere, so it is allowed everywhere.
+
+    Found by walking in with one — a new library imported from a new file left every rule above green,
+    because each of them reads a row that did not exist. This module's own first sentence promised the
+    opposite, which is the kind of promise only a test keeps.
+    """
+    homeless = sorted(
+        {
+            f"{one.file} imports {one.library}"
+            for one in imports
+            if one.library not in QUARANTINE
+            and one.library not in sys.stdlib_module_names
+            and not one.library.startswith(("src", *SPOKEN_EVERYWHERE))
+        }
+    )
+
+    assert homeless == []
 
 
 @pytest.mark.parametrize(("library", "homes"), QUARANTINE.items(), ids=QUARANTINE)

@@ -6,14 +6,15 @@ from collections.abc import Mapping
 from typing import Any
 
 import pytest
+import torch
 from torch import Tensor, nn
 
 from src.config import ComponentConfig, HeadConfig, ModelConfig
 from src.core import Axis, ModelOutput, Stream, TensorShape, TensorTree
 from src.models import CompositeModel, Model
-from src.models.build import build_model
-from src.models.heads import ConvHead, LinearHead
-from tests.unit.models.conftest import MAP_WIDTH, POOLED_WIDTH
+from src.models.build import build_head, build_model
+from src.models.heads import ConvHead, ExpandedHead, LinearHead
+from tests.unit.models.conftest import MAP_WIDTH, POOLED_WIDTH, Encoder
 
 CLASSES = TensorShape(axes=(Axis.CLASSES,), sizes=(3,))
 DENSE = TensorShape(axes=(Axis.CLASSES, Axis.HEIGHT, Axis.WIDTH), sizes=(3, None, None))
@@ -173,3 +174,93 @@ class NotAModel(nn.Module):
 
     def forward(self, inputs: Mapping[str, TensorTree]) -> None:
         return None
+
+
+CARRIED_ROW, CARRIED_BIAS = 0.5, 0.25
+
+
+class Started(Encoder):
+    """An encoder built from a weight file that carried a classifier, which is what `checkpoint_path` leaves.
+
+    The carried tensors are what the shipped backbones hand back: everything the file named that a
+    headless graph had no place for. Written out here rather than loaded from one, because what this is
+    about is the builder, and a real file would only be a slower way to say the same shapes.
+    """
+
+    def __init__(self, rows: int = 2, width: int = POOLED_WIDTH) -> None:
+        super().__init__()
+        self.carried_head = {
+            "fc.weight": torch.full((rows, width), CARRIED_ROW),
+            "fc.bias": torch.full((rows,), CARRIED_BIAS),
+        }
+
+
+class TestStartedFromAFile:
+    """A file's classifier reaches the head the run declared, and the class space is allowed to have grown."""
+
+    def built(self, task: str = "label", classes: int = 3, **carried: Any) -> nn.Module:
+        backbone = Started(**carried)
+        return build_head(task, head(), TensorShape(axes=(Axis.CLASSES,), sizes=(classes,)), backbone).head
+
+    def test_a_file_carrying_every_class_the_task_declares_fills_the_head_it_built(self) -> None:
+        """Nothing grew, so nothing is appended: the declared head, with the rows the file already had."""
+        built = self.built(classes=3, rows=3)
+
+        assert isinstance(built, LinearHead)
+        assert torch.equal(built.projection.weight, torch.full((3, POOLED_WIDTH), CARRIED_ROW))
+
+    def test_a_task_declaring_more_classes_than_the_file_keeps_what_was_learned_and_appends_the_rest(self) -> None:
+        """The declared vocabulary pins index to name, so the carried rows go in at the indices they had."""
+        built = self.built(classes=5, rows=2)
+
+        assert isinstance(built, ExpandedHead)
+        assert torch.equal(projection(built.base).weight, torch.full((2, POOLED_WIDTH), CARRIED_ROW))
+        assert projection(built.novel).weight.shape == (3, POOLED_WIDTH)
+
+    def test_narrowing_the_class_space_is_refused_because_nobody_said_which_classes_stay(self) -> None:
+        """Dropping rows is a mapping, and a transplant that guessed one would report under the wrong names."""
+        with pytest.raises(ValueError, match="5"):
+            self.built(classes=3, rows=5)
+
+    def test_a_classifier_read_from_another_feature_space_is_refused(self) -> None:
+        """Rows of the right count over the wrong width are not this network's classifier at all."""
+        with pytest.raises(ValueError, match="no part"):
+            self.built(classes=3, rows=3, width=POOLED_WIDTH + 1)
+
+    def test_a_head_only_half_of_which_the_file_fills_is_refused(self) -> None:
+        """The rule the rest of this framework keeps: what a file does not carry would be a reading of `seed`."""
+        backbone = Started(rows=3)
+        backbone.carried_head = {"fc.weight": backbone.carried_head["fc.weight"]}
+
+        with pytest.raises(ValueError, match=r"projection\.bias"):
+            build_head("label", head(), TensorShape(axes=(Axis.CLASSES,), sizes=(3,)), backbone)
+
+    def test_a_file_carrying_more_than_one_head_is_refused_rather_than_read_for_one(self) -> None:
+        """smp writes a segmentation head and an auxiliary classifier, and a file may hold both.
+
+        Neither is the other's, and nothing in the file says which this task continues — so the run is
+        refused by name rather than started from rows trained to answer another question.
+        """
+        backbone = Started(rows=3)
+        backbone.carried_head = {**backbone.carried_head, "aux.weight": torch.zeros(5, POOLED_WIDTH)}
+
+        with pytest.raises(ValueError, match="more than one head"):
+            build_head("label", head(), TensorShape(axes=(Axis.CLASSES,), sizes=(3,)), backbone)
+
+    def test_a_backbone_that_started_from_no_file_builds_the_head_as_declared(self) -> None:
+        """Every ordinary run: nothing was carried, so nothing is transplanted and nothing is checked."""
+        built = build_head("label", head(), TensorShape(axes=(Axis.CLASSES,), sizes=(3,)), Encoder()).head
+
+        assert isinstance(built, LinearHead) and built.projection.weight.shape == (3, POOLED_WIDTH)
+
+
+def test_a_carried_classifier_with_more_than_one_head_to_land_in_is_refused_by_name() -> None:
+    """One file carries one classifier, and two tasks reading it would both claim the same rows."""
+    shapes = {"a": TensorShape(axes=(Axis.CLASSES,), sizes=(3,)), "b": TensorShape(axes=(Axis.CLASSES,), sizes=(3,))}
+
+    with pytest.raises(ValueError, match="a, b"):
+        build_model(
+            ModelConfig(name="composite", backbone=ComponentConfig(_target_=f"{__name__}.Started")),
+            {"a": head(), "b": head()},
+            shapes,
+        )

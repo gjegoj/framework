@@ -20,6 +20,7 @@ from src.core import Axis, TargetInfo
 from src.tasks import Classification, Segmentation
 from src.tasks.build import head_for
 from tests.support.declarations import NORMALIZATION
+from tests.support.text import text_family
 from tests.unit.build.conftest import SIZE
 
 
@@ -288,6 +289,33 @@ class TestDeclarationsThatCannotHold:
         }
 
         with pytest.raises(LookupError, match="onxn"):
+            build(load_config(declared))
+
+    def test_a_run_that_could_never_write_what_it_declares_is_refused_before_it_trains(
+        self, declaration: Mapping[str, Any], tmp_path: Path
+    ) -> None:
+        """An artifact takes one tensor per input, and a caption reaches a model as several.
+
+        The refusal exists where both halves are visible — what the data settled and what the run says it
+        will write — and it arrives here rather than at shipping, which is after the last epoch.
+        """
+        declared = {
+            **declaration,
+            "data": {
+                **declaration["data"],
+                "inputs": {**declaration["data"]["inputs"], "caption": {"column": "caption"}},
+            },
+            "preprocessing": {
+                **declaration["preprocessing"],
+                "inputs": {
+                    **declaration["preprocessing"]["inputs"],
+                    "caption": {"name": "text", "model_name": str(text_family(tmp_path / "family")), "max_length": 8},
+                },
+            },
+            "export": [{"name": "onnx"}],
+        }
+
+        with pytest.raises(ValueError, match="export: none"):
             build(load_config(declared))
 
     def test_inputs_bound_to_columns_and_inputs_encoded_are_one_vocabulary(

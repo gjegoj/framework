@@ -11,6 +11,7 @@ from src.transforms.albumentations import AlbumentationsTransform
 from src.transforms.augmentations import RandomBorderCrop, Rotate90
 from src.transforms.base import AnswersTask, BatchTransform, GeometryAware, SampleTransform
 from src.transforms.batch import CutMix, MixUp
+from src.transforms.multiview import MultiViewTransform
 
 __all__ = [
     "AlbumentationsTransform",
@@ -19,6 +20,7 @@ __all__ = [
     "CutMix",
     "GeometryAware",
     "MixUp",
+    "MultiViewTransform",
     "RandomBorderCrop",
     "Rotate90",
     "SampleTransform",

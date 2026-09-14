@@ -13,8 +13,17 @@ from torch import Tensor, nn
 from src.core import Axis, Modality, Stream, TensorShape, TensorTree, require_tensor
 from src.models.base import Backbone, required_input
 from src.models.registry import backbone_registry
+from src.models.weights import start_from
 
 log = logging.getLogger(__name__)
+
+HEADS = ("segmentation_head.", "classification_head.")
+"""The two heads every smp model carries, whichever architecture it is.
+
+Named here rather than asked of the model, unlike timm's: smp fixes both attributes for every family,
+so there is nothing to ask. Measured on smp 0.5: an smp file shares all 180 of this backbone's names
+and brings exactly these on top, because the head leaves the graph in the constructor below.
+"""
 
 PREFIX_TOKEN_HOOK = "_forward_with_prefix_tokens"
 """The smp hook that reads a ViT's intermediate features; replaced to add the encoder's final norm."""
@@ -33,6 +42,9 @@ class SmpBackbone(Backbone):
         encoder_name: Encoder backbone, e.g. ``"resnet18"``, or a timm ViT for DPT.
         pretrained: Load the encoder's ImageNet weights; ``encoder_weights`` overrides this.
         input_name: Which of the batch's inputs to encode.
+        checkpoint_path: Weights of this architecture from elsewhere, put in after smp has built the
+            graph. The head such a file carries is held back rather than loaded, because this one has
+            taken its own off the forward path.
         **options: Forwarded to ``smp.create_model``.
     """
 
@@ -42,6 +54,8 @@ class SmpBackbone(Backbone):
         encoder_name: str = "resnet18",
         pretrained: bool = True,
         input_name: str = Modality.IMAGE,
+        *,
+        checkpoint_path: str | None = None,
         **options: Any,
     ) -> None:
         super().__init__()
@@ -62,6 +76,9 @@ class SmpBackbone(Backbone):
         self.carries_prefix_tokens = bool(getattr(model.encoder, "has_prefix_tokens", False))
         if self.carries_prefix_tokens:
             _apply_the_encoders_final_norm(self.encoder, encoder_name)
+        if checkpoint_path is not None:
+            # No prefix: smp writes `encoder.`/`decoder.` and this adapter keeps both under those names.
+            self.carried_head = start_from(self, checkpoint_path, aside=HEADS)
 
     @property
     def feature_shapes(self) -> Mapping[str, TensorShape]:

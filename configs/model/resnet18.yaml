@@ -3,6 +3,21 @@
 # decoding — is reached by `_target_` instead and declares no backbone, and then no
 # task may declare a head either. What a run is *learned by* is never the model's:
 # a loss belongs to the task, and an objective of one's own to `learner`.
+#
+# `backbone.checkpoint_path` starts the network from weights of this architecture
+# trained somewhere else — a hub file, a pretraining script, a colleague. A file
+# names the library's own graph, so it needs to say nothing about how this framework
+# wraps it; what it carries that a headless backbone has no place for is its old
+# classifier, and that is held back rather than loaded. A run whose task declares
+# *more* classes than the file answered for then starts them from it: the carried
+# rows keep the indices the declared `classes` pin them to, and the names added
+# after them are fresh, under `heads.<task>.base` and `heads.<task>.novel` so that
+# `freeze` and a task's own rate can address the two apart. Fewer classes than the
+# file is refused — which of them stay is a mapping nobody has written. One file
+# carries one classifier, so a run of several tasks is refused too.
+#
+# It is not where a checkpoint *this framework wrote* goes: that file names a run
+# rather than an architecture, and `run.checkpoint_path` reads it.
 name: composite
 backbone:
   name: timm

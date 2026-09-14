@@ -6,10 +6,12 @@ overrides, and everything below receives one validated ``ExperimentConfig``.
 
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 from typing import Any, cast
 
 import hydra
+import yaml
 from omegaconf import DictConfig, OmegaConf
 from rich.panel import Panel
 from rich.syntax import Syntax
@@ -36,6 +38,7 @@ def main(composed: DictConfig) -> None:
     A key the composed config already declares is overridden by name; one it does not —
     ``run.checkpoint_path``, ``run.resume_path`` — is *added* with Hydra's ``+``.
     """
+    silence_third_party_notices()
     show(composed)
     # `throw_on_missing`, because the root config marks `data.source` as `???`: without it the marker
     # degrades into that literal string, and a run that forgot its source is told its file format is
@@ -75,11 +78,73 @@ def table_for(manifest: Manifest) -> Table:
     return built
 
 
+def silence_third_party_notices() -> None:
+    """Drop the notices about how one library calls another, and only those.
+
+    A run's own substitutions stay: torch saying that MPS ignores the pinned memory a `loader` asked
+    for is about this run's declaration, and the reader is the one who can act on it. What goes is the
+    deprecation one library owes another — nobody reading it can do anything but wait for a release.
+    Each line names one message rather than a category, so a filter outlives the notice it was written
+    for by doing nothing at all instead of by hiding its neighbours.
+
+    The second is Lightning telling a run that the module's ``on_after_batch_transfer`` wins over the
+    data module's. It is emitted whenever the module overrides that hook at all, whether or not a data
+    module offers one — read in its connector — and in this framework none ever does: ``TrainingData``
+    is the only data module a run is assembled with, and it implements no hook the module could win
+    over. What the notice says is being ignored is therefore the base class's own empty body. The
+    condition that makes it vacuous is pinned by
+    ``test_the_data_adapter_implements_no_hook_the_module_would_win_over``, so a hook added there turns
+    this line from harmless into wrong, loudly, rather than quietly.
+
+    The third is the stated exception to the rule above, and is here by the owner's decision. It *is* a
+    substitution of this run's own numbers: a normalized confusion matrix divides each row by that
+    class's support, and a class no row of the split carried divides by zero. What makes it droppable
+    rather than hidden is that the matrix already shows it — the row those zeros fill is empty — and
+    that a run reports one per stage, saying the same thing about the same split each time.
+    """
+    warnings.filterwarnings("ignore", message=r".*LeafSpec.*is deprecated", category=FutureWarning)
+    warnings.filterwarnings(
+        "ignore",
+        message=r"You have overridden `on_after_batch_transfer` in `LightningModule`",
+        category=UserWarning,
+    )
+    warnings.filterwarnings(
+        "ignore",
+        message=r".*NaN values found in confusion matrix have been replaced with zeros",
+        category=UserWarning,
+    )
+
+
 def show(composed: DictConfig) -> None:
-    """Show the run what it was given, in the language a declaration is written in."""
-    rendered = OmegaConf.to_yaml(composed, resolve=True)
+    """Show the run what it was given, in the language a declaration is written in.
+
+    Dumped through PyYAML rather than ``OmegaConf.to_yaml``, for one setting: ``default_flow_style=None``
+    puts a collection holding no collections on one line — ``image_size: [224, 224]``,
+    ``classes: {0: cat, 1: dog}`` — and keeps the block form for everything nested. OmegaConf writes
+    block style throughout, which turns three numbers into three lines and a vocabulary of 37 breeds
+    into a panel nothing else fits beside.
+
+    ``word_wrap`` is not decoration: a line a panel cannot fit is *cropped* by rich rather than folded,
+    and measured at sixty columns a seven-key ``trainer:`` lost three of its entries out of the middle
+    of the line. Wrapping the dump to the console's own width instead was tried and dropped — with the
+    fold in place nothing is lost either way, and it was a setting no reader could tell apart.
+
+    Resolved without ``throw_on_missing``, because this is printed *before* the strict read: a run that
+    forgot a mandatory value should have its declaration on screen when it is told so, and here the
+    marker shows as the ``'???'`` it is.
+    """
+    rendered = yaml.safe_dump(
+        cast("dict[str, Any]", OmegaConf.to_container(composed, resolve=True)),
+        default_flow_style=None,
+        sort_keys=False,
+        allow_unicode=True,
+    )
     console().print(
-        Panel(Syntax(rendered, "yaml", theme="perldoc", background_color="default"), title="Run", expand=False)
+        Panel(
+            Syntax(rendered, "yaml", theme="perldoc", background_color="default", word_wrap=True),
+            title="Run",
+            expand=False,
+        )
     )
 
 

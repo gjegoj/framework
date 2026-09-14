@@ -1,0 +1,20 @@
+# One network over every draw of a picture, for a run whose supervision is the drawing.
+#
+# `multiview` names no library. It wraps another backbone and folds the draws a stage stacked into the
+# batch, so that one set of weights sees every one of them — shared rather than merely equal — and what
+# comes back stays folded: a batch of 16 pictures drawn twice answers with 32 rows. Nothing else in the
+# run changes, because what a task declares it produces is still what one answer is, and the head over
+# it is built and applied exactly as it always was.
+#
+# It needs no view count. The number lives on the stage that draws them (`transforms: multiview`), and
+# the objective recovers the pair from how many rows came back against how many samples the batch held.
+#
+# The wrapped backbone is written out rather than named, because a child position has no registry of
+# its own — the same reason a nested exporter is written out under `export`.
+name: composite
+backbone:
+  _target_: src.models.MultiViewBackbone
+  backbone:
+    _target_: src.models.TimmBackbone
+    model_name: resnet18
+    pretrained: true

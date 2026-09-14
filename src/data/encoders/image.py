@@ -74,12 +74,24 @@ class ImageEncoder(FileEncoder, InputEncoder):
         return read_image(self.path_of(value), grayscale=self.grayscale)
 
     def encode(self, value: object) -> Tensor:
+        """The tensor the stage's chain made, checked against what this input was declared to be.
+
+        Read off the end rather than demanded whole, because a stage may draw one picture several times
+        and hand the sample a stack of views. What an input *is* stays what one view is — the view axis
+        rides with the batch axis, which no declaration carries either — so one leading axis is allowed
+        and a second is not: that is a shape nothing in this run builds.
+
+        The check is here rather than left to the model because what it catches is a chain that forgot
+        its tail: a picture of the wrong size, or one that never crossed into tensors at all.
+        """
         expected = (self.channels, *self.image_size)
-        if not isinstance(value, Tensor) or tuple(value.shape) != expected:
+        views = len(expected) + 1
+        if not isinstance(value, Tensor) or value.ndim > views or tuple(value.shape[-len(expected) :]) != expected:
             arrived = list(value.shape) if isinstance(value, Tensor | np.ndarray) else type(value).__name__
             raise ValueError(
-                f"Image input arrives as {arrived}, not a {list(expected)} tensor. The stage's transforms pipeline "
-                "prepares it: end the chain with Resize to image_size, Normalize and ToTensorV2 (configs/transforms)."
+                f"Image input arrives as {arrived}, not a {list(expected)} tensor (nor a stack of them). The "
+                "stage's transforms pipeline prepares it: end the chain with Resize to image_size, Normalize "
+                "and ToTensorV2 (configs/transforms)."
             )
         return value
 

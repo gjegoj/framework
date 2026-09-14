@@ -189,3 +189,19 @@ def test_a_split_that_can_only_be_streamed_is_refused_by_name() -> None:
     """
     with pytest.raises(TypeError, match="train"):
         TrainingData(Streaming(), batch_size=2).train_dataloader()
+
+
+def test_the_data_adapter_implements_no_hook_the_module_would_win_over() -> None:
+    """Three hooks belong to the module and the data module both, and Lightning prefers the data module's.
+
+    This adapter implements none of them, which is what makes the notice a run prints about the pair
+    vacuous here — what Lightning says is being ignored is the base class's own empty body. The CLI
+    silences that notice on the strength of this, so a hook added here has to be read as revoking it.
+    The list is asked of Lightning rather than written out, because it is Lightning's to grow.
+    """
+    from lightning.pytorch.trainer.connectors.data_connector import _DataHookSelector
+
+    shared = _DataHookSelector._valid_hooks
+    implemented = [name for name in shared if getattr(TrainingData, name) is not getattr(L.LightningDataModule, name)]
+
+    assert shared and implemented == []

@@ -1,0 +1,29 @@
+# @package _global_
+# Every picture drawn twice, for an objective whose supervision is the drawing itself.
+#
+# The draws are what a contrastive run learns from: two identical copies teach nothing, so the chain
+# below is deliberately strong — a crop that may keep a third of the picture, a flip, a heavy colour
+# shift. What the encoder is forced to learn is whatever survives all of it.
+#
+# Every stage draws the same way, unlike the chains beside this one. An evaluation stage that drew
+# deterministically would be scoring a different objective from the one training descends, and the two
+# numbers would sit in one column under one name.
+#
+# `views` is declared here and nowhere else. The `multiview` backbone that folds them into the batch
+# needs no number, and the objective recovers the pair from how many rows came back against how many
+# samples the batch held — so there is nothing here to keep in step with anything.
+transforms:
+  train: &drawing
+    _target_: src.transforms.MultiViewTransform
+    views: 2
+    base:
+      _target_: src.transforms.AlbumentationsTransform
+      seed: ${seed}
+      transforms:
+        - {_target_: albumentations.RandomResizedCrop, size: "${preprocessing.inputs.image.image_size}", scale: [0.3, 1.0]}
+        - {_target_: albumentations.HorizontalFlip, p: 0.5}
+        - {_target_: albumentations.ColorJitter, p: 0.8}
+        - {_target_: albumentations.Normalize, mean: "${preprocessing.inputs.image.mean}", std: "${preprocessing.inputs.image.std}"}
+        - {_target_: albumentations.pytorch.ToTensorV2}
+  val: *drawing
+  test: *drawing

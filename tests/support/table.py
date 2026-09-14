@@ -23,12 +23,15 @@ def write_table(root: Path, samples: int = 8) -> Path:
         image = np.full((12, 10, 3), (20 * index + 30) % 256, dtype=np.uint8)
         cv2.imwrite(str(root / f"{index}.png"), image)
         # ``angle`` is upright throughout: a pretext augmentation advances it, and nothing else reads it.
+        # ``caption`` is written from ``species`` rather than collected, so a run over it proves that the
+        # text half of a pipeline works and says nothing at all about reading language.
         rows.append(
             {
                 "image_path": str(root / f"{index}.png"),
                 "species": SPECIES[index % 2],
                 "age": float(index),
                 "angle": 0,
+                "caption": f"a {SPECIES[index % 2]} on the porch",
             }
         )
     table = root / "rows.csv"

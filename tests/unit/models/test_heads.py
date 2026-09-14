@@ -8,7 +8,7 @@ from torch import nn
 
 from src.core import FEATURE_AXIS, Axis
 from src.models.base import ShapeAware
-from src.models.heads import ConvHead, CosineHead, LinearHead
+from src.models.heads import ConvHead, CosineHead, ExpandedHead, LinearHead
 from src.models.registry import head_registry
 
 WIDTH, CLASSES = 6, 2
@@ -72,3 +72,36 @@ def test_a_conv_head_projects_a_feature_map_and_keeps_its_size(kernel_size: int)
     head = ConvHead(in_features=6, out_features=2, kernel_size=kernel_size)
 
     assert head(torch.zeros(4, 6, 5, 5)).shape == (4, 2, 5, 5)
+
+
+class TestExpandedHead:
+    """A class space that grew: what was learned keeps its indices, what is new is appended after them."""
+
+    def test_the_classes_a_run_already_had_keep_the_indices_they_had(self) -> None:
+        """The declared vocabulary pins index to name, so a grown run reads a kept file's rows as before."""
+        grown = ExpandedHead(base=LinearHead(WIDTH, CLASSES), novel=LinearHead(WIDTH, 3))
+        features = torch.randn(4, WIDTH)
+
+        answered = grown(features)
+
+        assert answered.shape == (4, CLASSES + 3)
+        assert torch.allclose(answered[:, :CLASSES], grown.base(features))
+
+    def test_a_dense_output_grows_on_the_same_axis_a_flat_one_does(self) -> None:
+        """`[B, C, H, W]` and `[B, C]` name their classes on the same axis, and one rule covers both."""
+        grown = ExpandedHead(base=ConvHead(WIDTH, CLASSES), novel=ConvHead(WIDTH, 1))
+
+        answered = grown(torch.randn(4, WIDTH, 5, 5))
+
+        assert answered.shape == (4, CLASSES + 1, 5, 5)
+
+    def test_what_was_learned_and_what_is_new_are_addressed_apart(self) -> None:
+        """`freeze`, the optimizer and the averaging callback all walk paths; two submodules are that contract.
+
+        One wider matrix would put both under one tensor, and ``requires_grad`` lives on whole tensors —
+        a run holding the carried rows still would hold the new ones still with them.
+        """
+        grown = ExpandedHead(base=LinearHead(WIDTH, CLASSES), novel=LinearHead(WIDTH, 3))
+
+        assert {name for name, _ in grown.named_children()} == {"base", "novel"}
+        assert "base.projection.weight" in grown.state_dict()

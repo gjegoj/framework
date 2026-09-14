@@ -7,12 +7,13 @@ composes into is stubbed, because everything below has its own tests and none of
 from __future__ import annotations
 
 import sys
+import warnings
 from io import StringIO
 from pathlib import Path
 from typing import Any
 
 import pytest
-from omegaconf import MissingMandatoryValue
+from omegaconf import MissingMandatoryValue, OmegaConf
 from rich.console import Console
 
 from src import cli
@@ -103,6 +104,83 @@ def test_a_run_that_shipped_something_ends_by_showing_what(monkeypatch: pytest.M
     cli.main()
 
     assert "model.onnx" in screen.export_text()
+
+
+def test_a_collection_holding_no_collection_is_shown_on_one_line(monkeypatch: pytest.MonkeyPatch) -> None:
+    """What a reader takes in at a glance: a size, a vocabulary and a pair of statistics, each one line.
+
+    A declaration is mostly small collections — two sides of an image, three channel means, a class per
+    index — and written a value to a line they push everything that matters off the screen. Nested
+    collections keep the block form, because that is the shape a reader navigates by.
+    """
+    screen = Console(width=200, record=True)
+    monkeypatch.setattr(cli, "console", lambda: screen)
+
+    cli.show(OmegaConf.create({"preprocessing": {"image_size": [224, 224], "classes": {0: "cat", 1: "dog"}}}))
+
+    shown = screen.export_text()
+    assert "image_size: [224, 224]" in shown
+    assert "classes: {0: cat, 1: dog}" in shown
+    assert "preprocessing:" in shown, "and what holds them is still a block a reader navigates by"
+
+
+def test_a_declaration_too_wide_for_the_panel_is_folded_rather_than_cropped(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Compact is worth nothing if it costs the middle of a line: rich crops what a panel cannot fit.
+
+    Every value, not the last one: measured at this width, a dump wrapped to PyYAML's own default loses
+    three of these eight, and one wrapped to the panel but cropped rather than folded loses one — the
+    soft limit lets a line overhang by a token. A test naming only the tail is green through both.
+    """
+    knobs = {f"knob_{index}": index for index in range(8)}
+    screen = Console(width=60, record=True)
+    monkeypatch.setattr(cli, "console", lambda: screen)
+
+    cli.show(OmegaConf.create({"trainer": knobs}))
+
+    shown = screen.export_text()
+    assert [knob for knob, value in knobs.items() if f"{knob}: {value}" not in shown] == []
+
+
+@pytest.mark.parametrize(
+    ("message", "category"),
+    [
+        pytest.param(
+            "`isinstance(treespec, LeafSpec)` is deprecated, use `isinstance(treespec, TreeSpec) and "
+            "treespec.is_leaf()` instead.",
+            FutureWarning,
+            id="pytree",
+        ),
+        pytest.param(
+            "You have overridden `on_after_batch_transfer` in `LightningModule` but have passed in a "
+            "`LightningDataModule`. It will use the implementation from `LightningModule` instance.",
+            UserWarning,
+            id="hook",
+        ),
+    ],
+)
+def test_each_silenced_notice_is_a_notice_these_libraries_actually_write(message: str, category: type[Warning]) -> None:
+    """A filter whose pattern matches nothing is not an error: it is silent, and so is its absence.
+
+    The notices are quoted as the libraries write them today, so a typo in a pattern is caught here.
+    What this cannot catch is the other direction — a library rewording its own notice makes the filter
+    dead rather than wrong, and the line then goes back to being printed, which is the safe failure.
+    """
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        cli.silence_third_party_notices()
+        warnings.warn(message, category, stacklevel=1)
+
+    assert [str(one.message) for one in caught] == []
+
+
+def test_a_notice_a_run_can_act_on_is_left_where_a_reader_can_see_it() -> None:
+    """The filters name messages, not categories: what a library says about this run's own declaration stays."""
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        cli.silence_third_party_notices()
+        warnings.warn("'pin_memory' argument is set as true but not supported on MPS now", UserWarning, stacklevel=1)
+
+    assert len(caught) == 1
 
 
 def test_the_configs_directory_is_found_by_absolute_path() -> None:

@@ -4,13 +4,14 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from itertools import chain
 from math import isfinite
 from typing import Any, cast
 
 import torch
 from torch import Tensor, nn
 
-from src.core.types import ShapeTree, TensorTree, tree_map
+from src.core.types import ShapeTree, TensorTree, tensors_in, tree_map
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,6 +37,18 @@ class Batch:
 
     def __len__(self) -> int:
         return self.count
+
+    @property
+    def device(self) -> torch.device:
+        """Where this batch's tensors are, for a target derived from the batch rather than read out of it.
+
+        Read off the first tensor rather than remembered: ``to`` moves every one of them together, so
+        there is one answer and the first is it. A batch carrying no tensor at all has none, and says so
+        rather than answering ``cpu`` for a run that is not on it.
+        """
+        for tensor in chain(tensors_in(self.inputs), tensors_in(self.targets)):
+            return tensor.device
+        raise ValueError("This batch carries no tensors, so there is no device its values are on.")
 
     def to(self, device: torch.device | str, *, non_blocking: bool = False) -> Batch:
         return self._map(lambda tensor: tensor.to(device=device, non_blocking=non_blocking))

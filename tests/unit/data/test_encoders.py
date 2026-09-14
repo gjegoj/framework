@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import sys
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -22,8 +24,10 @@ from src.data.encoders import (
 )
 from src.data.encoders.continuous import BinnedEncoder
 from src.data.encoders.identity import IdentityEncoder
+from src.data.encoders.text import TextEncoder
 from src.data.registry import input_encoder_registry, target_encoder_registry
 from tests.support.declarations import CLASSES
+from tests.support.text import WORDS, text_family
 
 
 class TestContract:
@@ -290,6 +294,22 @@ class TestImage:
         with pytest.raises(ValueError, match="transforms"):
             encoder.encode(encoder.load("a.png"))
 
+    def test_a_stack_of_views_is_the_declared_image_as_many_times(self, images: Path) -> None:
+        """A stage may draw one picture several times, and what the input *is* stays what one view is.
+
+        The view axis rides with the batch axis: no declaration carries it, so the check here reads the
+        shape of a view off the end rather than demanding the whole of it.
+        """
+        encoder = ImageEncoder(image_size=(6, 8), root=images)
+        views = torch.zeros(2, 3, 6, 8)
+
+        assert encoder.encode(views) is views
+
+    def test_a_tensor_with_more_in_front_of_it_than_views_is_still_refused(self, images: Path) -> None:
+        """One leading axis is what a stage can make; anything deeper is a shape nobody in this run built."""
+        with pytest.raises(ValueError, match="transforms"):
+            ImageEncoder(image_size=(6, 8), root=images).encode(torch.zeros(2, 2, 3, 6, 8))
+
     @pytest.mark.parametrize(
         "kwargs",
         [{"image_size": (0, 4)}, {"image_size": (4, 4, 4)}, {"image_size": (4, 4), "grayscale": True}],
@@ -328,3 +348,72 @@ class TestMask:
 
         with pytest.raises(ValueError, match="1"):
             encoder.validate(["a_mask.png"])
+
+
+LENGTH = 8
+"""How many tokens this fixture's captions become, short ones padded to it and long ones cut to it."""
+
+
+class TestText:
+    @pytest.fixture
+    def encoder(self, tmp_path: Path) -> TextEncoder:
+        return TextEncoder(str(text_family(tmp_path / "family")), max_length=LENGTH)
+
+    def test_declares_one_length_for_every_tensor_the_family_reads(self, encoder: TextEncoder) -> None:
+        """A text input is a tree — an id per token and whatever the family reads beside it — not one tensor."""
+        declared = encoder.info.shape
+
+        assert encoder.info.modality == Modality.TEXT
+        assert isinstance(declared, Mapping)
+        assert set(declared) == {"input_ids", "token_type_ids", "attention_mask"}
+        assert all(one == TensorShape(axes=(Axis.TOKENS,), sizes=(LENGTH,)) for one in declared.values())
+
+    def test_a_caption_encodes_to_exactly_the_tree_it_declared(self, encoder: TextEncoder) -> None:
+        """What is published and what is produced are one statement; two would size a head for a tensor nobody makes."""
+        encoded = encoder.encode("a brown dog")
+        declared = encoder.info.shape
+
+        assert isinstance(encoded, Mapping) and isinstance(declared, Mapping)
+        assert set(encoded) == set(declared)
+        assert all(require_tensor(value, name=name).shape == (LENGTH,) for name, value in encoded.items())
+        assert all(require_tensor(value, name=name).dtype == torch.long for name, value in encoded.items())
+
+    @pytest.mark.parametrize("caption", ["a", " ".join(WORDS[5:] * 3)], ids=["shorter", "longer"])
+    def test_every_caption_arrives_at_the_declared_length(self, encoder: TextEncoder, caption: str) -> None:
+        """The length is the declaration, so a batch stacks whatever the captions were."""
+        encoded = encoder.encode(caption)
+
+        assert isinstance(encoded, Mapping)
+        assert require_tensor(encoded["input_ids"], name="input_ids").shape == (LENGTH,)
+
+    def test_which_tokens_are_padding_travels_with_them(self, encoder: TextEncoder) -> None:
+        """Padding is marked in the tree itself, so nothing downstream has to guess it from a pad id."""
+        short = encoder.encode("a dog")
+        full = encoder.encode(" ".join(WORDS[5:] * 3))
+
+        assert isinstance(short, Mapping) and isinstance(full, Mapping)
+        assert int(require_tensor(short["attention_mask"], name="mask").sum()) < LENGTH
+        assert int(require_tensor(full["attention_mask"], name="mask").sum()) == LENGTH
+
+    @pytest.mark.parametrize(
+        "cell", [None, float("nan"), 42, "", "   "], ids=["none", "nan", "number", "empty", "blank"]
+    )
+    def test_a_cell_holding_no_caption_is_refused_by_name(self, encoder: TextEncoder, cell: object) -> None:
+        """A column with a hole in it is named here, rather than read as the empty sentence by a tokenizer."""
+        with pytest.raises(ValueError, match="no text to read"):
+            encoder.encode(cell)
+
+    @pytest.mark.parametrize("max_length", [0, -3])
+    def test_a_length_that_holds_nothing_is_refused(self, tmp_path: Path, max_length: int) -> None:
+        with pytest.raises(ValueError, match="max_length"):
+            TextEncoder(str(text_family(tmp_path / "family")), max_length=max_length)
+
+    def test_the_name_resolves_long_before_the_library_behind_it_is_needed(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Importing the package registers every encoder; a run that reads no text pays for none of transformers."""
+        monkeypatch.setitem(sys.modules, "transformers", None)
+
+        assert issubclass(input_encoder_registry.get("text"), TextEncoder)
+        with pytest.raises(ImportError):
+            TextEncoder(str(tmp_path), max_length=LENGTH)

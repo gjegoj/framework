@@ -23,6 +23,7 @@ from src.config import ExperimentConfig, TaskConfig
 from src.core import Stage
 from src.data.build import build_data_module, build_preprocessor
 from src.experiment import Experiment
+from src.export import WRITTEN_FROM, example_inputs
 from src.export.build import build_exporters
 from src.losses.build import build_loss
 from src.metrics.build import build_metrics
@@ -41,9 +42,11 @@ from src.training.build import (
 from src.transforms.build import build_transforms
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Mapping, Sequence
 
+    from src.core import DatasetInfo
     from src.data import DataModule
+    from src.export import Exporter
     from src.losses import Loss
     from src.metrics import MetricCollection
     from src.models import Model
@@ -66,6 +69,7 @@ def build(config: ExperimentConfig) -> Experiment:
     # is going to answer a misspelled format at the end of it.
     exporters = build_exporters(config.export)
     data = prepare_data(config, kinds)
+    _refuse_a_run_that_could_never_write_what_it_declares(exporters, data.info)
     tasks = build_tasks(config.tasks, data.info)
     # Named here rather than inline, because a second network is built from the very same two: a teacher
     # answers the questions this run asks, so its heads are sized by what the tasks settled, not by a file.
@@ -99,6 +103,18 @@ def build(config: ExperimentConfig) -> Experiment:
         exporters=exporters,
         adapter=adapter,
     )
+
+
+def _refuse_a_run_that_could_never_write_what_it_declares(exporters: Sequence[Exporter], info: DatasetInfo) -> None:
+    """An export is written from an example of the declared inputs; a run that cannot have one is told here.
+
+    The check *is* the operation — the very call shipping makes, on the very facts it makes it from —
+    so there is no second statement of what an example needs, free to fall behind the first. What it
+    costs is one batch of noise; what it saves is hearing after the last epoch that nothing can be
+    written from it, which is where this was answered before.
+    """
+    if exporters:
+        example_inputs(info, list(info.inputs), WRITTEN_FROM)
 
 
 def prepare_data(config: ExperimentConfig, kinds: Mapping[str, type[Task]]) -> DataModule:

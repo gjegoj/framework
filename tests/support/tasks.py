@@ -34,7 +34,10 @@ def info(**overrides: Any) -> TargetInfo:
     return TargetInfo(**{"classes": CLASSES, **overrides})
 
 
-ON_THE_KIND: dict[str, dict[str, Any]] = {"metric_learning": {"embedding_dim": WIDTH}}
+ON_THE_KIND: dict[str, dict[str, Any]] = {
+    "metric_learning": {"embedding_dim": WIDTH},
+    "contrastive": {"embedding_dim": WIDTH},
+}
 """What a kind takes in its own declaration, where the data cannot settle it: read by ``specimen`` alone."""
 
 SPECIMENS: dict[str, tuple[TargetInfo, Tensor]] = {
@@ -45,6 +48,9 @@ SPECIMENS: dict[str, tuple[TargetInfo, Tensor]] = {
     "binary_segmentation": (TargetInfo(), (PIXELS % 2).float()),
     "regression": (TargetInfo(), torch.tensor([1.5, 2.5, 3.5])),
     "metric_learning": (info(), torch.tensor([0, 1, 0])),
+    # The one kind that reads no column: what stands here is what it derives from the batch, which is
+    # which row each sample is, so the table still says "the target this kind is handed".
+    "contrastive": (TargetInfo(), torch.arange(COUNT)),
 }
 """What each kind's target says and how its own encoder hands it over: a new kind needs a row here.
 
@@ -66,6 +72,16 @@ def published(task: Task, output: ModelOutput) -> Tensor:
     return require_tensor(task.postprocess(output, Representation.PROJECTED), name=task.name)
 
 
+ANSWERS_PER_SAMPLE: dict[str, int] = {"contrastive": 2}
+"""How many rows a kind answers with for each sample of the batch, where that is not one.
+
+Every other kind answers once per sample, so a batch of three has three rows. A run that draws views of
+a picture has as many answers as draws: the stage stacks them and a viewing backbone folds them into the
+batch, which is what makes one set of weights see every draw. ``Batch.count`` keeps counting samples, so
+the two numbers part company here rather than anywhere in a declaration.
+"""
+
+
 def specimen(kind: str, name: str = "t") -> tuple[Task, ModelOutput, Batch]:
     """A task of one kind, an output its head could have produced, and the batch that output answers."""
     if kind not in SPECIMENS:
@@ -75,5 +91,5 @@ def specimen(kind: str, name: str = "t") -> tuple[Task, ModelOutput, Batch]:
     shape = task.output_shape()
     declared_sizes = zip(shape.axes, shape.sizes, strict=True)
     sizes = [size if size is not None else EXTENT[Axis(axis)] for axis, size in declared_sizes]
-    output = ModelOutput(outputs={name: torch.rand(COUNT, *sizes)})
+    output = ModelOutput(outputs={name: torch.rand(COUNT * ANSWERS_PER_SAMPLE.get(kind, 1), *sizes)})
     return task, output, Batch(inputs={}, targets={name: target}, count=COUNT)

@@ -28,6 +28,7 @@ class Axis(StrEnum):
     HEIGHT = "height"
     WIDTH = "width"
     EMBEDDING = "embedding"
+    TOKENS = "tokens"
 
 
 SPATIAL = frozenset({Axis.HEIGHT, Axis.WIDTH})
@@ -89,6 +90,7 @@ class Modality(StrEnum):
     """What an input is; conventional names, as ``Stream``'s are — a custom encoder may say anything."""
 
     IMAGE = "image"
+    TEXT = "text"
 
 
 class Role(StrEnum):

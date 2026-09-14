@@ -9,6 +9,7 @@ synthetic one:
     breed       one of 37                                      (GLOBAL multiclass)
     mask_path   pet / background / boundary                    (DENSE segmentation)
     random_age  noise, by that name                            (GLOBAL regression)
+    caption     a sentence written from the two labels          (text input)
 
 ``random_age`` is noise on purpose, and named so nobody reads it as a learnable
 target: no model can beat predicting its mean, because nothing in the picture
@@ -17,6 +18,13 @@ train, log and report — rather than of a model. A ``mae`` that settles near wh
 constant at the column's middle reaches is the correct outcome, not a failure; the
 number is printed when the table is written, and it is not the column's standard
 deviation, which summarises the same spread in units a mean absolute error is not in.
+
+``caption`` is the opposite trap and is named here for the same reason. It is a
+template filled with ``breed`` and ``species``, so it does not under-carry the
+signal — it carries it *verbatim*. A task reading it can be all but perfect, and
+that number says the text half of a pipeline tokenizes, batches, encodes and
+reports; it says nothing whatever about reading language. Real captions are
+collected, not generated, and this dataset has none.
 
 The whole dataset is written: 7349 rows from ``annotations/list.txt``. The
 reference this is modelled on read ``trainval.txt`` instead and used 3680 of them,
@@ -102,6 +110,18 @@ def random_age(name: str, seed: int) -> float:
     return round(float(draw.uniform(*AGE_RANGE)), 1)
 
 
+def caption(row: Listed) -> str:
+    """The sentence a text input reads, in the phrasing image-text models are prompted with.
+
+    Written from the labels rather than collected, which is the whole of what it is:
+    the breed stands in it in so many words, so a run over this column is proving a
+    pipeline. The underscores of the file name come out, because a tokenizer splits
+    on spaces and ``german_shorthaired`` is one unknown word where three known ones
+    were meant.
+    """
+    return f"a photo of a {row.breed.replace('_', ' ').lower()}, a kind of {row.species}"
+
+
 def prepared(
     rows: list[Listed], images: Path, trimaps: Path, masks_out: Path, seed: int
 ) -> tuple[list[dict[str, str]], Counter[str]]:
@@ -138,6 +158,7 @@ def prepared(
                 "breed": row.breed,
                 "mask_path": str(mask_path.resolve()),
                 "random_age": str(random_age(row.name, seed)),
+                "caption": caption(row),
             }
         )
     return records, skipped
@@ -189,6 +210,10 @@ def main() -> None:
     print(
         f"random_age spans {min(ages)}–{max(ages)}; a constant at its middle is off by {floor:.2f} on "
         f"average. It is noise, so a regression on it cannot beat that mae, and beating it means a leak."
+    )
+    print(
+        f"  caption reads e.g. {records[0]['caption']!r}. It is written from breed and species, so a task "
+        f"over it measures the text pipeline and not a model; a near-perfect number is the expected one."
     )
     # The vocabularies a task declares, ready to paste: the index space is a declaration,
     # never learned from whichever rows a split leaves in train, so the script that knows

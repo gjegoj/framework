@@ -46,6 +46,7 @@ from src.core.types import (
     TensorShape,
     TensorTree,
     drop_feature_axis,
+    require_named_tensors,
     require_tensor,
 )
 
@@ -86,6 +87,7 @@ __all__ = [
     "as_children",
     "class_name",
     "drop_feature_axis",
+    "require_named_tensors",
     "require_tensor",
     "submodule_at",
     "validate_classes",

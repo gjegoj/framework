@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
+from typing import cast
 
 from torch import Tensor
 
@@ -24,11 +25,42 @@ def tree_map(operation: Callable[[Tensor], Tensor], tree: TensorTree) -> TensorT
     return tree
 
 
+def tensors_in(tree: TensorTree) -> Iterator[Tensor]:
+    """Every tensor a tree holds, in the order it holds them, whatever it holds them inside.
+
+    The reading half of ``tree_map``: a question about the tensors of a structure, rather than a new
+    structure built from them. One home, because a second walk would be free to disagree about what
+    counts as a leaf — which is the whole of what these two functions know.
+    """
+    if isinstance(tree, Tensor):
+        yield tree
+    elif isinstance(tree, Mapping):
+        for value in tree.values():
+            yield from tensors_in(value)
+    elif isinstance(tree, list | tuple):
+        for value in tree:
+            yield from tensors_in(value)
+
+
 def require_tensor(value: object, *, name: str) -> Tensor:
     """Narrow a structured value where an operation requires a single tensor."""
     if not isinstance(value, Tensor):
         raise TypeError(f"{name} must be a tensor, got {type(value).__name__}.")
     return value
+
+
+def require_named_tensors(value: object, *, name: str) -> Mapping[str, Tensor]:
+    """Narrow a structured value where an operation requires several tensors that answer to names.
+
+    The other half of ``require_tensor``: one input may be a tree rather than a tensor — a sentence
+    reaches a model as ids beside the mask saying which of them are words — and whoever reads such an
+    input needs the names, not a single value. Flat, because a flat mapping is what the libraries that
+    take them are called with.
+    """
+    if not isinstance(value, Mapping) or not all(isinstance(one, Tensor) for one in value.values()):
+        arrived = f"a tree of {', '.join(sorted(value))}" if isinstance(value, Mapping) else type(value).__name__
+        raise TypeError(f"{name} must be named tensors, got {arrived}.")
+    return cast("Mapping[str, Tensor]", value)
 
 
 FEATURE_AXIS = 1

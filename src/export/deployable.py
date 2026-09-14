@@ -125,15 +125,20 @@ def _sizes_of(info: DatasetInfo, name: str) -> tuple[int, ...]:
             "from `data.inputs`, so a graph over another input has nothing to be given."
         )
     declared = info.inputs[name].shape
+    published = "An encoder publishes this in the `info` it declares for its input."
     if declared is None:
-        reason = "declares no shape"
+        reason, cure = "declares no shape", published
     elif not isinstance(declared, TensorShape):
+        # Not a declaration to correct but a boundary of this package: a graph taking several tensors
+        # for one input is a signature nothing here writes or verifies yet, so the run is told which
+        # declaration to drop rather than sent to fix an encoder that is answering correctly.
         reason = "is a tree of tensors rather than one"
+        cure = "A run over such an input trains and scores; declare `export: none` for it."
     elif open_axes := [axis for axis, size in zip(declared.axes, declared.sizes, strict=True) if size is None]:
-        reason = f"leaves {', '.join(open_axes)} open"
+        reason, cure = f"leaves {', '.join(open_axes)} open", published
     else:
         return cast(tuple[int, ...], declared.sizes)
     raise ValueError(
         f"An export gives the graph one example tensor per input, shaped as the data declares it, and "
-        f"{name!r} {reason}. An encoder publishes this in the `info` it declares for its input."
+        f"{name!r} {reason}. {cure}"
     )

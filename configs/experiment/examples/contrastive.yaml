@@ -1,0 +1,36 @@
+# @package _global_
+# A run with no labels: `uv run main.py experiment=examples/contrastive`.
+#
+# What supervises it is the drawing itself. Every picture is drawn twice, and in a batch those two
+# draws are the only pair that belong together — so the objective pulls them towards each other and
+# pushes each away from every other picture's. No column is read, no vocabulary is declared, and the
+# `species` and `breed` columns of the table sit untouched beside the run.
+#
+# **The augmentations are the supervision, not decoration.** Two identical draws teach nothing: what
+# the encoder is forced to learn is whatever survives a crop, a flip and a colour shift, and the
+# strength of those is the strength of the method. The evaluation stages draw the same way for the
+# same reason — a deterministic pair would make `val/loss` a different objective from `train/loss`.
+#
+# **What this run is judged by is the next one.** There is no reading here that scores an encoder:
+# a vocabulary is what every metric of this framework compares against, and this run has none. The
+# number below goes down, and whether that was worth anything is answered by a second run that
+# declares `model.backbone.checkpoint_path` against these weights and measures an actual task.
+#
+# **Two shapes to know.** A stage stacks its draws, and a `multiview` backbone folds them into the
+# batch so that one set of weights sees every one — so a batch of 16 pictures encodes 32 rows, and
+# the answers are as many as the draws rather than as many as the samples. Nothing else in the run
+# is changed by that, because what a task declares it produces is still what one answer is.
+defaults:
+  - examples/pet
+  - override /model: multiview
+  - override /transforms: multiview
+
+tasks:
+  appearance:
+    # How wide a space the pictures are separated in is a choice of the model, not of the data,
+    # so the kind carries it. The head is sized from this number and nothing writes it twice.
+    kind: {name: contrastive, embedding_dim: 128}
+    # No `target_column`: this is the one kind whose answer is which row of the batch a draw is.
+    # The default objective, written out to show its one knob. `temperature` is where the learned
+    # scale starts — CLIP learns it from there, so this is a starting point rather than a setting.
+    loss: {name: info_nce, temperature: 0.07}

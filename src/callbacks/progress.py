@@ -156,6 +156,20 @@ class MetricsProgressBar(RichProgressBar):
             self._history.declare(pl_module.metric_directions())
 
     @override
+    def get_metrics(self, trainer: L.Trainer, pl_module: L.LightningModule) -> dict[str, Any]:
+        """Nothing beside the bar: everything a run measures is already under it, and said better.
+
+        Lightning's own answer here is the logger's version plus whatever was logged with
+        ``prog_bar=True`` — beside this bar that is a second, shorter rendering of one row of the
+        table below it, without the stage it belongs to, without its best and without which way it
+        moved. ``v_num`` names the logger's version, which the run directory is already named after.
+
+        The module's ``prog_bar`` request is not withdrawn by this and is not dead: a run declaring no
+        progress callback gets Lightning's own bar, which honours it and draws no table.
+        """
+        return {}
+
+    @override
     def _init_progress(self, trainer: L.Trainer) -> None:
         """Let Lightning build its bar, then give the live display a renderable that has the table too.
 

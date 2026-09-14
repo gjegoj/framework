@@ -1,0 +1,7 @@
+# @package _global_
+# No pipeline at all — what a run with no pixels declares.
+#
+# Not merely unused in such a run: the chains in this group interpolate the image size and statistics
+# that `preprocessing` publishes for a picture, so a run without one would be resolving names it does
+# not carry. A text run says so here.
+transforms: {}

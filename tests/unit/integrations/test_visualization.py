@@ -51,12 +51,14 @@ class TestDrawnInput:
         assert found[0] == "a"
 
 
-LEFT_OFF = {"metric_learning"}
+LEFT_OFF = {"contrastive", "metric_learning"}
 """The registered kinds a cell has no way to show, named rather than discovered from the code under test.
 
 A direction in a space is not a reading of a sample: what it means is only visible against a gallery,
 which a single cell is not. Drawing it as the number it superficially resembles would be worse than
-leaving it out, which is the same judgement the heat-map case below records.
+leaving it out, which is the same judgement the heat-map case below records. Both kinds that answer
+with a direction are here, and a run drawing views has a second reason besides: its batch holds more
+answers than it holds samples, so there is no one answer a sample's cell could carry.
 """
 
 
