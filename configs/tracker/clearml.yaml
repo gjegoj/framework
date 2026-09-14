@@ -6,18 +6,39 @@
 # rather than its results. The whole resolved config reaches ClearML as
 # hyperparameters besides, so nothing has to be squeezed in here to be findable.
 #
-# A tag is an interpolation, and a group that is off leaves an empty string
-# (`oc.select` reaches into a section that may be wholly null); empty tags are
-# dropped. The architecture is not written here at all — the key naming one
-# differs per backbone family and a composite backbone has none, so the model is
-# asked for it and the answer joins these.
+# Every chip is an interpolation, and one naming a section a run may not declare is
+# reached through `oc.select`: an absent scheduler, delta or teacher leaves an empty
+# string, which the tracker drops, rather than ending the composition and the run
+# with it. A name is reached the same way — a component written out by `_target_`
+# writes none, here as everywhere — so such a run is filed under one chip fewer.
+#
+# The three carrying a prefix read values this file's own root always declares.
+# Written around an optional one, a prefix would leave `lr=` standing: a chip that
+# says nothing and is not empty either, so nothing drops it.
+#
+# The architecture is named by whichever key its family spells it with — `model_name`
+# for timm and for a text family, `arch` with `encoder_name` for smp — each reached
+# the same way, so the ones a run does not write leave blanks. A backbone under a
+# wrapper spells it a level deeper and a tower carries a name the run itself chose,
+# so a paired or multi-view run is filed under what it does write: naming those
+# positions here would be this file guessing what a run called its parts.
+#
+# The picture's size is not a chip at all. It is declared per input, under a name each
+# run chooses, and a run with two pictures has two of them — so there is no one key to
+# read. It is in the hyperparameters meanwhile, like everything else not worth a chip.
 tracker:
   name: clearml
   project_name: ${run.project}
   task_name: ${run.name}
   tags:
-    - ${optimizer.name}
-    - ${oc.select:scheduler.name,''}         # the section itself may be null
+    - ${oc.select:model.backbone.name,''}          # the family the heads are built over: timm / smp / hf_text
+    - ${oc.select:model.backbone.model_name,''}    # the network itself, as timm and a text family name it
+    - ${oc.select:model.backbone.arch,''}          # as smp names the decoder around one
+    - ${oc.select:model.backbone.encoder_name,''}  # and the encoder under that
+    - ${oc.select:optimizer.name,''}
+    - ${oc.select:scheduler.name,''}               # the section itself may be null
+    - ${oc.select:adapter.name,''}                 # lora, where a run learns a delta beside weights held still
+    - ${oc.select:learner.name,''}                 # distillation, where a second network teaches this one
     - lr=${lr}
     - bs=${batch_size}
     - epochs=${epochs}

@@ -145,12 +145,13 @@ def test_a_run_that_records_nowhere_still_finishes() -> None:
 def test_only_the_stage_asked_for_is_summarised() -> None:
     """A summary is about the stage it belongs to; a run that still held a validation reading would
     otherwise put two numbers under one name. Read here rather than through a trainer, because a
-    trainer empties what it logged between the stages and so can never pose the question."""
+    trainer empties what it logged between the stages and so can never pose the question. The reading
+    is written out long because this is where a headline is cut to what a table is read at."""
     logged = {
-        "test/loss": torch.tensor(0.25),
+        "test/loss": torch.tensor(0.7948718070983887),
         # A reading of its own, not the test stage's under another name: a series drops the stage, so
         # two stages of one measurement would collide into the right answer and prove nothing.
         "val/label/f1/mean": torch.tensor(0.5),
     }
 
-    assert headlines(logged, Stage.TEST) == pytest.approx({"loss": 0.25})
+    assert headlines(logged, Stage.TEST) == {"loss": 0.795}

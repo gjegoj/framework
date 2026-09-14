@@ -237,3 +237,72 @@ def test_every_name_a_shipped_example_writes_resolves_to_an_implementation(examp
     config = load_config(composed(f"experiment=examples/{example}"))
 
     assert unresolved_names(config) == []
+
+
+def tags_for(*overrides: str) -> list[str]:
+    """The chips the shipped ClearML group writes for a run, blanks and all.
+
+    Read before the tracker drops the blank ones, because the blank is the point: a chip names a
+    section a run may not declare, and what tells "no chip" from "no run at all" is whether the group
+    reached for it in a way that survives its absence.
+    """
+    return cast("list[str]", composed("tracker=clearml", *overrides)["tracker"]["tags"])
+
+
+@pytest.mark.parametrize("example", EXAMPLES)
+def test_a_shipped_example_can_be_filed_on_the_service_it_uploads_to(example: str) -> None:
+    """A run declares `tracker: clearml` on top of whatever else it is, and every chip has to survive it.
+
+    Between them the examples run with no scheduler, no delta, no teacher, a backbone written out by
+    `_target_` and no picture at all — every absence a chip here is written around. One reaching a key
+    such a run does not write ends the composition, so the run dies over a label it was never judged by.
+
+    A chip is a value or nothing: `key=` written around a value a run may not have leaves the key
+    standing with a hole after it, which is not blank and so is not dropped either.
+    """
+    tags = tags_for(f"experiment=examples/{example}")
+
+    assert "adamw" in tags
+    assert [tag for tag in tags if tag.endswith("=")] == []
+
+
+def test_a_run_is_filed_under_what_makes_it_unlike_an_ordinary_one() -> None:
+    """The sections an ordinary run leaves out are the ones worth filtering a list of runs by.
+
+    Each is read from the declaration that already states it rather than written again: the family the
+    heads are built over, the network itself under whichever key that family spells it with, the
+    schedule, the delta learned beside weights held still, and the second network that teaches. A
+    declaration is all a chip needs, so the run behind this one need not be one that would assemble.
+    """
+    ordinary = tags_for("experiment=examples/classification")
+    unusual = tags_for(
+        "experiment=examples/classification",
+        "model=dpt_dinov3",
+        "adapter=lora",
+        "scheduler=cosine",
+        "+learner={name: distillation}",
+    )
+
+    assert [tag for tag in ordinary if tag] == ["timm", "resnet18", "adamw", "lr=0.0003", "bs=32", "epochs=10"]
+    assert set(unusual) - set(ordinary) == {
+        "smp",
+        "dpt",
+        "tu-vit_small_plus_patch16_dinov3.lvd1689m",
+        "cosine",
+        "lora",
+        "distillation",
+    }
+
+
+def test_a_component_written_out_by_import_path_leaves_a_blank_chip_rather_than_ending_the_run() -> None:
+    """`_target_` writes no name anywhere in this grammar, and a chip reaching for one must not insist.
+
+    A run whose optimizer arrives by import path is ordinary — every registry position takes either
+    form — and the label it would be filed under is the last thing entitled to refuse it. Reaching
+    straight for the name ends such a run before it is validated, naming the slot in a list of chips
+    rather than the declaration or the fix.
+    """
+    tags = tags_for("experiment=examples/classification", "~optimizer.name", "+optimizer._target_=torch.optim.RAdam")
+
+    assert "adamw" not in tags
+    assert [tag for tag in tags if tag] == ["timm", "resnet18", "lr=0.0003", "bs=32", "epochs=10"]

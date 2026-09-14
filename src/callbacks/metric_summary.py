@@ -18,6 +18,13 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
+SUMMARY_DECIMALS = 3
+"""A summary table is read rather than computed with: 0.795 reads at a glance, 0.7948718070983887 does not.
+
+Here rather than at each backend, because every table a run keeps shows the same reading, and a number
+that differed between two of them would be the same measurement under two answers.
+"""
+
 
 @callback_registry.register("metric_summary")
 class MetricSummary(L.Callback):
@@ -54,5 +61,5 @@ def headlines(logged: Mapping[str, Tensor], stage: Stage) -> dict[str, float]:
     for key, value in logged.items():
         headline = MetricKey.headline(key)
         if headline is not None and headline.stage is stage:
-            found[headline.series] = float(value)
+            found[headline.series] = round(float(value), SUMMARY_DECIMALS)
     return found
