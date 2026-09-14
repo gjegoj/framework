@@ -75,19 +75,36 @@ class WeightedLossConfig(BaseModel):
 
 
 class HeadConfig(ComponentConfig):
-    """A head and the one feature stream it reads; a head over several streams arrives with detection.
+    """A head and the feature streams it reads — one, or several where a task is learned over them together.
 
     ``stream`` rather than ``input``: a run's inputs are what the data feeds the model
-    (``preprocessing.inputs.image``), while this names one of the features a backbone publishes.
+    (``preprocessing.inputs.image``), while this names the features a backbone publishes.
+
+    Several is how a pairing is declared — ``stream: [image_pooled, text_pooled]`` builds the declared
+    head once per stream, at the width each of them publishes, and the order written is the order the
+    answers arrive in. One or several is one key rather than two, as ``TaskConfig.loss`` already is.
     """
 
-    stream: str | None = Field(None, min_length=1)
+    stream: str | list[str] | None = None
+
+    @property
+    def streams(self) -> tuple[str, ...]:
+        """The features this head reads, as whoever builds it sees them however the declaration spelled it."""
+        if self.stream is None:
+            return ()
+        return (self.stream,) if isinstance(self.stream, str) else tuple(self.stream)
 
     @field_validator("stream")
     @classmethod
-    def named_stream(cls, value: str | None) -> str | None:
-        if value is not None and value.strip() != value:
-            raise ValueError("A head reads one feature name, unpadded.")
+    def named_streams(cls, value: str | list[str] | None) -> str | list[str] | None:
+        """Every spelling checked in one place, because there is one rule and two ways of writing it."""
+        names = (value,) if isinstance(value, str) else tuple(value or ())
+        if value is not None and not names:
+            raise ValueError("A head reads at least one feature; a list naming none builds nothing.")
+        if any(not name or name.strip() != name for name in names):
+            raise ValueError("A head reads feature names, each of them unpadded.")
+        if len(set(names)) != len(names):
+            raise ValueError("A head reads distinct features: one named twice would build two heads over it.")
         return value
 
 

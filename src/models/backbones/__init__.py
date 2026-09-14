@@ -7,8 +7,9 @@ so it is here beside the families rather than above them.
 from __future__ import annotations
 
 from src.models.backbones.hf import HFTextBackbone
+from src.models.backbones.multiencoder import MultiEncoderBackbone
 from src.models.backbones.multiview import MultiViewBackbone
 from src.models.backbones.smp import SmpBackbone
 from src.models.backbones.timm import TimmBackbone
 
-__all__ = ["HFTextBackbone", "MultiViewBackbone", "SmpBackbone", "TimmBackbone"]
+__all__ = ["HFTextBackbone", "MultiEncoderBackbone", "MultiViewBackbone", "SmpBackbone", "TimmBackbone"]

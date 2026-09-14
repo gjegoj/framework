@@ -70,12 +70,41 @@ def test_a_file_that_shares_no_name_with_this_network_is_refused_by_the_declarat
         start_from(Wrapped(), str(tmp_path / "vit.pth"), inside="model.")
 
 
-def test_a_file_that_fits_only_partly_is_refused_rather_than_half_loaded(tmp_path: Path) -> None:
-    """The rule the rest of this framework already keeps: a network half from a file is not a network."""
-    torch.save({"weight": torch.ones(CLASSES, WIDTH)}, tmp_path / "half.pth")
+@pytest.mark.parametrize(
+    ("held", "named"),
+    [
+        pytest.param(
+            {"weight": torch.ones(CLASSES, WIDTH)},
+            r"only in part — it carries nothing for model\.bias\.",
+            id="a file that fills only half of it",
+        ),
+        pytest.param(
+            {"weight": torch.ones(CLASSES, WIDTH), "bias": torch.ones(CLASSES), "extra": torch.ones(CLASSES)},
+            r"only in part — this network has no place for model\.extra\.",
+            id="a file bringing a name this network has nowhere to put",
+        ),
+        pytest.param(
+            {"weight": torch.ones(CLASSES, WIDTH), "extra": torch.ones(CLASSES)},
+            r"carries nothing for model\.bias, and this network has no place for model\.extra\.",
+            id="a file that is wrong in both directions at once",
+        ),
+    ],
+)
+def test_a_file_that_fits_only_partly_is_refused_rather_than_half_loaded(
+    held: dict[str, torch.Tensor], named: str, tmp_path: Path
+) -> None:
+    """The rule the rest of this framework already keeps: a network half from a file is not a network.
 
-    with pytest.raises(ValueError, match="bias"):
-        start_from(Wrapped(), str(tmp_path / "half.pth"), inside="model.")
+    Each case is matched on the whole clause the refusal owes it, rather than on a name the file
+    happens to hold: measured, matching `bias` alone was satisfied by the refusal *above* — which
+    prints the names this network is built of — so the test passed while the wrong thing was said.
+    A file that fits everything and brings extras is the smp case, where a family carries a head the
+    declaration did not name as one to hold back.
+    """
+    torch.save(held, tmp_path / "part.pth")
+
+    with pytest.raises(ValueError, match=named):
+        start_from(Wrapped(), str(tmp_path / "part.pth"), inside="model.")
 
 
 def test_a_file_that_is_not_weights_at_all_is_refused_before_anything_is_put_anywhere(tmp_path: Path) -> None:

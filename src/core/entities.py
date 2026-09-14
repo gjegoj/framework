@@ -75,23 +75,30 @@ def class_name(classes: Mapping[int, str] | None, index: int) -> str:
     return f"class{index}" if classes is None else classes.get(index, f"class{index}")
 
 
-def as_children(children: Mapping[str, nn.Module]) -> nn.ModuleDict:
-    """The modules a run keeps one per task, under the names the run gave its tasks.
+def as_children(children: Mapping[str, nn.Module], *, label: str = "task") -> nn.ModuleDict:
+    """The modules a run keeps one per declared name, under the names the declaration gave them.
 
-    Here rather than at each of the two places that keep such a mapping — a model's heads, a learner's
-    losses — because both turn one vocabulary into torch children and both owe the same answer when a
-    name cannot be one. Torch is asked rather than listed: every ``nn.Module`` already answers to
-    ``training``, ``forward`` and some forty more, and a child shadowing one is refused by the
-    container with a message about attributes, minutes into a run and naming nothing a reader wrote.
+    Here rather than at each of the places that keep such a mapping — a model's heads, a learner's
+    losses, the heads of one task reading a pair of streams, the towers of a pairing — because each
+    turns a declared vocabulary
+    into torch children and each owes the same answer when a name cannot be one. Torch is asked rather
+    than listed: every ``nn.Module`` already answers to ``training``, ``forward`` and some forty more,
+    and a child shadowing one is refused by the container with a message about attributes, minutes
+    into a run and naming nothing a reader wrote.
 
     Not folded into ``validate_name``: a loss's log name and a metric's label pass through that too,
     and neither becomes an attribute of anything.
+
+    Parameters:
+        children: The modules to keep, by the name each was declared under.
+        label: What one of those names names, so a refusal says which declaration to go and edit —
+            a run's tasks, or the feature streams one head was declared over.
     """
     reserved = sorted(name for name in children if hasattr(nn.Module, name) or name in vars(nn.Module()))
     if reserved:
         raise ValueError(
-            f"{', '.join(repr(name) for name in reserved)} cannot name a task: every torch module already "
-            "answers to it, so the run could not keep this one under that name. Rename it."
+            f"{', '.join(repr(name) for name in reserved)} cannot name a {label}: every torch module "
+            "already answers to it, so the run could not keep this one under that name. Rename it."
         )
     return nn.ModuleDict(dict(children))
 

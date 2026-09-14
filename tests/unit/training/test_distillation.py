@@ -142,6 +142,20 @@ def test_a_task_whose_answer_is_not_a_distribution_over_classes_is_refused() -> 
     assert "age" in str(refusal.value)
 
 
+def test_a_teacher_answering_in_another_space_is_refused_rather_than_broadcast() -> None:
+    """Two distributions of different widths are not far apart or close: they are not comparable at all.
+
+    `kl_div` broadcasts, so a teacher answering over one class against a student over three produced a
+    finite 53.72823 and a total that read like distillation. Whether the two were ever asked the same
+    question is exactly what the number cannot say, and the builder can only settle it for a teacher it
+    composed itself — one arriving whole by `_target_` is checked here, where both answers are in hand.
+    """
+    learner = taught(teacher=torch.tensor([[1.0], [0.5]]))
+
+    with pytest.raises(ValueError, match=r"answers \[2, 1\] — over 1 class"):
+        learner.step(batch())
+
+
 def test_the_teacher_is_moved_wherever_the_run_moved_everything_else() -> None:
     """Held outside the module tree, it is not carried along by the move that puts the run on its device."""
     learner = taught()

@@ -52,7 +52,12 @@ class HFTextBackbone(Backbone):
         super().__init__()
         if pooling not in POOLINGS:
             raise ValueError(f"pooling is one of {', '.join(POOLINGS)}, got {pooling!r}.")
-        self.model = AutoModel.from_pretrained(model_name)
+        # Put back into the state every network here is built in. Measured: `from_pretrained` returns
+        # 30 of this family's 31 modules in eval, where timm returns 0 of 95 and smp 0 of 135, and a fit
+        # never puts them back — so a run declaring no `freeze` trained a tower whose dropout was off
+        # (two passes over one caption, identical as it arrives and 0.30 apart once it is training).
+        # What holds a network still here is a declaration, and this is what leaves that true.
+        self.model = AutoModel.from_pretrained(model_name).train()
         self.input_name = input_name
         self.pooling = pooling
         self.width = int(self.model.config.hidden_size)

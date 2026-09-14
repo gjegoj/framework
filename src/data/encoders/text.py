@@ -47,7 +47,7 @@ class TextEncoder(InputEncoder):
         if max_length <= 0:
             raise ValueError(f"max_length is how many tokens a caption becomes, so it is positive, got {max_length}.")
         self.model_name = model_name
-        self.max_length = int(max_length)
+        self.max_length = max_length
         self.tokenizer: PreTrainedTokenizerBase = AutoTokenizer.from_pretrained(model_name)
         self.reads: tuple[str, ...] = tuple(self.tokenizer.model_input_names)
         """The names this family's model is called with, which are the leaves of this input's tree."""

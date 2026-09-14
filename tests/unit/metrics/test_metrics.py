@@ -177,6 +177,26 @@ class TestGalleryReadings:
         with pytest.raises(ValueError, match="another of its own identity"):
             metric.compute()
 
+    @pytest.mark.parametrize("reading", GALLERY_READINGS)
+    def test_a_gallery_holding_a_direction_that_is_not_one_is_refused_rather_than_ranked(
+        self, reading: type[GalleryReading]
+    ) -> None:
+        """A number that is not a number ranks, compares and files like any other, and reads as a score.
+
+        Measured on four samples of two identities with a single NaN among the thirty-two values:
+        recall@1 answered 0.5, mAP 0.6667 and verification 0.5 — a plausible epoch from an encoder that
+        had produced nothing of the sort. Refused on the gallery rather than in each reading, because
+        every one of them loses the evidence at the same step: after `topk`, after a comparison, after
+        `bucketize`, a NaN is an ordinary index.
+        """
+        embeddings = torch.eye(4)
+        embeddings[0, 0] = float("nan")
+        metric = reading()
+        metric.update(embeddings, torch.tensor([0, 0, 1, 1]))
+
+        with pytest.raises(ValueError, match="1 of 4"):
+            metric.compute()
+
     def test_every_reading_of_one_epoch_shares_the_one_copy_of_it(self) -> None:
         """Measured on torchmetrics 1.9.0: metrics whose state agrees after a batch become one compute
         group, after which only the group's leader is updated and the rest are handed its state by
@@ -259,9 +279,18 @@ class TestRetrieval:
         zero, it read 0.1429 where the average precision of those very ranks is 0.0848. Average
         precision is a function of the ranking alone, so a shift that preserves every order changes
         nothing about the question and everything about whether the library may be asked it.
+
+        Two things about the epoch below are the fixture rather than decoration, and this test failed
+        for both before they were. Every identity appears more than once, because a query with nobody of
+        its own is the one case where the two readings differ *by design* — this one leaves it out and
+        the library scores it nought, which is what the test below this states — and a drawn identity
+        was lonely in 7 of 200 draws, every one of them a disagreement. And the directions are drawn in
+        double, because two near-equal cosines can sort one way here and the other way in the library:
+        measured over 200 draws, in single they part by up to 8.1e-06 — above any tolerance at which
+        this test would still be saying anything — and in double by 3.0e-08.
         """
-        identities = torch.randint(0, 8, (60,))
-        embeddings = torch.nn.functional.normalize(torch.randn(60, 16), dim=1)
+        identities = torch.arange(8).repeat(8)
+        embeddings = torch.nn.functional.normalize(torch.randn(64, 16, dtype=torch.float64), dim=1)
         pairs = ~torch.eye(len(identities), dtype=torch.bool)
         similarity = embeddings @ embeddings.T
         ours = MeanAveragePrecision()
@@ -399,6 +428,23 @@ def best_over_every_observed_value(embeddings: Tensor, identities: Tensor) -> fl
 
 
 class TestVerification:
+    def test_rejecting_every_pair_is_a_decision_this_sweep_can_reach(self) -> None:
+        """A collapsed encoder answers every pair alike, and then the only useful decision is to accept none.
+
+        Measured before this held: four identical directions over two identities read an accuracy of
+        1/3, while rejecting every pair — the baseline anybody reaches without a model — gives 2/3. The
+        grid ended at 1.0 and the rule is `cosine >= threshold`, so a pair sitting at exactly 1.0 could
+        not be refused by any candidate on it. A reading below its own trivial baseline is not a reading.
+        """
+        collapsed = torch.tensor([[1.0, 0.0]]).repeat(4, 1)
+        identities = torch.tensor([0, 0, 1, 1])
+        accuracy, threshold = VerificationAccuracy(), VerificationThreshold()
+        accuracy.update(collapsed, identities)
+        threshold.update(collapsed, identities)
+
+        assert float(accuracy.compute()) == pytest.approx(4 / 6)
+        assert float(threshold.compute()) > 1.0
+
     """Telling two pictures of one identity from two of different ones: one threshold over the cosines."""
 
     def test_the_accuracy_it_reports_is_the_accuracy_at_the_threshold_it_reports(self) -> None:

@@ -300,6 +300,23 @@ class TestWhatARunShips:
         assert (directory / "model.json").exists()
         assert [one.name for one in manifest.outputs] == ["species"]
 
+    def test_nothing_is_published_from_a_rank_that_is_not_the_first(
+        self, declaration: Mapping[str, Any], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Every rank runs this script to its end, and writing a file is not something a logger makes once.
+
+        What Lightning makes happen once is a *logged* value; an exporter writes bytes straight to a
+        path it was handed, so under a strategy that keeps every process inside the script each of them
+        would write the same artifact at the same moment, over each other.
+        """
+        built = experiment(declaration, export=[{"name": "torchscript"}])
+        monkeypatch.setattr(type(built.trainer), "is_global_zero", property(lambda self: False))
+
+        manifest = run(built)
+
+        assert manifest.artifacts == ()
+        assert not list(Path(declaration["run"]["directory"]).glob("model.*"))
+
     def test_a_run_that_declared_no_format_writes_nothing_and_says_nothing(
         self, declaration: Mapping[str, Any]
     ) -> None:

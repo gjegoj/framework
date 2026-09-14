@@ -12,9 +12,10 @@ from torch import Tensor, nn
 from src.config import ComponentConfig, HeadConfig, ModelConfig
 from src.core import Axis, ModelOutput, Stream, TensorShape, TensorTree
 from src.models import CompositeModel, Model
+from src.models.backbones.multiencoder import MultiEncoderBackbone
 from src.models.build import build_head, build_model
-from src.models.heads import ConvHead, ExpandedHead, LinearHead
-from tests.unit.models.conftest import MAP_WIDTH, POOLED_WIDTH, Encoder
+from src.models.heads import ConvHead, ExpandedHead, LinearHead, StackedHeads
+from tests.unit.models.conftest import MAP_WIDTH, NARROW_WIDTH, POOLED_WIDTH, Encoder, Sentences
 
 CLASSES = TensorShape(axes=(Axis.CLASSES,), sizes=(3,))
 DENSE = TensorShape(axes=(Axis.CLASSES, Axis.HEIGHT, Axis.WIDTH), sizes=(3, None, None))
@@ -26,8 +27,13 @@ def composite(**overrides: Any) -> ModelConfig:
     return ModelConfig(name="composite", backbone=ENCODER, **overrides)
 
 
-def head(name: str = "linear", stream: str = Stream.POOLED, **params: Any) -> HeadConfig:
+def head(name: str = "linear", stream: str | list[str] = Stream.POOLED, **params: Any) -> HeadConfig:
     return HeadConfig(name=name, stream=stream, **params)
+
+
+def paired() -> MultiEncoderBackbone:
+    """Two towers of deliberately different widths, which is what a head over both is sized by."""
+    return MultiEncoderBackbone({"image": Encoder(), "text": Sentences()})
 
 
 def projection(head: nn.Module) -> nn.Linear | nn.Conv2d:
@@ -54,6 +60,25 @@ class TestSizing:
         sizes = projection(built)
         assert (sizes.in_channels if isinstance(sizes, nn.Conv2d) else sizes.in_features) == width
         assert (sizes.out_channels if isinstance(sizes, nn.Conv2d) else sizes.out_features) == 3
+
+    def test_a_head_declared_over_several_streams_is_one_of_it_per_stream_sized_by_each(self) -> None:
+        """A pair of towers is read by a pair of heads, and neither width is written in the declaration.
+
+        Declared the other way round from how the towers were, and deliberately not in alphabetical
+        order: what the schema promises is that the order *written* is the order the answers arrive in,
+        and every specimen that happened to be alphabetical left that promise resting on nothing.
+        """
+        built = build_head("t", head("linear", ["text_pooled", "image_pooled"]), CLASSES, paired())
+
+        assert isinstance(built.head, StackedHeads)
+        assert [projection(part).in_features for part in built.head.heads.values()] == [NARROW_WIDTH, POOLED_WIDTH]
+        assert built.streams == ("text_pooled", "image_pooled")
+
+    def test_a_head_over_one_stream_is_that_head_rather_than_a_stack_holding_it(self) -> None:
+        """Every run this framework has is this one; reading a pair is what the other shape is for."""
+        built = build_head("t", head("linear", Stream.POOLED), CLASSES, Encoder())
+
+        assert isinstance(built.head, LinearHead)
 
     def test_a_task_whose_output_names_no_width_is_refused_rather_than_given_one(self) -> None:
         """A head makes some number of values per position; a shape naming none cannot size one.
@@ -255,10 +280,16 @@ class TestStartedFromAFile:
 
 
 def test_a_carried_classifier_with_more_than_one_head_to_land_in_is_refused_by_name() -> None:
-    """One file carries one classifier, and two tasks reading it would both claim the same rows."""
-    shapes = {"a": TensorShape(axes=(Axis.CLASSES,), sizes=(3,)), "b": TensorShape(axes=(Axis.CLASSES,), sizes=(3,))}
+    """One file carries one classifier, and two tasks reading it would both claim the same rows.
 
-    with pytest.raises(ValueError, match="a, b"):
+    Named by the weights rather than by the key that brought them: where `checkpoint_path` is written
+    depends on where the backbone sits, and a wrapped one is declared at `model.backbone.backbone` —
+    so a message spelling the plain path out would send that run to edit a key it does not have.
+    """
+    shapes = {"a": TensorShape(axes=(Axis.CLASSES,), sizes=(3,)), "b": TensorShape(axes=(Axis.CLASSES,), sizes=(3,))}
+    named = "weights this backbone started from carry one classifier, and this run declares a, b"
+
+    with pytest.raises(ValueError, match=named):
         build_model(
             ModelConfig(name="composite", backbone=ComponentConfig(_target_=f"{__name__}.Started")),
             {"a": head(), "b": head()},

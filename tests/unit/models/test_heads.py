@@ -8,7 +8,7 @@ from torch import nn
 
 from src.core import FEATURE_AXIS, Axis
 from src.models.base import ShapeAware
-from src.models.heads import ConvHead, CosineHead, ExpandedHead, LinearHead
+from src.models.heads import ConvHead, CosineHead, ExpandedHead, LinearHead, StackedHeads
 from src.models.registry import head_registry
 
 WIDTH, CLASSES = 6, 2
@@ -105,3 +105,23 @@ class TestExpandedHead:
 
         assert {name for name, _ in grown.named_children()} == {"base", "novel"}
         assert "base.projection.weight" in grown.state_dict()
+
+
+class TestStacked:
+    """Several streams, one head each, their answers folded into the batch the way a sample's draws are."""
+
+    def test_every_stream_is_read_by_a_head_built_for_its_own_width(self) -> None:
+        """What arrives is one answer per stream per sample, which is what a batch of them holds."""
+        stacked = StackedHeads({"first": nn.Linear(2, CLASSES), "second": nn.Linear(4, CLASSES)})
+
+        answered = stacked(torch.zeros(3, 2), torch.zeros(3, 4))
+
+        assert tuple(answered.shape) == (3 * 2, CLASSES)
+
+    def test_the_answers_of_one_sample_stay_next_to_each_other(self) -> None:
+        """The order an objective comparing a pair recovers them by; it is the contract, not an accident."""
+        stacked = StackedHeads({"first": nn.Identity(), "second": nn.Identity()})
+
+        answered = stacked(torch.tensor([[1.0], [2.0]]), torch.tensor([[10.0], [20.0]]))
+
+        assert answered.flatten().tolist() == [1.0, 10.0, 2.0, 20.0]

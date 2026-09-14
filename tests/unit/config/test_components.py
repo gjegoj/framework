@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from src.config import ComponentConfig
+from src.config import ComponentConfig, HeadConfig
 
 
 @pytest.mark.parametrize(
@@ -49,3 +49,37 @@ def test_reads_every_spelling_the_same_way(
 def test_refuses_an_ambiguous_or_foreign_declaration(declared: Any) -> None:
     with pytest.raises(ValidationError):
         ComponentConfig.model_validate(declared)
+
+
+class TestHead:
+    """A head declares the features it reads: one, or several where its task is learned over a pair of them."""
+
+    @pytest.mark.parametrize(
+        ("declared", "streams"),
+        [
+            pytest.param({"name": "linear", "stream": "pooled"}, ("pooled",), id="one"),
+            pytest.param(
+                {"name": "linear", "stream": ["image_pooled", "text_pooled"]},
+                ("image_pooled", "text_pooled"),
+                id="several, in the order they were written",
+            ),
+            pytest.param({"name": "native"}, (), id="none, for the task's own default to fill in"),
+        ],
+    )
+    def test_reads_one_name_or_several_the_same_way(self, declared: Any, streams: tuple[str, ...]) -> None:
+        """Whichever shape the declaration took, what builds the head reads one: `stream: pooled` is a list of one."""
+        assert HeadConfig.model_validate(declared).streams == streams
+
+    @pytest.mark.parametrize(
+        "stream",
+        [
+            pytest.param(" pooled", id="padded"),
+            pytest.param(["image_pooled", " text_pooled"], id="padded among several"),
+            pytest.param(["pooled", "pooled"], id="one feature named twice"),
+            pytest.param([], id="a list naming nothing"),
+        ],
+    )
+    def test_refuses_anything_but_distinct_names_of_features(self, stream: Any) -> None:
+        """A feature named twice would build two heads over one stream, which can only be a slip of the pen."""
+        with pytest.raises(ValidationError):
+            HeadConfig(name="linear", stream=stream)

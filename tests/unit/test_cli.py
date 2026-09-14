@@ -156,6 +156,11 @@ def test_a_declaration_too_wide_for_the_panel_is_folded_rather_than_cropped(monk
             UserWarning,
             id="hook",
         ),
+        pytest.param(
+            "3 NaN values found in confusion matrix have been replaced with zeros.",
+            UserWarning,
+            id="empty rows of a confusion matrix",
+        ),
     ],
 )
 def test_each_silenced_notice_is_a_notice_these_libraries_actually_write(message: str, category: type[Warning]) -> None:

@@ -19,6 +19,9 @@ from tests.support.tasks import CLASSES as THREE
 from tests.support.tasks import specimen as task_specimen
 
 CLASSES = 3
+MULTICLASS = Semantics.MULTICLASS
+LOGITS = torch.tensor([[2.0, -1.0, 0.5], [-0.5, 1.0, 2.0]])
+"""Two samples over three classes, the batch the soft-target reading was measured on."""
 
 
 NUMBERS = (torch.randn(4), torch.tensor([1.0, 2.0, 3.0, 4.0]))
@@ -242,6 +245,43 @@ class TestSemantics:
         result = build_loss(task.default_loss, task.facts())(task.raw(output), task.loss_target(batch))
 
         assert result.total.ndim == 0 and bool(torch.isfinite(result.total))
+
+
+class TestFocal:
+    """A batch transform leaves a share of each class on every row, and the objective has to stay the one it was."""
+
+    def multiclass(self, **params: Any) -> Loss:
+        return build_loss(ComponentConfig(name="focal", **params), settled(TargetInfo(classes=THREE), MULTICLASS))
+
+    def test_a_share_that_names_one_class_reads_as_that_class(self) -> None:
+        """`gamma: 0` is cross-entropy, so a one-hot share and the index it names have to give one number.
+
+        Measured before this held: the share went down the yes-or-no branch — a sigmoid over each class
+        on its own — and the same batch read 0.55476 against cross-entropy's 0.30643. MixUp and CutMix
+        produce exactly this target, so a multiclass run declaring `loss: focal` beside either of them
+        was descending a set of independent binary questions with nothing anywhere to say so.
+        """
+        focal = self.multiclass(gamma=0.0)
+        hard = torch.tensor([0, 2])
+
+        answered = focal(LOGITS, torch.nn.functional.one_hot(hard, CLASSES).float())
+
+        assert float(answered.total) == pytest.approx(float(focal(LOGITS, hard).total))
+
+    def test_a_multiclass_answer_is_the_same_when_every_logit_moves_together(self) -> None:
+        """A distribution over classes reads differences; a loss following the absolute size reads something else."""
+        focal = self.multiclass(gamma=2.0)
+        shared = torch.nn.functional.one_hot(torch.tensor([0, 2]), CLASSES).float()
+
+        assert float(focal(LOGITS + 10.0, shared).total) == pytest.approx(float(focal(LOGITS, shared).total))
+
+    def test_the_discount_still_spares_nothing_a_share_already_gets_right(self) -> None:
+        """What focal is for: a confident right answer stops carrying the gradient, share or index alike."""
+        focal = self.multiclass(gamma=2.0)
+        certain = torch.tensor([[20.0, -20.0, -20.0], [-20.0, -20.0, 20.0]])
+        shared = torch.nn.functional.one_hot(torch.tensor([0, 2]), CLASSES).float()
+
+        assert float(focal(certain, shared).total) < float(focal(LOGITS, shared).total)
 
 
 class TestShapes:

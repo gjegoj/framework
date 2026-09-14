@@ -79,10 +79,29 @@ class GalleryReading(torchmetrics.Metric, ABC):
 
     def compute(self) -> Tensor:
         """The epoch as one gallery, normalized so ranking follows angle whatever the model publishes."""
-        embeddings = normalize(dim_zero_cat(self.embeddings), dim=FEATURE_AXIS)
+        embeddings = dim_zero_cat(self.embeddings)
         identities = dim_zero_cat(self.identities)
+        self._refuse_a_gallery_that_holds_what_is_not_a_direction(embeddings)
         self._refuse_a_gallery_of_one_identity(identities)
-        return self._read(embeddings, identities)
+        return self._read(normalize(embeddings, dim=FEATURE_AXIS), identities)
+
+    @staticmethod
+    def _refuse_a_gallery_that_holds_what_is_not_a_direction(embeddings: Tensor) -> None:
+        """A value that is not finite normalises, ranks, compares and files like any other, and scores.
+
+        Asked once here rather than in each reading, because every one of them loses the evidence at the
+        same step: after a `topk`, a comparison or a `bucketize` a NaN is an ordinary index. Measured on
+        four samples of two identities with one NaN among their values — recall@1 0.5, mAP 0.6667,
+        verification 0.5, every one of them an ordinary-looking epoch from an encoder that made none.
+        """
+        loose = int((~embeddings.isfinite().all(dim=FEATURE_AXIS)).sum())
+        if loose:
+            raise ValueError(
+                f"{loose} of {len(embeddings)} samples answered this epoch with something that is not a "
+                f"direction: a value that is not finite. Nothing downstream can tell one apart — it "
+                f"normalises, ranks and files like any other number — so the epoch would be scored as "
+                f"though the model had answered. What produced them is what to look at."
+            )
 
     @abstractmethod
     def _read(self, embeddings: Tensor, identities: Tensor) -> Tensor:
@@ -285,16 +304,22 @@ def _separated(blocks: Iterator[tuple[Tensor, Tensor, int]], identities: Tensor)
     rather than by the epoch squared. Where several thresholds read alike the lowest is answered with,
     which is the field's convention and the only one the epoch holds a reason to prefer.
     """
-    thresholds = torch.linspace(-1.0, 1.0, LEVELS, device=identities.device)
-    matched = torch.zeros(LEVELS, dtype=torch.long, device=identities.device)
+    # One candidate past the top of the range, because the rule is `cosine >= threshold` and a pair at
+    # exactly 1.0 has to be refusable by something. Without it a collapsed encoder — four identical
+    # directions over two identities — read 1/3 where refusing every pair, the baseline anybody reaches
+    # without a model, gives 2/3: a reading below its own floor. The step is the grid's own, so the
+    # accuracy answered is still exactly the accuracy of the threshold answered beside it.
+    candidates = LEVELS + 1
+    thresholds = torch.linspace(-1.0, 1.0 + 2.0 / (LEVELS - 1), candidates, device=identities.device)
+    matched = torch.zeros(candidates, dtype=torch.long, device=identities.device)
     apart = torch.zeros_like(matched)
     for similarity, mine, at in blocks:
         filed = torch.bucketize(similarity, thresholds, right=True, out_int32=True).sub_(1).clamp_(min=0)
         rows = torch.arange(len(mine), device=filed.device)
         # A picture is not a pair with itself: sent to the level past the end, which is sliced off below.
-        filed[rows, rows + at] = LEVELS
-        held = torch.bincount(filed.flatten(), minlength=LEVELS + 1)[:LEVELS]
-        ours = torch.bincount(filed[identities == mine.unsqueeze(-1)], minlength=LEVELS + 1)[:LEVELS]
+        filed[rows, rows + at] = candidates
+        held = torch.bincount(filed.flatten(), minlength=candidates + 1)[:candidates]
+        ours = torch.bincount(filed[identities == mine.unsqueeze(-1)], minlength=candidates + 1)[:candidates]
         matched += ours
         apart += held - ours
     found = matched.sum() - matched.cumsum(0) + matched

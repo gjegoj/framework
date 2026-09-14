@@ -85,10 +85,15 @@ class Backbone(nn.Module, ABC):
 
 @dataclass(frozen=True, slots=True)
 class HeadConnection:
-    """One ready head and the stream it reads; the mapping key that holds it names its output."""
+    """One ready head and the features it reads, in order; the mapping key that holds it names its output.
+
+    A tuple rather than a name, because a head reading a pair of towers is read exactly as a head
+    reading one is — the model hands it what it named, in the order it named them, and how many that is
+    is the declaration's business rather than the model's.
+    """
 
     head: nn.Module
-    stream: str
+    streams: tuple[str, ...]
 
 
 @runtime_checkable
@@ -114,6 +119,17 @@ class Produces(Protocol):
     """
 
     produces: ClassVar[Representation]
+
+
+def produced_by(head: nn.Module) -> Representation:
+    """What a head's numbers are: what the head says, or a projection where it says nothing.
+
+    One home, because three readers ask it — the model serving a task, and each of the two wrappers
+    this framework builds around a declared head, which answer for the declaration they were built
+    from. A wrapper answering for itself would be saying `projected` about a tensor of angles, and the
+    composition root reading that told a run to declare the head it had already declared.
+    """
+    return head.produces if isinstance(head, Produces) else Representation.PROJECTED
 
 
 def required_input(inputs: Mapping[str, TensorTree], name: str, reader: str) -> TensorTree:

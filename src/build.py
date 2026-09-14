@@ -16,11 +16,12 @@ import logging
 from typing import TYPE_CHECKING
 
 import lightning as L
+import numpy as np
 from lightning import seed_everything
 
 from src.callbacks.build import build_callbacks
-from src.config import ExperimentConfig, TaskConfig
-from src.core import Stage
+from src.config import ExperimentConfig, HeadConfig, TaskConfig
+from src.core import Axis, Sample, Stage, TensorShape, require_tensor
 from src.data.build import build_data_module, build_preprocessor
 from src.experiment import Experiment
 from src.export import WRITTEN_FROM, example_inputs
@@ -44,13 +45,14 @@ from src.transforms.build import build_transforms
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
-    from src.core import DatasetInfo
+    from src.core import DatasetInfo, Normalization
     from src.data import DataModule
     from src.export import Exporter
     from src.losses import Loss
     from src.metrics import MetricCollection
     from src.models import Model
     from src.tasks import Task
+    from src.transforms import SampleTransform
 
 log = logging.getLogger(__name__)
 
@@ -82,6 +84,7 @@ def build(config: ExperimentConfig) -> Experiment:
     losses = {name: loss_for(config.tasks[name], task) for name, task in tasks.items()}
     measured = {name: metrics_for(config.tasks[name], task) for name, task in tasks.items()}
     _refuse_a_head_and_an_objective_that_disagree(model, losses)
+    _refuse_a_head_of_several_streams_under_an_objective_that_reads_one(heads, losses)
     _refuse_watching_an_objective_this_run_never_scores(config, tasks, losses, measured)
     learner = build_learner(
         config.learner,
@@ -117,6 +120,16 @@ def _refuse_a_run_that_could_never_write_what_it_declares(exporters: Sequence[Ex
         example_inputs(info, list(info.inputs), WRITTEN_FROM)
 
 
+FULL = 255.0
+"""What an 8-bit pixel reads at its brightest, which is the range a chain is asked to scale from."""
+
+SHADES = (32.0, 224.0)
+"""The darkest and brightest level the probe uses; inside the range so that no clipping hides an error."""
+
+TOLERANCE = 1e-3
+"""How far a resize's own interpolation may move a flat image before the scaling is called wrong."""
+
+
 def prepare_data(config: ExperimentConfig, kinds: Mapping[str, type[Task]]) -> DataModule:
     """Read the sources, fit the encoders on the training split, and warm whatever cache there is.
 
@@ -139,8 +152,74 @@ def prepare_data(config: ExperimentConfig, kinds: Mapping[str, type[Task]]) -> D
     data.setup(splits)
     if Stage.TRAIN in splits:
         data.fit_preprocessing(Stage.TRAIN)
+    # After the fit and before the warm: an encoder that learns its layout has nothing to publish until
+    # the first of those, and the second is the expensive one — a run whose pixels do not become what it
+    # declared should hear so before it reads a dataset, not after.
+    _refuse_a_chain_that_does_not_scale_as_the_declaration_promises(data.info, transforms)
     data.warm(splits)
     return data
+
+
+def _refuse_a_chain_that_does_not_scale_as_the_declaration_promises(
+    info: DatasetInfo, transforms: Mapping[str, SampleTransform]
+) -> None:
+    """What an image becomes is declared in one section and done by another, and nothing compared them.
+
+    `preprocessing.inputs.<name>` is what the record beside an exported artifact promises whoever serves
+    it, and what a sample page un-scales pixels by; the arithmetic is the chain a stage declares, which
+    is free to do something else entirely. Measured: mean and std of 0.5 beside a `Normalize` told the
+    pixels already run 0..1 leaves a white pixel at 509 where the declaration puts it at 1 — and both
+    halves are self-consistent, so no number of the run looks wrong.
+
+    The chain is *asked* rather than read: searching it for a `Normalize` to compare parameters against
+    would be a second reading of somebody else's operation, defeated by any other spelling of the same
+    arithmetic. Only the stages that are not training, because an augmentation draws — what one does to
+    a pixel is not a fact about the run — and because what the promise is about is inference, which the
+    evaluation chains are the shape of.
+    """
+    for name, declared in info.inputs.items():
+        shape = declared.shape
+        if declared.normalization is None or not isinstance(shape, TensorShape):
+            continue
+        height, width = shape.size(Axis.HEIGHT), shape.size(Axis.WIDTH)
+        if height is None or width is None:
+            continue
+        for stage, chain in transforms.items():
+            if stage != Stage.TRAIN:
+                _refuse_one_chain(name, stage, chain, declared.normalization, (height, width))
+
+
+def _refuse_one_chain(
+    name: str, stage: str, chain: SampleTransform, declared: Normalization, size: tuple[int, int]
+) -> None:
+    """One known image through one chain, against where the declaration says each channel should land.
+
+    A different level per channel rather than one flat grey, so that a chain putting the channels in
+    another order than the statistics were written for is caught by the same probe as a wrong scale.
+
+    Read from the trailing axes, because what a chain answers with is not always one image: a stage
+    drawing views answers with a stack of them, and every draw is scaled the same way, so every draw is
+    checked.
+    """
+    levels = np.linspace(SHADES[0], SHADES[1], len(declared.mean)).round()
+    probe = np.broadcast_to(levels.astype(np.uint8), (*size, len(levels)))
+    answered = require_tensor(chain(Sample(inputs={name: np.squeeze(probe)})).inputs[name], name=name)
+    wanted = [
+        round((float(level) / FULL - mean) / deviation, 4)
+        for level, mean, deviation in zip(levels, declared.mean, declared.std, strict=True)
+    ]
+    for drawn in answered[..., 0, 0].reshape(-1, len(levels)).tolist():
+        landed = [round(one, 4) for one in drawn]
+        if any(abs(one - other) > TOLERANCE for one, other in zip(landed, wanted, strict=True)):
+            raise ValueError(
+                f"The chain `transforms.{stage}` does not scale {name!r} as `preprocessing.inputs` "
+                f"declares: a pixel reading {levels.tolist()} out of {FULL} arrives as {landed}, where "
+                f"mean {list(declared.mean)} and std {list(declared.std)} put it at {wanted}. That "
+                f"declaration is what the record beside an exported artifact promises whoever serves "
+                f"the model, so the two have to be one preprocessing. A `Normalize` told the pixels "
+                f"already run 0..1 is the usual cause; channels in another order than the statistics "
+                f"were written for is the other."
+            )
 
 
 def needed_splits(config: ExperimentConfig) -> tuple[Stage, ...]:
@@ -184,6 +263,31 @@ def _refuse_a_head_and_an_objective_that_disagree(model: Model, losses: Mapping[
                 f"holds, so this pair would train and report a number that looks like work. Declare "
                 f"`tasks.{name}.loss` that reads {answered}, or a head that answers with {loss.reads} — "
                 f"`tasks.{name}.head` where the run composes one, `produces` on a network arriving whole."
+            )
+
+
+def _refuse_a_head_of_several_streams_under_an_objective_that_reads_one(
+    heads: Mapping[str, HeadConfig], losses: Mapping[str, Loss]
+) -> None:
+    """A head reading several streams answers once per stream for every sample; most objectives read one.
+
+    Here because only the root holds both: how many streams a head was declared over belongs to the
+    model section, and how many answers an objective compares belongs to the objective. Left to meet on
+    the first batch, the pair died inside torch with `Expected input batch_size (4) to match target
+    batch_size (2)`, naming neither declaration nor which of the two to change.
+
+    One stream under an objective reading two is deliberately not refused: a stage drawing views supplies
+    the second answer, and how many it drew is known to the batch alone. Only the direction that can
+    never work is refused here.
+    """
+    for name, head in heads.items():
+        streams, reads = len(head.streams), losses[name].reads_per_sample
+        if streams > 1 and streams != reads:
+            raise ValueError(
+                f"Task {name!r}: `head.stream` names {streams} features, so this head answers {streams} "
+                f"times for every sample, and objective {losses[name].log_name!r} reads {reads}. Name one "
+                f"stream, or declare an objective that learns from several answers of a sample — "
+                f"`info_nce` reads a pair."
             )
 
 

@@ -6,6 +6,7 @@ from collections.abc import Collection, Mapping
 from typing import cast, override
 
 import torch
+from torch import Tensor
 from torch.nn.functional import kl_div, log_softmax
 
 from src.core import FEATURE_AXIS, Batch, LossOutput, ModelOutput, Semantics
@@ -124,11 +125,33 @@ class DistillationLearner(StandardLearner):
         a task answering once per sample and one answering once per pixel. For a flat output that is
         exactly torch's ``batchmean``; for a dense one, ``batchmean`` would report the sum over an image.
         """
-        softened = log_softmax(task.raw(output) / self._temperature, dim=FEATURE_AXIS)
-        teaching = log_softmax(task.raw(taught) / self._temperature, dim=FEATURE_AXIS)
+        answered, teaches = task.raw(output), task.raw(taught)
+        self._refuse_a_teacher_answering_in_another_space(name, answered, teaches)
+        softened = log_softmax(answered / self._temperature, dim=FEATURE_AXIS)
+        teaching = log_softmax(teaches / self._temperature, dim=FEATURE_AXIS)
         pointwise = kl_div(softened, teaching, reduction="none", log_target=True)
         divergence = pointwise.sum(FEATURE_AXIS).mean() * self._temperature**2
         return (LossOutput.reported(DISTILLATION, divergence) * self._weight).prefixed(name)
+
+    @staticmethod
+    def _refuse_a_teacher_answering_in_another_space(name: str, answered: Tensor, teaches: Tensor) -> None:
+        """Two distributions of different widths are not far apart or close; they are not comparable.
+
+        Here rather than at the build, because this is where it can be known: a teacher the root composed
+        is sized by the very outputs the student is, but one arriving whole by `_target_` answers with
+        whatever it answers with, and only its answer says what that is. `kl_div` broadcasts, so a
+        teacher over one class against a student over three gave a finite 53.72823 and a total that
+        read like distillation.
+        """
+        if answered.shape != teaches.shape:
+            raise ValueError(
+                f"Task {name!r}: this run's network answers {list(answered.shape)} and the teacher "
+                f"answers {list(teaches.shape)} — over {teaches.shape[FEATURE_AXIS]} class"
+                f"{'' if teaches.shape[FEATURE_AXIS] == 1 else 'es'} against "
+                f"{answered.shape[FEATURE_AXIS]}. How far one distribution is from another is a question "
+                f"about two of the same width; declare a teacher this run's own tasks size, or one "
+                f"trained on the very classes they declare."
+            )
 
     def _refuse_a_task_with_no_distribution_to_soften(self) -> None:
         """Softening spreads confidence over classes, and a task answering with something else has none.

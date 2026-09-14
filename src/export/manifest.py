@@ -122,6 +122,10 @@ def ship(graph: DeployableModel, info: DatasetInfo, exporters: Sequence[Exporter
         # input whose shape it was never going to write.
         return Manifest(inputs=(), outputs=(), artifacts=())
     example = example_inputs(info, graph.input_names, WRITTEN_FROM)
+    # Taken away before anything is written, because the artifacts go straight to their final paths and
+    # a record is a claim about the files beside it. A publication that fails halfway would otherwise
+    # leave the previous run's parity standing over a file it had already been overwritten by.
+    beside(destination, MANIFEST_SUFFIX).unlink(missing_ok=True)
     with _as_it_is_shipped(graph):
         answered = _answered(graph, example)
         artifacts = tuple(_written(exporter, graph, example, destination) for exporter in exporters)

@@ -72,6 +72,17 @@ reads — so its position belongs to the tensors packages exchange rather than t
 shape's own words for what they mean.
 """
 
+DRAWN_AXIS = 1
+"""Where a sample's several answers sit before they are folded into the batch, and its several draws too.
+
+One axis rather than a name in any declared shape, and it rides beside the batch axis — the one
+``TensorShape`` deliberately does not carry either. What a task declares it produces is what *one*
+answer is, and what an input *is* stays what one view is, which is also what a deployed artifact takes
+— so a run that draws a picture twice, or pairs it with its caption, has changed how many rows a batch
+holds rather than how deep each of them is. Both folds leave a sample's own answers adjacent, which is
+the order an objective comparing them relies on, and both read this one name.
+"""
+
 
 def drop_feature_axis(values: Tensor) -> Tensor:
     """Drop a width-one feature axis: ``[B, 1]`` becomes ``[B]``, ``[B, 1, H, W]`` becomes ``[B, H, W]``.

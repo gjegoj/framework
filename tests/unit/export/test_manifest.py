@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
+import torch
 from torch import nn
 
 from src.config import ComponentConfig
@@ -202,6 +203,40 @@ def test_a_run_that_ships_nothing_writes_no_record(tmp_path: Path) -> None:
     assert manifest.artifacts == ()
     assert not beside(tmp_path / "model", MANIFEST_SUFFIX).exists()
     assert not list(tmp_path.glob("model.*"))
+
+
+class Restless(Model):
+    """A network answering a little differently every call, so nothing written from it can match it."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.head = nn.Linear(FEATURES, 1)
+
+    def forward(self, inputs: Mapping[str, TensorTree]) -> ModelOutput:
+        features = require_tensor(inputs["features"], name="features")
+        return ModelOutput(outputs={"value": self.head(features) + torch.rand(1)})
+
+
+def test_a_publication_that_fails_leaves_no_record_standing_over_the_artifact_it_described(
+    tmp_path: Path,
+) -> None:
+    """The record is the claim, and a second publication overwrites the files it was a claim about.
+
+    Artifacts are written straight to their final paths, so re-publishing replaces them before anything
+    about them is proven. Measured before this held: the first export succeeded, the second overwrote
+    the artifact and failed its parity, and the record of the first stayed beside it — a passing verdict
+    describing a file that was no longer there.
+    """
+    declared: dict[str, object] = {"name": "torchscript"}
+    shipped(tmp_path, declared)
+    record = beside(tmp_path / "model", MANIFEST_SUFFIX)
+    assert record.exists(), "the first publication is what the second one has to not leave standing"
+
+    restless = DeployableModel(Restless(), [Regression("value", TargetInfo())], input_names=("features",))
+    with pytest.raises(RuntimeError):
+        shipped(tmp_path, declared, graph=restless)
+
+    assert not record.exists()
 
 
 class Dropping(Model):

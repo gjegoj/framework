@@ -110,6 +110,41 @@ class TestFactsTravel:
         assert set(metrics_for(config, task)) == expected
 
 
+class TestWhatThePixelsActuallyBecome:
+    """`preprocessing.inputs.image` declares a scaling, and only the chain a stage runs can make it true."""
+
+    def chain(self, **normalize: Any) -> dict[str, Any]:
+        return {
+            "_target_": "src.transforms.AlbumentationsTransform",
+            "transforms": [
+                {"_target_": "albumentations.Resize", "height": SIZE[0], "width": SIZE[1]},
+                {"_target_": "albumentations.Normalize", **{**NORMALIZATION, **normalize}},
+                {"_target_": "albumentations.pytorch.ToTensorV2"},
+            ],
+        }
+
+    def test_a_chain_that_does_not_scale_pixels_as_the_declaration_promises_is_refused(
+        self, declaration: Mapping[str, Any]
+    ) -> None:
+        """The record an export writes promises this scaling to whoever serves the artifact.
+
+        Measured: with mean and std both 0.5 declared, a chain whose `Normalize` is told the pixels
+        already run 0..1 answers **509** for a white pixel where the declaration puts it at 1 — and
+        every number of the run looks ordinary, because both halves are self-consistent. The pair is
+        visible here and nowhere else: one is the preprocessing section, the other is the stage's own.
+        """
+        loud = self.chain(max_pixel_value=1.0)
+
+        named = r"does not scale 'image' as `preprocessing\.inputs` declares"
+
+        with pytest.raises(ValueError, match=named):
+            experiment(declaration, transforms={**declaration["transforms"], "val": loud, "test": loud})
+
+    def test_a_chain_that_does_what_it_promises_is_left_alone(self, declaration: Mapping[str, Any]) -> None:
+        """The shipped pipeline, unchanged: the check has to be one a correct run passes without knowing it."""
+        assert experiment(declaration, transforms={stage: self.chain() for stage in ("train", "val", "test")})
+
+
 class TestWhatTheHeadAnswersWith:
     """One tensor, two separately built readers: only the root sees both, so only the root can refuse.
 
@@ -148,6 +183,26 @@ class TestWhatTheHeadAnswersWith:
 
         with pytest.raises(ValueError, match="answers with cosines, and objective 'cross_entropy' reads projected"):
             experiment(declaration, tasks=tasks)
+
+    def test_a_head_over_several_streams_is_refused_where_the_objective_reads_one_answer(
+        self, declaration: Mapping[str, Any], tasks: dict[str, Any]
+    ) -> None:
+        """A head declared over a pair answers twice for every sample, and cross-entropy compares one.
+
+        Measured before this held: such a run built, and the first batch died inside torch with
+        `Expected input batch_size (4) to match target batch_size (2)` — naming neither declaration nor
+        which of the two to change. One stream under an objective reading two is left alone on purpose:
+        a stage drawing views supplies the second answer, and only the batch knows how many it drew.
+        """
+        tower = {"_target_": "src.models.TimmBackbone", "model_name": "resnet18", "pretrained": False}
+        paired = {
+            "name": "composite",
+            "backbone": {"_target_": "src.models.MultiEncoderBackbone", "encoders": {"one": tower, "two": tower}},
+        }
+        tasks["species"] = {**tasks["species"], "head": {"name": "linear", "stream": ["one_pooled", "two_pooled"]}}
+
+        with pytest.raises(ValueError, match="answers 2 times for every sample"):
+            experiment(declaration, tasks=tasks, model=paired)
 
     def test_a_head_the_run_wrote_itself_is_taken_at_the_word_it_declares(
         self, declaration: Mapping[str, Any], tasks: dict[str, Any]

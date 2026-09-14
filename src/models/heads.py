@@ -4,13 +4,15 @@ line of YAML."""
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import ClassVar, cast
 
 import torch
 from torch import Tensor, nn
 from torch.nn.functional import normalize
 
-from src.core import FEATURE_AXIS, Axis, Representation
+from src.core import DRAWN_AXIS, FEATURE_AXIS, Axis, Representation, as_children
+from src.models.base import produced_by
 from src.models.registry import head_registry
 
 
@@ -94,7 +96,45 @@ class ExpandedHead(nn.Module):
         self.base = base
         self.novel = novel
 
+    @property
+    def produces(self) -> Representation:
+        """What the declaration answers with: a class space that grew has more rows, not another reading."""
+        return produced_by(self.base)
+
     def forward(self, features: Tensor) -> Tensor:
         # The same axis carries classes for a flat output and for a dense one, which is why growing a
         # segmentation head and growing a classifier are one rule rather than two.
         return torch.cat((cast(Tensor, self.base(features)), cast(Tensor, self.novel(features))), dim=FEATURE_AXIS)
+
+
+class StackedHeads(nn.Module):
+    """One head per stream, their answers folded into the batch so that a sample's own stay adjacent.
+
+    What a pairing produces: a picture read by one tower and its caption by another, projected into one
+    space by a head apiece and handed on as ordinary rows. ``head: {name: linear, stream: [image_pooled,
+    text_pooled]}`` is the whole declaration, and the heads are the declared one built once per stream,
+    at the width each of them publishes — which is why the towers need not be the same width and why
+    every head this framework has works in a pairing without knowing one exists.
+
+    Not in the head registry: nobody declares one. It is assembled by the builder that knows how many
+    streams the declaration named, exactly as ``ExpandedHead`` is assembled around the rows a file
+    carried.
+
+    Folded rather than kept apart on an axis of their own — the decision drawn views already made, and
+    the same fact underneath it: what a task declares it produces is what *one* answer is, so a batch
+    answering twice per sample holds more rows rather than deeper ones. Everything downstream reads a
+    pairing exactly as it reads a pair of views, the objective over them included.
+    """
+
+    def __init__(self, heads: Mapping[str, nn.Module]) -> None:
+        super().__init__()
+        self.heads = as_children(heads, label="stream")
+
+    @property
+    def produces(self) -> Representation:
+        """One declaration built once per stream, so what any of them answers with is what all of them do."""
+        return produced_by(next(iter(self.heads.values())))
+
+    def forward(self, *features: Tensor) -> Tensor:
+        answered = [cast(Tensor, head(feature)) for head, feature in zip(self.heads.values(), features, strict=True)]
+        return torch.stack(answered, dim=DRAWN_AXIS).flatten(0, DRAWN_AXIS)

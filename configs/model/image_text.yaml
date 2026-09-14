@@ -1,0 +1,28 @@
+# Two networks side by side: a picture read by one family, its caption by another.
+#
+# `multiencoder` names no library. It holds one backbone per input and hands each the batch whole — each
+# already names the input it reads — then publishes every stream as `<tower>_<stream>`, because two
+# towers publish `pooled` alike and the name written here is the only thing that tells them apart.
+#
+# The head is declared over both: `head: {name: linear, stream: [image_pooled, text_pooled]}` builds
+# that head once per stream, at the width each of them publishes, and stacks the answers so a sample's
+# two stay next to each other. Those are the same rows a stage drawing two views produces, which is why
+# the objective over a pairing is the one a run over views already had.
+#
+# The towers are written out rather than named, because a child position has no registry of its own —
+# the same reason a wrapped backbone is written out under `model: multiview`.
+#
+# `model_name` for the text tower is deliberately absent: it is the family whose tokenizer
+# `preprocessing` declares, read from that one place, exactly as `model: text` reads it.
+name: composite
+backbone:
+  _target_: src.models.MultiEncoderBackbone
+  encoders:
+    image:
+      _target_: src.models.TimmBackbone
+      model_name: resnet18
+      pretrained: true
+    text:
+      _target_: src.models.HFTextBackbone
+      model_name: "${preprocessing.inputs.text.model_name}"
+      pooling: mean

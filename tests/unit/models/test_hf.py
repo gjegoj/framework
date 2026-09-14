@@ -101,3 +101,15 @@ def test_the_name_resolves_long_before_the_library_behind_it_is_needed(
     assert issubclass(backbone_registry.get("hf_text"), HFTextBackbone)
     with pytest.raises(ImportError):
         HFTextBackbone(str(tmp_path))
+
+
+def test_the_family_arrives_in_the_state_every_other_network_here_is_built_in(family: Path) -> None:
+    """A network is built training and a run decides otherwise; this library hands one back in eval.
+
+    Measured on this two-layer family: as ``from_pretrained`` returns it, two passes over one caption
+    are identical, and with it put back they differ by 0.30 — so a run declaring no ``freeze`` would be
+    training a tower whose dropout is off, and nothing in its report would say so. Measured on the
+    other two families a run can declare: timm hands back 0 of 95 modules in eval and smp 0 of 135,
+    which is what makes this one a substitution rather than a convention.
+    """
+    assert [name for name, part in HFTextBackbone(str(family)).named_modules() if not part.training] == []

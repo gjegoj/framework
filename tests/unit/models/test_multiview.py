@@ -37,3 +37,16 @@ def test_a_network_that_publishes_no_streams_is_refused_where_it_is_declared() -
     """This one answers with whatever it wraps, so what it wraps has to be something a head can read."""
     with pytest.raises(TypeError, match="Backbone"):
         MultiViewBackbone(nn.Linear(2, 2))  # type: ignore[arg-type]
+
+
+def test_what_the_wrapped_network_started_from_is_still_what_this_one_carries() -> None:
+    """Drawing views changes nothing a head reads, so a warm start's classifier still has a place to land.
+
+    Measured before this held: a `checkpoint_path` on the wrapped backbone loaded its encoder and then
+    lost the rows the file's classifier held, so a run asking to grow a class space got a fresh head and
+    read `2 were held back` — the line an ordinary run prints when nothing was meant to use them.
+    """
+    carrying = Encoder()
+    carrying.carried_head = {"fc.weight": torch.zeros(2, POOLED_WIDTH)}
+
+    assert MultiViewBackbone(carrying).carried_head == carrying.carried_head

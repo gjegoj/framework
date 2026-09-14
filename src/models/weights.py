@@ -64,23 +64,28 @@ def start_from(network: nn.Module, path: str, *, inside: str = "", aside: Sequen
         aside: Key prefixes the file may carry that this network has no place for.
     """
     held = weights_in(path)
-    carried = {name: value for name, value in held.items() if aside and name.startswith(tuple(aside))}
+    held_back = tuple(aside)
+    carried = {name: value for name, value in held.items() if name.startswith(held_back)}
     offered = {f"{inside}{name}": value for name, value in held.items() if name not in carried}
     wanted = set(network.state_dict())
-    missing, unexpected = sorted(wanted - set(offered)), sorted(set(offered) - wanted)
-    if not wanted - set(missing):
+    shared = wanted & set(offered)
+    if not shared:
         raise ValueError(
             f"`checkpoint_path` {path!r} shares no weights with {type(network).__name__}: it names "
             f"{', '.join(sorted(held)[:3])}… and this network is built of {', '.join(sorted(wanted)[:3])}… "
             f"A file of another architecture loads nothing at all, and nothing would say so."
         )
+    missing, unexpected = sorted(wanted - shared), sorted(set(offered) - wanted)
     if missing or unexpected:
+        # Each half only where it is true: a file that fits everything and brings extras was being told
+        # it carried nothing for "everything here", which is the opposite of what had just been found.
+        unfilled = f"it carries nothing for {', '.join(missing)}" if missing else ""
+        spare = f"this network has no place for {', '.join(unexpected)}" if unexpected else ""
         raise ValueError(
-            f"`checkpoint_path` {path!r} fits {type(network).__name__} only in part — it carries nothing "
-            f"for {', '.join(missing) or 'everything here'}, and this network has no place for "
-            f"{', '.join(unexpected) or 'nothing else'}. A network half from a file is not that file's "
-            f"network; declare the variant it was written from, or name the head it carries as one to "
-            f"hold back."
+            f"`checkpoint_path` {path!r} fits {type(network).__name__} only in part — "
+            f"{', and '.join(half for half in (unfilled, spare) if half)}. A network half from a file is "
+            f"not that file's network; declare the variant it was written from, or name the head it "
+            f"carries as one to hold back."
         )
     load_weights(network, offered, path)
     log.info(

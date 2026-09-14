@@ -1,0 +1,48 @@
+# @package _global_
+# A picture and its caption pulled towards each other: `uv run main.py experiment=examples/pairing`.
+#
+# Two towers of different families and different widths encode two inputs of one row; a head apiece
+# projects both into one space; and the objective says that the only pair in the batch that belongs
+# together is the picture and the caption of the same row. No column is read as a label.
+#
+# **What the number means, and what it does not.** `caption` is written by `scripts/prepare_pet.py`
+# from `breed` and `species`, so there are 37 sentences in the whole table and a batch of 32 holds the
+# same one more than once. The objective is then told that two cats of one breed are wrong answers for
+# each other's caption, which the text side cannot tell apart at all — so the loss descends on the
+# picture side and the number says the four declarations line up, not that anything was learned about
+# language. Real captions are collected; this dataset has none. `random_age` is the same trap from the
+# other side: it carries no signal, and is named so.
+#
+# **What is added rather than overridden.** `preprocessing.inputs` and `data.inputs` gain a `text` key
+# beside the `image` one `examples/pet` declares — Hydra merges dictionaries, which is exactly what is
+# wanted here, where `examples/caption` had to declare its own `data` because it needed the picture
+# *gone*.
+#
+# **What cannot be declared.** A caption reaches the model as several tensors, and an artifact is
+# written from one per input, so this run keeps the framework's own `export: none`. It is refused at
+# build rather than after the last epoch.
+defaults:
+  - examples/pet
+  - override /model: image_text
+
+tasks:
+  pairing:
+    # How wide a space the two sides are compared in is a choice of the model, not of the data.
+    kind: {name: contrastive, embedding_dim: 128}
+    # The one declaration this arrangement needs: one head per tower, each sized by what that tower
+    # publishes, their answers stacked in the order written here.
+    head: {name: linear, stream: [image_pooled, text_pooled]}
+
+preprocessing:
+  inputs:
+    text:
+      name: text
+      model_name: sentence-transformers/all-MiniLM-L6-v2
+      max_length: 32
+
+data:
+  inputs:
+    text: {column: caption}
+
+run:
+  name: pairing

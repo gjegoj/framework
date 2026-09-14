@@ -79,7 +79,13 @@ class MultiViewTransform:
             )
 
     def _refuse_a_chain_whose_draw_is_an_answer(self) -> None:
-        """An augmentation whose draw is the supervision writes one answer, and views need one each."""
+        """An augmentation whose draw is the supervision writes one answer, and views need one each.
+
+        Asked of the chain this framework builds, which is the one that derives the question from its
+        own augmentations. A chain a run wrote itself and that answers a task is not seen here — the
+        capability would be a third protocol in this package sitting one letter from ``AnswersTask``,
+        which means something else, and no second kind of chain has arrived to need telling apart.
+        """
         if isinstance(self.base, AlbumentationsTransform) and (answered := sorted(self.base.answers)):
             raise ValueError(
                 f"This chain answers {', '.join(answered)} by what it draws, and it is drawn once per view: "

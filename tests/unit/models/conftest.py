@@ -1,4 +1,4 @@
-"""A backbone that publishes both shapes a head can read, and factories for the graphs model tests assemble."""
+"""The backbones model tests read features from, and factories for the graphs they assemble over them."""
 
 from __future__ import annotations
 
@@ -12,9 +12,10 @@ from torch import Tensor, nn
 from src.core import Axis, Stream, TensorShape, TensorTree
 from src.models import Backbone, CompositeModel, HeadConnection
 
-POOLED_WIDTH, MAP_WIDTH, SIDE = 8, 4, 3
+POOLED_WIDTH, MAP_WIDTH, NARROW_WIDTH, SIDE = 8, 4, 5, 3
 
 VECTOR = TensorShape(axes=(Axis.CHANNELS,), sizes=(POOLED_WIDTH,))
+NARROW = TensorShape(axes=(Axis.CHANNELS,), sizes=(NARROW_WIDTH,))
 MAP = TensorShape(axes=(Axis.CHANNELS, Axis.HEIGHT, Axis.WIDTH), sizes=(MAP_WIDTH, None, None))
 
 
@@ -40,6 +41,28 @@ class Encoder(Backbone):
         return nn.Linear(POOLED_WIDTH, out_features) if stream == Stream.POOLED else None
 
 
+class Sentences(Backbone):
+    """One pooled vector from another input, of a width of its own — the second tower of a pairing.
+
+    Beside :class:`Encoder` rather than parametrised from it, because what the tests around a pairing
+    are about is exactly that the two towers differ: they read different inputs, they publish the same
+    stream name, and the head over each is sized by a different number.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.projection = nn.Linear(2, NARROW_WIDTH)
+
+    @property
+    def feature_shapes(self) -> Mapping[str, TensorShape]:
+        return {Stream.POOLED: NARROW}
+
+    def forward(self, inputs: Mapping[str, TensorTree]) -> Mapping[str, Tensor]:
+        sentences = inputs["text"]
+        assert isinstance(sentences, Tensor)
+        return {Stream.POOLED: self.projection(sentences.flatten(1)[:, :2])}
+
+
 @pytest.fixture
 def backbone() -> Encoder:
     return Encoder()
@@ -53,7 +76,7 @@ def make_composite(backbone: Encoder) -> CompositeFactory:
     """A composite over one linear head reading the pooled stream; keywords override any part."""
 
     def make(**overrides: Any) -> CompositeModel:
-        connection = HeadConnection(nn.Linear(POOLED_WIDTH, 2), stream=Stream.POOLED)
+        connection = HeadConnection(nn.Linear(POOLED_WIDTH, 2), streams=(Stream.POOLED,))
         heads: Mapping[str, HeadConnection] = {"label": connection}
         parts: dict[str, Any] = {"backbone": backbone, "heads": heads}
         return CompositeModel(**{**parts, **overrides})

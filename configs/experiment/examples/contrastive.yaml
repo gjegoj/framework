@@ -13,8 +13,15 @@
 #
 # **What this run is judged by is the next one.** There is no reading here that scores an encoder:
 # a vocabulary is what every metric of this framework compares against, and this run has none. The
-# number below goes down, and whether that was worth anything is answered by a second run that
-# declares `model.backbone.checkpoint_path` against these weights and measures an actual task.
+# number below goes down, and whether that was worth anything is answered by a second run that trains
+# an actual task on top of this encoder.
+#
+# **Carrying it there is not yet a declaration this framework has.** `model.backbone.checkpoint_path`
+# reads a file naming an *architecture*; what this run leaves names a *run*, its keys beginning
+# `learner.model.backbone.`, and that key refuses such a file by name — measured, it shares not one
+# weight. `run.checkpoint_path` reads a run's file whole and so wants the same tasks, which the second
+# run by definition does not have. Until one of the two learns the other's file, the weights are moved
+# across by hand. Said here rather than left to be found out by the run that tries.
 #
 # **Two shapes to know.** A stage stacks its draws, and a `multiview` backbone folds them into the
 # batch so that one set of weights sees every one — so a batch of 16 pictures encodes 32 rows, and

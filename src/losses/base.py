@@ -27,6 +27,10 @@ class Loss(nn.Module, ABC):
         reads: What the head's numbers have to be for this objective to mean anything. Almost every one
             of them reads a projection, which is why that is the default; an angular margin is added to
             an angle and has nothing to add to anything else. The pair is checked where both are built.
+        reads_per_sample: How many answers of one sample this objective compares. Almost every one reads
+            the single answer a head makes, which is why that is the default; an objective learning from
+            the batch itself reads the pair a sample gave. Read where a head declared over several
+            streams meets it, which is the one place both numbers are known.
         reads_soft_targets: Whether a target blended from two samples — what a mixing transform leaves
             behind — is something this can compare. An objective scoring the one class a sample *is*
             cannot, and says so here rather than discovering it on a batch. Declared by the objective
@@ -35,6 +39,7 @@ class Loss(nn.Module, ABC):
     """
 
     reads: Representation = Representation.PROJECTED
+    reads_per_sample: int = 1
     reads_soft_targets: bool = True
 
     def __init__(self) -> None:

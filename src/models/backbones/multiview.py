@@ -7,18 +7,9 @@ from typing import cast
 
 from torch import Tensor, nn
 
-from src.core import Modality, TensorShape, TensorTree, require_tensor
+from src.core import DRAWN_AXIS, Modality, TensorShape, TensorTree, require_tensor
 from src.models.base import Backbone, required_input
 from src.models.registry import backbone_registry
-
-VIEW_AXIS = 1
-"""Where a stack of draws sits before it is folded: after the samples they came from, before each draw.
-
-One axis rather than a name in any declared shape. What an input *is* stays what one view is, which is
-also what a deployed artifact takes, so views ride beside the batch axis — the one ``TensorShape``
-deliberately does not carry either. Folding this one into the batch is what leaves the draws of a
-sample adjacent, which is the order the objective reading them relies on.
-"""
 
 
 @backbone_registry.register("multiview")
@@ -58,6 +49,11 @@ class MultiViewBackbone(Backbone):
             )
         self.backbone = backbone
         self.input_name = input_name
+        # What the wrapped network started from is what this one started from: drawing views changes
+        # nothing a head reads, so the rows a weight file's classifier held still have one place to
+        # land. Left out, a run declaring `checkpoint_path` got a fresh head and the only word about it
+        # was the tower's own "n were held back", which is what an ordinary run prints too.
+        self.carried_head = backbone.carried_head
 
     @property
     def feature_shapes(self) -> Mapping[str, TensorShape]:
@@ -66,7 +62,7 @@ class MultiViewBackbone(Backbone):
 
     def forward(self, inputs: Mapping[str, TensorTree]) -> Mapping[str, Tensor]:
         drawn = require_tensor(required_input(inputs, self.input_name, type(self).__name__), name=self.input_name)
-        return cast("Mapping[str, Tensor]", self.backbone({**inputs, self.input_name: drawn.flatten(0, VIEW_AXIS)}))
+        return cast("Mapping[str, Tensor]", self.backbone({**inputs, self.input_name: drawn.flatten(0, DRAWN_AXIS)}))
 
     def native_head(self, stream: str, out_features: int) -> nn.Module | None:
         """Whatever the wrapped family brings: drawing views changes nothing about what a head is."""

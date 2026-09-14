@@ -26,6 +26,7 @@ class WeightedSum(Loss):
         self.parts = nn.ModuleList(loss for loss, _ in parts)
         self.weights = [float(weight) for _, weight in parts]
         self.reads = _one_reading(parts)
+        self.reads_per_sample = _one_count(parts)
         self.reads_soft_targets = all(loss.reads_soft_targets for loss, _ in parts)
 
     def forward(self, outputs: Tensor, targets: Tensor) -> LossOutput:
@@ -33,6 +34,22 @@ class WeightedSum(Loss):
             weight * cast(Loss, part)(outputs, targets) for part, weight in zip(self.parts, self.weights, strict=True)
         ]
         return reduce(lambda total, term: total + term, weighted)
+
+
+def _one_count(parts: Sequence[tuple[Loss, float]]) -> int:
+    """How many answers of a sample these terms agree the output holds; they read one tensor, so they must.
+
+    The same argument as ``_one_reading`` below, about the other half of what that tensor is: a term
+    reading one answer per sample and a term reading two cannot both be right about the same rows, and
+    the one that is wrong is comparing a sample against somebody else's answer.
+    """
+    counted = {loss.reads_per_sample for loss, _ in parts}
+    if len(counted) != 1:
+        raise ValueError(
+            f"These objectives disagree about how many answers one sample gives: {sorted(counted)}. They "
+            f"are handed the same rows, so one of them is reading another sample's answer as this one's."
+        )
+    return counted.pop()
 
 
 def _one_reading(parts: Sequence[tuple[Loss, float]]) -> Representation:

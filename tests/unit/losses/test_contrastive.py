@@ -69,9 +69,15 @@ def test_the_temperature_is_learned_with_the_run_rather_than_fixed_at_the_declar
     assert objective.log_scale.grad is not None
 
 
-def test_a_run_that_draws_no_views_is_refused_with_what_it_should_have_declared() -> None:
-    """One row per sample means nothing was drawn twice, and there is no pair to compare at all."""
-    with pytest.raises(ValueError, match="MultiViewTransform"):
+@pytest.mark.parametrize("cure", ["MultiViewTransform", "multiencoder"], ids=["one input drawn twice", "two inputs"])
+def test_a_run_answering_once_per_sample_is_refused_with_both_ways_it_could_answer_twice(cure: str) -> None:
+    """One row per sample means nothing was paired, and there are two declarations that would pair it.
+
+    Both named, because this objective cannot tell which the reader meant: it never learns whether the
+    two answers came from one input drawn twice or from two inputs read side by side, and a refusal
+    naming only the one that happened to be written first would send half its readers the wrong way.
+    """
+    with pytest.raises(ValueError, match=cure):
         InfoNce()(torch.randn(SAMPLES, WIDTH), rows())
 
 

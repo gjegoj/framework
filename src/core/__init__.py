@@ -41,6 +41,7 @@ from src.core.taxonomy import (
     Stream,
 )
 from src.core.types import (
+    DRAWN_AXIS,
     FEATURE_AXIS,
     ShapeTree,
     TensorShape,
@@ -52,6 +53,7 @@ from src.core.types import (
 
 __all__ = [
     "CELLS",
+    "DRAWN_AXIS",
     "ERROR",
     "FEATURE_AXIS",
     "OVERLAP",

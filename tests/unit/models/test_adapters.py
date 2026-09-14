@@ -26,7 +26,7 @@ TASK = "label"
 def composite() -> CompositeModel:
     """A fresh graph whose weights are the same every time, so two of them are comparable."""
     torch.manual_seed(0)
-    connection = HeadConnection(nn.Linear(POOLED_WIDTH, 2), stream=Stream.POOLED)
+    connection = HeadConnection(nn.Linear(POOLED_WIDTH, 2), streams=(Stream.POOLED,))
     return CompositeModel(Encoder(), {TASK: connection})
 
 
@@ -143,7 +143,7 @@ def test_the_parts_a_refusal_offers_are_the_ones_a_delta_could_go_beside() -> No
     torch.manual_seed(0)
     encoder = TimmBackbone(model_name="resnet18", pretrained=False)
     width = encoder.feature_shapes[Stream.POOLED].size(Axis.CHANNELS) or 0
-    model = CompositeModel(encoder, {TASK: HeadConnection(nn.Linear(width, 2), stream=Stream.POOLED)})
+    model = CompositeModel(encoder, {TASK: HeadConnection(nn.Linear(width, 2), streams=(Stream.POOLED,))})
 
     with pytest.raises(ValueError) as refusal:
         build_adapter(declaration(target_modules=["qkv"]), model)

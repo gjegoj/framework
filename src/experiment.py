@@ -89,6 +89,11 @@ def _ship(experiment: Experiment) -> Manifest:
     so by not implementing the port, and the run carries on: the file beside the artifacts is the copy
     that exists whatever a run declared for a tracker, including nothing.
     """
+    if not experiment.trainer.is_global_zero:
+        # One publisher, because this writes bytes rather than logs a value: a strategy that keeps every
+        # rank inside the script would have each of them writing the same paths at the same moment, and
+        # nothing upstream makes a file operation happen once the way a logger does.
+        return Manifest(inputs=(), outputs=(), artifacts=())
     config = experiment.declaration
     learner = experiment.module.learner
     info = experiment.data.info

@@ -18,12 +18,17 @@ PAIR = 2
 
 @loss_registry.register("info_nce")
 class InfoNce(Loss):
-    """Two views of a sample against every other sample's, both ways round — the CLIP objective.
+    """A sample's two answers against every other sample's, both ways round — the CLIP objective.
 
-    What supervises it is the batch: the draw that came from the same picture is the right answer and
-    the rest of the batch is the wrong one, so the target is which row a sample is, and a run needs no
-    column for it. Both directions are scored and averaged, because a matrix read one way only makes
-    one side of every pair responsible for the match.
+    What supervises it is the batch: the answer that came from the same sample is the right one and the
+    rest of the batch is wrong, so the target is which row a sample is, and a run needs no column for
+    it. Both directions are scored and averaged, because a matrix read one way only makes one side of
+    every pair responsible for the match.
+
+    Where the two answers came from is not this objective's business and is deliberately not asked.
+    Drawing one picture twice and pairing a picture with its caption arrive here as the same thing —
+    twice as many rows as the batch has samples, a sample's own adjacent — which is why the pairing
+    this library is named for needed nothing added here.
 
     The comparison is between *directions*: the vectors are normalised here rather than by whatever
     produced them. A backbone that normalised would be answering for an objective it does not know it
@@ -39,6 +44,9 @@ class InfoNce(Loss):
             value the scale starts from, and a run learns on from there.
     """
 
+    reads_per_sample: int = PAIR
+    """Two, which is what `_two_draws` recovers below and what a head declared over a pair is checked against."""
+
     def __init__(self, temperature: float = 0.07) -> None:
         if temperature <= 0:
             raise ValueError(f"A temperature divides the similarities, so it is positive; got {temperature}.")
@@ -52,18 +60,20 @@ class InfoNce(Loss):
         return self.reported(both_ways / PAIR)
 
     def _two_draws(self, outputs: Tensor, samples: int) -> tuple[Tensor, Tensor]:
-        """The pair to compare, recovered from the rows alone, or a refusal naming what the run draws.
+        """The pair to compare, recovered from the rows alone, or a refusal naming both ways to make one.
 
-        Nothing declares the number of draws here. The target says how many samples the batch holds and
-        the rows say how many answers came back, and a viewing backbone leaves every draw of a sample
-        next to the next — so the two are the halves of one unflattening, and a run drawing some other
-        number is a run this objective cannot read.
+        Nothing declares the number of answers here. The target says how many samples the batch holds
+        and the rows say how many answers came back, and whatever produced them left a sample's own next
+        to each other — so the two are the halves of one unflattening, and a run answering some other
+        number of times is a run this objective cannot read.
         """
         if outputs.ndim != 2 or outputs.shape[0] != samples * PAIR:
             raise ValueError(
-                f"This objective reads two draws of every sample: {samples} samples should have answered "
-                f"with {samples * PAIR} rows, and it was handed {list(outputs.shape)}. A stage draws them "
-                f"with `MultiViewTransform(views: {PAIR})` and a `multiview` backbone folds them in."
+                f"This objective reads two answers for every sample: {samples} samples should have "
+                f"answered with {samples * PAIR} rows, and it was handed {list(outputs.shape)}. Two come "
+                f"either from one input drawn twice — `MultiViewTransform(views: {PAIR})` under a "
+                f"`multiview` backbone — or from two inputs read side by side, a `multiencoder` backbone "
+                f"under a head declared over both its streams."
             )
         drawn = outputs.unflatten(0, (samples, PAIR))
         return drawn[:, 0], drawn[:, 1]

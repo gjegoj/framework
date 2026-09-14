@@ -12,7 +12,7 @@ from src.config.instantiate import instantiate
 from src.core import SPATIAL, Axis, TensorShape
 from src.models.adapters import Adapter
 from src.models.base import Backbone, HeadConnection, Model, ShapeAware
-from src.models.heads import ExpandedHead
+from src.models.heads import ExpandedHead, StackedHeads
 from src.models.registry import adapter_registry, backbone_registry, head_registry, model_registry
 
 log = logging.getLogger(__name__)
@@ -80,23 +80,36 @@ def build_backbone(declared: ComponentConfig) -> Backbone:
 
 
 def build_head(task: str, declared: HeadConfig, output_shape: TensorShape, backbone: Backbone) -> HeadConnection:
-    """The declared head at the widths nobody has to write down: the stream's, and the task's output."""
-    if declared.stream is None:
+    """The declared head at the widths nobody has to write down: each stream's, and the task's output."""
+    streams = declared.streams
+    if not streams:
         raise ValueError(f"Task {task!r}: head {declared.spelled!r} names no feature stream to read.")
-    stream, out_features = declared.stream, _out_features(task, output_shape)
-    at = _sized(task, declared, stream, backbone)
+    out_features = _out_features(task, output_shape)
+    at = _sized(task, declared, streams, backbone)
     if not backbone.carried_head:
-        return HeadConnection(at(out_features), stream=stream)
-    return HeadConnection(_started_from(task, at, backbone.carried_head, out_features), stream=stream)
+        return HeadConnection(at(out_features), streams=streams)
+    return HeadConnection(_started_from(task, at, backbone.carried_head, out_features), streams=streams)
 
 
-def _sized(task: str, declared: HeadConfig, stream: str, backbone: Backbone) -> Callable[[int], nn.Module]:
-    """The declared head at any number of outputs, which is asked for twice by a run whose class space grew.
+def _sized(task: str, declared: HeadConfig, streams: tuple[str, ...], backbone: Backbone) -> Callable[[int], nn.Module]:
+    """The declared head at any number of outputs — one of it per stream, stacked where it reads several.
 
     A factory rather than one head, because growing means building the same declaration at two counts —
     the rows a file carried and the classes added since — and a second spelling of "what this task's
     head is" would be free to disagree with the first.
+
+    A pairing is that same declaration built once per stream rather than a head of its own: the towers
+    differ in width and in nothing else a head can see, so ``linear`` over a pair is two of it, and a
+    head added to the registry reads a pairing the day it arrives without knowing that pairings exist.
     """
+    over = {stream: _over(task, declared, stream, backbone) for stream in streams}
+    if len(over) == 1:
+        return next(iter(over.values()))
+    return lambda count: StackedHeads({stream: build(count) for stream, build in over.items()})
+
+
+def _over(task: str, declared: HeadConfig, stream: str, backbone: Backbone) -> Callable[[int], nn.Module]:
+    """The declared head over one stream, at the width that stream publishes and any number of outputs."""
     if declared.name == NATIVE:
         return lambda count: _native_head(task, declared, stream, count, backbone)
     published = _published(task, stream, backbone)
@@ -190,9 +203,10 @@ def _refuse_a_carried_classifier_with_two_claimants(backbone: Backbone, heads: M
     """
     if backbone.carried_head and len(heads) > 1:
         raise ValueError(
-            f"The weights 'model.backbone.checkpoint_path' names carry one classifier, and this run "
-            f"declares {', '.join(sorted(heads))}: which of them it was trained to answer is not written "
-            f"anywhere. Point a single-task run at that file, or drop the path and let the heads start fresh."
+            f"The weights this backbone started from carry one classifier, and this run declares "
+            f"{', '.join(sorted(heads))}: which of them it was trained to answer is not written anywhere. "
+            f"Point a single-task run at that file, or drop its `checkpoint_path` and let the heads "
+            f"start fresh."
         )
 
 

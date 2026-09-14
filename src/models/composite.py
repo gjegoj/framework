@@ -8,7 +8,7 @@ from typing import cast
 from torch import Tensor, nn
 
 from src.core import ModelOutput, Representation, TensorTree, as_children
-from src.models.base import Backbone, HeadConnection, Model, Produces
+from src.models.base import Backbone, HeadConnection, Model, produced_by
 from src.models.registry import model_registry
 
 
@@ -24,7 +24,7 @@ class CompositeModel(Model):
         super().__init__()
         self.backbone = backbone
         self.heads = as_children({name: connection.head for name, connection in heads.items()})
-        self._streams = {name: connection.stream for name, connection in heads.items()}
+        self._streams = {name: connection.streams for name, connection in heads.items()}
 
     def produces(self, task: str) -> Representation:
         """Whatever the head serving this task says it answers with; one that says nothing projects.
@@ -32,8 +32,7 @@ class CompositeModel(Model):
         Every task a composite serves has a head — the build refuses a set of one that is not the set
         of the other — so there is no branch here for a task without one.
         """
-        head = self.heads[task]
-        return head.produces if isinstance(head, Produces) else Representation.PROJECTED
+        return produced_by(self.heads[task])
 
     def parameters_of(self, task: str) -> Iterable[nn.Parameter]:
         """A composite gives each task its head and shares the backbone; the split is exactly that."""
@@ -41,5 +40,8 @@ class CompositeModel(Model):
 
     def forward(self, inputs: Mapping[str, TensorTree]) -> ModelOutput:
         features = self.backbone(inputs)
-        outputs = {name: cast(Tensor, self.heads[name](features[stream])) for name, stream in self._streams.items()}
+        outputs = {
+            name: cast(Tensor, self.heads[name](*(features[stream] for stream in streams)))
+            for name, streams in self._streams.items()
+        }
         return ModelOutput(outputs=outputs, features=features)
