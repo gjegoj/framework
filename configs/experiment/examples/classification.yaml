@@ -7,6 +7,8 @@
 defaults:
   - examples/pet
   - override /model: resnet18
+  - override /tracker: clearml
+  - override /callbacks: samples
 
 tasks:
   label:

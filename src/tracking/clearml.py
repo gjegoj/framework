@@ -50,6 +50,11 @@ class ClearMLTracker(Logger):
         task_name: The run's name there; the service's own default when None.
         tags: Chips the experiment list filters by; one that resolved to nothing is dropped.
         reuse_last_task_id: A fresh run per fit beats the service's own reuse heuristic.
+        media_uri: Where a page is uploaded to, for a run whose service cannot take one. A page is a
+            debug sample, and a debug sample goes to ``api.files_server`` and nowhere else — read in
+            clearml 2.1.10: ``output_uri`` is documented for models and artifacts, and no key of
+            ``clearml.conf`` reaches it. What does is the logger's own destination, which is why this
+            is the one parameter here the service is never handed.
         **options: Forwarded to ``Task.init`` verbatim, so every upstream knob stays reachable.
     """
 
@@ -59,6 +64,7 @@ class ClearMLTracker(Logger):
         task_name: str | None = None,
         tags: Sequence[str] | None = None,
         reuse_last_task_id: bool = False,
+        media_uri: str | None = None,
         **options: Any,
     ) -> None:
         super().__init__()
@@ -69,6 +75,7 @@ class ClearMLTracker(Logger):
             "reuse_last_task_id": reuse_last_task_id,
             **options,
         }
+        self._media_uri = media_uri
         self._task: Task | None = None
 
     @property
@@ -84,6 +91,12 @@ class ClearMLTracker(Logger):
             from clearml import Task
 
             self._task = Task.init(**self._declared)
+            if self._media_uri is not None:
+                # Once, on the logger this run keeps: it is made here and held, so every page that
+                # follows goes the same way. Credentials are `clearml.conf`'s, and a destination it
+                # cannot write to is refused on the spot — which is when the run is created, before
+                # the first epoch, rather than at whichever epoch first draws.
+                self._task.get_logger().set_default_upload_destination(self._media_uri)
         return self._task
 
     @property

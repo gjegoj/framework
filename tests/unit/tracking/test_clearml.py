@@ -210,3 +210,30 @@ def test_the_record_of_what_a_run_produced_is_kept_as_something_fetched_back_who
 
 def test_it_keeps_records_and_says_so_structurally(logger: ClearMLTracker) -> None:
     assert isinstance(logger, KeepsRecord)
+
+
+def test_a_run_that_names_where_its_pages_go_sends_them_there_rather_than_to_the_file_server(
+    clearml: Recorded,
+) -> None:
+    """A page is the one reading here that becomes a file, and the service uploads it to one place only.
+
+    Read in clearml 2.1.10: a debug sample goes to `api.files_server` and nothing in `Task.init`
+    moves it — `output_uri` is documented for models and artifacts, and no key of `clearml.conf`
+    reaches it. Only the logger's own destination does, so this is the one knob of ours that is not
+    forwarded, and the service must never be handed it.
+    """
+    ClearMLTracker(media_uri="s3://bucket/media").log_html("samples/val", "<p>a page</p>", 0)
+
+    assert clearml.destinations == ["s3://bucket/media"]
+    assert "media_uri" not in clearml.started
+
+
+def test_a_run_that_names_nowhere_leaves_the_service_the_destination_it_chose(clearml: Recorded) -> None:
+    """Declaring nothing is the ordinary case, and it has to stay the service's own decision.
+
+    What is read is that the service was never told, rather than what it was told: handed `None` it
+    would record a destination of `None`, which reads exactly like never having been asked.
+    """
+    ClearMLTracker().log_html("samples/val", "<p>a page</p>", 0)
+
+    assert clearml.destinations == []

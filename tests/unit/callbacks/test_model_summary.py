@@ -8,6 +8,7 @@ import pytest
 from lightning.pytorch.callbacks import RichModelSummary
 
 from src.callbacks.model_summary import TreeModelSummary, tree_names
+from src.console import HEADER_STYLE
 
 
 @pytest.mark.parametrize(
@@ -38,8 +39,13 @@ def test_the_rows_keep_the_order_they_were_summarised_in() -> None:
     assert [one.rsplit(" ", 1)[-1] for one in tree_names(paths)] == ["model", "heads", "backbone"]
 
 
-def test_only_the_name_column_is_ours(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Columns, totals and rank-zero gating stay Lightning's, so what it adds later arrives for free."""
+def test_only_the_name_column_and_the_header_are_ours(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Columns, totals and rank-zero gating stay Lightning's, so what it adds later arrives for free.
+
+    The header is the exception, and the only one: two more tables are printed under this one, and a
+    run reads them as one report. The value is the library's own default today, which is exactly why
+    it is said here — otherwise the three agree by coincidence rather than by a line.
+    """
     summarised: dict[str, Any] = {}
     monkeypatch.setattr(
         RichModelSummary,
@@ -53,4 +59,4 @@ def test_only_the_name_column_is_ours(monkeypatch: pytest.MonkeyPatch) -> None:
 
     assert summarised["given"][0] == [("Name", ["model", "└─ backbone"]), ("Params", ["10", "10"])]
     assert summarised["given"][1:] == (10, 10, 0.1, {"train": 1}, 0)
-    assert summarised["named"] == {"extra": "kept"}
+    assert summarised["named"] == {"extra": "kept", "header_style": HEADER_STYLE}

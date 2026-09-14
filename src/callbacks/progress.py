@@ -17,6 +17,7 @@ from rich.table import Table
 from rich.text import Text
 
 from src.callbacks.registry import callback_registry
+from src.console import HEADER_STYLE
 from src.core import Stage
 from src.tracking import MetricKey
 from src.training import DeclaresMetricDirections
@@ -97,7 +98,7 @@ def table(history: MetricHistory) -> Table:
     metrics between the fit and the test, so a table assembled from what is currently logged would
     blank the train and val columns at the exact moment the test column arrives to be compared.
     """
-    built = Table(show_header=True)
+    built = Table(show_header=True, header_style=HEADER_STYLE)
     built.add_column("Metric")
     for stage, best in COLUMNS:
         built.add_column(f"Best ({stage})" if best else stage.capitalize(), justify="right")

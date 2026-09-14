@@ -22,6 +22,7 @@ class Recorded:
     histograms: list[dict[str, Any]] = field(default_factory=list)
     artifacts: dict[str, Any] = field(default_factory=dict)
     started: dict[str, Any] = field(default_factory=dict)
+    destinations: list[str] = field(default_factory=list)
     connected: dict[str, Any] = field(default_factory=dict)
     flushes: int = 0
     fails_to_flush: bool = False
@@ -52,6 +53,9 @@ def clearml(monkeypatch: pytest.MonkeyPatch) -> Recorded:
 
         def report_histogram(self, **reported: Any) -> None:
             recorded.histograms.append(reported)
+
+        def set_default_upload_destination(self, uri: str) -> None:
+            recorded.destinations.append(uri)
 
     class Task:
         name = "a-run"

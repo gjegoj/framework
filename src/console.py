@@ -8,6 +8,14 @@ from rich import get_console
 from rich.console import Console
 from rich.progress import BarColumn, MofNCompleteColumn, Progress, TextColumn, TimeElapsedColumn
 
+HEADER_STYLE = "bold magenta"
+"""How every table a run prints names its columns, so the ones under each other read as one report.
+
+The value is the one Lightning's model summary carries by default; the summary is handed it too rather
+than left on that default, because two of these tables are drawn here and the third is not, and a
+library moving its own default is exactly how the three would come to disagree without a line changing.
+"""
+
 
 def console() -> Console:
     """Rich's own console, which is what the libraries a run is built on print through.

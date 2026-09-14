@@ -15,7 +15,7 @@ import lightning as L
 from rich.table import Table
 
 from src.callbacks.registry import callback_registry
-from src.console import console
+from src.console import HEADER_STYLE, console
 from src.core import Bars, ClassDistribution, DatasetStatistics, Distribution, ValueDistribution
 from src.tracking import DrawsBars
 from src.training import TrainingData
@@ -179,7 +179,7 @@ def _table(task: str, measures: str) -> Table:
     The target comes first in the title because that is what a reader is looking for; what is being
     measured qualifies it.
     """
-    return Table(title=f"{task} — {measures}", title_justify="left")
+    return Table(title=f"{task} — {measures}", title_justify="left", header_style=HEADER_STYLE)
 
 
 def _held(rows: int, counted: int) -> str:

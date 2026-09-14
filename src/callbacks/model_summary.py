@@ -8,6 +8,7 @@ from typing import Any, override
 from lightning.pytorch.callbacks import RichModelSummary
 
 from src.callbacks.registry import callback_registry
+from src.console import HEADER_STYLE
 
 BRANCH, LAST, THROUGH, PAST = "├─ ", "└─ ", "│  ", "   "
 """The four pieces a tree is drawn from: a child, the last child, a line passing under one, and none."""
@@ -53,4 +54,7 @@ class TreeModelSummary(RichModelSummary):
     @override
     def summarize(summary_data: list[tuple[str, list[str]]], *rest: Any, **options: Any) -> None:
         treed = [(header, tree_names(values) if header == "Name" else values) for header, values in summary_data]
+        # The same header the tables under this one wear. Set rather than left to the library's own
+        # default, which is this value today: that is what makes the three one statement instead of two.
+        options.setdefault("header_style", HEADER_STYLE)
         RichModelSummary.summarize(treed, *rest, **options)
