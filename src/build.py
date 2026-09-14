@@ -26,12 +26,18 @@ from src.experiment import Experiment
 from src.export.build import build_exporters
 from src.losses.build import build_loss
 from src.metrics.build import build_metrics
-from src.models.build import build_model
+from src.models.build import build_adapter, build_model
 from src.tasks.build import build_task_kinds, build_tasks, default_target_encoder, head_for
 from src.tracking import MetricKey
 from src.tracking.build import build_tracker
 from src.training import LOSS, TrainingData, TrainingModule
-from src.training.build import build_learner, build_optimizer_factory, build_profiler, build_scheduler_factory
+from src.training.build import (
+    build_learner,
+    build_optimizer_factory,
+    build_profiler,
+    build_scheduler_factory,
+    build_teacher,
+)
 from src.transforms.build import build_transforms
 
 if TYPE_CHECKING:
@@ -61,16 +67,25 @@ def build(config: ExperimentConfig) -> Experiment:
     exporters = build_exporters(config.export)
     data = prepare_data(config, kinds)
     tasks = build_tasks(config.tasks, data.info)
-    model = build_model(
-        config.model,
-        heads={name: head_for(config.tasks[name], task) for name, task in tasks.items()},
-        outputs={name: task.output_shape() for name, task in tasks.items()},
-    )
+    # Named here rather than inline, because a second network is built from the very same two: a teacher
+    # answers the questions this run asks, so its heads are sized by what the tasks settled, not by a file.
+    heads = {name: head_for(config.tasks[name], task) for name, task in tasks.items()}
+    outputs = {name: task.output_shape() for name, task in tasks.items()}
+    model = build_model(config.model, heads=heads, outputs=outputs)
+    # Between building the network and training it, because that is the whole of what an adapter is: the
+    # weights come from wherever the model section says, and what this run learns is added beside them.
+    adapter = build_adapter(config.adapter, model)
     losses = {name: loss_for(config.tasks[name], task) for name, task in tasks.items()}
     measured = {name: metrics_for(config.tasks[name], task) for name, task in tasks.items()}
     _refuse_a_head_and_an_objective_that_disagree(model, losses)
     _refuse_watching_an_objective_this_run_never_scores(config, tasks, losses, measured)
-    learner = build_learner(config.learner, model=model, tasks=tasks, losses=losses)
+    learner = build_learner(
+        config.learner,
+        model=model,
+        tasks=tasks,
+        losses=losses,
+        teacher=build_teacher(config.teacher, heads=heads, outputs=outputs),
+    )
     return Experiment(
         module=TrainingModule(
             learner,
@@ -82,6 +97,7 @@ def build(config: ExperimentConfig) -> Experiment:
         trainer=build_trainer(config),
         declaration=config,
         exporters=exporters,
+        adapter=adapter,
     )
 
 

@@ -20,6 +20,7 @@ if TYPE_CHECKING:
 
     from src.config import ExperimentConfig
     from src.export import Exporter
+    from src.models import Adapter
     from src.training import TrainingData, TrainingModule
 
 MODEL = "model"
@@ -40,6 +41,7 @@ class Experiment:
     trainer: L.Trainer
     declaration: ExperimentConfig
     exporters: Sequence[Exporter] = field(default_factory=tuple)
+    adapter: Adapter | None = None
 
 
 def run(experiment: Experiment) -> Manifest:
@@ -65,6 +67,11 @@ def run(experiment: Experiment) -> Manifest:
     if config.run.train:
         experiment.trainer.fit(experiment.module, datamodule=experiment.data, ckpt_path=config.run.resume_path)
         restore_best_weights(experiment.trainer, learner)
+    if experiment.adapter is not None:
+        # After the epoch this run kept has been read back, because that file was written while the
+        # network was adapted and nothing could read it once the delta is folded in; and before anything
+        # is scored or shipped, so that what is reported on and what leaves are one network.
+        experiment.adapter.merge()
     if config.run.test:
         experiment.trainer.test(experiment.module, datamodule=experiment.data, verbose=False)
     return _ship(experiment)

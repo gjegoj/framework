@@ -9,8 +9,9 @@ from torch import nn
 from src.config import ComponentConfig, HeadConfig, ModelConfig
 from src.config.instantiate import instantiate
 from src.core import SPATIAL, Axis, TensorShape
+from src.models.adapters import Adapter
 from src.models.base import Backbone, HeadConnection, Model, ShapeAware
-from src.models.registry import backbone_registry, head_registry, model_registry
+from src.models.registry import adapter_registry, backbone_registry, head_registry, model_registry
 
 NATIVE = "native"
 """The reserved head name: the head the backbone itself brings, built by the backbone."""
@@ -43,6 +44,24 @@ def build_model(declared: ModelConfig, heads: Mapping[str, HeadConfig], outputs:
     connections = {name: build_head(name, head, outputs[name], backbone) for name, head in heads.items()}
     composed: Model = instantiate(declared, model_registry, backbone=backbone, heads=connections)
     return composed
+
+
+def build_adapter(declared: ComponentConfig | None, model: Model) -> Adapter | None:
+    """The parameters this run adds to the network, attached to it, or None where it declared none.
+
+    The model is imposed rather than offered: an adapter is a change to a network, so there is no such
+    thing as one that does not take it. Nothing else about the run reaches here — how many epochs, which
+    optimizer, what is frozen — because none of it changes what a delta is.
+    """
+    if declared is None:
+        return None
+    built = instantiate(declared, adapter_registry, model=model)
+    if not isinstance(built, Adapter):
+        raise TypeError(
+            f"{declared.spelled!r} built {type(built).__name__}, which is not an Adapter: a run asks one for "
+            "parameters to add before it trains and a way to fold them back after, and this answers neither."
+        )
+    return built
 
 
 def build_backbone(declared: ComponentConfig) -> Backbone:

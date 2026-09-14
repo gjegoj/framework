@@ -26,7 +26,7 @@ from src.export.registry import exporter_registry
 from src.losses.registry import loss_registry
 from src.metrics.registry import metric_registry
 from src.models.build import NATIVE
-from src.models.registry import backbone_registry, head_registry, model_registry
+from src.models.registry import adapter_registry, backbone_registry, head_registry, model_registry
 from src.tasks.registry import task_registry
 from src.tracking.registry import tracker_registry
 from src.training.registry import learner_registry, optimizer_registry, scheduler_registry
@@ -171,6 +171,8 @@ def declared_names(config: ExperimentConfig) -> Iterator[tuple[ComponentConfig, 
         yield config.scheduler, scheduler_registry
     if config.tracker is not None:
         yield config.tracker, tracker_registry
+    if config.adapter is not None:
+        yield config.adapter, adapter_registry
     for task in config.tasks.values():
         yield task.kind, task_registry
         if task.target_encoder is not None:
@@ -217,6 +219,9 @@ def unresolved_names(config: ExperimentConfig) -> list[str]:
         "export=tensorrt",
         "export=ncnn",
         "export=all",
+        # Paired with the encoder whose attention `lora.yaml` names; over a residual network it would
+        # be refused at build, which is the point of the refusal rather than a fault of the group.
+        "adapter=lora model=dpt_dinov3",
     ],
 )
 def test_every_group_option_validates_and_names_something_that_exists(override: str) -> None:

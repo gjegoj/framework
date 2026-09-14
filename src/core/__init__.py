@@ -24,6 +24,7 @@ from src.core.entities import (
     ValueDistribution,
     as_children,
     class_name,
+    submodule_at,
     validate_classes,
     validate_name,
 )
@@ -86,6 +87,7 @@ __all__ = [
     "class_name",
     "drop_feature_axis",
     "require_tensor",
+    "submodule_at",
     "validate_classes",
     "validate_name",
 ]

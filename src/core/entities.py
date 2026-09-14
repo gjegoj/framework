@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from math import isfinite
-from typing import cast
+from typing import Any, cast
 
 import torch
 from torch import Tensor, nn
@@ -81,6 +81,36 @@ def as_children(children: Mapping[str, nn.Module]) -> nn.ModuleDict:
             "answers to it, so the run could not keep this one under that name. Rename it."
         )
     return nn.ModuleDict(dict(children))
+
+
+def submodule_at(root: nn.Module, path: str, *, reader: str) -> nn.Module:
+    """The sub-module a dot-path names, or a message naming what is there instead.
+
+    Here rather than beside whichever declaration walks one, because two of them do — the parts a run
+    holds still and the part it adapts — and a path that names nothing is one mistake, owed one answer.
+    Beside ``as_children`` for the same reason it is: both are about a declaration's word and torch's
+    namespace, which is a fact of the vocabulary rather than of any package.
+
+    Parameters:
+        root: What the path is relative to.
+        path: Dot-path under it — ``backbone``, ``heads.species``.
+        reader: The declaration the path was written in, so a refusal names where to go and edit.
+    """
+    found: Any = root
+    for step in path.split("."):
+        try:
+            found = getattr(found, step)
+        except AttributeError:
+            children = ", ".join(name for name, _ in found.named_children()) or "none"
+            raise LookupError(
+                f"{reader} cannot find {path!r}: {step!r} is not a module of {type(found).__name__}. "
+                f"Available: {children}."
+            ) from None
+    if not isinstance(found, nn.Module):
+        # A path leading somewhere that is not a module and one leading nowhere are the same mistake in
+        # the same declaration, and one mistake is worth one kind of refusal.
+        raise LookupError(f"{reader} works on modules, and {path!r} names a {type(found).__name__}.")  # noqa: TRY004
+    return found
 
 
 def validate_classes(classes: Mapping[int, str]) -> None:
@@ -218,6 +248,18 @@ class LossOutput:
     def __post_init__(self) -> None:
         if self.total.ndim != 0:
             raise ValueError("Loss total must be a scalar tensor.")
+
+    @classmethod
+    def reported(cls, name: str, value: Tensor) -> LossOutput:
+        """One number, which is the whole of this objective, under the name a report will find it by.
+
+        Both maps, and the very same tensor in each, so that a weight applied afterwards moves the share
+        and leaves the term where it was: ``breakdown`` tells the two apart by identity. Here rather than
+        beside whichever caller builds one, because two of them do — a loss answering for itself and a
+        learner descending something that is not a loss — and one that filled a single map would report
+        a number the total was never made of.
+        """
+        return cls(total=value, losses={name: value}, contributions={name: value})
 
     def __add__(self, other: LossOutput) -> LossOutput:
         duplicates = (self.losses.keys() & other.losses.keys()) | (

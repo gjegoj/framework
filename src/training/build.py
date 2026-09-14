@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Mapping, Sequence
 from functools import partial
 from inspect import signature
@@ -13,13 +14,18 @@ from torch.optim import Optimizer
 if TYPE_CHECKING:
     from lightning.pytorch.utilities.types import LRSchedulerConfigType
 
-from src.config import ComponentConfig, SchedulerConfig
+from src.config import ComponentConfig, HeadConfig, SchedulerConfig, TeacherConfig
 from src.config.instantiate import fill_signature, instantiate, instantiate_offering, resolve_factory, resolve_params
+from src.core import TensorShape
 from src.losses import Loss
-from src.models import Model
+from src.models import Model, load_weights
+from src.models.build import build_model
 from src.tasks import Task
 from src.training.base import FitProfile, Learner, OptimizerFactory, SchedulerFactory
+from src.training.checkpoints import model_weights
 from src.training.registry import learner_registry, optimizer_registry, profiler_registry, scheduler_registry
+
+log = logging.getLogger(__name__)
 
 LEARNING_RATE = "lr"
 """What a learning-rate graph is titled; Lightning's monitor reads it from the policy below.
@@ -31,7 +37,12 @@ group share one graph, each a line on it.
 
 
 def build_learner(
-    declared: ComponentConfig, *, model: Model, tasks: Mapping[str, Task], losses: Mapping[str, Loss]
+    declared: ComponentConfig,
+    *,
+    model: Model,
+    tasks: Mapping[str, Task],
+    losses: Mapping[str, Loss],
+    teacher: Model | None = None,
 ) -> Learner:
     """The algorithm a run trains by, over the parts it has already assembled.
 
@@ -43,11 +54,21 @@ def build_learner(
     ``learned_only`` is offered the same way and derived rather than declared: a target whose vocabulary
     the training split settled says so, and an objective keeping one parameter per entry of it has
     nothing to say about an entry no split it learned from held.
+
+    So is ``teacher``, which is why a second network is declared in a section of its own rather than
+    inside this one: offered as a fact *and* written in the declaration, it would be two statements of
+    one thing, and the builder refuses those by name before either could be read.
     """
     learned_only = sorted(name for name, task in tasks.items() if task.info.open_set)
     _refuse_a_total_that_would_mean_two_things(tasks, learned_only)
     built = instantiate_offering(
-        declared, learner_registry, model=model, tasks=tasks, losses=losses, learned_only=learned_only
+        declared,
+        learner_registry,
+        model=model,
+        tasks=tasks,
+        losses=losses,
+        learned_only=learned_only,
+        teacher=teacher,
     )
     if not isinstance(built, Learner):
         raise TypeError(
@@ -55,6 +76,32 @@ def build_learner(
             "batch into a loss, and a trainer has nothing to ask it for."
         )
     return built
+
+
+def build_teacher(
+    declared: TeacherConfig | None, *, heads: Mapping[str, HeadConfig], outputs: Mapping[str, TensorShape]
+) -> Model | None:
+    """The second network a run learns from, sized by this run's tasks and holding the weights it answers with.
+
+    Sized here rather than declared, which is what makes a teacher a teacher rather than a second model:
+    it answers the same questions as the student, so its heads are built from the same shapes by the same
+    builder. A declaration restating them could disagree with them, and the disagreement would show up as
+    a shape error inside a step.
+
+    Its weights are read straight into it, and the strictness that costs is the point twice over: it is
+    what makes the teacher worth listening to, and it is also the only check that the file and the
+    declaration are about the same network — a teacher built from one architecture and loaded from
+    another's run is refused by name rather than by a wrong number.
+
+    Not through ``load_checkpoint``, which says in its log that the optimizer and the epoch counter start
+    fresh. True, and about a run continuing from weights; a teacher continues nothing.
+    """
+    if declared is None:
+        return None
+    teacher = build_model(declared, heads=heads, outputs=outputs)
+    load_weights(teacher, model_weights(declared.checkpoint_path), declared.checkpoint_path)
+    log.info("The teacher answers with the weights from %s and learns nothing here.", declared.checkpoint_path)
+    return teacher
 
 
 def _refuse_a_total_that_would_mean_two_things(tasks: Mapping[str, Task], learned_only: Sequence[str]) -> None:

@@ -24,6 +24,7 @@ QUARANTINE: dict[str, tuple[str, ...]] = {
     "hydra": ("config/instantiate.py", "cli.py"),
     "omegaconf": ("cli.py",),
     "albumentations": ("transforms/albumentations.py", "transforms/augmentations/"),
+    "peft": ("models/adapters.py",),
     "timm": ("models/backbones/",),
     "segmentation_models_pytorch": ("models/backbones/", "losses/segmentation.py"),
     "torchmetrics": ("metrics/",),
@@ -68,7 +69,8 @@ CAPABILITY_EDGES: dict[str, frozenset[str]] = {
         }
     ),
     "cli": frozenset({"build", "console", "experiment", "export"}),
-    "experiment": frozenset({"export", "tracking", "training"}),
+    # `models`, because folding a delta back in is a step of the run, between what it kept and what it ships.
+    "experiment": frozenset({"export", "models", "tracking", "training"}),
     # `models` and `tasks` for what a deployable graph is made of: one network, and what its outputs mean.
     "export": frozenset({"models", "tasks"}),
     # `losses`, because annealing moves a number of an objective and has to know what one is.
@@ -175,7 +177,7 @@ def files() -> list[str]:
     return [path.relative_to(SRC).as_posix() for path in sorted(SRC.rglob("*.py"))]
 
 
-MINIMUM_IMPORTS = 900
+MINIMUM_IMPORTS = 950
 """What the tree imports today, rounded down.
 
 The rules below all read the same list, so a glob that quietly stopped matching would make every one of

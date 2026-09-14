@@ -13,12 +13,14 @@ from src.training.base import (
 )
 from src.training.checkpoints import load_checkpoint, load_learned, model_weights, restore_best_weights
 from src.training.data import TrainingData
+from src.training.distillation import DistillationLearner
 from src.training.learner import StandardLearner
 from src.training.module import LOSS, TrainingModule, module_at
 
 __all__ = [
     "LOSS",
     "DeclaresMetricDirections",
+    "DistillationLearner",
     "FitProfile",
     "Learner",
     "StandardLearner",

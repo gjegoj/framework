@@ -6,6 +6,7 @@ module runs, so `model=resnet18` in a config finds `timm` here and nowhere else.
 
 from __future__ import annotations
 
+from src.models.adapters import Adapter, LoraAdapter
 from src.models.backbones import SmpBackbone, TimmBackbone
 from src.models.base import Backbone, HeadConnection, Model, Produces, ShapeAware
 from src.models.composite import CompositeModel
@@ -13,12 +14,14 @@ from src.models.heads import ConvHead, CosineHead, LinearHead
 from src.models.weights import load_weights
 
 __all__ = [
+    "Adapter",
     "Backbone",
     "CompositeModel",
     "ConvHead",
     "CosineHead",
     "HeadConnection",
     "LinearHead",
+    "LoraAdapter",
     "Model",
     "Produces",
     "ShapeAware",

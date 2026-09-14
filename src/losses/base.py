@@ -51,7 +51,7 @@ class Loss(nn.Module, ABC):
 
     def reported(self, value: Tensor) -> LossOutput:
         """This loss's number under its own name, which is how every leaf loss answers."""
-        return LossOutput(total=value, losses={self.log_name: value}, contributions={self.log_name: value})
+        return LossOutput.reported(self.log_name, value)
 
 
 class TorchLoss(Loss):

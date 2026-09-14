@@ -66,12 +66,7 @@ class StandardLearner(Learner):
         and it is what keeps a total from meaning one thing in training and another in evaluation.
         """
         output = self.model(batch.inputs)
-        scored = (
-            self.tasks
-            if self.training
-            else {name: task for name, task in self.tasks.items() if name not in self._learned_only}
-        )
-        losses = [self._weighted(name, task, output, batch) for name, task in scored.items()]
+        terms = self._terms(output, batch)
         with torch.no_grad():
             # Metrics and displays never go backward, and a prediction built inside the graph would hold
             # every task's activations alive until the optimizer step.
@@ -79,10 +74,28 @@ class StandardLearner(Learner):
                 name: task.postprocess(output, self.model.produces(name)) for name, task in self.tasks.items()
             }
         return StepOutput(
-            loss=reduce(operator.add, losses) if losses else None,
+            loss=reduce(operator.add, terms) if terms else None,
             predictions=predictions,
             targets={name: task.metric_view(batch) for name, task in self.tasks.items()},
         )
+
+    def _terms(self, output: ModelOutput, batch: Batch) -> list[LossOutput]:
+        """Everything this step descends, each under the name of the task it is about.
+
+        The one place a learner descending something besides its targets extends — a second network to
+        agree with — so that the tasks go on being scored exactly as they are here rather than beside it.
+        """
+        return [self._weighted(name, task, output, batch) for name, task in self._scored().items()]
+
+    def _scored(self) -> Mapping[str, Task]:
+        """The tasks this stage has an objective for, which outside training is not all of them.
+
+        One home, because a learner adding a term of its own has to add it for the same tasks: a total
+        made of one set while training and another while validating is two numbers under one name.
+        """
+        if self.training:
+            return self.tasks
+        return {name: task for name, task in self.tasks.items() if name not in self._learned_only}
 
     def parameters_of(self, task: str) -> Iterable[nn.Parameter]:
         """The model's parts for this task, plus its loss — an angular margin keeps the class prototypes."""

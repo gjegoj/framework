@@ -10,7 +10,14 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from src.config.experiment import ExperimentConfig, LoaderConfig, RunConfig, SchedulerConfig, TrainerConfig
+from src.config.experiment import (
+    ExperimentConfig,
+    LoaderConfig,
+    RunConfig,
+    SchedulerConfig,
+    TeacherConfig,
+    TrainerConfig,
+)
 from src.config.schema import (
     ClassFile,
     ComponentConfig,
@@ -38,6 +45,7 @@ __all__ = [
     "RunConfig",
     "SchedulerConfig",
     "TaskConfig",
+    "TeacherConfig",
     "TrainerConfig",
     "WeightedLossConfig",
     "load_config",

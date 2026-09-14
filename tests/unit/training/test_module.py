@@ -26,6 +26,7 @@ from src.metrics.build import build_metrics
 from src.tasks import Classification, Task
 from src.training import Learner, TrainingModule
 from src.training.base import FitProfile, ParameterGroup, StepPreview
+from src.training.module import module_at
 from tests.support.models import Echo
 
 CLASSES = {0: "cat", 1: "dog"}
@@ -432,3 +433,14 @@ class TestPreviews:
         fit.fit(module(), train_dataloaders=loader(RIGHT))
 
         assert "train/loss" in fit.logged_metrics
+
+
+def test_a_module_that_holds_no_learner_answers_for_that_itself() -> None:
+    """The walk to the model is this module's own layout; a declaration's reader never wrote that path.
+
+    Named the other way round, a refusal would tell a callback its declaration cannot find a path the
+    callback did not write — and the path under the model, which is what a declaration does write, is
+    the one the reader is answerable for.
+    """
+    with pytest.raises(LookupError, match="LightningModule cannot find"):
+        module_at(L.LightningModule(), "backbone", reader="Freeze")

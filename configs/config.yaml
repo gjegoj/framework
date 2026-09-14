@@ -7,6 +7,7 @@ defaults:
   - preprocessing: image
   - transforms: default    # the deterministic pixel pipeline; swap to `augmented` to add train-time augmentation
   - loader: default
+  - adapter: none          # `lora` holds a backbone still and learns a low-rank delta beside it
   - callbacks: none        # `default` keeps the best weights and logs the rate (it needs a tracker)
   - tracker: none          # nothing is recorded; swap to `csv` for a local file or `clearml` to upload
   - export: none           # nothing is shipped; swap to `onnx`, `pt2`, `torchscript` or `all`
@@ -30,6 +31,14 @@ data:
   split: {train: 0.7, val: 0.15, test: 0.15}
 
 tasks: {}
+
+# `learner` and `teacher` are neither declared here nor groups, and cannot be: a run that learns from a
+# second network names a file this machine holds, so no shipped file could carry one. Both go in an
+# experiment, after an ordinary run has left a checkpoint to learn from:
+#   learner: {name: distillation, temperature: 4.0, weight: 0.5}
+#   teacher: {name: composite, backbone: {name: timm, model_name: resnet50, pretrained: true},
+#             checkpoint_path: runs/<project>/<name>/checkpoints/<file>.ckpt}
+# The teacher's heads are sized by this run's own tasks, so nothing about them is written twice.
 
 run:
   project: my-project      # the run's identity: tracker project + the runs/ subtree

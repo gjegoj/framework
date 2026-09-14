@@ -1,0 +1,32 @@
+# @package _global_
+# LoRA: hold a backbone still and learn a low-rank delta beside chosen weights, then fold it in.
+#
+# Pairs with a large pretrained encoder — `model=dpt_dinov3` is the one shipped here. What it buys is
+# counted in parameters: measured on that model, a rank-8 delta beside the attention of its ViT-S/16
+# learns 0.230M against the 58.7M the backbone holds, 0.39% of it. What leaves the run is the ordinary
+# artifact — the delta is folded into the weights it was added to after the epoch the run kept is
+# restored and before anything is scored or shipped, so `state_dict` keys, `model.json` and every export
+# read exactly as in a run that adapted nothing.
+#
+# `target_modules` is the one knob with no safe default. It matches the *end* of a module's path, so a
+# single word reaches every block: `qkv` and `proj` are a transformer's attention, `fc1` and `fc2` its
+# MLP, `conv1` and `conv2` a residual network's convolutions. A name reaching nothing is refused while
+# the run is being assembled, listing the parts that are actually under `module` — so a wrong guess
+# costs a second rather than an epoch.
+#
+# `module` names a part rather than the whole model, and that is the design twice over. Once because
+# every path a config already writes keeps naming what it named — `callbacks` freezing `backbone`, a
+# checkpoint's keys, the parameter group a task's own rate applies to. And once because adapting holds
+# everything under it still, so it must name what is *pretrained* and nothing else: `backbone.encoder`
+# here, because an smp backbone is a pretrained encoder beside a decoder this run has to learn from
+# scratch, and `module: backbone` would freeze those 30M random weights and train a delta against them.
+# A backbone that is one network end to end — timm's — is named `backbone`.
+#
+# Freezing what this adapts is refused rather than obeyed: the delta would be held still along with the
+# weights beneath it, and nothing there would learn at all.
+adapter:
+  name: lora
+  module: backbone.encoder
+  target_modules: [qkv, proj]
+  r: 8
+  alpha: 16

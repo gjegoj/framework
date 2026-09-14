@@ -9,12 +9,12 @@ no backend by name.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from typing import TYPE_CHECKING, Any, ClassVar, override
+from typing import TYPE_CHECKING, ClassVar, override
 
 import lightning as L
 from torch import Tensor, nn
 
-from src.core import Batch, LossOutput, Stage, StepOutput, TensorTree
+from src.core import Batch, LossOutput, Stage, StepOutput, TensorTree, submodule_at
 from src.metrics import DeclaresStages, Metric, MetricCollection
 from src.tracking import MetricKey, report, series
 from src.training.base import FitProfile, Learner, OptimizerFactory, SchedulerFactory, StepPreview, StepWatcher
@@ -265,24 +265,14 @@ def module_at(pl_module: L.LightningModule, path: str, *, reader: str) -> nn.Mod
     one ``MODEL_PREFIX`` turns into a checkpoint's keys, so a config's path and a saved file's contents
     are two readings of one declaration rather than two spellings to keep in step.
 
+    Two walks rather than one: where the model sits is this module's own fact, and the path under it is
+    what a declaration wrote, so each is answered for by whoever owns it. Written as one, a refusal would
+    quote the reader their own path with this module's prefix glued to the front of it.
+
     Parameters:
         pl_module: The training module the path is relative to the model of.
         path: Dot-path under the model — ``backbone``, ``heads.species``.
         reader: Who is asking, so a refusal names the declaration the path was written in.
     """
-    found: Any = pl_module
-    for step in f"{TrainingModule.MODEL}.{path}".split("."):
-        try:
-            found = getattr(found, step)
-        except AttributeError:
-            children = ", ".join(name for name, _ in found.named_children()) or "none"
-            raise LookupError(
-                f"{reader} cannot find {path!r}: {step!r} is not a module of {type(found).__name__}. "
-                f"Available: {children}."
-            ) from None
-    if not isinstance(found, nn.Module):
-        # same mistake in the same declaration, and one mistake is worth one kind of refusal.
-        raise LookupError(  # noqa: TRY004
-            f"{reader} works on modules, and {path!r} names a {type(found).__name__}."
-        )
-    return found
+    holder = submodule_at(pl_module, TrainingModule.MODEL, reader=type(pl_module).__name__)
+    return submodule_at(holder, path, reader=reader)
