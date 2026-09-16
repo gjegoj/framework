@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from typing import ClassVar
 
 from src.core import OVERLAP, Axis, Stream, TensorShape
-from src.tasks.base import Task
+from src.tasks.base import TargetEncoderDeclaration, Task
 from src.tasks.registry import task_registry
 from src.tasks.semantics import CLASSIFICATION_METRICS, BinarySemantics, MulticlassSemantics
 
@@ -38,7 +38,7 @@ class DenseOutput(Task):
 class Segmentation(DenseOutput, MulticlassSemantics):
     """One of the declared classes per pixel."""
 
-    default_target_encoder: ClassVar[str | None] = "mask"
+    default_target_encoder: ClassVar[TargetEncoderDeclaration | None] = "mask"
     default_metrics: ClassVar[Mapping[str, Mapping[str, object]]] = SEGMENTATION_METRICS
 
 
@@ -46,5 +46,5 @@ class Segmentation(DenseOutput, MulticlassSemantics):
 class BinarySegmentation(DenseOutput, BinarySemantics):
     """One score per pixel: how much it belongs to the thing."""
 
-    default_target_encoder: ClassVar[str | None] = "mask"
+    default_target_encoder: ClassVar[TargetEncoderDeclaration | None] = "mask"
     default_metrics: ClassVar[Mapping[str, Mapping[str, object]]] = SEGMENTATION_METRICS

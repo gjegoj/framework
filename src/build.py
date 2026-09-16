@@ -21,7 +21,7 @@ from lightning import seed_everything
 
 from src.callbacks.build import build_callbacks
 from src.config import ExperimentConfig, HeadConfig, TaskConfig
-from src.core import Axis, Sample, Stage, TensorShape, require_tensor
+from src.core import Axis, Sample, Stage, TensorShape, naming, require_tensor
 from src.data.build import build_data_module, build_preprocessor
 from src.experiment import Experiment
 from src.export import WRITTEN_FROM, example_inputs
@@ -242,7 +242,8 @@ def loss_for(declared: TaskConfig, task: Task) -> Loss:
     Here rather than in either package: ``losses`` knows nothing of tasks and ``tasks`` knows nothing of
     losses, so the root is the only place holding both a declaration and the facts to size it from.
     """
-    return build_loss(declared.loss if declared.loss is not None else task.default_loss, task.facts())
+    with naming(f"tasks.{task.name}.loss"):
+        return build_loss(declared.loss if declared.loss is not None else task.default_loss, task.facts())
 
 
 def _refuse_a_head_and_an_objective_that_disagree(model: Model, losses: Mapping[str, Loss]) -> None:
@@ -370,7 +371,8 @@ def metrics_for(declared: TaskConfig, task: Task) -> MetricCollection:
     """What a task is judged by; a declared set replaces the kind's own rather than adding to it."""
     if declared.metrics is None:
         log.info("Task %r is judged by its kind's own metrics: %s.", task.name, ", ".join(task.default_metrics))
-    return build_metrics(declared.metrics if declared.metrics is not None else task.default_metrics, task.facts())
+    with naming(f"tasks.{task.name}.metrics"):
+        return build_metrics(declared.metrics if declared.metrics is not None else task.default_metrics, task.facts())
 
 
 def build_trainer(config: ExperimentConfig) -> L.Trainer:

@@ -9,7 +9,7 @@ from torch import Tensor
 from torch.nn.functional import normalize
 
 from src.core import FEATURE_AXIS, Axis, Batch, Representation, TargetInfo, TensorTree
-from src.tasks.base import LossDeclaration, Task
+from src.tasks.base import LossDeclaration, TargetEncoderDeclaration, Task
 from src.tasks.registry import task_registry
 
 
@@ -36,7 +36,7 @@ class MetricLearning(Task):
 
     output_axis: ClassVar[str] = Axis.EMBEDDING
     publishes: ClassVar[Representation] = Representation.DIRECTION
-    default_target_encoder: ClassVar[str | None] = "identity"
+    default_target_encoder: ClassVar[TargetEncoderDeclaration | None] = "identity"
     default_metrics: ClassVar[Mapping[str, Mapping[str, object]]] = {
         "recall_at_1": {"name": "recall_at_k", "k": 1},
         # Recall asks whether a match turned up first; this asks how every picture of the identity was

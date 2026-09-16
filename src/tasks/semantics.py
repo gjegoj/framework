@@ -13,7 +13,7 @@ from torch import Tensor
 from torch.nn.functional import one_hot
 
 from src.core import FEATURE_AXIS, Batch, Representation, Semantics, TensorTree, drop_feature_axis
-from src.tasks.base import LossDeclaration, Task
+from src.tasks.base import LossDeclaration, TargetEncoderDeclaration, Task
 
 DECISION = 0.5
 """Where a score becomes a decision: at or above this, the label holds.
@@ -38,7 +38,7 @@ class MulticlassSemantics(Task):
 
     semantics: ClassVar[Semantics | None] = Semantics.MULTICLASS
     publishes: ClassVar[Representation] = Representation.PROBABILITIES
-    default_target_encoder: ClassVar[str | None] = "label"
+    default_target_encoder: ClassVar[TargetEncoderDeclaration | None] = "label"
     default_metrics: ClassVar[Mapping[str, Mapping[str, object]]] = CLASSIFICATION_METRICS
 
     @property
@@ -81,7 +81,7 @@ class BinarySemantics(Task):
 
     semantics: ClassVar[Semantics | None] = Semantics.BINARY
     publishes: ClassVar[Representation] = Representation.PROBABILITIES
-    default_target_encoder: ClassVar[str | None] = "scalar"
+    default_target_encoder: ClassVar[TargetEncoderDeclaration | None] = "scalar"
     default_metrics: ClassVar[Mapping[str, Mapping[str, object]]] = CLASSIFICATION_METRICS
 
     @property
@@ -109,7 +109,7 @@ class MultilabelSemantics(Task):
 
     semantics: ClassVar[Semantics | None] = Semantics.MULTILABEL
     publishes: ClassVar[Representation] = Representation.PROBABILITIES
-    default_target_encoder: ClassVar[str | None] = "multilabel"
+    default_target_encoder: ClassVar[TargetEncoderDeclaration | None] = "multilabel"
     # A multilabel confusion matrix is one small matrix per label, which reports as nothing useful.
     default_metrics: ClassVar[Mapping[str, Mapping[str, object]]] = {
         label: declared for label, declared in CLASSIFICATION_METRICS.items() if label != "confusion_matrix"

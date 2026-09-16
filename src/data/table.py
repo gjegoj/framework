@@ -8,7 +8,7 @@ from typing import Any
 import pandas as pd
 from torch.utils.data import Dataset
 
-from src.core import CELLS, DatasetInfo, DatasetStatistics, Distribution, Sample
+from src.core import CELLS, DatasetInfo, DatasetStatistics, Distribution, Sample, naming
 from src.data.base import DataModule, Preprocessor, Table, TableSource
 from src.data.registry import data_module_registry
 from src.data.sources import capped, source_for
@@ -119,10 +119,8 @@ class TableDataModule(DataModule):
             if split == train_split:
                 continue
             for name, column in self._targets.items():
-                try:
+                with naming(f"Split {split!r}, target {name!r}"):
                     self._preprocessor.validate({name: table[column]})
-                except (LookupError, ValueError, TypeError) as error:
-                    raise type(error)(f"Split {split!r}, target {name!r}: {error}") from error
 
     def _cells(self, table: Table) -> dict[str, pd.Series]:
         return {name: table[column] for name, column in self._targets.items()}

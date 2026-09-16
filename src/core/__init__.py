@@ -28,6 +28,7 @@ from src.core.entities import (
     validate_classes,
     validate_name,
 )
+from src.core.refusals import naming
 from src.core.registry import Registry
 from src.core.taxonomy import (
     SPATIAL,
@@ -89,6 +90,7 @@ __all__ = [
     "as_children",
     "class_name",
     "drop_feature_axis",
+    "naming",
     "require_named_tensors",
     "require_tensor",
     "submodule_at",

@@ -13,7 +13,8 @@ if TYPE_CHECKING:
     from src.training.base import Learner
 
 learner_registry: Registry[Learner] = Registry("learner")
-"""What `learner` writes; register with ``@learner_registry.register("name")``."""
+"""What `learner` writes; an algorithm of your own is reached by ``_target_``, or named here
+as ``Registry`` describes — a decorator alone leaves the name unresolvable until the module runs."""
 
 optimizer_registry: Registry[optim.Optimizer] = Registry("optimizer")
 """What `optimizer` writes: torch's own classes, under the names a data scientist already uses.

@@ -19,7 +19,7 @@ from src.config import TaskConfig, load_config
 from src.core import Axis, TargetInfo
 from src.tasks import Classification, Segmentation
 from src.tasks.build import head_for
-from tests.support.declarations import NORMALIZATION
+from tests.support.declarations import CLASSES, NORMALIZATION
 from tests.support.text import text_family
 from tests.unit.build.conftest import SIZE
 
@@ -324,6 +324,36 @@ class TestTheRunItWillBe:
 
         assert built.data.val_dataloader().pin_memory is True
         assert built.data.train_dataloader().batch_size == 2
+
+
+class TestWhereInTheDeclaration:
+    """A run holds several tasks, and a refusal from one of their positions has to say which one wrote it."""
+
+    @pytest.mark.parametrize(
+        ("position", "written"),
+        [
+            pytest.param("loss", {"loss": "crossentropy"}, id="loss"),
+            pytest.param("metrics", {"metrics": {"score": {"name": "accuracyy"}}}, id="metrics"),
+            pytest.param("head", {"head": {"name": "linnear"}}, id="head"),
+            pytest.param("target_encoder", {"target_encoder": {"name": "labell"}}, id="target encoder"),
+        ],
+    )
+    def test_a_name_nothing_implements_is_refused_naming_where_it_was_written(
+        self, declaration: Mapping[str, Any], position: str, written: Mapping[str, Any]
+    ) -> None:
+        """The registry lists every name it holds, which is the one thing a reader already knows.
+
+        What it cannot know is which of a run's tasks the misspelling is in: the same four positions are
+        written once per task, and the list of alternatives is identical for all of them. The position is
+        spelled as a run would override it, so the message is the path to the line that has to change.
+        """
+        tasks = {
+            **declaration["tasks"],
+            "other": {"kind": "classification", "target_column": "species", "classes": CLASSES, **written},
+        }
+
+        with pytest.raises(LookupError, match=rf"tasks\.other\.{position}"):
+            experiment(declaration, tasks=tasks)
 
 
 class TestDeclarationsThatCannotHold:

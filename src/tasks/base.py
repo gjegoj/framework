@@ -23,6 +23,12 @@ from src.core import (
 )
 
 type LossDeclaration = str | Mapping[str, object] | Sequence[Mapping[str, object]]
+type TargetEncoderDeclaration = str | Mapping[str, object]
+"""How a kind names the encoder its column starts from: a registry name, or a whole declaration.
+
+Both, for the same reason ``default_head`` is a whole declaration: a kind of one's own reaches an
+encoder of one's own by import path, without registering it into this tree or repeating the line in
+every experiment that names the kind."""
 """A loss as a task declares its default: a registry name, one declaration, or several to weigh together."""
 
 
@@ -39,8 +45,9 @@ class Task(ABC):
 
     Attributes:
         default_head: The head a task gets when a run declares none, and the stream it reads.
-        default_target_encoder: Registry name of the encoder its column starts from, or None when the
-            batch itself is the supervision. Read before the data is prepared, so it cannot see facts.
+        default_target_encoder: The encoder its column starts from — a registry name, or a whole
+            declaration for one this framework does not hold — or None when the batch itself is the
+            supervision. Read before the data is prepared, so it cannot see facts.
         default_metrics: What the task is judged by when a run declares no metrics of its own.
         semantics: What this task's labels mean, where they mean one of the three things a vocabulary
             can mean; None where the target is a number rather than a label.
@@ -62,7 +69,7 @@ class Task(ABC):
     """
 
     default_head: ClassVar[Mapping[str, object]] = {"name": "linear", "stream": Stream.POOLED}
-    default_target_encoder: ClassVar[str | None] = None
+    default_target_encoder: ClassVar[TargetEncoderDeclaration | None] = None
     default_metrics: ClassVar[Mapping[str, Mapping[str, object]]] = {}
     semantics: ClassVar[Semantics | None] = None
 

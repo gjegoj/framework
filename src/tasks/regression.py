@@ -9,7 +9,7 @@ import torch
 from torch import Tensor
 
 from src.core import ERROR, FEATURE_AXIS, Batch, Representation, TensorTree, drop_feature_axis
-from src.tasks.base import LossDeclaration, Task
+from src.tasks.base import LossDeclaration, TargetEncoderDeclaration, Task
 from src.tasks.registry import task_registry
 
 
@@ -24,7 +24,7 @@ class Regression(Task):
     """
 
     publishes: ClassVar[Representation] = Representation.VALUE
-    default_target_encoder: ClassVar[str | None] = "scalar"
+    default_target_encoder: ClassVar[TargetEncoderDeclaration | None] = "scalar"
     default_metrics: ClassVar[Mapping[str, Mapping[str, object]]] = {ERROR: {"name": ERROR}}
 
     @property

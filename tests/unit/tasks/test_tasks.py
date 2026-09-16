@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import ClassVar
+
 import pytest
 import torch
 from torch import Tensor
@@ -9,7 +11,10 @@ from torch import Tensor
 from src.core import FEATURE_AXIS, Batch, ModelOutput, Representation, Semantics, TargetInfo, require_tensor
 from src.data.encoders.continuous import BinnedEncoder, GaussianBinsEncoder, LinearBinsEncoder
 from src.tasks import MetricLearning, Task
+from src.tasks.base import TargetEncoderDeclaration
+from src.tasks.build import default_target_encoder
 from src.tasks.registry import task_registry
+from src.tasks.regression import Regression
 from tests.support.tasks import info, published, specimen
 
 PRODUCIBLE = [Representation.PROJECTED, Representation.COSINES]
@@ -32,8 +37,26 @@ class TestContract:
 
         assert issubclass(kind, Task)
         assert isinstance(kind.default_head["stream"], str) and isinstance(kind.default_head["name"], str)
-        assert kind.default_target_encoder is None or isinstance(kind.default_target_encoder, str)
+        assert kind.default_target_encoder is None or default_target_encoder(kind) is not None
         assert isinstance(kind.default_metrics, dict)
+
+    def test_a_kind_may_name_the_encoder_it_reads_its_column_with_by_import_path(self) -> None:
+        """One grammar for every component, including the one a kind writes for itself.
+
+        A head a kind declares is a whole declaration, so a kind of one's own may reach a head of one's
+        own; its encoder was a registry name and nothing else, which left the same reader registering
+        an encoder into this framework or writing `target_encoder:` into every experiment that used the
+        kind — for a fact the kind already knows.
+        """
+
+        class ReadingItsOwnWay(Regression):
+            default_target_encoder: ClassVar[TargetEncoderDeclaration | None] = {
+                "_target_": "src.data.encoders.ScalarEncoder"
+            }
+
+        declared = default_target_encoder(ReadingItsOwnWay)
+
+        assert declared is not None and declared.import_path == "src.data.encoders.ScalarEncoder"
 
     @pytest.mark.parametrize("kind", list(task_registry))
     def test_every_registered_task_answers_the_step_with_tensors(self, kind: str) -> None:

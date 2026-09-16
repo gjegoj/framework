@@ -14,6 +14,20 @@ class Widget:
         self.size, self.tag, self.inner = size, tag, inner
 
 
+class Anything:
+    """A constructor that forwards every knob it is handed, the way a library's own often does."""
+
+    def __init__(self, **options: Any) -> None:
+        self.options = options
+
+
+class Wanting:
+    """A constructor asking for something no run settles, so what is genuinely missing can be told apart."""
+
+    def __init__(self, vocabulary: object) -> None:
+        self.vocabulary = vocabulary
+
+
 @pytest.fixture
 def registry() -> Registry[Widget]:
     widgets = Registry[Widget]("widget")

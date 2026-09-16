@@ -9,7 +9,7 @@ from torch import Tensor, nn
 
 from src.config import ComponentConfig, HeadConfig, ModelConfig
 from src.config.instantiate import instantiate
-from src.core import SPATIAL, Axis, TensorShape
+from src.core import SPATIAL, Axis, TensorShape, naming
 from src.models.adapters import Adapter
 from src.models.base import Backbone, HeadConnection, Model, ShapeAware
 from src.models.heads import ExpandedHead, StackedHeads
@@ -116,7 +116,8 @@ def _over(task: str, declared: HeadConfig, stream: str, backbone: Backbone) -> C
     width = _width(published, stream, backbone)
 
     def built(count: int) -> nn.Module:
-        head: nn.Module = instantiate(declared, head_registry, in_features=width, out_features=count)
+        with naming(f"tasks.{task}.head"):
+            head: nn.Module = instantiate(declared, head_registry, in_features=width, out_features=count)
         _refuse_a_head_that_cannot_read(task, declared.spelled, head, published, stream)
         return head
 

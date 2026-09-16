@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from pathlib import Path
+from typing import Any
 
 from src.config import ClassFile, ComponentConfig, PreprocessingConfig, TaskConfig
 from src.config.instantiate import instantiate, resolve_factory
-from src.core import Registry
+from src.core import Registry, naming
 from src.data.base import DataModule, Encoder, Preprocessor, TargetEncoder
 from src.data.registry import (
     cache_registry,
@@ -49,22 +50,27 @@ def build_preprocessor(
 
 
 def build_target_encoder(name: str, task: TaskConfig, default: ComponentConfig | None) -> TargetEncoder:
-    """The declared encoder, or the task kind's default; ``classes`` come from the task and nowhere else."""
-    component = task.target_encoder or default
-    if component is None:
-        raise ValueError(f"Task {name!r} declares a target but no target_encoder, and its kind has no default.")
-    if "classes" in component.params:
-        raise ValueError(f"Task {name!r}: classes are declared on the task, not inside its target encoder.")
-    factory = resolve_factory(component, target_encoder_registry)
-    reads_classes = isinstance(factory, type) and issubclass(factory, Encoder) and factory.takes_classes
-    if reads_classes:
-        if task.classes is None:
-            raise ValueError(f"Task {name!r}: {component.spelled!r} reads a vocabulary; declare classes on the task.")
-        encoder: TargetEncoder = instantiate(component, target_encoder_registry, classes=classes_of(task.classes))
-        return encoder
-    if task.classes is not None:
-        raise ValueError(f"Task {name!r} declares classes, but {component.spelled!r} reads no vocabulary; drop them.")
-    encoder = instantiate(component, target_encoder_registry)
+    """The declared encoder, or the task kind's default; ``classes`` come from the task and nowhere else.
+
+    Which task is said once, by the position, rather than spelled into each refusal: the same line is
+    written once per task, so the name belonged in all of them, and four copies of it are four chances
+    to fall out of step with the line a run would actually override.
+    """
+    with naming(f"tasks.{name}.target_encoder"):
+        component = task.target_encoder or default
+        if component is None:
+            raise ValueError("This task declares a target, so something has to read it, and its kind has no default.")
+        if "classes" in component.params:
+            raise ValueError("Classes are declared on the task, not inside its target encoder.")
+        factory = resolve_factory(component, target_encoder_registry)
+        vocabulary: dict[str, Any] = {}
+        if isinstance(factory, type) and issubclass(factory, Encoder) and factory.takes_classes:
+            if task.classes is None:
+                raise ValueError(f"{component.spelled!r} reads a vocabulary; declare classes on the task.")
+            vocabulary = {"classes": classes_of(task.classes)}
+        elif task.classes is not None:
+            raise ValueError(f"{component.spelled!r} reads no vocabulary, and this task declares classes; drop them.")
+        encoder: TargetEncoder = instantiate(component, target_encoder_registry, **vocabulary)
     return encoder
 
 

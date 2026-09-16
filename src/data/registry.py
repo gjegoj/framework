@@ -1,8 +1,10 @@
 """The names a data declaration may write: what reads a cell, what joins a batch, what holds a split.
 
-Every one of these is an extension point of the same shape as the others in this framework — register
-a class of your own with ``@<name>_registry.register("name")`` and a declaration finds it, or reach it
-by ``_target_`` without registering at all. A registry is a convenience, never a gate.
+Every one of these is an extension point of the same shape as the others in this framework: reach a
+class of your own by ``_target_`` without registering at all, or give it a name here — which takes
+what ``Registry`` describes, a decorator beside the class *and* the module imported from a package's
+``__init__``, since a name exists only once the module defining it has run. A registry is a
+convenience, never a gate.
 """
 
 from __future__ import annotations

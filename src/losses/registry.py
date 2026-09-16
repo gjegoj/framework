@@ -10,4 +10,5 @@ if TYPE_CHECKING:
     from src.losses.base import Loss
 
 loss_registry: Registry[Loss] = Registry("loss")
-"""What `tasks.<name>.loss` writes; register with ``@loss_registry.register("name")``."""
+"""What `tasks.<name>.loss` writes; a loss of your own is reached by ``_target_``, or named here
+as ``Registry`` describes — a decorator alone leaves the name unresolvable until the module runs."""
