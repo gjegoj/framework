@@ -19,7 +19,7 @@ from src.build import build
 from src.config import load_config
 from src.core import require_tensor
 from src.experiment import Experiment, run
-from tests.support.declarations import NORMALIZATION, pixel_pipeline
+from tests.support.declarations import BACKBONE, NORMALIZATION, pixel_pipeline
 from tests.support.table import write_table
 
 SIZE = [32, 32]
@@ -54,7 +54,7 @@ def declared(table: Path, tmp_path: Path) -> Mapping[str, Any]:
             "inputs": {"image": {"name": "image", "image_size": SIZE, **NORMALIZATION}},
         },
         "transforms": {stage: pixel_pipeline(SIZE) for stage in ("train", "val", "test")},
-        "model": {"name": "composite", "backbone": {"name": "timm", "model_name": "resnet18", "pretrained": False}},
+        "model": {"name": "composite", "backbone": {"name": "timm", "model_name": BACKBONE, "pretrained": False}},
         "tasks": {"species": {"kind": "classification", "target_column": "species", "classes": {0: "cat", 1: "dog"}}},
         "scheduler": {"name": "cosine", "T_max": 1},
         "tracker": {"name": "csv", "save_dir": str(tmp_path / "run")},

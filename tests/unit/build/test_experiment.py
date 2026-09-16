@@ -16,6 +16,7 @@ from src.config import load_config
 from src.experiment import Experiment, run
 from src.training import model_weights, restore_best_weights
 from src.training.checkpoints import LEARNER_PREFIX, MODEL_PREFIX
+from tests.support.declarations import BACKBONE
 
 LEARNED_MARGIN = "losses.species.margin"
 """Where an objective that carries parameters sits inside a learner, for a run declaring one below."""
@@ -118,7 +119,7 @@ class TestRun:
 
         run(built)
 
-        assert Path(next((tmp_path / "record").rglob("hparams.yaml"))).read_text().count("resnet18") == 1
+        assert Path(next((tmp_path / "record").rglob("hparams.yaml"))).read_text().count(BACKBONE) == 1
 
     def test_a_run_ends_holding_the_weights_it_kept_rather_than_its_last_epoch(
         self, declaration: Mapping[str, Any], tmp_path: Path

@@ -186,8 +186,8 @@ def files() -> list[str]:
     return [path.relative_to(SRC).as_posix() for path in sorted(SRC.rglob("*.py"))]
 
 
-MINIMUM_IMPORTS = 950
-"""What the tree imports today, rounded down.
+MINIMUM_IMPORTS = 1050
+"""What the tree imports today, rounded down — measured 2026-09-16 at 1078 over 135 files.
 
 The rules below all read the same list, so a glob that quietly stopped matching would make every one of
 them pass on nothing. This is the number that says the list is real; raise it as the tree grows."""
@@ -362,9 +362,15 @@ def test_the_edges_a_package_declares_never_lead_back_to_it() -> None:
     assert looping == [], "these packages can reach themselves"
 
 
-def test_the_training_module_reads_capabilities_through_their_contracts_only(imports: list[Import]) -> None:
-    if not any(one.file == TRAINING_MODULE for one in imports):
-        pytest.skip(f"{TRAINING_MODULE} is not written yet; this rule has no subject to hold")
+def test_the_training_module_reads_capabilities_through_their_contracts_only(
+    files: list[str], imports: list[Import]
+) -> None:
+    """The loop reaches a capability through its facade or not at all — one file, named here.
+
+    Its absence is a failure rather than a reason to stand down: a rule whose subject is one path holds
+    for nothing the moment that path is renamed, and standing down is indistinguishable from passing.
+    """
+    assert TRAINING_MODULE in files, f"this rule's subject is {TRAINING_MODULE}, and the tree has no such file"
     reaching_in = sorted(
         one.module
         for one in imports

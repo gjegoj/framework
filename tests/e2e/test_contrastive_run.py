@@ -16,7 +16,7 @@ from src.build import build
 from src.config import load_config
 from src.core import require_tensor
 from src.experiment import run
-from tests.support.declarations import SIZE, pixel_pipeline, smallest_run
+from tests.support.declarations import BACKBONE, SIZE, pixel_pipeline, smallest_run
 from tests.support.table import write_table
 
 if TYPE_CHECKING:
@@ -42,7 +42,7 @@ def contrasting(table: Path, tmp_path: Path) -> dict[str, Any]:
         "name": "composite",
         "backbone": {
             "_target_": "src.models.MultiViewBackbone",
-            "backbone": {"_target_": "src.models.TimmBackbone", "model_name": "resnet18", "pretrained": False},
+            "backbone": {"_target_": "src.models.TimmBackbone", "model_name": BACKBONE, "pretrained": False},
         },
     }
     declared["tasks"] = {TASK: {"kind": {"name": "contrastive", "embedding_dim": WIDTH}}}

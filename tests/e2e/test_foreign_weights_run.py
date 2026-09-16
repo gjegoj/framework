@@ -19,7 +19,7 @@ from src.core import require_tensor, submodule_at
 from src.experiment import run
 from src.models import Model
 from src.models.heads import ExpandedHead
-from tests.support.declarations import CLASSES, smallest_run
+from tests.support.declarations import BACKBONE, CLASSES, smallest_run
 from tests.support.table import write_table
 
 if TYPE_CHECKING:
@@ -27,6 +27,12 @@ if TYPE_CHECKING:
 
 GROWN = {**CLASSES, len(CLASSES): "bird"}
 """The vocabulary of a later run: every name the file answered for, at its index, and one added after."""
+
+FIRST_WEIGHT = "conv1.0.weight"
+"""The first tensor of the library's own graph, named as the library names it — a stem convolution here.
+
+Read as a witness that a tensor of the file landed in the network rather than beside it, so any real
+weight would serve; this one is named because the framework prefixes it and the file does not."""
 
 
 @pytest.fixture(scope="module")
@@ -42,8 +48,8 @@ def trained(tmp_path_factory: pytest.TempPathFactory) -> Path:
     this framework wraps that graph, which is why the backbone is the one asked where it keeps it.
     """
     torch.manual_seed(0)
-    path = tmp_path_factory.mktemp("weights") / "resnet18.pth"
-    torch.save(timm.create_model("resnet18", pretrained=False, num_classes=len(CLASSES)).state_dict(), path)
+    path = tmp_path_factory.mktemp("weights") / f"{BACKBONE}.pth"
+    torch.save(timm.create_model(BACKBONE, pretrained=False, num_classes=len(CLASSES)).state_dict(), path)
     return path
 
 
@@ -57,7 +63,7 @@ def starting(table: Path, tmp_path: Path, trained: Path) -> dict[str, Any]:
     declared = dict(smallest_run(table, tmp_path))
     declared["model"] = {
         "name": "composite",
-        "backbone": {"name": "timm", "model_name": "resnet18", "pretrained": False, "checkpoint_path": str(trained)},
+        "backbone": {"name": "timm", "model_name": BACKBONE, "pretrained": False, "checkpoint_path": str(trained)},
     }
     declared["tasks"] = {"species": {"kind": "classification", "target_column": "species", "classes": GROWN}}
     return declared
@@ -78,7 +84,7 @@ def test_the_classes_the_file_answered_for_keep_their_rows_and_the_one_added_sin
 
     held = dict(network_of(build(load_config(starting))).state_dict())
 
-    assert torch.equal(held["backbone.model.conv1.weight"], written["conv1.weight"])
+    assert torch.equal(held[f"backbone.model.{FIRST_WEIGHT}"], written[FIRST_WEIGHT])
     assert torch.equal(held["heads.species.base.projection.weight"], written["fc.weight"])
     assert held["heads.species.novel.projection.weight"].shape == (1, written["fc.weight"].shape[1])
 

@@ -10,10 +10,9 @@ from torch import Tensor
 from torchmetrics.retrieval import RetrievalHitRate, RetrievalMAP
 
 from src.core import Matrix, Semantics, Stage
-from src.metrics import ConfusionMatrix, GalleryReading
+from src.metrics import ConfusionMatrix, GalleryReading, metric_learning
 from src.metrics.build import build_metrics
 from src.metrics.metric_learning import (
-    QUERY_BLOCK,
     MeanAveragePrecision,
     RecallAtK,
     VerificationAccuracy,
@@ -29,7 +28,24 @@ CHOICES = torch.tensor([0, 1, 2, 0])
 PAIRED = torch.tensor([0, 0, 1, 1])
 """Two identities, two pictures each: what a reading averaged over every match a query has needs."""
 NUMBERS = torch.tensor([1.5, 2.5, 3.5, 4.5])
+
+BLOCK = 4
+"""How wide a block of queries is while the two readings about stitching them together are taken.
+
+A block bounds how much of a similarity matrix is alive at once and settles nothing either reading
+reports, so a test about the seam between blocks is free to choose it. Measured 2026-09-16: at the
+shipped 1024 those two tests held **426 MB** of the suite's peak between them — a gallery of 2085
+directions, its full pairwise cross-check, and an index for every pair of it — to hold an offset that
+eleven directions hold just as well. Four also puts more seams in the reading, not fewer."""
 VOCABULARY: Mapping[str, object] = {"semantics": Semantics.MULTICLASS, "num_classes": CLASSES}
+
+
+@pytest.fixture
+def narrowed_block(monkeypatch: pytest.MonkeyPatch) -> int:
+    """The block width the readings walk a gallery in, narrowed to ``BLOCK`` for whoever asks for it."""
+    monkeypatch.setattr(metric_learning, "QUERY_BLOCK", BLOCK)
+    return BLOCK
+
 
 SPECIMENS: dict[str, tuple[Mapping[str, object], Tensor, Tensor]] = {
     "accuracy": (VOCABULARY, VOTES, CHOICES),
@@ -318,14 +334,14 @@ class TestRetrieval:
 
         assert float(metric.compute()) == 1.0, "the one query with a match found it; the other three had none"
 
-    def test_an_epoch_wider_than_one_block_is_read_as_one_gallery(self) -> None:
+    def test_an_epoch_wider_than_one_block_is_read_as_one_gallery(self, narrowed_block: int) -> None:
         """Queries are ranked a block at a time; a sample's own column then sits where its block starts.
 
         Getting that offset wrong excludes somebody else's sample from every block but the first, which
         changes the reading by a little and looks like nothing.
         """
-        held = QUERY_BLOCK * 2 + 37
-        identities = torch.arange(held) % 50
+        held = narrowed_block * 2 + 3
+        identities = torch.arange(held) % 3
         embeddings = torch.nn.functional.normalize(torch.randn(held, 8), dim=1)
         metric = RecallAtK(k=3)
 
@@ -540,7 +556,7 @@ class TestVerification:
 
         assert float(metric.compute()) == 1.0, "each picture's only match is its twin in the other batch"
 
-    def test_an_epoch_wider_than_one_block_is_read_as_one_gallery(self) -> None:
+    def test_an_epoch_wider_than_one_block_is_read_as_one_gallery(self, narrowed_block: int) -> None:
         """Pairs are counted a block at a time, and a picture's own column sits where its block starts.
 
         Getting that offset wrong leaves somebody else's pair out of every block but the first and
@@ -549,7 +565,7 @@ class TestVerification:
         with strangers on both sides of the swap the two mistakes cancel to within a pair or two, and
         the reading comes back right for the wrong reason.
         """
-        embeddings, identities = separating(QUERY_BLOCK + 17, 8, spread=0.45)
+        embeddings, identities = separating(narrowed_block + 17, 8, spread=0.45)
         metric, threshold = VerificationAccuracy(), VerificationThreshold()
 
         for one in (metric, threshold):

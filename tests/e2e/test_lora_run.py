@@ -21,8 +21,21 @@ from src.training.checkpoints import MODEL_PREFIX
 from tests.support.declarations import smallest_run
 from tests.support.table import write_table
 
-ADAPTED = "conv1"
-"""Every convolution of a residual block's first position, which is what a low-rank delta is added to here."""
+ADAPTED = "conv2"
+"""Every convolution of a residual block's second position, which is what a low-rank delta is added to here.
+
+The second rather than the first because peft matches a name against the end of a module's path, and
+this network's stem is a module named ``conv1`` holding convolutions of its own — a name matching both
+a stem and a block is a name peft refuses, and rightly."""
+
+LIVE_BRANCHES = {"zero_init_last": False}
+"""Every residual branch starts live rather than at zero, so a delta inside one has a gradient to learn from.
+
+timm zero-initialises the last normalisation of each block, which makes the block the identity until
+that one tensor moves. Measured 2026-09-16 over the two optimizer steps this run has: with branches
+left at zero, not one block's delta moved at all — under `resnet18` the assertion below was satisfied
+by the stem, a convolution outside every branch, and the run proved nothing about the blocks it named.
+"""
 
 
 @pytest.fixture(scope="module")
@@ -32,7 +45,11 @@ def table(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 @pytest.fixture
 def declared(table: Path, tmp_path: Path) -> dict[str, Any]:
-    return dict(smallest_run(table, tmp_path))
+    """The smallest run there is, with the branches a delta is added to actually carrying signal."""
+    declaration = dict(smallest_run(table, tmp_path))
+    backbone = dict(declaration["model"]["backbone"])
+    declaration["model"] = {**declaration["model"], "backbone": {**backbone, **LIVE_BRANCHES}}
+    return declaration
 
 
 @pytest.fixture

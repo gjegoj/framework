@@ -18,7 +18,7 @@ from src.core import require_tensor
 from src.experiment import run
 from src.models import CompositeModel, LinearHead
 from src.models.heads import StackedHeads
-from tests.support.declarations import SIZE, smallest_run
+from tests.support.declarations import BACKBONE, SIZE, smallest_run
 from tests.support.table import write_table
 from tests.support.text import WIDTH as FAMILY_WIDTH
 from tests.support.text import text_family
@@ -27,8 +27,8 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 TASK, EMBEDDING, LENGTH, TOWERS = "pair", 12, 8, 2
-IMAGE_WIDTH = 512
-"""What resnet18 pools to, against the family's own 16: the two towers are deliberately unalike."""
+IMAGE_WIDTH = 96
+"""What the image tower pools to, against the text family's own 16: the two are deliberately unalike."""
 
 
 @pytest.fixture(scope="module")
@@ -57,7 +57,7 @@ def pairing(table: Path, tmp_path: Path) -> dict[str, Any]:
         "backbone": {
             "_target_": "src.models.MultiEncoderBackbone",
             "encoders": {
-                "image": {"_target_": "src.models.TimmBackbone", "model_name": "resnet18", "pretrained": False},
+                "image": {"_target_": "src.models.TimmBackbone", "model_name": BACKBONE, "pretrained": False},
                 "text": {"_target_": "src.models.HFTextBackbone", "model_name": family},
             },
         },

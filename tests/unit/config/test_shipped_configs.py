@@ -7,8 +7,6 @@ from typing import Any, cast
 
 import numpy as np
 import pytest
-from hydra import compose, initialize_config_dir
-from omegaconf import OmegaConf
 
 from src.config import ComponentConfig, ExperimentConfig, WeightedLossConfig, load_config
 from src.config.instantiate import resolve_factory
@@ -31,18 +29,7 @@ from src.tasks.registry import task_registry
 from src.tracking.registry import tracker_registry
 from src.training.registry import learner_registry, optimizer_registry, scheduler_registry
 from src.transforms.build import build_transforms
-from tests.support.paths import CONFIGS
-
-EXAMPLES = sorted(path.stem for path in (CONFIGS / "experiment" / "examples").glob("*.yaml") if path.stem != "pet")
-
-
-def composed(*overrides: str) -> Mapping[str, Any]:
-    with initialize_config_dir(config_dir=str(CONFIGS), version_base=None):
-        # ``${hydra:run.dir}`` resolves only inside a Hydra job; a run directory is given by hand here.
-        composed_config = compose(config_name="config", overrides=[*overrides, "run.directory=runs/test"])
-        raw = OmegaConf.to_container(composed_config, resolve=True)
-    assert isinstance(raw, dict)
-    return cast(Mapping[str, Any], raw)
+from tests.support.declarations import EXAMPLES, composed
 
 
 def test_the_examples_a_reader_is_sent_to_are_in_the_repository() -> None:

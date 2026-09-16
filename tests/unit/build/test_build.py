@@ -44,7 +44,7 @@ class TestFactsTravel:
     ) -> None:
         """Bins are laid out over the training split's own range, so this width exists only after the fit."""
         binned = {"name": "linear_bins", "bins": 3}
-        tasks = {"age": {"kind": "regression", "target_column": "age", "target_encoder": binned}}
+        tasks = {"age": {"kind": "regression", "target_column": "random_age", "target_encoder": binned}}
 
         built = experiment(declaration, tasks=tasks)
 
@@ -227,7 +227,7 @@ class TestTwoTasks:
     def both(self, declaration: Mapping[str, Any]) -> Any:
         tasks = {
             "species": {**declaration["tasks"]["species"], "weight": 0.5},
-            "age": {"kind": "regression", "target_column": "age", "lr": 1.0e-4},
+            "age": {"kind": "regression", "target_column": "random_age", "lr": 1.0e-4},
         }
         return experiment(declaration, tasks=tasks)
 
@@ -304,7 +304,8 @@ class TestTheRunItWillBe:
     ) -> None:
         """What a run gives up by not reading the training split, said where it is given up rather than
         by a size that silently came from somewhere else. Declaring the range is the way to keep it."""
-        binned = {"kind": "regression", "target_column": "age", "target_encoder": {"name": "linear_bins", "bins": 4}}
+        layout = {"name": "linear_bins", "bins": 4}
+        binned = {"kind": "regression", "target_column": "random_age", "target_encoder": layout}
 
         with pytest.raises(ValueError, match="low and high"):
             experiment(declaration, tasks={"age": binned}, run={**declaration["run"], "train": False})
