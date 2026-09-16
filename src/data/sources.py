@@ -5,7 +5,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import ClassVar
 
 import pandas as pd
 
@@ -34,26 +34,25 @@ def format_of(path: str | Path) -> str:
     raise LookupError(f"Cannot infer the table format of {str(path)!r}; declare one of: {known}.")
 
 
-def source_for(paths: str | Path | Sequence[str | Path], *, format: str | None = None, **reader: Any) -> TableSource:
+def source_for(paths: str | Path | Sequence[str | Path], *, format: str | None = None) -> TableSource:
     """One source over one or several files of the same format."""
     listed = [paths] if isinstance(paths, str | Path) else list(paths)
     if not listed:
         raise ValueError("A source needs at least one path.")
     factory: Callable[..., TableSource] = table_source_registry.get(format or format_of(listed[0]))
-    return factory(listed, **reader)
+    return factory(listed)
 
 
 class FileSource(TableSource, ABC):
-    """Several files of one format, concatenated in the declared order; reader keywords forward to pandas.
+    """Several files of one format, concatenated in the declared order.
 
     A subclass says which suffixes imply it and how one file is read; ``format_of`` finds it by the first.
     """
 
     suffixes: ClassVar[tuple[str, ...]] = ()
 
-    def __init__(self, paths: Sequence[str | Path], **reader: Any) -> None:
+    def __init__(self, paths: Sequence[str | Path]) -> None:
         self.paths = [Path(path) for path in paths]
-        self.reader = reader
 
     def read(self) -> Table:
         frames = [self._read_file(path) for path in self.paths]
@@ -69,7 +68,7 @@ class CsvSource(FileSource):
     suffixes: ClassVar[tuple[str, ...]] = (".csv",)
 
     def _read_file(self, path: Path) -> Table:
-        return pd.read_csv(path, **self.reader)
+        return pd.read_csv(path)
 
 
 @table_source_registry.register("json")
@@ -77,7 +76,7 @@ class JsonSource(FileSource):
     suffixes: ClassVar[tuple[str, ...]] = (".json",)
 
     def _read_file(self, path: Path) -> Table:
-        return pd.read_json(path, **self.reader)
+        return pd.read_json(path)
 
 
 @table_source_registry.register("jsonl")
@@ -85,7 +84,7 @@ class JsonLinesSource(FileSource):
     suffixes: ClassVar[tuple[str, ...]] = (".jsonl",)
 
     def _read_file(self, path: Path) -> Table:
-        return pd.read_json(path, lines=True, **self.reader)
+        return pd.read_json(path, lines=True)
 
 
 def capped(table: Table, max_samples: int | float | None) -> Table:

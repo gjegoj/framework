@@ -60,7 +60,7 @@ class Anneal(L.Callback):
         start: What it is worth at the first epoch, whatever it was constructed with.
         end: What it reaches, and holds from there on.
         schedule: The shape of the ramp — ``linear`` or ``cosine``.
-        over: How much of the run the ramp spans; the default takes all of it.
+        over: How much of the run the ramp spans; left out, it takes all of it.
     """
 
     def __init__(
@@ -71,7 +71,7 @@ class Anneal(L.Callback):
         start: float,
         end: float,
         schedule: str = "linear",
-        over: float = 1.0,
+        over: float | None = None,
     ) -> None:
         super().__init__()
         if schedule not in RAMPS:

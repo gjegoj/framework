@@ -22,8 +22,8 @@ from src.data.registry import target_encoder_registry
 class MaskEncoder(FileEncoder, VocabularyEncoder):
     """A mask the model learns: every pixel indexes one of the task's declared classes.
 
-    The pixel pipeline resizes the plane with its image (nearest neighbour, never normalized) and may hand
-    it back as a narrower integer tensor; ``encode`` settles the dtype a loss expects.
+    The pixel pipeline resizes the plane with its image (nearest neighbour, never normalized) and hands it
+    back as an integer tensor of a width of its own choosing; ``encode`` settles the dtype a loss expects.
     """
 
     geometry: ClassVar[Geometry] = Geometry.MASK
@@ -33,7 +33,17 @@ class MaskEncoder(FileEncoder, VocabularyEncoder):
         VocabularyEncoder.__init__(self, classes=classes)
 
     def load(self, value: object) -> np.ndarray:
-        return read_image(self.path_of(value), grayscale=True).astype(np.int64)
+        """The plane as the file decoded to, which for a grayscale read is one byte a pixel.
+
+        Widened to ``int64`` before, for a width no mask can reach: ``cv2.IMREAD_GRAYSCALE`` answers
+        with eight bits whatever the file holds — measured, a 16-bit PNG comes back scaled into that
+        range — so a vocabulary this encoder could ever read fits in the dtype it is already handed.
+        What the eight bytes bought was arena: measured over 1000 Oxford-IIIT Pet masks, 1400.6 MiB
+        held against 175.1 MiB for the same pixels, and a cache holds exactly what this returns.
+        Nothing downstream wanted them either — albumentations narrows the plane to ``int32`` on its
+        way through, and ``encode`` settles the ``long`` a dense loss reads.
+        """
+        return read_image(self.path_of(value), grayscale=True)
 
     def encode(self, value: object) -> Tensor:
         return torch.as_tensor(value, dtype=torch.long)

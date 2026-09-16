@@ -33,17 +33,17 @@ class Freeze(BaseFinetuning):
         modules: Dot-paths of what to hold still, relative to the model — ``backbone``,
             ``heads.species``. Relative to the *model* rather than to the training module, so that
             nothing a run wraps around it moves a path a config wrote.
-        until: How long they are held, as a share of the run or a whole epoch index; the default
-            holds them for all of it.
+        until: How long they are held, as a share of the run or a whole epoch index; left out, they
+            are held for all of it.
         train_bn: Let normalisation layers keep learning their running statistics while the rest is
             held — those statistics describe *this* data, not the data the weights arrived from.
     """
 
-    def __init__(self, modules: Sequence[str], until: float = 1.0, train_bn: bool = True) -> None:
+    def __init__(self, modules: Sequence[str], until: float | None = None, train_bn: bool = True) -> None:
         super().__init__()
         if not modules:
             raise ValueError("Freeze holds named parts of the model still, and this declaration named none.")
-        self._modules = tuple(modules)
+        self.modules = tuple(modules)
         self._until = Moment(until, knob="until")
         self._train_bn = train_bn
         self._release: Boundary | None = None
@@ -51,7 +51,7 @@ class Freeze(BaseFinetuning):
 
     @override
     def freeze_before_training(self, pl_module: L.LightningModule) -> None:
-        for path in self._modules:
+        for path in self.modules:
             self.freeze(module_at(pl_module, path, reader=type(self).__name__), train_bn=self._train_bn)
 
     @override
@@ -65,7 +65,7 @@ class Freeze(BaseFinetuning):
         super().on_fit_start(trainer, pl_module)
         self._release = self._until.in_epochs(FitProfile.of(trainer))
         self._let_go = False
-        log.info("Frozen until %s: %s", self._release, ", ".join(self._modules))
+        log.info("Frozen until %s: %s", self._release, ", ".join(self.modules))
 
     @override
     def finetune_function(self, pl_module: L.LightningModule, epoch: int, optimizer: Optimizer) -> None:
@@ -81,6 +81,6 @@ class Freeze(BaseFinetuning):
         if self._let_go or self._release is None or epoch < self._release.epoch:
             return
         self._let_go = True
-        for path in self._modules:
+        for path in self.modules:
             self.make_trainable(module_at(pl_module, path, reader=type(self).__name__))
-        log.info("Unfrozen at epoch %s: %s", epoch, ", ".join(self._modules))
+        log.info("Unfrozen at epoch %s: %s", epoch, ", ".join(self.modules))

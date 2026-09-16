@@ -257,6 +257,29 @@ class TestScalarAndBins:
         with pytest.raises(ValueError):
             cls(**kwargs)
 
+    @pytest.mark.parametrize(
+        "cell", [float("nan"), float("inf"), "n/a", None], ids=["blank", "infinite", "a word", "missing"]
+    )
+    @pytest.mark.parametrize("read", ["fit", "validate", "encode"])
+    def test_a_cell_holding_no_number_is_refused_wherever_the_column_is_read(self, cell: object, read: str) -> None:
+        """A blank annotation cell reads back as nan, and a nan target is a nan loss from the step it is drawn in."""
+        encoder = ScalarEncoder()
+
+        with pytest.raises(ValueError, match="number"):
+            getattr(encoder, read)(cell if read == "encode" else [1.0, cell])
+
+    @pytest.mark.parametrize("cls", [LinearBinsEncoder, GaussianBinsEncoder])
+    def test_a_layout_is_never_learned_from_a_column_with_a_gap_in_it(self, cls: type[BinnedEncoder]) -> None:
+        """Measured: one blank cell puts nan on both ends of the range, and the run was told in an info
+        line that the encoder had learned [nan, nan] — after which every target it encoded was nan."""
+        with pytest.raises(ValueError, match="number"):
+            cls(bins=10).fit([0.0, float("nan"), 10.0])
+
+    def test_a_cell_the_layout_reads_is_refused_before_it_is_clamped_to_an_edge(self) -> None:
+        """nan compares false against both ends, so the clamp let it through as an index into the bins."""
+        with pytest.raises(ValueError, match="number"):
+            LinearBinsEncoder(bins=10, low=0.0, high=10.0).encode(float("nan"))
+
     def test_refuses_to_learn_a_range_from_a_constant_or_empty_split(self) -> None:
         with pytest.raises(ValueError):
             LinearBinsEncoder(bins=5).fit([3.0, 3.0])
@@ -339,7 +362,8 @@ class TestMask:
             mask_encoder.encode(torch.as_tensor(loaded, dtype=torch.int32) if as_tensor else loaded), name="mask"
         )
 
-        assert loaded.dtype == np.int64 and loaded.shape == (6, 8)
+        assert loaded.dtype == np.uint8 and loaded.nbytes == loaded.size, "a byte a pixel, and a cache holds this"
+        assert loaded.shape == (6, 8)
         assert mask.dtype is torch.long and mask.shape == (6, 8) and int(mask.sum()) == 4 * 5
         assert MaskEncoder.geometry is Geometry.MASK and MaskEncoder.takes_classes
 

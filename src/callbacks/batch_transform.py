@@ -34,11 +34,11 @@ class ApplyBatchTransform(L.Callback):
     Parameters:
         transform: What to run, declared by import path — ``{_target_: src.transforms.MixUp,
             alpha: 0.4}`` — the same grammar the pixel pipeline is written in.
-        until: How long to keep running it. The default runs it for the whole fit; stopping earlier
+        until: How long to keep running it. Left out, it runs for the whole fit; stopping earlier
             lets a run finish on the data it will be judged on.
     """
 
-    def __init__(self, transform: BatchTransform, until: float = 1.0) -> None:
+    def __init__(self, transform: BatchTransform, until: float | None = None) -> None:
         super().__init__()
         if not isinstance(transform, BatchTransform):
             raise TypeError(

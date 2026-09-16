@@ -29,13 +29,14 @@ class EmaWeights(EMAWeightAveraging):
     Parameters:
         decay: How much of the average survives each update — 0.9999 over a long run, 0.99 over a short
             one; the closer to 1, the longer the average remembers.
-        after: How much of the run to train before averaging begins, resolved against its total steps.
+        after: How much of the run to train before averaging begins, resolved against its total steps;
+            left out, it begins with the run.
         **options: Forwarded to ``EMAWeightAveraging``, so every knob of it stays reachable —
             ``device`` (``"cpu"`` keeps the second copy off the accelerator), ``use_buffers``,
             ``update_every_n_steps``.
     """
 
-    def __init__(self, decay: float = 0.999, after: float = 0.0, **options: Any) -> None:
+    def __init__(self, decay: float = 0.999, after: float | None = None, **options: Any) -> None:
         if not 0.0 < decay < 1.0:
             raise ValueError(
                 f"An EMA decay is the share of the average that survives an update, in (0, 1); got {decay}."

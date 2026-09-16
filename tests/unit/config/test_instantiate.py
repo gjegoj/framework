@@ -142,6 +142,16 @@ class TestWhatAConstructorWillTake:
         with pytest.raises(ValueError, match="which the framework derives"):
             instantiate(ComponentConfig.model_validate({"name": "widget", "size": 3}), registry, size=7)
 
+    def test_a_constructor_whose_signature_cannot_be_read_is_left_to_answer_for_itself(self) -> None:
+        """Not every callable says what it takes: measured, `inspect.signature` refuses `dict`, `max`
+        and `zip` with `no signature found for builtin`. Reading one to check a declaration against it
+        would refuse a declaration the constructor accepts, in the words of the reading rather than of
+        the run — so where there is nothing to read, there is nothing to check.
+        """
+        built = instantiate(ComponentConfig.model_validate({"_target_": "builtins.dict", "size": 3}))
+
+        assert built == {"size": 3}
+
 
 class TestFillSignature:
     def test_hands_a_foreign_constructor_only_the_facts_it_names(self) -> None:

@@ -140,6 +140,17 @@ class TestWhatThePixelsActuallyBecome:
         with pytest.raises(ValueError, match=named):
             experiment(declaration, transforms={**declaration["transforms"], "val": loud, "test": loud})
 
+    def test_a_stage_this_run_reads_with_no_chain_to_prepare_it_is_refused_by_name(
+        self, declaration: Mapping[str, Any]
+    ) -> None:
+        """Measured: the run assembles, trains its epoch, and dies opening the first test batch with
+        `Image input arrives as [12, 10, 3], not a [3, 8, 8] tensor` — raised inside a loader worker,
+        naming the input but not the stage whose chain was missing, after every minute of the fit."""
+        declared = {stage: chain for stage, chain in declaration["transforms"].items() if stage != "test"}
+
+        with pytest.raises(ValueError, match=r"transforms\.test"):
+            experiment(declaration, transforms=declared)
+
     def test_a_chain_that_does_what_it_promises_is_left_alone(self, declaration: Mapping[str, Any]) -> None:
         """The shipped pipeline, unchanged: the check has to be one a correct run passes without knowing it."""
         assert experiment(declaration, transforms={stage: self.chain() for stage in ("train", "val", "test")})
@@ -431,6 +442,109 @@ class TestDeclarationsThatCannotHold:
         with pytest.raises(ValueError, match="training"):
             experiment(declaration, tasks=tasks)
 
+    @pytest.mark.parametrize(
+        "spelled",
+        [
+            pytest.param({"name": "freeze", "modules": ["backbone"]}, id="by the name a registry holds"),
+            pytest.param({"_target_": "src.callbacks.Freeze", "modules": ["backbone"]}, id="by an import path"),
+        ],
+    )
+    def test_freezing_what_this_run_adapts_is_refused_however_the_freeze_is_spelled(
+        self, declaration: Mapping[str, Any], spelled: Mapping[str, Any]
+    ) -> None:
+        """Held still, a delta never moves, and the run trains its heads alone while saying otherwise.
+
+        Measured on a resnet adapted at its convolutions: with a freeze over the same module, not one
+        tensor of the delta is left learning — and the run trains, logs, keeps an epoch and ships it.
+        Which of the two spellings a config reached the same class by is not a fact about the run.
+        """
+        adapter = {"name": "lora", "module": "backbone", "target_modules": ["conv2"], "r": 2}
+
+        with pytest.raises(ValueError, match="held still"):
+            experiment(declaration, adapter=adapter, callbacks=[spelled])
+
+    @pytest.mark.parametrize(
+        ("adapted", "frozen"),
+        [
+            pytest.param("backbone", ["heads.species", "backbone.layer1"], id="a part of what is adapted"),
+            pytest.param("backbone.layer1", ["backbone"], id="a module that holds what is adapted"),
+        ],
+    )
+    def test_a_freeze_meeting_an_adapter_anywhere_along_one_path_is_refused(
+        self, declaration: Mapping[str, Any], adapted: str, frozen: list[str]
+    ) -> None:
+        """Either way round: holding a module holds everything under it, and the delta is under one."""
+        adapter = {"name": "lora", "module": adapted, "target_modules": ["conv2"], "r": 2}
+
+        with pytest.raises(ValueError, match="held still"):
+            experiment(declaration, adapter=adapter, callbacks=[{"name": "freeze", "modules": frozen}])
+
+    def test_freezing_a_part_the_adapter_does_not_reach_is_left_alone(self, declaration: Mapping[str, Any]) -> None:
+        """The pair is refused where it would hold the delta still, and nowhere else."""
+        adapter = {"name": "lora", "module": "backbone", "target_modules": ["conv2"], "r": 2}
+
+        assert experiment(declaration, adapter=adapter, callbacks=[{"name": "freeze", "modules": ["heads.species"]}])
+
+    @pytest.mark.parametrize(
+        "spelled",
+        [
+            pytest.param({"name": "lr_monitor"}, id="by the name a registry holds"),
+            pytest.param({"_target_": "lightning.pytorch.callbacks.LearningRateMonitor"}, id="by an import path"),
+        ],
+    )
+    def test_watching_a_rate_with_nothing_recording_is_refused_however_the_monitor_is_spelled(
+        self, declaration: Mapping[str, Any], spelled: Mapping[str, Any]
+    ) -> None:
+        """A callback that only reports needs somewhere to report to, and the two are separate sections."""
+        with pytest.raises(ValueError, match="nowhere to write a learning rate"):
+            experiment(declaration, callbacks=[spelled])
+
+    @pytest.mark.parametrize(
+        "learner",
+        [
+            pytest.param({"name": "standard"}, id="a learner by the name a registry holds"),
+            pytest.param({"_target_": "src.training.StandardLearner"}, id="one by an import path"),
+        ],
+    )
+    def test_a_teacher_nobody_would_learn_from_is_refused_however_the_learner_is_spelled(
+        self, declaration: Mapping[str, Any], learner: Mapping[str, Any], tmp_path: Path
+    ) -> None:
+        """A second network is built, read from its file and carried through the run; one nothing asks
+        anything is pure cost, and whether anything asks it is a question about its constructor."""
+        kept = tmp_path / "teacher.ckpt"
+        kept.write_bytes(b"")
+        teacher = {**declaration["model"], "checkpoint_path": str(kept)}
+
+        with pytest.raises(ValueError, match="no teacher in its constructor"):
+            experiment(declaration, learner=learner, teacher=teacher)
+
+    @pytest.mark.parametrize(
+        "learner",
+        [
+            pytest.param({"name": "distillation"}, id="a learner by the name a registry holds"),
+            pytest.param({"_target_": "src.training.DistillationLearner"}, id="one by an import path"),
+        ],
+    )
+    def test_distilling_with_nobody_to_learn_from_is_refused_however_the_learner_is_spelled(
+        self, declaration: Mapping[str, Any], learner: Mapping[str, Any]
+    ) -> None:
+        """Left alone it dies where the learner is built, in the words of a missing argument rather than
+        naming the section to write."""
+        with pytest.raises(ValueError, match="nothing to distil from"):
+            experiment(declaration, learner=learner)
+
+    def test_a_pair_that_cannot_hold_is_refused_before_a_single_row_is_read(
+        self, declaration: Mapping[str, Any], tmp_path: Path
+    ) -> None:
+        """Two sections disagreeing is a fact about the declaration alone, and preparing the data is a
+        source read, an encoder fit and a cache warm. Declared over a source that is not there, so
+        whichever refusal arrives first is the one a run would have paid that time for."""
+        data = {**declaration["data"], "source": str(tmp_path / "no-such-table.csv")}
+        adapter = {"name": "lora", "module": "backbone", "target_modules": ["conv2"], "r": 2}
+
+        with pytest.raises(ValueError, match="held still"):
+            experiment(declaration, data=data, adapter=adapter, callbacks=[{"name": "freeze", "modules": ["backbone"]}])
+
     def test_a_head_declared_against_a_model_that_arrives_whole_is_refused(
         self, declaration: Mapping[str, Any]
     ) -> None:
@@ -445,9 +559,16 @@ def identities() -> dict[str, Any]:
     return {"identity": {"kind": {"name": "metric_learning", "embedding_dim": 4}, "target_column": "species"}}
 
 
-def watching(monitor: str, mode: str) -> list[dict[str, Any]]:
+SAVERS = [
+    pytest.param({"name": "checkpoint"}, id="by the name a registry holds"),
+    pytest.param({"_target_": "lightning.pytorch.callbacks.ModelCheckpoint"}, id="by an import path"),
+]
+"""The two ways one class is declared; a rule about what a run builds holds for both or for neither."""
+
+
+def watching(monitor: str, mode: str, spelled: Mapping[str, Any] | None = None) -> list[dict[str, Any]]:
     """The shipped set's own saver, written out, because a group replaces a list rather than patching it."""
-    return [{"name": "checkpoint", "monitor": monitor, "mode": mode, "save_top_k": 1}]
+    return [{**(spelled or {"name": "checkpoint"}), "monitor": monitor, "mode": mode, "save_top_k": 1}]
 
 
 class TestTheTrainer:
@@ -476,10 +597,14 @@ class TestTheTrainer:
         declared = [one for one in built.trainer.callbacks if isinstance(one, LearningRateMonitor | ModelCheckpoint)]
         assert [type(one).__name__ for one in declared] == ["LearningRateMonitor", "ModelCheckpoint"]
 
+    @pytest.mark.parametrize("spelled", SAVERS)
     def test_a_monitor_naming_an_objective_this_run_never_scores_is_refused_before_it_trains(
-        self, declaration: Mapping[str, Any]
+        self, declaration: Mapping[str, Any], spelled: Mapping[str, Any]
     ) -> None:
         """A run judged on identities it never learned scores no objective outside training.
+
+        Held whichever way the saver was named: what it watches is an argument it declares, and only
+        *which class* a declaration named is a thing that cannot be read off the declaration.
 
         Lightning does refuse this itself — measured, `MisconfigurationException` at the end of the first
         validation, listing the keys that do exist. What this buys is when and what: while the run is
@@ -487,7 +612,7 @@ class TestTheTrainer:
         which Lightning has no way to know.
         """
         with pytest.raises(ValueError, match="val/loss"):
-            experiment(declaration, tasks=identities(), callbacks=watching("val/loss", "min"))
+            experiment(declaration, tasks=identities(), callbacks=watching("val/loss", "min", spelled))
 
     def test_a_monitor_naming_one_task_s_own_objective_is_refused_like_the_total(
         self, declaration: Mapping[str, Any]

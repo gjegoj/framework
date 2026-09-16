@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any, ClassVar
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -54,9 +55,26 @@ class ComponentConfig(BaseModel):
         return self.name if self.name is not None else str(self.import_path)
 
 
+def refuse_a_path_that_is_not_there(key: str, path: str | None) -> None:
+    """A declared file is answered for where it is declared, not minutes later where something opens it.
+
+    One home because three sections name one: the weights a run starts from, the weights a teacher
+    answers with, and the vocabulary a task reads out of a file. Each would otherwise be found missing
+    after the sources were read and the cache warmed — the vocabulary latest of all, since it is opened
+    while the encoders are built.
+    """
+    if path is not None and not Path(path).is_file():
+        raise ValueError(f"{key} names no file: {path}")
+
+
 class ClassFile(BaseModel):
     model_config = ConfigDict(extra="forbid")
     file: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def present(self) -> ClassFile:
+        refuse_a_path_that_is_not_there("classes.file", self.file)
+        return self
 
 
 class WeightedLossConfig(BaseModel):

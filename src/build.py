@@ -18,10 +18,12 @@ from typing import TYPE_CHECKING
 import lightning as L
 import numpy as np
 from lightning import seed_everything
+from lightning.pytorch.callbacks import LearningRateMonitor
 
+from src.callbacks import Freeze
 from src.callbacks.build import build_callbacks
 from src.config import ExperimentConfig, HeadConfig, TaskConfig
-from src.core import Axis, Sample, Stage, TensorShape, naming, require_tensor
+from src.core import Axis, Geometry, Sample, Stage, TensorShape, naming, require_tensor
 from src.data.build import build_data_module, build_preprocessor
 from src.experiment import Experiment
 from src.export import WRITTEN_FROM, example_inputs
@@ -39,11 +41,16 @@ from src.training.build import (
     build_profiler,
     build_scheduler_factory,
     build_teacher,
+    learners_that_read_a_teacher,
+    reads_a_teacher,
 )
 from src.transforms.build import build_transforms
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
+
+    from lightning.pytorch.callbacks import Callback
+    from lightning.pytorch.loggers import Logger
 
     from src.core import DatasetInfo, Normalization
     from src.data import DataModule
@@ -70,6 +77,14 @@ def build(config: ExperimentConfig) -> Experiment:
     # preparing the data is a source read, an encoder fit and a cache warm — the whole cost of a run that
     # is going to answer a misspelled format at the end of it.
     exporters = build_exporters(config.export)
+    # Built here, before the data, for what they answer rather than for what they do: three sections
+    # mean nothing without another, and which class a declaration names is the only honest way to ask.
+    # Nothing is started by building them — a tracker opens its run on the first thing reported to it.
+    tracker = build_tracker(config.tracker)
+    callbacks = build_callbacks(config.callbacks)
+    _refuse_a_rate_watched_with_nothing_recording(tracker, callbacks)
+    _refuse_freezing_what_this_run_adapts(config, callbacks)
+    _refuse_half_of_a_distillation(config)
     data = prepare_data(config, kinds)
     _refuse_a_run_that_could_never_write_what_it_declares(exporters, data.info)
     tasks = build_tasks(config.tasks, data.info)
@@ -101,11 +116,88 @@ def build(config: ExperimentConfig) -> Experiment:
             metrics=measured,
         ),
         data=TrainingData(data, batch_size=config.batch_size, **config.loader.model_dump()),
-        trainer=build_trainer(config),
+        trainer=build_trainer(config, tracker, callbacks),
         declaration=config,
         exporters=exporters,
         adapter=adapter,
     )
+
+
+def _refuse_a_rate_watched_with_nothing_recording(tracker: Logger | None, callbacks: Sequence[Callback]) -> None:
+    """A callback that only reports needs somewhere to report to, and the two are separate sections.
+
+    Left alone, Lightning refuses this itself — but at ``on_train_start``, after the sources have been
+    read, the encoders fitted and the cache warmed, and in words naming ``LearningRateMonitor``, the
+    ``Trainer`` and its ``logger``: three things that appear nowhere in what the run declared.
+    """
+    if tracker is None and any(isinstance(one, LearningRateMonitor) for one in callbacks):
+        raise ValueError(
+            "callbacks holds a LearningRateMonitor and tracker is none, so there is nowhere to write a "
+            "learning rate. Either declare a tracker — `tracker=csv` keeps the numbers in the run's own "
+            "directory — or run without the callbacks that report: `callbacks=none`. A list cannot be "
+            "edited from the command line, because Hydra will not force-add to a group."
+        )
+
+
+def _refuse_freezing_what_this_run_adapts(config: ExperimentConfig, callbacks: Sequence[Callback]) -> None:
+    """Held still, a delta never moves, and the run trains its heads alone while the declaration says otherwise.
+
+    Measured on a resnet adapted at its convolutions: with ``freeze`` over the same module, none of the
+    thirty-four tensors of the delta are left learning, and nothing anywhere says so — the run trains,
+    logs, keeps an epoch and ships it. The pair is redundant at best, because attaching a delta already
+    holds the weights beneath it still; what it costs at worst is the whole run.
+
+    The freeze is the built callback and the adapted module is the declaration's own: ``module`` is a
+    parameter of ``Adapter`` itself, so the declaration is where it is typed and owned, while what a
+    callback *is* cannot be read off a declaration at all.
+    """
+    adapted = str(config.adapter.params.get("module", "")) if config.adapter is not None else ""
+    if not adapted:
+        return
+    for one in callbacks:
+        if not isinstance(one, Freeze):
+            continue
+        if held := [path for path in one.modules if _reaches(path, adapted)]:
+            raise ValueError(
+                f"`adapter` adds parameters under {adapted!r} and `callbacks` freezes "
+                f"{', '.join(repr(path) for path in held)}: the delta would be held still along with the "
+                f"weights it was added to, and nothing under {adapted!r} would learn at all. Attaching a "
+                f"delta already holds those weights still — drop the freeze, or freeze parts the adapter "
+                f"does not reach."
+            )
+
+
+def _reaches(frozen: str, adapted: str) -> bool:
+    """Whether holding one dot-path still holds the other: the same module, or either one inside the other."""
+    return frozen == adapted or frozen.startswith(f"{adapted}.") or adapted.startswith(f"{frozen}.")
+
+
+def _refuse_half_of_a_distillation(config: ExperimentConfig) -> None:
+    """A second network and an algorithm that reads one are two sections, and neither means anything alone.
+
+    One way round, the teacher is built, loaded from its file and carried through the run with nothing
+    ever asking it anything. The other, the learner is built without the one thing it exists for —
+    which does fail, but in the words of a missing argument where a learner is assembled, rather than
+    here naming the section to write.
+
+    Both halves are one question — will this learner be handed a teacher — and it is asked of the
+    constructor, which is what ``build_learner`` hands one to. Asked of the name a declaration wrote,
+    it held for the shipped learner alone: a ``_target_`` declaration writes none, so a teacher beside
+    one was built, read from its file and asked nothing, with a log that looked like any other run's.
+    """
+    if config.teacher is not None and not reads_a_teacher(config.learner):
+        raise ValueError(
+            f"`teacher` declares a second network to learn from, and `learner` is {config.learner.spelled!r}, "
+            f"which names no teacher in its constructor: the teacher would be built, read from its file "
+            f"and carried through the run with nothing to ask it. Declare a learner that reads one — "
+            f"{learners_that_read_a_teacher()} — or drop the teacher."
+        )
+    if config.teacher is None and reads_a_teacher(config.learner):
+        raise ValueError(
+            f"`learner` is {config.learner.spelled!r}, which learns from a second network, and there is "
+            f"nothing to distil from. Declare a `teacher` — the model it is, and `checkpoint_path` for the "
+            f"run whose weights it answers with — or a learner that learns from the data alone."
+        )
 
 
 def _refuse_a_run_that_could_never_write_what_it_declares(exporters: Sequence[Exporter], info: DatasetInfo) -> None:
@@ -142,13 +234,14 @@ def prepare_data(config: ExperimentConfig, kinds: Mapping[str, type[Task]]) -> D
         {name: default_target_encoder(kind) for name, kind in kinds.items()},
     )
     transforms = build_transforms(config.transforms, preprocessor.geometries)
+    splits = needed_splits(config)
+    _refuse_a_split_this_run_reads_with_nothing_declared_to_prepare_it(preprocessor.geometries, transforms, splits)
     data = build_data_module(
         config.data,
         preprocessor=preprocessor,
         targets={name: declared.target_column for name, declared in config.tasks.items() if declared.target_column},
         transforms=transforms,
     )
-    splits = needed_splits(config)
     data.setup(splits)
     if Stage.TRAIN in splits:
         data.fit_preprocessing(Stage.TRAIN)
@@ -158,6 +251,35 @@ def prepare_data(config: ExperimentConfig, kinds: Mapping[str, type[Task]]) -> D
     _refuse_a_chain_that_does_not_scale_as_the_declaration_promises(data.info, transforms)
     data.warm(splits)
     return data
+
+
+def _refuse_a_split_this_run_reads_with_nothing_declared_to_prepare_it(
+    geometries: Mapping[str, Mapping[str, Geometry]],
+    transforms: Mapping[str, SampleTransform],
+    splits: Sequence[Stage],
+) -> None:
+    """A stage whose rows this run will read, and nothing declared to turn their pixels into tensors.
+
+    A missing key in ``transforms`` is simply no chain, which is the right reading for a run over values
+    that do not move: a text run declares ``transforms: {}`` and means it. It is the wrong reading for
+    anything with a picture in it, and nothing said so — such a row reaches the encoders as the array its
+    file decoded to, and is refused one sample at a time inside a loader worker, at the first batch of
+    that stage. For ``test`` that is after the whole fit, and the refusal names the input rather than the
+    stage, which is the one thing the reader would have to go and edit.
+    """
+    moved = sorted(
+        {name for cells in geometries.values() for name, geometry in cells.items() if geometry is not Geometry.NONE}
+    )
+    missing = [stage for stage in splits if stage not in transforms]
+    if not moved or not missing:
+        return
+    named = ", ".join(f"`transforms.{stage}`" for stage in missing)
+    raise ValueError(
+        f"Nothing prepares the pixels of a split this run reads: {named} "
+        f"{'declares' if len(missing) == 1 else 'declare'} no chain, and {', '.join(moved)} "
+        f"{'moves' if len(moved) == 1 else 'move'} with the picture. Declare the chain — one ends with "
+        "Resize, Normalize and ToTensorV2 (configs/transforms) — or leave the split out of the run."
+    )
 
 
 def _refuse_a_chain_that_does_not_scale_as_the_declaration_promises(
@@ -305,6 +427,10 @@ def _refuse_watching_an_objective_this_run_never_scores(
     what the declaration asked to be watched. Both watchers are held to it, the saver that keeps an
     epoch and the schedule that reacts to one, because it is one question asked twice.
 
+    Read off the declared key rather than off the built saver, and that is not the compromise the three
+    pairings above make: ``monitor`` is an argument, so every spelling of the class writes it the same
+    way, while *which class* a declaration named is the thing a declaration cannot be asked.
+
     Lightning refuses this itself, and not badly: measured, ``MisconfigurationException`` at the end of
     the first validation, listing the keys that do exist. What this buys is when and what — while the run
     is still being assembled rather than an epoch into it, and naming the readings to watch instead,
@@ -375,19 +501,22 @@ def metrics_for(declared: TaskConfig, task: Task) -> MetricCollection:
         return build_metrics(declared.metrics if declared.metrics is not None else task.default_metrics, task.facts())
 
 
-def build_trainer(config: ExperimentConfig) -> L.Trainer:
+def build_trainer(config: ExperimentConfig, tracker: Logger | None, callbacks: Sequence[Callback]) -> L.Trainer:
     """The loop itself: how long it runs, what it records to, and what runs alongside it.
+
+    Handed the two rather than building them, because both were built before the data was read: what a
+    run records to and what runs alongside it are also what three refusals above are about, and building
+    them twice would leave the run holding different objects than the ones that were answered for.
 
     ``logger=False`` rather than None where a run declares no tracker: left to itself Lightning starts
     a logger of its own, which is not what `tracker: none` says. Where a run's files land is written in
     config as ``${run.directory}``, because Lightning would otherwise resolve it from the tracker.
     """
-    tracker = build_tracker(config.tracker)
     return L.Trainer(
         max_epochs=config.epochs,
         default_root_dir=config.run.directory,
         logger=tracker if tracker is not None else False,
-        callbacks=build_callbacks(config.callbacks),
+        callbacks=list(callbacks),
         profiler=build_profiler(config.trainer.profiler),
         **config.trainer.model_dump(exclude={"profiler"}),
     )

@@ -3,42 +3,18 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from pathlib import Path
 from typing import ClassVar, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from src.config.schema import ComponentConfig, ModelConfig, PreprocessingConfig, TaskConfig
+from src.config.schema import (
+    ComponentConfig,
+    ModelConfig,
+    PreprocessingConfig,
+    TaskConfig,
+    refuse_a_path_that_is_not_there,
+)
 from src.core import Stage, validate_name
-
-LEARNING_RATE_MONITOR = "lr_monitor"
-"""The shipped callback that only reports, named here because the pairing is a rule about two sections."""
-
-FREEZE = "freeze"
-"""The shipped callback that holds parameters still, named here for the same reason as the one above."""
-
-DISTILLATION = "distillation"
-"""The shipped learner that reads a second network, named here for the same reason again.
-
-Spelled rather than imported: this package reads no other, so a registry name reaches it as a word. The
-price is the one the two above already pay — a component declared by ``_target_`` writes no name, and the
-pairing below then holds for nobody.
-"""
-
-
-def refuse_a_path_that_is_not_there(key: str, path: str | None) -> None:
-    """A declared file is answered for where it is declared, not minutes later where something opens it.
-
-    One home because two sections name one: the weights a run starts from, and the weights a teacher
-    answers with. Both would otherwise be found missing after the sources were read and the cache warmed.
-    """
-    if path is not None and not Path(path).is_file():
-        raise ValueError(f"{key} names no file: {path}")
-
-
-def _reaches(frozen: str, adapted: str) -> bool:
-    """Whether holding one dot-path still holds the other: the same module, or either one inside the other."""
-    return frozen == adapted or frozen.startswith(f"{adapted}.") or adapted.startswith(f"{frozen}.")
 
 
 def refuse_owned_keys(values: Mapping[str, object], owned: Mapping[str, str]) -> None:
@@ -211,13 +187,17 @@ class ExperimentConfig(BaseModel):
 
     @model_validator(mode="after")
     def connections(self) -> ExperimentConfig:
-        """Everything two sections have to agree about, checked before anything is built from them.
+        """What two sections have to agree about *in words*, checked before anything is built from them.
 
-        Here rather than in the composition root: these are functions of the declaration alone, and a
-        declaration that has been validated should be one a run can be built from. Checking them at the
-        root would leave a second reader — a notebook, a test, an export entry point — holding a config
-        that passed validation and still cannot be assembled, and would refuse a typo only after the
-        global seed had already been set.
+        Here rather than in the composition root because these read the declaration and nothing else: a
+        name, a key, a column. A validated declaration is then one a second reader — a notebook, a test,
+        an export entry point — can hold and know assembles this far, and a typo is refused before the
+        global seed is set.
+
+        A rule about what a section will *build* cannot be one of these, and the three that used to try
+        are the root's now. This package imports no capability package, so a class reaches it as a word
+        at best; a declaration written with ``_target_`` writes no word at all, and every such rule held
+        for half the declarations that could break it.
         """
         refuse_owned_keys(self.optimizer.params, {"lr": "the root's lr"})
         if not self.tasks:
@@ -226,79 +206,7 @@ class ExperimentConfig(BaseModel):
             validate_name(name, label="Task")
         self._refuse_heads_declared_twice()
         self._refuse_inputs_that_disagree()
-        self._refuse_watching_a_rate_with_nothing_recording()
-        self._refuse_freezing_what_this_run_adapts()
-        self._refuse_half_of_a_distillation()
         return self
-
-    def _refuse_half_of_a_distillation(self) -> None:
-        """A second network and the algorithm that reads one are two sections, and neither means anything alone.
-
-        One way round, the teacher is built, loaded from its file and carried through the run with nothing
-        ever asking it anything. The other, the learner is built without the one thing it exists for —
-        which does fail, but where a learner is assembled and in the words of a missing argument, rather
-        than here naming the section to write.
-
-        Both halves read the name the run wrote, so a learner reached by ``_target_`` is paired with
-        nothing and accused of nothing: that import path may well be this very learner, and a refusal
-        reading it would call a correct declaration wrong.
-        """
-        declared = self.learner.name
-        if self.teacher is not None and declared is not None and declared != DISTILLATION:
-            raise ValueError(
-                f"`teacher` declares a second network to learn from, and `learner` is {self.learner.spelled!r}, "
-                f"which learns from the data alone: the teacher would be built, read from its file and "
-                f"carried through the run with nothing to ask it. Declare `learner: {{name: {DISTILLATION}}}`, "
-                f"or drop the teacher."
-            )
-        if declared == DISTILLATION and self.teacher is None:
-            raise ValueError(
-                f"`learner` is {DISTILLATION!r} and there is nothing to distil from. Declare a `teacher` — the "
-                f"model it is, and `checkpoint_path` for the run whose weights it answers with — or "
-                f"`learner: {{name: standard}}` to learn from the data alone."
-            )
-
-    def _refuse_freezing_what_this_run_adapts(self) -> None:
-        """Held still, a delta never moves, and the run trains its heads alone while the declaration says otherwise.
-
-        Measured on a resnet adapted at its convolutions: with ``freeze`` over the same module, none of
-        the thirty-four tensors of the delta are left learning, and nothing anywhere says so — the run
-        trains, logs, keeps an epoch and ships it. The pair is redundant at best, because attaching a
-        delta already holds the weights beneath it still; what it costs at worst is the whole run.
-
-        Read by name, as the pairing above is: a callback reached by ``_target_`` declares no name to
-        recognise, and the limitation is the one already accepted for the rate monitor.
-        """
-        adapted = str(self.adapter.params.get("module", "")) if self.adapter is not None else ""
-        if not adapted:
-            return
-        for one in self.callbacks:
-            if one.name != FREEZE:
-                continue
-            held = [str(path) for path in one.params.get("modules") or () if _reaches(str(path), adapted)]
-            if held:
-                raise ValueError(
-                    f"`adapter` adds parameters under {adapted!r} and `callbacks` freezes "
-                    f"{', '.join(repr(path) for path in held)}: the delta would be held still along with the "
-                    f"weights it was added to, and nothing under {adapted!r} would learn at all. Attaching a "
-                    f"delta already holds those weights still — drop the freeze, or freeze parts the adapter "
-                    f"does not reach."
-                )
-
-    def _refuse_watching_a_rate_with_nothing_recording(self) -> None:
-        """A callback that only reports needs somewhere to report to, and the two are separate sections.
-
-        Left alone, Lightning refuses this itself — but at ``on_train_start``, after the sources have been
-        read, the encoders fitted and the cache warmed, and in words naming ``LearningRateMonitor``, the
-        ``Trainer`` and its ``logger``: three things that appear nowhere in what the run declared.
-        """
-        if self.tracker is None and any(one.name == LEARNING_RATE_MONITOR for one in self.callbacks):
-            raise ValueError(
-                f"callbacks declares {LEARNING_RATE_MONITOR!r} and tracker is none, so there is nowhere to "
-                "write a learning rate. Either declare a tracker — `tracker=csv` keeps the numbers in the "
-                "run's own directory — or run without the callbacks that report: `callbacks=none`. A list "
-                "cannot be edited from the command line, because Hydra will not force-add to a group."
-            )
 
     def _refuse_heads_declared_twice(self) -> None:
         """A head is a task's declaration; the model section only selects the network, or brings its own.

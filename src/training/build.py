@@ -36,6 +36,30 @@ group share one graph, each a line on it.
 """
 
 
+def reads_a_teacher(declared: ComponentConfig) -> bool:
+    """Whether this learner would be handed a teacher, asked exactly the way ``build_learner`` offers one.
+
+    Here rather than where the pair is refused, because it is the same question as the handing below and
+    has to stay the same answer. A name would settle it for the shipped learner alone — ``_target_``
+    writes none, and a distilling learner of a reader's own is as much half of a pair as this one — so
+    what settles it is the constructor: a teacher goes to whoever names one.
+    """
+    return _hands_a_teacher(resolve_factory(declared, learner_registry))
+
+
+def learners_that_read_a_teacher() -> str:
+    """Every registered learner a teacher can be declared beside, so a refusal names the fix.
+
+    Read off the registry rather than spelled beside it: a second distilling learner is then offered by
+    the same sentence the day it is registered, and a name written here could fall out of step with one.
+    """
+    return ", ".join(sorted(name for name in learner_registry if _hands_a_teacher(learner_registry.get(name))))
+
+
+def _hands_a_teacher(factory: Callable[..., Any]) -> bool:
+    return "teacher" in fill_signature(factory, teacher=None)
+
+
 def build_learner(
     declared: ComponentConfig,
     *,

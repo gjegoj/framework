@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from inspect import Parameter, signature
 from typing import Any
 
@@ -70,10 +70,11 @@ def refuse_what_the_constructor_does_not_name(
     A constructor forwarding ``**kwargs`` is taken at its word and left alone. Measured on this tree's
     own dependencies: every torchmetrics metric, ``smp.create_model`` and an albumentations chain
     forward what they are handed and each refuses its own unknown knobs in its own words, so a rule
-    here would refuse declarations those libraries accept.
+    here would refuse declarations those libraries accept. One that says nothing at all is left alone
+    for the same reason.
     """
-    named = signature(factory).parameters
-    if any(one.kind is Parameter.VAR_KEYWORD for one in named.values()):
+    named = what_it_names(factory)
+    if named is None or any(one.kind is Parameter.VAR_KEYWORD for one in named.values()):
         return
     accepted = ", ".join(sorted(named)) or "nothing"
     if unknown := sorted(component.params.keys() - named.keys()):
@@ -111,8 +112,22 @@ def fill_signature(factory: Callable[..., Any], **facts: Any) -> dict[str, Any]:
     torchmetrics metric, a torch schedule, a loss reached by ``_target_`` — takes what it understands
     and nothing else. One that forwards ``**kwargs`` names nothing and so receives nothing.
     """
-    named = signature(factory).parameters
-    return {name: value for name, value in facts.items() if name in named}
+    named = what_it_names(factory)
+    return {} if named is None else {name: value for name, value in facts.items() if name in named}
+
+
+def what_it_names(factory: Callable[..., Any]) -> Mapping[str, Parameter] | None:
+    """The parameters a constructor declares, or ``None`` where it declares nothing readable.
+
+    One reading for the two questions asked of a signature here — what may be handed over, and what may
+    not be declared — so they cannot part over a constructor neither can read. Measured: ``inspect``
+    refuses ``dict``, ``max`` and ``zip`` with ``no signature found for builtin``, and a check that
+    read one would refuse, in the words of the reading, a declaration the constructor accepts.
+    """
+    try:
+        return signature(factory).parameters
+    except ValueError:
+        return None
 
 
 def _resolve_value(value: Any) -> Any:

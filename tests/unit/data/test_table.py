@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from pathlib import Path
 from typing import Any, ClassVar
 
 import pandas as pd
@@ -86,6 +87,36 @@ def test_exactly_one_of_a_split_or_divided_sources(make_module: ModuleFactory, o
         make_module(**overrides)
 
 
+def test_a_source_written_as_a_mapping_is_read_by_both_of_its_keys(
+    table: pd.DataFrame, make_module: ModuleFactory, tmp_path: Path
+) -> None:
+    """The long form of a source, which is what a file whose suffix names no format is declared as."""
+    table.to_csv(tmp_path / "rows.txt", index=False)
+    declared = {"path": str(tmp_path / "rows.txt"), "format": "csv"}
+
+    module = prepared(make_module(source=declared, split=Split({"train": 1.0})), ("train",))
+
+    assert len(module.dataset("train")) == len(table)
+
+
+@pytest.mark.parametrize(
+    "declared",
+    [
+        pytest.param({"path": "rows.csv", "type": "csv"}, id="another word for the format"),
+        pytest.param({"path": "rows.csv", "sep": ";"}, id="a keyword for whoever reads the file"),
+        pytest.param({"train": {"format": "csv"}}, id="a split whose source names no file"),
+    ],
+)
+def test_a_key_a_source_is_not_declared_by_is_refused_rather_than_read_past(
+    make_module: ModuleFactory, declared: dict[str, Any]
+) -> None:
+    """Nothing typed this mapping, so the one reading it is the one that can refuse it: a key that is
+    not `format` left the format to the suffix, and the run read the file that key was written to
+    prevent it reading."""
+    with pytest.raises(ValueError, match="source"):
+        make_module(source=declared, split=Split({"train": 1.0}))
+
+
 class TestDividedSources:
     def test_are_read_only_for_the_splits_asked_for(self, table: pd.DataFrame, make_module: ModuleFactory) -> None:
         class Counting(TableSource):
@@ -109,6 +140,19 @@ class TestDividedSources:
         module.setup(("train", "val"))
 
         with pytest.raises(LookupError, match=r"val.*species.*bird"):
+            module.fit_preprocessing("train")
+
+    def test_fitting_names_the_split_and_the_target_it_learned_from_the_same_way(
+        self, table: pd.DataFrame, make_module: ModuleFactory
+    ) -> None:
+        """A run has several targets, and which column an encoder refused is not a question of which
+        encoder it was: two of them read numbers, and one table holds both columns."""
+        odd = table.copy()
+        odd.loc[0, "species"] = "bird"
+        module = make_module(source={"train": odd.head(3), "val": odd.tail(1)}, split=None)
+        module.setup(("train", "val"))
+
+        with pytest.raises(LookupError, match=r"train.*species.*bird"):
             module.fit_preprocessing("train")
 
 
