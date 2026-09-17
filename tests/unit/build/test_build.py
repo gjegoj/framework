@@ -6,6 +6,7 @@ what a task gets when it declares nothing, which splits a run prepares, and what
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -321,14 +322,22 @@ class TestTheRunItWillBe:
         with pytest.raises(ValueError, match="low and high"):
             experiment(declaration, tasks={"age": binned}, run={**declaration["run"], "train": False})
 
-    def test_a_run_that_will_test_without_a_split_to_test_on_is_refused_before_it_starts(
-        self, declaration: Mapping[str, Any]
+    def test_a_run_that_will_test_without_a_split_to_test_on_says_which_rows_it_read(
+        self, declaration: Mapping[str, Any], caplog: pytest.LogCaptureFixture
     ) -> None:
-        """Falling back to the validation rows would report optimistic numbers under an honest name."""
+        """The validation rows stand in, and the run says so where a reader of the numbers will see it.
+
+        Not silently: the epoch this run keeps is the one those very rows chose, so what it reports as
+        `test` is that measurement under another name rather than an estimate on data held out from the
+        choice — which is the whole difference between the two columns of the table it prints.
+        """
         data = {**declaration["data"], "split": {"train": 0.7, "val": 0.3}}
 
-        with pytest.raises(LookupError, match="test"):
-            experiment(declaration, data=data)
+        with caplog.at_level(logging.WARNING):
+            built = experiment(declaration, data=data)
+
+        assert built.data.info.splits == ("train", "val", "test")
+        assert "validation rows" in caplog.text
 
     def test_the_loader_knobs_a_run_declares_reach_every_stage(self, declaration: Mapping[str, Any]) -> None:
         built = experiment(declaration, loader={"num_workers": 0, "pin_memory": True})

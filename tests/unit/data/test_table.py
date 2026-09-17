@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any, ClassVar
@@ -115,6 +116,27 @@ def test_a_key_a_source_is_not_declared_by_is_refused_rather_than_read_past(
     prevent it reading."""
     with pytest.raises(ValueError, match="source"):
         make_module(source=declared, split=Split({"train": 1.0}))
+
+
+def test_a_run_that_will_test_without_a_test_split_reads_the_validation_rows(
+    table: pd.DataFrame, make_module: ModuleFactory, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Said out loud, because it changes what a reported number means rather than filling in a default:
+    the epoch a run keeps is the one its validation split chose, so what it reports as `test` is that
+    same measurement under another name."""
+    module = make_module(split=Split({"train": 0.8, "val": 0.2}))
+
+    with caplog.at_level(logging.WARNING):
+        module.setup(("train", "val", "test"))
+
+    assert module.dataset("test").table.equals(module.dataset("val").table)
+    assert "validation rows" in caplog.text
+
+
+def test_a_run_that_will_test_with_no_validation_split_either_is_refused(make_module: ModuleFactory) -> None:
+    """Nothing to stand in: a run cannot report on rows no source yielded."""
+    with pytest.raises(LookupError, match="test"):
+        make_module(split=Split({"train": 1.0})).setup(("train", "test"))
 
 
 class TestDividedSources:

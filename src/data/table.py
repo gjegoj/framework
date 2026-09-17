@@ -2,18 +2,21 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 import pandas as pd
 from torch.utils.data import Dataset
 
-from src.core import CELLS, DatasetInfo, DatasetStatistics, Distribution, Sample, naming
+from src.core import CELLS, DatasetInfo, DatasetStatistics, Distribution, Sample, Stage, naming
 from src.data.base import DataModule, Preprocessor, Table, TableSource
 from src.data.registry import data_module_registry
 from src.data.sources import capped, source_for
 from src.data.split import Split, split_table
 from src.transforms import SampleTransform
+
+log = logging.getLogger(__name__)
 
 type Source = TableSource | Table
 type DeclaredSource = Source | Mapping[str, Source]
@@ -103,7 +106,7 @@ class TableDataModule(DataModule):
         return DatasetInfo(inputs=base.inputs, targets=base.targets, splits=tuple(self._tables), metadata=base.metadata)
 
     def setup(self, splits: Sequence[str]) -> None:
-        available = self._read(splits)
+        available = _standing_in_for_a_test_split_that_was_not_declared(self._read(splits), splits)
         missing = sorted(set(splits) - set(available))
         if missing:
             raise LookupError(f"Splits {missing} are not available; the sources yield {sorted(available)}.")
@@ -176,6 +179,30 @@ class TableDataModule(DataModule):
             }
         assert self._split is not None
         return split_table(capped(_rows(self._source), self._max_samples), self._split)
+
+
+def _standing_in_for_a_test_split_that_was_not_declared(
+    available: dict[str, Table], splits: Sequence[str]
+) -> dict[str, Table]:
+    """A run that will test, with no test rows of its own and a validation split to stand in for them.
+
+    Here because this is the one place that sees both halves: which stages the run will read, and what
+    the sources actually yielded — and it holds for both grammars, a ``split`` of fractions and sources
+    already divided, because it is one rule about the same two facts.
+
+    Said out loud rather than filled in quietly, because it changes what a reported number means: the
+    epoch a run keeps is the one its validation split chose, so a number reported as ``test`` is that
+    same measurement under another name rather than an estimate on data held out from the choice. A run
+    with no validation split either is refused as before — there is nothing to stand in.
+    """
+    if Stage.TEST in splits and Stage.TEST not in available and Stage.VAL in available:
+        log.warning(
+            "No test split is declared, so the test stage reads the validation rows: what this run "
+            "reports as test is measured on the rows it chose its epoch by, not on data held out from "
+            "that choice. Declare a test split to report on one."
+        )
+        return {**available, Stage.TEST: available[Stage.VAL]}
+    return available
 
 
 def _rows(source: Source) -> Table:
