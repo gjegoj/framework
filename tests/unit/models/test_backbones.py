@@ -32,6 +32,30 @@ def smp_backbone() -> SmpBackbone:
 
 
 class TestTimm:
+    @pytest.mark.parametrize(
+        "model_name",
+        [
+            pytest.param("resnet18", id="a head that classifies the features it is handed"),
+            pytest.param("mobilenetv4_conv_small", id="a head that widens them through a hidden layer"),
+            pytest.param("poolformerv2_s12", id="a family that publishes no width for its head"),
+        ],
+    )
+    def test_the_width_it_declares_is_the_width_its_model_returns(self, model_name: str) -> None:
+        """Otherwise a head is built against one number and fed another, and the run dies on its first
+        matmul with torch's word about two shapes, naming neither the model nor the line that chose it.
+
+        Measured over 32 families on timm 1.0.28: ``num_features`` is the width *before* the head, and
+        ten of them — every mobilenet, ghostnet, lcnet, repghostnet, hardcorenas, vgg — end wider than
+        it, vgg11 at 4096 against a stated 512. These three are the three readings timm has: a head
+        that classifies what it is handed, one that widens it first, and a family publishing no width
+        for its head at all.
+        """
+        backbone = TimmBackbone(model_name, pretrained=False)
+
+        pooled = backbone(PICTURES)[Stream.POOLED]
+
+        assert pooled.shape[1] == backbone.feature_shapes[Stream.POOLED].size(Axis.CHANNELS)
+
     def test_publishes_one_pooled_vector_and_encodes_into_it(self, timm_backbone: TimmBackbone) -> None:
         shapes = timm_backbone.feature_shapes
 

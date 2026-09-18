@@ -50,7 +50,14 @@ class TimmBackbone(Backbone):
         # torch's bare word about `fc.weight` — naming neither the declaration nor the way out.
         self.model = timm.create_model(model_name, pretrained=pretrained, num_classes=0, **options)
         self.input_name = input_name
-        self.width = int(cast(int, self.model.num_features))
+        # `num_features` is where the graph ends, `head_hidden_size` where its head ends, and a model
+        # built headless returns the second. Measured over 32 families on timm 1.0.28, ten make those
+        # two different numbers — every mobilenet, ghostnet, lcnet, repghostnet, hardcorenas and vgg,
+        # vgg11 ending at 4096 against a stated 512 — and a head sized by the first was handed the
+        # second, dying on its first matmul. `metaformer` alone of timm's 90 families publishes no
+        # head width, and ends where its graph does: there the fallback is that number under its
+        # older name.
+        self.width = int(cast(int, getattr(self.model, "head_hidden_size", self.model.num_features)))
         if checkpoint_path is not None:
             self.carried_head = start_from(self, checkpoint_path, inside=INSIDE, aside=_classifier_prefixes(self.model))
 
