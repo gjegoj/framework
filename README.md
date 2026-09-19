@@ -1,124 +1,549 @@
 # ml-framework
 
-Config-driven multi-task computer-vision training on PyTorch Lightning · Hydra ·
-Pydantic · timm / smp · albumentations · torchmetrics.
+Config-driven multi-task computer-vision training on PyTorch Lightning, Hydra and
+Pydantic, with timm, segmentation-models-pytorch, albumentations and torchmetrics behind
+it.
 
-Built around a strict dependency discipline — a thin core, capability packages
-around it, one composition root — and a vocabulary any data scientist can read
-without a glossary.
+**Who this is for.** Data scientists who want to train, evaluate and ship a vision model
+by writing a YAML file instead of a training loop. You need Python and PyTorch. You do
+not need to read the framework's source to use it — and you do not need to edit it to
+extend it.
 
-Classification, segmentation, regression and metric learning, several of them on
-one backbone, with EMA, freezing, MixUp/CutMix, loss-parameter annealing and
-per-task learning rates, a grid of samples and a summary of the data a run is
-about to read. What a run ends with is deployable: ONNX, PT2, TorchScript, ncnn
-or a TensorRT engine, each proven against the model it was written from and
-described by a record a deployment reads. Metric learning learns its identities
-from the training split alone, so a run can hold whole identities out and be
-judged on ones it never saw — by retrieval and by verification, since the
-objective over the learned identities says nothing about the others. Detection is
-not here yet. What is written below is what runs.
+**What you can train.** Classification (single-label, binary, multi-label), semantic
+segmentation, regression, metric learning and contrastive pretext runs — several of them
+on one backbone at once. Beside that: EMA, layer freezing, MixUp and CutMix, LoRA
+adapters, loss-parameter annealing, per-task learning rates, knowledge distillation from
+a second network, a grid of sample predictions and a summary of the data a run is about
+to read.
+
+**What a run ends with.** A deployable artifact — ONNX, PT2, TorchScript, ncnn or a
+TensorRT engine — each checked against the model it was written from and described by a
+`model.json` a deployment reads.
+
+**Not covered.** Object detection: no box geometry, encoders or metrics for it.
 
 ## Quick start
 
 ```bash
 make install
-make test-run                    # fetches a real dataset and trains three tasks on one backbone
+make test-run
 ```
 
-`make test-run` is the whole framework in one command: it downloads Oxford-IIIT
-Pet, writes the table, and runs the multitask example — classification,
-regression and segmentation together. From there, every other shipped run is one
-line, and [`configs/experiment/examples/`](configs/experiment/examples/) is where
-they live:
+`make test-run` downloads the Oxford-IIIT Pet dataset, writes its table, and trains
+classification, regression and segmentation together on one backbone. It is the whole
+framework in one command.
+
+Every shipped example is one line from there:
 
 ```bash
 uv run main.py experiment=examples/classification
 uv run main.py experiment=examples/segmentation
-uv run main.py experiment=examples/finetuning
 uv run main.py experiment=examples/metric_learning
-uv run main.py experiment=examples/classification lr=3e-4 epochs=50 loader=performance scheduler=onecycle
+uv run main.py experiment=examples/finetuning
+uv run main.py experiment=examples/classification lr=3e-4 epochs=50 scheduler=onecycle
 ```
 
-Configs live in [`configs/`](configs/). `config.yaml` holds the knobs a run is
-usually steered by — `seed`, `lr`, `epochs`, `batch_size` — and the group files
-interpolate from them, so one edit reaches every consumer. The picture's size and
-statistics are declared once in `configs/preprocessing/image.yaml`, and the pixel
-chain reads them from there. Override a knob (`lr=3e-4`), not its mirror: the
-optimizer group declares no `lr`, so `optimizer.lr=3e-4` is refused by Hydra,
-which offers you `+optimizer.lr=3e-4` — take that offer and the run is refused by
-name, because `lr` has one home. Adding a key a group file genuinely does not
-declare is what the `+` is for (`+trainer.precision=bf16-mixed`).
+The examples live in [`configs/experiment/examples/`](configs/experiment/examples/) and
+a test assembles every one of them, so none can drift from the code:
 
-## Architecture
+| Example | What it runs |
+|---|---|
+| `classification.yaml` | Cat or dog, from a pretrained ResNet |
+| `segmentation.yaml` | Pet, background and boundary, per pixel |
+| `regression.yaml` | A continuous target |
+| `multitask.yaml` | All three at once, on one backbone |
+| `metric_learning.yaml` | Identities rather than classes, judged on breeds held out of training |
+| `finetuning.yaml` | Freeze, release, average: the classic pretrained-backbone recipe |
+| `caption.yaml`, `pairing.yaml` | Text, and image-text pairs |
+| `pet.yaml` | The table and split the others share; inherited, never run on its own |
+| `contrastive.yaml` | A pretext run. Known not to assemble; tracked as a defect |
 
+## How a run is declared
+
+Four ideas carry the rest of this page.
+
+**One experiment file is one run.** It names the data, the tasks and whatever it wants
+different from the defaults. Everything it does not name comes from
+[`configs/config.yaml`](configs/config.yaml) and the group files beside it.
+
+**Every component is declared the same way.** `name` picks a registered implementation;
+`_target_` takes an import path to anything, including your own class. Every other key in
+the mapping is an argument for that component's constructor, so an upstream knob is
+reachable without a schema change:
+
+```yaml
+loss: {name: focal, gamma: 2.0}              # registered by name
+loss: {_target_: my_project.losses.Tversky}  # anything importable
+loss: cross_entropy                           # shorthand for {name: cross_entropy}
 ```
-cli.py + build.py    composition root: Hydra composes, one grammar builds
-      │ creates and wires
-capability packages  data · transforms · models · tasks · losses · metrics ·
-      │              training · tracking · callbacks · export · integrations
-      │              (visualization is a library of its own beside them)
-      │ implement and consume
-core/                entities · taxonomy · the registry — torch and stdlib only
+
+**Sizes come from the data.** Encoders fit on the training split, and heads are built
+from what they found. You never write `num_classes`, an embedding width the data settles,
+or a feature dimension.
+
+**A bad declaration dies while the run is assembled**, with a message naming the key and
+the fix — not mid-epoch, and never by one value silently winning over another.
+
+### Overriding from the command line
+
+Change a knob at its one home, not at a mirror of it:
+
+```bash
+uv run main.py experiment=examples/classification lr=3e-4 epochs=50
+uv run main.py experiment=examples/classification model=unet tracker=csv export=onnx
+uv run main.py experiment=examples/classification +trainer.precision=bf16-mixed
 ```
 
-Arrows point down only. The core never imports a capability; a capability never
-imports `config/`; only the composition root and a package's own `build.py` read
-declarations. That is what keeps the third-party stacks contained — Lightning in
-`training/` and `callbacks/`, albumentations in `transforms/`, pandas and OpenCV
-in `data/`, pydantic in `config/`, ONNX and TensorRT in `export/backends/`,
-Hydra in `cli.py` and the one resolver it needs in `config/instantiate.py`. The
-rules are not a
-convention: [`tests/test_layering.py`](tests/test_layering.py) walks every import
-in the tree and fails on one that is not declared.
+`lr` lives in the root config and the optimizer group interpolates from it, so
+`optimizer.lr=3e-4` is refused. Use `+` only for a key a group genuinely does not
+declare, such as a Lightning `Trainer` argument.
 
-Three ideas carry most of the design:
+### What each section decides
 
-- **A task is a kind.** `classification`, `segmentation`, `regression` are
-  classes that each state what the task needs — encoder, head, loss, metrics — in
-  one place; a kind of your own is a subclass reachable by `_target_`, not a new
-  subsystem.
-- **Sizes come from the data.** Encoders fit on the train split, their facts land
-  on the prepared module's `info`, and only then are heads built — `num_classes`
-  is never written in a config file.
-- **One grammar for every component.** `name` (a registry key) or `_target_` (an
-  import path); every other key is a constructor argument, so an upstream knob is
-  reachable without a schema change.
+| Section | Decides | Default |
+|---|---|---|
+| `data` | The table, which columns are inputs, how it is split | none — you declare it |
+| `tasks` | What is learned, from which column, judged by what | none — you declare it |
+| `model` | The backbone the heads are built onto | `resnet18` |
+| `preprocessing` | How a sample is loaded and normalized | `image` |
+| `transforms` | The pixel chain, per split | `default` (deterministic) |
+| `optimizer`, `scheduler` | How the weights move | `adamw`, `none` |
+| `trainer`, `loader` | Lightning and DataLoader arguments, forwarded verbatim | `default` |
+| `callbacks` | Checkpoints, EMA, freezing, mixing, reports | `none` |
+| `tracker` | Where numbers are recorded | `none` |
+| `export` | What is shipped when the run ends | `none` |
+| `adapter` | Parameters added to a frozen part, then folded back | `none` |
+| `learner` | The training algorithm, and a teacher where one learns from a second network | `standard` |
+| `run` | Project and run name, directories, what to restore, whether to train or only test | — |
 
-Third-party models plug in through adapters to narrow ports; the ports never bend
-toward a library's signatures. What the model brings decides where it lands — and
-every row below is one new class, with no edit to existing code:
+`model`, `optimizer`, `scheduler`, `trainer`, `loader`, `callbacks`, `tracker`, `export`,
+`adapter`, `preprocessing` and `transforms` are Hydra groups: swap one with
+`model=unet`. A group replaces a list rather than appending to it, so a run that declares
+its own `callbacks` writes the whole list.
+
+## Config recipes
+
+Terse, working fragments. Each one goes in an experiment file.
+
+<details>
+<summary><b>The smallest run</b></summary>
+
+```yaml
+# @package _global_
+data:
+  source: data/train.csv
+  inputs: {image: {column: image_path}}
+  split: {train: 0.8, val: 0.2}
+
+tasks:
+  label:
+    kind: classification
+    target_column: species
+    classes: {0: cat, 1: dog}
+```
+
+`classes` is declared rather than inferred: the data is validated against this vocabulary,
+the index space survives resampling, and these names label the metrics, the confusion
+matrix and the samples grid.
+</details>
+
+<details>
+<summary><b>Segmentation</b></summary>
+
+```yaml
+defaults:
+  - override /model: unet
+
+tasks:
+  mask:
+    kind: segmentation
+    target_column: mask_path
+    classes: {0: pet, 1: background, 2: boundary}
+    head: native          # smp's own segmentation head, over the decoder
+    loss:
+      - {loss: cross_entropy, weight: 1.0}
+      - {loss: dice, weight: 1.0}
+```
+
+Several losses on one output: each entry names its loss apart from its mixing weight, so
+a loss's own `weight` argument never collides with it.
+</details>
+
+<details>
+<summary><b>Several tasks on one backbone</b></summary>
+
+```yaml
+tasks:
+  mask:
+    kind: segmentation
+    target_column: mask_path
+    classes: {0: pet, 1: background, 2: boundary}
+    head: native
+    weight: 1.0
+  label:
+    kind: classification
+    target_column: species
+    classes: {0: cat, 1: dog}
+    head: {name: native, stream: encoder}   # a linear head cannot read a feature map
+    weight: 0.5
+    lr: 1.0e-3                              # its own pace: small head, pretrained trunk
+  age:
+    kind: regression
+    target_column: age
+    head: {name: native, stream: encoder}
+    weight: 0.2
+```
+
+`weight` is the task's share of the total objective; `lr` gives it its own optimizer
+group, which `lr_monitor` then draws as its own line.
+</details>
+
+<details>
+<summary><b>Metric learning</b></summary>
+
+```yaml
+data:
+  split:
+    rule: {_target_: src.data.GroupedSplit, by: breed}   # whole identities held out
+
+tasks:
+  identity:
+    kind: {name: metric_learning, embedding_dim: 128}
+    target_column: breed
+    loss: {name: arcface_proxy, margin: 0.5, scale: 64.0}
+    metrics:
+      recall_at_1: {name: recall_at_k, k: 1}
+      map: {name: map}
+      verification: {name: verification_accuracy}
+      threshold: {name: verification_threshold}
+
+callbacks:
+  - {name: checkpoint, monitor: val/identity/recall_at_1, mode: max, dirpath: ${run.directory}/checkpoints}
+```
+
+No `classes`: this kind learns its vocabulary from the training split alone, so the
+identities held out are not held to a list. `val/loss` is the wrong monitor here — the
+objective is over the training identities, and validation names others.
+
+The other arrangement puts the prototypes in the network and classifies directly:
+
+```yaml
+tasks:
+  breed:
+    kind: classification
+    target_column: breed
+    classes: {...}
+    head: {name: cosine, embedding_dim: 128}
+    loss: {name: arcface, margin: 0.5, scale: 64.0}
+```
+</details>
+
+<details>
+<summary><b>Distillation from a second network</b></summary>
+
+```yaml
+learner:
+  name: distillation
+  weight: 1.0                                        # the teacher's share, beside the tasks' own
+  loss: {name: kullback_leibler, temperature: 4.0}
+  teacher:
+    name: composite
+    backbone: {name: timm, model_name: vit_large_patch16_dinov3.lvd1689m}
+    checkpoint_path: runs/teacher/checkpoints/best.ckpt
+```
+
+The teacher's heads are sized by this run's own tasks, so nothing about them is written
+twice. It is held outside the module tree: no checkpoint carries it, no export ships it.
+
+A head answering in cosines needs `scale`, which turns a bounded answer into a
+distribution before it is softened. Declared without one, the pair is refused by name:
+
+```yaml
+  loss: {name: kullback_leibler, temperature: 4.0, scale: 16.0}
+```
+
+Watch `train/<task>/distillation`. The column holds `weight × temperature² × KL`, so
+divide by `temperature²` to compare runs at different temperatures.
+</details>
+
+<details>
+<summary><b>LoRA</b></summary>
+
+```yaml
+defaults:
+  - override /adapter: lora
+  - override /model: dpt_dinov3
+
+adapter:
+  module: backbone.encoder     # what is pretrained, and nothing else
+  target_modules: [qkv, proj]  # matches the end of a module path
+  r: 8
+  alpha: 16
+```
+
+`target_modules` reaches every block whose path ends in that word: `qkv` and `proj` are a
+transformer's attention, `fc1` and `fc2` its MLP, `conv1` and `conv2` a residual
+network's convolutions. A name reaching nothing is refused while the run is assembled.
+
+The delta is folded into the weights after the kept epoch is restored, so `state_dict`
+keys, `model.json` and every export read exactly as in a run that adapted nothing.
+</details>
+
+<details>
+<summary><b>Freezing, EMA, mixing, annealing</b></summary>
+
+```yaml
+callbacks:
+  - {name: progress}
+  - {name: model_summary, max_depth: 3}
+  - {name: lr_monitor, logging_interval: epoch}
+  - {name: metric_summary}
+
+  # Hold the backbone still while the fresh head stops pushing noise into it,
+  # then let it go a third of the way in.
+  - {name: freeze, modules: [backbone], until: 0.3}
+
+  # Average the last stretch of weights; validate and save in their place.
+  - {name: ema, decay: 0.999, after: 0.3}
+
+  # Two samples become one picture and one blended label. Stopped before the end,
+  # so the last epochs are spent on the data the run is judged on.
+  - name: batch_transform
+    transform: {_target_: src.transforms.MixUp, alpha: 0.4}
+    until: 0.8
+
+  # Move one number of a task's objective over the run.
+  - {name: anneal, task: label, parameter: focal.gamma, start: 0.0, end: 2.0}
+
+  - name: checkpoint
+    monitor: val/loss
+    mode: min
+    save_top_k: 1
+    dirpath: ${run.directory}/checkpoints
+```
+
+`until` and `after` are a share of the run (`0.3`) or an epoch number (`3`). `1` is
+refused as ambiguous; leave the knob out to mean the whole run.
+
+EMA needs a full checkpoint. Declaring `save_weights_only: true` beside it is refused,
+because the file would hold the live weights while the metric that chose it came from the
+averaged ones.
+</details>
+
+<details>
+<summary><b>Splitting a table</b></summary>
+
+```yaml
+data:
+  split:
+    train: 0.7
+    val: 0.15
+    test: 0.15
+    seed: 42
+    # Leave `rule` out to shuffle and cut.
+    rule: {_target_: src.data.StratifiedSplit, by: species}   # keep each split's class mix
+    # rule: {_target_: src.data.GroupedSplit, by: patient_id} # keep a group on one side
+```
+
+`seed` is separate from the experiment's, so runs at different seeds can share a split.
+</details>
+
+<details>
+<summary><b>Exporting and tracking</b></summary>
+
+```bash
+uv run main.py experiment=examples/classification export=onnx tracker=clearml
+```
+
+```yaml
+export:
+  - {name: onnx, opset: 18, simplify: true}
+  - {name: torchscript}
+```
+
+`export=all` writes ONNX, PT2 and TorchScript. `ncnn` converts through `pnnx` from a
+TorchScript graph, and `tensorrt` compiles the ONNX graph for one GPU — it needs the
+`tensorrt` package, which is not a dependency here and needs a GPU at import.
+
+Each artifact is checked against the model it came from and described by a `model.json`
+beside it.
+
+Trackers: `none` (default), `csv` for a local file, `clearml` to upload. `lr_monitor`
+needs one; `metric_summary` adds its table only where a backend keeps one, and is left
+alone otherwise.
+</details>
+
+<details>
+<summary><b>Starting from weights, resuming, testing only</b></summary>
+
+```yaml
+run:
+  checkpoint_path: runs/previous/checkpoints/best.ckpt   # weights only
+  # resume_path: ...                                     # weights + optimizer + epoch
+  train: false                                           # score an existing model
+  test: true
+```
+
+Declare one of `checkpoint_path` or `resume_path`, not both. To load weights for a
+*backbone architecture* rather than a whole run, use `model.backbone.checkpoint_path`
+instead.
+</details>
+
+## Extending it
+
+Nothing under `src/` has to change. A class of your own is reached by `_target_` wherever
+a `name` would go, and receives the same derived facts a registered one does.
+[`tests/e2e/test_custom_extension.py`](tests/e2e/test_custom_extension.py) runs a task
+kind, a network and a splitting rule of one's own, end to end.
+
+<details>
+<summary><b>A loss, metric, callback or encoder of your own</b></summary>
+
+Write the class, then name it:
+
+```python
+# my_project/losses.py
+from torch import nn, Tensor
+
+
+class Ranking(nn.Module):
+    def __init__(self, margin: float = 0.2) -> None:
+        super().__init__()
+        self.margin = margin
+
+    def forward(self, outputs: Tensor, targets: Tensor) -> Tensor: ...
+```
+
+```yaml
+tasks:
+  label:
+    loss: {_target_: my_project.losses.Ranking, margin: 0.3}
+```
+
+Any module comparing two tensors works as a loss. A constructor that names a fact the run
+derived — `num_classes`, `semantics` — is handed it; one that does not, is not.
+
+The same holds for a metric (anything with torchmetrics' interface), a callback (a
+Lightning `Callback`), a target encoder and a pixel transform.
+</details>
+
+<details>
+<summary><b>A backbone, or a whole model</b></summary>
+
+What the third-party model gives you decides what you write, and each row is one new
+class:
 
 | The model provides | You write |
 |---|---|
 | Features only (timm, DINO, an smp encoder) | a `Backbone` adapter |
 | Features behind a removable head (torchvision) | a `Backbone` adapter that strips it |
-| Logits but no loss (HF `*ForClassification`) | a `Backbone` exposing a `logits` stream + `head: {_target_: torch.nn.Identity}` |
-| Everything: head, loss, decoding (a DETR of your own) | a `Model`, reached by `_target_` and built as it is |
-| Just weights for our own topology | nothing — `run.checkpoint_path` loads them |
+| Logits but no loss (a Hugging Face `*ForClassification`) | a `Backbone` exposing a `logits` stream, plus `head: {_target_: torch.nn.Identity}` |
+| Everything — head, loss, decoding (a DETR of your own) | a `Model`, reached by `_target_` and built as it is |
+| Only weights for a topology this framework already builds | nothing; `run.checkpoint_path` loads them |
 
-The same holds off the model path: a loss, a metric, a callback, an encoder, a
-pixel augmentation and a rule for dividing a table all arrive the same way.
-[`tests/e2e/test_custom_extension.py`](tests/e2e/test_custom_extension.py) is the
-promise written down — a task kind, a network and a splitting rule of one's own,
-run end to end with nothing under `src/` knowing about them.
+```yaml
+model: {_target_: my_project.models.Detector, variant: small}
+```
 
-## Documentation
+A model reached this way arrives whole: no backbone is composed and no heads are built
+onto it. If it answers in something other than raw projections, say so by overriding
+`produces` — the objective over it is checked against that answer.
+</details>
 
-There is none yet, deliberately: the guides are written once the shape stops
-moving. Until then the configs under [`configs/`](configs/) carry the reasoning
-in comments, and every contract is stated in the docstring of the `base.py` that
-declares it.
+<details>
+<summary><b>A kind of task</b></summary>
+
+A kind states, in one class, what a task of that kind needs: which encoder reads its
+column, which head serves it, what it is judged by, and how its output is read back.
+
+```python
+from src.tasks import Task
+
+
+class Doubling(Task):
+    default_target_encoder = "scalar"
+    ...
+```
+
+```yaml
+tasks:
+  age: {kind: {_target_: my_project.tasks.Doubling}, target_column: age}
+```
+
+Subclass `Task` and read the contract in
+[`src/tasks/base.py`](src/tasks/base.py); the shipped kinds beside it are the worked
+examples.
+</details>
+
+<details>
+<summary><b>A rule for dividing a table</b></summary>
+
+A rule is a callable taking the rows, the fraction wanted per split name, and a seed:
+
+```python
+class EveryOther:
+    def __init__(self, first: str = "train") -> None:
+        self.first = first
+
+    def __call__(self, rows, fractions, seed): ...
+```
+
+```yaml
+data:
+  split: {train: 0.5, val: 0.5, rule: {_target_: my_project.splits.EveryOther}}
+```
+</details>
+
+<details>
+<summary><b>Where new code belongs</b></summary>
+
+Dependencies point in one direction: a thin core of entities and registries, capability
+packages around it, and one composition root that alone reads the whole declaration. The
+core never imports a capability, a capability never imports `config/`, and each
+third-party stack stays in one package — Lightning in `training/` and `callbacks/`,
+albumentations in `transforms/`, pandas in `data/`, ONNX and TensorRT in
+`export/backends/`.
+
+This is enforced, not advised:
+[`tests/test_layering.py`](tests/test_layering.py) walks every import in the tree and
+fails on one that is not declared.
+</details>
+
+## What ships
+
+Names usable as `name:` in their own position.
+
+| Position | Names |
+|---|---|
+| `tasks.<n>.kind` | `classification`, `binary_classification`, `multilabel_classification`, `segmentation`, `binary_segmentation`, `regression`, `metric_learning`, `contrastive` |
+| `tasks.<n>.loss` | `cross_entropy`, `bce`, `focal`, `dice`, `iou`, `tversky`, `mse`, `mae`, `huber`, `smooth_l1`, `expectation`, `arcface`, `arcface_proxy`, `info_nce` |
+| `tasks.<n>.metrics` | `accuracy`, `f1`, `precision`, `recall`, `iou`, `mae`, `mse`, `confusion_matrix`, `recall_at_k`, `map`, `verification_accuracy`, `verification_threshold` |
+| `tasks.<n>.head` | `linear`, `cosine`, `conv`, `native` |
+| `tasks.<n>.target_encoder` | `label`, `identity`, `scalar`, `multilabel`, `mask`, `linear_bins`, `gaussian_bins` |
+| `model.backbone` | `timm`, `smp`, `hf_text`, `multiview`, `multiencoder` |
+| `callbacks` | `checkpoint`, `progress`, `model_summary`, `metric_summary`, `lr_monitor`, `ema`, `freeze`, `batch_transform`, `anneal`, `samples`, `dataset_summary` |
+| `learner` | `standard`, `distillation` |
+| `learner.loss` | `kullback_leibler` |
+| `adapter` | `lora` |
+| `export` | `onnx`, `pt2`, `torchscript`, `ncnn`, `tensorrt` |
+| `tracker` | `csv`, `clearml` |
+| `data.source.format` | `csv`, `json`, `jsonl` |
+
+A misspelled name is refused with the list of the ones that position holds.
 
 ## Development
 
 ```bash
-make install     # uv sync
-make test        # full pytest suite
-make test-unit   # the package tests only
-make test-e2e    # the runs that go from a file on disk to logged metrics
-make test-gate   # the whole suite minus the tests that need a model hub (the pre-commit gate)
+make install     # sync dependencies
+make test        # the whole suite
+make test-unit   # one package at a time
+make test-e2e    # assembled runs, end to end
+make test-gate   # the suite minus the tests that need a model hub
 make typecheck   # mypy over src and tests
-make check       # typecheck + full tests — the gate
-make pre-commit  # every hook: file hygiene, typos, ruff check, ruff format, mypy, the test gate
+make check       # typecheck + tests
+make pre-commit  # every hook: file hygiene, typos, ruff, mypy, the test gate
 make clean       # caches and temporary files
 ```
+
+Every contract is stated in the docstring of the `base.py` that declares it, and the
+config files under [`configs/`](configs/) carry the reasoning behind their defaults.
