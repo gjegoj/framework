@@ -15,7 +15,6 @@ from src.config.experiment import (
     LoaderConfig,
     RunConfig,
     SchedulerConfig,
-    TeacherConfig,
     TrainerConfig,
 )
 from src.config.schema import (
@@ -26,6 +25,7 @@ from src.config.schema import (
     ModelConfig,
     PreprocessingConfig,
     TaskConfig,
+    TeacherConfig,
     WeightedLossConfig,
 )
 

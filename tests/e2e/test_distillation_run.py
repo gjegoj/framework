@@ -55,8 +55,8 @@ def distilling(declared: Mapping[str, Any], teacher: str, loss: Mapping[str, Any
             "name": "distillation",
             "weight": 0.5,
             "loss": loss if loss is not None else {"name": "kullback_leibler", "temperature": 4.0},
+            "teacher": {**declared["model"], "checkpoint_path": teacher},
         },
-        "teacher": {**declared["model"], "checkpoint_path": teacher},
     }
 
 

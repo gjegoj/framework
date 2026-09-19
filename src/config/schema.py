@@ -58,7 +58,7 @@ class ComponentConfig(BaseModel):
 def refuse_a_path_that_is_not_there(key: str, path: str | None) -> None:
     """A declared file is answered for where it is declared, not minutes later where something opens it.
 
-    One home because three sections name one: the weights a run starts from, the weights a teacher
+    One home because three declarations name one: the weights a run starts from, the weights a teacher
     answers with, and the vocabulary a task reads out of a file. Each would otherwise be found missing
     after the sources were read and the cache warmed — the vocabulary latest of all, since it is opened
     while the encoders are built.
@@ -192,16 +192,45 @@ class ModelConfig(ComponentConfig):
     backbone: ComponentConfig | None = None
 
 
-class LearnerConfig(ComponentConfig):
-    """The algorithm a run trains by; ``loss`` is the child position an algorithm with an objective fills.
+class TeacherConfig(ModelConfig):
+    """A second network for a run to learn from, and the weights that make it worth learning from.
 
-    The objective here is not a task's. A task's is what its target is compared with, and every run has
-    one per task; this is what an algorithm adds *beside* them — the distance to a second network, for
-    the one that learns from one. Left out, an algorithm that reads an objective says what it defaults
-    to, in the same place a task kind says it.
+    An ordinary model declaration, because that is what it is: the same grammar, built by the same
+    builder, sized by the same tasks. Its heads are not written here for exactly that reason — a teacher
+    answers the questions this run asks, and a second statement of their shapes could disagree.
+
+    The weights are not optional, and that is the whole of what this section adds. A network whose head
+    was only just initialised answers with noise, and a run distilling from it would descend towards
+    nothing while every number it reports looks ordinary. The file is one this framework wrote, since
+    that is what a run's own checkpoint is; weights in someone else's shape are a phase of their own.
+    """
+
+    checkpoint_path: str = Field(min_length=1, description="The run whose weights this teacher answers with.")
+
+    @model_validator(mode="after")
+    def taught(self) -> TeacherConfig:
+        refuse_a_path_that_is_not_there("learner.teacher.checkpoint_path", self.checkpoint_path)
+        return self
+
+
+class LearnerConfig(ComponentConfig):
+    """The algorithm a run trains by, and the child positions an algorithm that needs them fills.
+
+    Both belong to the algorithm rather than to the run, which is why they are written under it: a
+    second network means nothing beside a learner that never asks it anything, and an objective
+    measuring the distance to one means nothing without the network. Declared as sections of their own
+    they were two halves held together by a refusal; declared here, the half cannot be written without
+    naming the algorithm it belongs to.
+
+    ``loss`` is not a task's. A task's is what its target is compared with, and every run has one per
+    task; this is what an algorithm adds *beside* them — the distance to a second network, for the one
+    that learns from one. Left out, an algorithm that reads an objective says what it defaults to, in
+    the same place a task kind says it. ``teacher`` has no such default: a network to learn from cannot
+    be derived from anything the run already holds.
     """
 
     loss: ComponentConfig | None = None
+    teacher: TeacherConfig | None = None
 
 
 class PreprocessingConfig(ComponentConfig):

@@ -41,8 +41,7 @@ from src.training.build import (
     build_profiler,
     build_scheduler_factory,
     build_teacher,
-    learners_naming,
-    reads_a_teacher,
+    refuse_a_learner_and_its_child_positions_that_disagree,
 )
 from src.transforms.build import build_transforms
 
@@ -85,7 +84,7 @@ def build(config: ExperimentConfig) -> Experiment:
     _refuse_a_rate_watched_with_nothing_recording(tracker, callbacks)
     _refuse_an_average_no_checkpoint_would_keep(callbacks)
     _refuse_freezing_what_this_run_adapts(config, callbacks)
-    _refuse_half_of_a_distillation(config)
+    refuse_a_learner_and_its_child_positions_that_disagree(config.learner)
     data = prepare_data(config, kinds)
     _refuse_a_run_that_could_never_write_what_it_declares(exporters, data.info)
     tasks = build_tasks(config.tasks, data.info)
@@ -107,7 +106,7 @@ def build(config: ExperimentConfig) -> Experiment:
         model=model,
         tasks=tasks,
         losses=losses,
-        teacher=build_teacher(config.teacher, heads=heads, outputs=outputs),
+        teacher=build_teacher(config.learner.teacher, heads=heads, outputs=outputs),
     )
     return Experiment(
         module=TrainingModule(
@@ -195,34 +194,6 @@ def _refuse_freezing_what_this_run_adapts(config: ExperimentConfig, callbacks: S
 def _reaches(frozen: str, adapted: str) -> bool:
     """Whether holding one dot-path still holds the other: the same module, or either one inside the other."""
     return frozen == adapted or frozen.startswith(f"{adapted}.") or adapted.startswith(f"{frozen}.")
-
-
-def _refuse_half_of_a_distillation(config: ExperimentConfig) -> None:
-    """A second network and an algorithm that reads one are two sections, and neither means anything alone.
-
-    One way round, the teacher is built, loaded from its file and carried through the run with nothing
-    ever asking it anything. The other, the learner is built without the one thing it exists for —
-    which does fail, but in the words of a missing argument where a learner is assembled, rather than
-    here naming the section to write.
-
-    Both halves are one question — will this learner be handed a teacher — and it is asked of the
-    constructor, which is what ``build_learner`` hands one to. Asked of the name a declaration wrote,
-    it held for the shipped learner alone: a ``_target_`` declaration writes none, so a teacher beside
-    one was built, read from its file and asked nothing, with a log that looked like any other run's.
-    """
-    if config.teacher is not None and not reads_a_teacher(config.learner):
-        raise ValueError(
-            f"`teacher` declares a second network to learn from, and `learner` is {config.learner.spelled!r}, "
-            f"which names no teacher in its constructor: the teacher would be built, read from its file "
-            f"and carried through the run with nothing to ask it. Declare a learner that reads one — "
-            f"{learners_naming('teacher')} — or drop the teacher."
-        )
-    if config.teacher is None and reads_a_teacher(config.learner):
-        raise ValueError(
-            f"`learner` is {config.learner.spelled!r}, which learns from a second network, and there is "
-            f"nothing to distil from. Declare a `teacher` — the model it is, and `checkpoint_path` for the "
-            f"run whose weights it answers with — or a learner that learns from the data alone."
-        )
 
 
 def _refuse_a_run_that_could_never_write_what_it_declares(exporters: Sequence[Exporter], info: DatasetInfo) -> None:

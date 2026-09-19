@@ -558,8 +558,8 @@ class TestDeclarationsThatCannotHold:
         kept.write_bytes(b"")
         teacher = {**declaration["model"], "checkpoint_path": str(kept)}
 
-        with pytest.raises(ValueError, match="no teacher in its constructor"):
-            experiment(declaration, learner=learner, teacher=teacher)
+        with pytest.raises(ValueError, match="names no `teacher` in its constructor"):
+            experiment(declaration, learner={**learner, "teacher": teacher})
 
     @pytest.mark.parametrize(
         "learner",
@@ -576,17 +576,34 @@ class TestDeclarationsThatCannotHold:
         with pytest.raises(ValueError, match="nothing to distil from"):
             experiment(declaration, learner=learner)
 
+    @pytest.mark.parametrize(
+        ("overrides", "refused"),
+        [
+            pytest.param(
+                {
+                    "adapter": {"name": "lora", "module": "backbone", "target_modules": ["conv2"], "r": 2},
+                    "callbacks": [{"name": "freeze", "modules": ["backbone"]}],
+                },
+                "held still",
+                id="a freeze over the very module the run adapts",
+            ),
+            pytest.param(
+                {"learner": {"name": "standard", "loss": {"name": "kullback_leibler"}}},
+                r"learner\.loss",
+                id="a part declared under a learner that reads none",
+            ),
+        ],
+    )
     def test_a_pair_that_cannot_hold_is_refused_before_a_single_row_is_read(
-        self, declaration: Mapping[str, Any], tmp_path: Path
+        self, declaration: Mapping[str, Any], tmp_path: Path, overrides: Mapping[str, Any], refused: str
     ) -> None:
-        """Two sections disagreeing is a fact about the declaration alone, and preparing the data is a
+        """Two declarations disagreeing is a fact about the declaration alone, and preparing the data is a
         source read, an encoder fit and a cache warm. Declared over a source that is not there, so
         whichever refusal arrives first is the one a run would have paid that time for."""
         data = {**declaration["data"], "source": str(tmp_path / "no-such-table.csv")}
-        adapter = {"name": "lora", "module": "backbone", "target_modules": ["conv2"], "r": 2}
 
-        with pytest.raises(ValueError, match="held still"):
-            experiment(declaration, data=data, adapter=adapter, callbacks=[{"name": "freeze", "modules": ["backbone"]}])
+        with pytest.raises(ValueError, match=refused):
+            experiment(declaration, data=data, **overrides)
 
     def test_a_head_declared_against_a_model_that_arrives_whole_is_refused(
         self, declaration: Mapping[str, Any]

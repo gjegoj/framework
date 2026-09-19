@@ -18,7 +18,12 @@ from src.models import Model
 from src.tasks import Classification, MetricLearning
 from src.training import StandardLearner
 from src.training.base import FitProfile, Learner, ParameterGroup
-from src.training.build import build_learner, build_optimizer_factory, build_scheduler_factory
+from src.training.build import (
+    build_learner,
+    build_optimizer_factory,
+    build_scheduler_factory,
+    refuse_a_learner_and_its_child_positions_that_disagree,
+)
 from src.training.distillation import DistillationLearner
 from src.training.registry import optimizer_registry, scheduler_registry
 from tests.support.models import Angles, Echo
@@ -283,7 +288,7 @@ class TestLearner:
         declared = LearnerConfig.model_validate({"name": "standard", "loss": SOFT})
 
         with pytest.raises(ValueError, match=r"learner\.loss.*distillation"):
-            distilled(declared)
+            refuse_a_learner_and_its_child_positions_that_disagree(declared)
 
     @pytest.mark.parametrize(
         ("answering", "declared"),

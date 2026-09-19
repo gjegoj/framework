@@ -37,13 +37,17 @@ data:
 
 tasks: {}
 
-# `learner` and `teacher` are neither declared here nor groups, and cannot be: a run that learns from a
-# second network names a file this machine holds, so no shipped file could carry one. Both go in an
+# `learner` is neither declared here nor a group, and cannot be: a run that learns from a second
+# network names a file this machine holds, so no shipped file could carry one. It goes in an
 # experiment, after an ordinary run has left a checkpoint to learn from:
-#   learner: {name: distillation, temperature: 4.0, weight: 0.5}
-#   teacher: {name: composite, backbone: {name: timm, model_name: resnet50, pretrained: true},
-#             checkpoint_path: runs/<project>/<name>/checkpoints/<file>.ckpt}
-# The teacher's heads are sized by this run's own tasks, so nothing about them is written twice.
+#   learner:
+#     name: distillation
+#     weight: 0.5
+#     loss: {name: kullback_leibler, temperature: 4.0}
+#     teacher: {name: composite, backbone: {name: timm, model_name: resnet50, pretrained: true},
+#               checkpoint_path: runs/<project>/<name>/checkpoints/<file>.ckpt}
+# Both are written under the algorithm that reads them, and neither means anything without it. The
+# teacher's heads are sized by this run's own tasks, so nothing about them is written twice.
 
 run:
   project: my-project      # the run's identity: tracker project + the runs/ subtree

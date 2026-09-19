@@ -128,27 +128,6 @@ class SchedulerConfig(ComponentConfig):
     strict: bool = True
 
 
-class TeacherConfig(ModelConfig):
-    """A second network for a run to learn from, and the weights that make it worth learning from.
-
-    An ordinary model declaration, because that is what it is: the same grammar, built by the same
-    builder, sized by the same tasks. Its heads are not written here for exactly that reason — a teacher
-    answers the questions this run asks, and a second statement of their shapes could disagree.
-
-    The weights are not optional, and that is the whole of what this section adds. A network whose head
-    was only just initialised answers with noise, and a run distilling from it would descend towards
-    nothing while every number it reports looks ordinary. The file is one this framework wrote, since
-    that is what a run's own checkpoint is; weights in someone else's shape are a phase of their own.
-    """
-
-    checkpoint_path: str = Field(min_length=1, description="The run whose weights this teacher answers with.")
-
-    @model_validator(mode="after")
-    def taught(self) -> TeacherConfig:
-        refuse_a_path_that_is_not_there("teacher.checkpoint_path", self.checkpoint_path)
-        return self
-
-
 class ExperimentConfig(BaseModel):
     """Assembly injects root controls; runtime objects never read this schema.
 
@@ -176,7 +155,6 @@ class ExperimentConfig(BaseModel):
     loader: LoaderConfig = Field(default_factory=LoaderConfig)
     trainer: TrainerConfig = Field(default_factory=TrainerConfig)
     callbacks: list[ComponentConfig] = Field(default_factory=list)
-    teacher: TeacherConfig | None = None
     adapter: ComponentConfig | None = Field(
         None, description="Parameters added to a named part of the model before training and folded back after."
     )

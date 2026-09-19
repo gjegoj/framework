@@ -7,7 +7,7 @@
 # hyperparameters besides, so nothing has to be squeezed in here to be findable.
 #
 # Every chip is an interpolation, and one naming a section a run may not declare is
-# reached through `oc.select`: an absent scheduler, delta or teacher leaves an empty
+# reached through `oc.select`: an absent scheduler, delta or distillation leaves an empty
 # string, which the tracker drops, rather than ending the composition and the run
 # with it. A name is reached the same way — a component written out by `_target_`
 # writes none, here as everywhere — so such a run is filed under one chip fewer.

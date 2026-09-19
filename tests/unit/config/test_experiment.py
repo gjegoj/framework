@@ -58,8 +58,8 @@ def test_the_minimal_experiment_fills_in_every_default(minimal: dict[str, Any]) 
             id="a vocabulary pointed at nothing",
         ),
         pytest.param(
-            "teacher",
-            {"name": "timm", "checkpoint_path": "runs/nothing-here.ckpt"},
+            "learner",
+            {"name": "distillation", "teacher": {"name": "timm", "checkpoint_path": "runs/nothing-here.ckpt"}},
             "names no file",
             id="a teacher pointed at nothing",
         ),

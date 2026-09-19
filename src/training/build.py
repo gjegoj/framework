@@ -40,8 +40,8 @@ group share one graph, each a line on it.
 def _names(factory: Callable[..., Any], part: str) -> bool:
     """Whether a constructor asks for one of the parts ``build_learner`` offers, asked the way it offers it.
 
-    The one question behind every refusal about a section that means nothing alone — a teacher with
-    nobody to read it, an objective nobody would ask. A registry name would settle it for the shipped
+    The one question behind every refusal about a child position that means nothing alone — a teacher
+    with nobody to read it, an objective nobody would ask. A registry name would settle it for the shipped
     learners alone: ``_target_`` writes none, and a learner of a reader's own is as much half of a pair
     as these are, so what settles it is the constructor.
     """
@@ -55,11 +55,6 @@ def learners_naming(part: str) -> str:
     same sentence that day, and a list written by hand could fall out of step with one.
     """
     return ", ".join(sorted(name for name in learner_registry if _names(learner_registry.get(name), part)))
-
-
-def reads_a_teacher(declared: ComponentConfig) -> bool:
-    """Whether this learner would be handed a teacher, which is what makes a `teacher` section mean something."""
-    return _names(resolve_factory(declared, learner_registry), "teacher")
 
 
 def build_objective(declared: LearnerConfig) -> Loss | None:
@@ -81,25 +76,43 @@ def build_objective(declared: LearnerConfig) -> Loss | None:
         return built
 
 
-def _refuse_an_objective_this_learner_would_never_read(declared: LearnerConfig) -> None:
-    """A position filled below a learner that names none is a declaration nothing would ever read.
+def refuse_a_learner_and_its_child_positions_that_disagree(declared: LearnerConfig) -> None:
+    """What is written under a learner has to be what that learner reads, both ways round.
+
+    One question asked twice — does this algorithm name this part — because both answers are otherwise
+    silent. A position nothing reads is built, and a teacher read from its file besides, then asked
+    nothing for the whole run under a log that looks like any other's. A position an algorithm needs and
+    nobody wrote fails where the learner is assembled, in the words of a missing argument rather than
+    naming what to write.
 
     An offered fact a constructor does not name is dropped by contract — that is how one learner takes
     ``losses`` and another does not. A *declaration* carries no such contract: it was written meaning to
-    take effect, and dropping it in silence is how a run trains by an objective nobody chose while its
-    log reads like any other.
+    take effect, so dropping it in silence is the failure this replaces.
 
-    Asked of the constructor rather than of the name, for the reason a teacher is: a ``_target_``
-    declaration writes no name, so keying on one would let exactly the learners that most need saying
-    so pass unnoticed.
+    Asked of the constructor rather than of the name a declaration wrote: a ``_target_`` declaration
+    writes no name, so keying on one would pass exactly the learners a reader wrote themselves, and one
+    of those is as much half of a pair as a shipped one.
+
+    Only ``teacher`` is asked for in the second direction, because it is the only one a run cannot do
+    without: an algorithm left with no objective makes the one it says it defaults to, and a network to
+    learn from cannot be derived from anything a run already holds.
     """
-    if declared.loss is None:
-        return
-    if not _names(resolve_factory(declared, learner_registry), "loss"):
+    factory = resolve_factory(declared, learner_registry)
+    for part, written, what in (
+        ("loss", declared.loss, "an objective to measure the distance to a second network by"),
+        ("teacher", declared.teacher, "a second network to learn from"),
+    ):
+        if written is not None and not _names(factory, part):
+            raise ValueError(
+                f"`learner.{part}` declares {what}, and `learner` is {declared.spelled!r}, which names no "
+                f"`{part}` in its constructor: it would be built and then asked nothing. Declare a learner "
+                f"that reads one — {learners_naming(part)} — or drop `learner.{part}`."
+            )
+    if declared.teacher is None and _names(factory, "teacher"):
         raise ValueError(
-            f"`learner.loss` declares an objective and `learner` is {declared.spelled!r}, which names no "
-            f"`loss` in its constructor: it would be built and then asked nothing. Declare a learner that "
-            f"reads one — {learners_naming('loss')} — or drop `learner.loss`."
+            f"`learner` is {declared.spelled!r}, which learns from a second network, and there is nothing "
+            f"to distil from. Declare `learner.teacher` — the model it is, and `checkpoint_path` for the "
+            f"run whose weights it answers with — or a learner that learns from the data alone."
         )
 
 
@@ -122,13 +135,13 @@ def build_learner(
     the training split settled says so, and an objective keeping one parameter per entry of it has
     nothing to say about an entry no split it learned from held.
 
-    So is ``teacher``, which is why a second network is declared in a section of its own rather than
-    inside this one: offered as a fact *and* written in the declaration, it would be two statements of
-    one thing, and the builder refuses those by name before either could be read.
+    ``teacher`` and ``loss`` arrive offered too, and are the two an algorithm may be *declared* with:
+    each is written as a child position under the learner, resolved by the builder that owns it and then
+    handed over as a fact. A typed position never reaches the constructor's own arguments, which is what
+    keeps one declaration from being two statements of one thing.
     """
     learned_only = sorted(name for name, task in tasks.items() if task.info.open_set)
     _refuse_a_total_that_would_mean_two_things(tasks, learned_only)
-    _refuse_an_objective_this_learner_would_never_read(declared)
     objective = build_objective(declared)
     built = instantiate_offering(
         declared,
