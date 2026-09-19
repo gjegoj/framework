@@ -18,9 +18,9 @@ from typing import TYPE_CHECKING
 import lightning as L
 import numpy as np
 from lightning import seed_everything
-from lightning.pytorch.callbacks import LearningRateMonitor
+from lightning.pytorch.callbacks import LearningRateMonitor, ModelCheckpoint
 
-from src.callbacks import Freeze
+from src.callbacks import EmaWeights, Freeze
 from src.callbacks.build import build_callbacks
 from src.config import ExperimentConfig, HeadConfig, TaskConfig
 from src.core import Axis, Geometry, Sample, Stage, TensorShape, naming, require_tensor
@@ -28,7 +28,7 @@ from src.data.build import build_data_module, build_preprocessor
 from src.experiment import Experiment
 from src.export import WRITTEN_FROM, example_inputs
 from src.export.build import build_exporters
-from src.losses.build import build_loss
+from src.losses.build import build_loss, refuse_an_objective_the_head_does_not_answer
 from src.metrics.build import build_metrics
 from src.models.build import build_adapter, build_model
 from src.tasks.build import build_task_kinds, build_tasks, default_target_encoder, head_for
@@ -41,7 +41,7 @@ from src.training.build import (
     build_profiler,
     build_scheduler_factory,
     build_teacher,
-    learners_that_read_a_teacher,
+    learners_naming,
     reads_a_teacher,
 )
 from src.transforms.build import build_transforms
@@ -83,6 +83,7 @@ def build(config: ExperimentConfig) -> Experiment:
     tracker = build_tracker(config.tracker)
     callbacks = build_callbacks(config.callbacks)
     _refuse_a_rate_watched_with_nothing_recording(tracker, callbacks)
+    _refuse_an_average_no_checkpoint_would_keep(callbacks)
     _refuse_freezing_what_this_run_adapts(config, callbacks)
     _refuse_half_of_a_distillation(config)
     data = prepare_data(config, kinds)
@@ -139,6 +140,30 @@ def _refuse_a_rate_watched_with_nothing_recording(tracker: Logger | None, callba
         )
 
 
+def _refuse_an_average_no_checkpoint_would_keep(callbacks: Sequence[Callback]) -> None:
+    """An average of the weights and the file meant to hold it are two sections, and one can miss the other.
+
+    Measured on lightning 2.6.5: a callback's ``on_save_checkpoint`` runs only for full checkpoints, so
+    on the weights-only path the average is never substituted into the file. Nothing refuses the pair,
+    because each section is right on its own — and the run keeps a file of live weights chosen by a
+    metric read off the averaged ones, with every number it printed about them ordinary.
+
+    Here rather than where the averaging begins, which is the earliest moment *that* callback can see
+    the trainer's checkpoints — and by then the sources are read, the encoders fitted and the cache
+    warmed. This list is the whole of what can refuse: what Lightning adds to it itself is one default
+    ``ModelCheckpoint``, only where a run declared none, and its ``save_weights_only`` is false.
+    """
+    if any(isinstance(one, EmaWeights) for one in callbacks) and any(
+        isinstance(one, ModelCheckpoint) and one.save_weights_only for one in callbacks
+    ):
+        raise ValueError(
+            "An average of the weights cannot be kept by a checkpoint declaring save_weights_only: "
+            "the file would hold the live weights while the metric it was chosen by came from the "
+            "averaged ones. Declare save_weights_only: false — a full checkpoint is what "
+            "`run.resume_path` continues from anyway."
+        )
+
+
 def _refuse_freezing_what_this_run_adapts(config: ExperimentConfig, callbacks: Sequence[Callback]) -> None:
     """Held still, a delta never moves, and the run trains its heads alone while the declaration says otherwise.
 
@@ -190,7 +215,7 @@ def _refuse_half_of_a_distillation(config: ExperimentConfig) -> None:
             f"`teacher` declares a second network to learn from, and `learner` is {config.learner.spelled!r}, "
             f"which names no teacher in its constructor: the teacher would be built, read from its file "
             f"and carried through the run with nothing to ask it. Declare a learner that reads one — "
-            f"{learners_that_read_a_teacher()} — or drop the teacher."
+            f"{learners_naming('teacher')} — or drop the teacher."
         )
     if config.teacher is None and reads_a_teacher(config.learner):
         raise ValueError(
@@ -369,24 +394,14 @@ def loss_for(declared: TaskConfig, task: Task) -> Loss:
 
 
 def _refuse_a_head_and_an_objective_that_disagree(model: Model, losses: Mapping[str, Loss]) -> None:
-    """The network and the objective over it are built apart and have to agree about one tensor.
+    """Every task's own objective against the head serving it; what the pair has to satisfy is stated once.
 
-    Here because only the root holds both. Why neither the shape nor the values tell a projection and
-    an angle apart is ``Representation``, which is the word the two declare in.
-
-    Compared by value rather than by identity: ``Representation`` is a ``StrEnum`` so that a head a run
-    wrote itself may spell ``produces = "cosines"`` and be taken at its word.
+    Here because only the root holds both — the network and the objectives are built from separate
+    sections — while the sentence those two have to satisfy lives beside the losses, where the learner's
+    own term asks it as well.
     """
     for name, loss in losses.items():
-        answered = model.produces(name)
-        if loss.reads != answered:
-            raise ValueError(
-                f"Task {name!r}: the network serving it answers with {answered}, and objective "
-                f"{loss.log_name!r} reads {loss.reads}. Nothing in a tensor says which of the two it "
-                f"holds, so this pair would train and report a number that looks like work. Declare "
-                f"`tasks.{name}.loss` that reads {answered}, or a head that answers with {loss.reads} — "
-                f"`tasks.{name}.head` where the run composes one, `produces` on a network arriving whole."
-            )
+        refuse_an_objective_the_head_does_not_answer(name, model.produces(name), loss, f"tasks.{name}.loss")
 
 
 def _refuse_a_head_of_several_streams_under_an_objective_that_reads_one(

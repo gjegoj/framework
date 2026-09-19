@@ -10,7 +10,7 @@ import torch
 from torch import Tensor, nn
 
 from src.core import Batch, ModelOutput, TargetInfo, TensorTree
-from src.losses import Loss
+from src.losses import KullbackLeibler, Loss
 from src.losses.build import build_loss
 from src.models import Model
 from src.tasks import Classification, Regression, Task
@@ -74,7 +74,7 @@ def test_the_teacher_is_nowhere_the_run_writes_itself_down() -> None:
     learner = taught()
 
     assert not any("teacher" in name for name in learner.state_dict())
-    assert [name for name, _ in learner.named_children()] == ["model", "losses"]
+    assert [name for name, _ in learner.named_children()] == ["model", "losses", "loss"]
     grouped = {id(parameter) for group in learner.parameter_groups() for parameter in group["params"]}
     assert grouped.isdisjoint({id(parameter) for parameter in learner.teacher.parameters()})
 
@@ -107,6 +107,32 @@ def test_a_teacher_the_student_already_agrees_with_adds_nothing() -> None:
     assert float(apart[SOFT].detach()) > 0.0
 
 
+@pytest.mark.parametrize(
+    ("declared", "divergence"),
+    [
+        pytest.param(None, 0.1488416, id="the objective a run gets without declaring one"),
+        pytest.param(1.0, 0.1414574, id="unsoftened"),
+        pytest.param(4.0, 0.1488416, id="softened as the default is"),
+        pytest.param(8.0, 0.1445040, id="softened twice as far"),
+    ],
+)
+def test_the_term_is_the_softened_divergence_over_classes_scaled_by_the_square_of_the_temperature(
+    declared: float | None, divergence: float
+) -> None:
+    """The arithmetic itself, so that moving it elsewhere is observed rather than assumed.
+
+    Every other test here says what the term *does* — zero where the two answer alike, positive where
+    they do not, weighed the same at any temperature — and all of them would go on passing if the
+    formula were replaced by a different one of the same shape. These numbers were worked out from the
+    definition apart from the code under test: soften both rows by the temperature, sum the divergence
+    over the classes, average over the batch, multiply by the temperature squared. They agree with
+    ``kl_div`` to six places, which is float32 against the arithmetic done in float64.
+    """
+    objective = None if declared is None else KullbackLeibler(temperature=declared)
+
+    assert float(terms(taught(loss=objective))[SOFT].detach()) == pytest.approx(divergence, rel=1e-5)
+
+
 def test_the_teacher_is_listened_to_in_evaluation_as_well() -> None:
     """`val/loss` and `train/loss` have to sum the same terms, or the number a run is kept by is another one."""
     learner = taught()
@@ -123,7 +149,7 @@ def test_the_temperature_leaves_the_weight_meaning_what_it_meant() -> None:
     """
     gradients = []
     for temperature in (1.0, 8.0):
-        learner = taught(temperature=temperature)
+        learner = taught(loss=KullbackLeibler(temperature=temperature))
         output = learner.step(batch())
         assert output.loss is not None
         output.loss.breakdown()[SOFT].backward()

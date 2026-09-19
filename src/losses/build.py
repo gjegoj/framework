@@ -10,6 +10,7 @@ from torch import nn
 
 from src.config import ComponentConfig, WeightedLossConfig
 from src.config.instantiate import instantiate_offering
+from src.core import Representation
 from src.losses.base import Loss, NamedLoss
 from src.losses.composite import WeightedSum
 from src.losses.registry import loss_registry
@@ -26,6 +27,32 @@ def build_loss(declared: object, facts: Mapping[str, Any]) -> Loss:
     if len(parts) == 1 and parts[0][1] == 1.0:
         return parts[0][0]
     return WeightedSum(parts)
+
+
+def refuse_an_objective_the_head_does_not_answer(
+    task: str, answered: Representation, loss: Loss, declared_at: str
+) -> None:
+    """A network and an objective over it are built apart and have to agree about one tensor.
+
+    Here rather than in either builder, because two of them ask it: a task's own objective against the
+    head serving it, and the one an algorithm adds against a second network. Why neither the shape nor
+    the values tell a projection and an angle apart is ``Representation``, which is the word the two
+    declare in — measured on eight real classes, a divergence over unscaled cosines is 256 times the
+    one over those same two answers read the way the objective beside them reads them, and a run
+    descending the smaller number reports it under a name that reads like work.
+
+    Compared by value rather than by identity: ``Representation`` is a ``StrEnum`` so that a head a run
+    wrote itself may spell ``produces = "cosines"`` and be taken at its word.
+    """
+    if loss.reads == answered:
+        return
+    raise ValueError(
+        f"Task {task!r}: the network serving it answers with {answered}, and objective "
+        f"{loss.log_name!r} reads {loss.reads}. Nothing in a tensor says which of the two it holds, so "
+        f"this pair would train and report a number that looks like work. Declare `{declared_at}` that "
+        f"reads {answered}, or a head that answers with {loss.reads} — `tasks.{task}.head` where the run "
+        f"composes one, `produces` on a network arriving whole."
+    )
 
 
 def _weighted(declared: object) -> list[WeightedLossConfig]:

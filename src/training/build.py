@@ -14,10 +14,11 @@ from torch.optim import Optimizer
 if TYPE_CHECKING:
     from lightning.pytorch.utilities.types import LRSchedulerConfigType
 
-from src.config import ComponentConfig, HeadConfig, SchedulerConfig, TeacherConfig
+from src.config import ComponentConfig, HeadConfig, LearnerConfig, SchedulerConfig, TeacherConfig
 from src.config.instantiate import fill_signature, instantiate, instantiate_offering, resolve_factory, resolve_params
-from src.core import TensorShape
+from src.core import TensorShape, naming
 from src.losses import Loss
+from src.losses.registry import distillation_loss_registry
 from src.models import Model, load_weights
 from src.models.build import build_model
 from src.tasks import Task
@@ -36,32 +37,74 @@ group share one graph, each a line on it.
 """
 
 
+def _names(factory: Callable[..., Any], part: str) -> bool:
+    """Whether a constructor asks for one of the parts ``build_learner`` offers, asked the way it offers it.
+
+    The one question behind every refusal about a section that means nothing alone — a teacher with
+    nobody to read it, an objective nobody would ask. A registry name would settle it for the shipped
+    learners alone: ``_target_`` writes none, and a learner of a reader's own is as much half of a pair
+    as these are, so what settles it is the constructor.
+    """
+    return part in fill_signature(factory, **{part: None})
+
+
+def learners_naming(part: str) -> str:
+    """Every registered learner that part may be declared beside, so a refusal names the fix.
+
+    Read off the registry rather than spelled beside it: a learner registered tomorrow is offered by the
+    same sentence that day, and a list written by hand could fall out of step with one.
+    """
+    return ", ".join(sorted(name for name in learner_registry if _names(learner_registry.get(name), part)))
+
+
 def reads_a_teacher(declared: ComponentConfig) -> bool:
-    """Whether this learner would be handed a teacher, asked exactly the way ``build_learner`` offers one.
+    """Whether this learner would be handed a teacher, which is what makes a `teacher` section mean something."""
+    return _names(resolve_factory(declared, learner_registry), "teacher")
 
-    Here rather than where the pair is refused, because it is the same question as the handing below and
-    has to stay the same answer. A name would settle it for the shipped learner alone — ``_target_``
-    writes none, and a distilling learner of a reader's own is as much half of a pair as this one — so
-    what settles it is the constructor: a teacher goes to whoever names one.
+
+def build_objective(declared: LearnerConfig) -> Loss | None:
+    """The objective declared below the learner, built from the registry that serves that position.
+
+    Resolved here rather than left among the learner's own arguments: a registry belongs to a position,
+    so a ``name`` one level down resolves to nothing and would travel on as the mapping it literally is.
+    This is the same child position ``model.backbone`` is, filled the same way by the builder that owns it.
     """
-    return _hands_a_teacher(resolve_factory(declared, learner_registry))
+    if declared.loss is None:
+        return None
+    with naming("learner.loss"):
+        built = instantiate(declared.loss, distillation_loss_registry)
+        if not isinstance(built, Loss):
+            raise TypeError(
+                f"{declared.loss.spelled!r} built {type(built).__name__}, which does not compare this run's "
+                "answer with the teacher's: an objective takes both and reports one number."
+            )
+        return built
 
 
-def learners_that_read_a_teacher() -> str:
-    """Every registered learner a teacher can be declared beside, so a refusal names the fix.
+def _refuse_an_objective_this_learner_would_never_read(declared: LearnerConfig) -> None:
+    """A position filled below a learner that names none is a declaration nothing would ever read.
 
-    Read off the registry rather than spelled beside it: a second distilling learner is then offered by
-    the same sentence the day it is registered, and a name written here could fall out of step with one.
+    An offered fact a constructor does not name is dropped by contract — that is how one learner takes
+    ``losses`` and another does not. A *declaration* carries no such contract: it was written meaning to
+    take effect, and dropping it in silence is how a run trains by an objective nobody chose while its
+    log reads like any other.
+
+    Asked of the constructor rather than of the name, for the reason a teacher is: a ``_target_``
+    declaration writes no name, so keying on one would let exactly the learners that most need saying
+    so pass unnoticed.
     """
-    return ", ".join(sorted(name for name in learner_registry if _hands_a_teacher(learner_registry.get(name))))
-
-
-def _hands_a_teacher(factory: Callable[..., Any]) -> bool:
-    return "teacher" in fill_signature(factory, teacher=None)
+    if declared.loss is None:
+        return
+    if not _names(resolve_factory(declared, learner_registry), "loss"):
+        raise ValueError(
+            f"`learner.loss` declares an objective and `learner` is {declared.spelled!r}, which names no "
+            f"`loss` in its constructor: it would be built and then asked nothing. Declare a learner that "
+            f"reads one — {learners_naming('loss')} — or drop `learner.loss`."
+        )
 
 
 def build_learner(
-    declared: ComponentConfig,
+    declared: LearnerConfig,
     *,
     model: Model,
     tasks: Mapping[str, Task],
@@ -85,6 +128,8 @@ def build_learner(
     """
     learned_only = sorted(name for name, task in tasks.items() if task.info.open_set)
     _refuse_a_total_that_would_mean_two_things(tasks, learned_only)
+    _refuse_an_objective_this_learner_would_never_read(declared)
+    objective = build_objective(declared)
     built = instantiate_offering(
         declared,
         learner_registry,
@@ -93,6 +138,7 @@ def build_learner(
         losses=losses,
         learned_only=learned_only,
         teacher=teacher,
+        loss=objective,
     )
     if not isinstance(built, Learner):
         raise TypeError(

@@ -509,6 +509,40 @@ class TestDeclarationsThatCannotHold:
             experiment(declaration, callbacks=[spelled])
 
     @pytest.mark.parametrize(
+        "spelled",
+        [
+            pytest.param({"name": "ema"}, id="by the name a registry holds"),
+            pytest.param({"_target_": "src.callbacks.EmaWeights"}, id="by an import path"),
+        ],
+    )
+    def test_an_average_kept_by_a_checkpoint_of_weights_alone_is_refused_however_the_average_is_spelled(
+        self, declaration: Mapping[str, Any], spelled: Mapping[str, Any], tmp_path: Path
+    ) -> None:
+        """The file would hold the live weights while the metric it was chosen by came from the averaged ones.
+
+        Measured on lightning 2.6.5: a callback's save hook runs only for full checkpoints, so on the
+        weights-only path the average is never substituted into the file — and the two sections say so
+        nowhere, because each is right on its own. Which spelling a config reached the class by is not a
+        fact about the run.
+        """
+        saving = {"name": "checkpoint", "save_weights_only": True, "dirpath": str(tmp_path / "kept")}
+
+        with pytest.raises(ValueError, match="save_weights_only"):
+            experiment(declaration, callbacks=[spelled, saving])
+
+    def test_a_checkpoint_of_weights_alone_with_nothing_to_average_is_left_alone(
+        self, declaration: Mapping[str, Any], tmp_path: Path
+    ) -> None:
+        """The pair is refused where the file would miss an average, and nowhere else.
+
+        A run that keeps weights alone is an ordinary run: what makes the pairing wrong is the second
+        section, and a refusal reading one of them would stop runs that declared nothing of the kind.
+        """
+        saving = {"name": "checkpoint", "save_weights_only": True, "dirpath": str(tmp_path / "kept")}
+
+        assert experiment(declaration, callbacks=[saving])
+
+    @pytest.mark.parametrize(
         "learner",
         [
             pytest.param({"name": "standard"}, id="a learner by the name a registry holds"),

@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any, override
 
-from lightning.pytorch.callbacks import EMAWeightAveraging, ModelCheckpoint
+from lightning.pytorch.callbacks import EMAWeightAveraging
 
 from src.callbacks.moment import Moment
 from src.callbacks.registry import callback_registry
@@ -50,7 +50,6 @@ class EmaWeights(EMAWeightAveraging):
         super().setup(trainer, pl_module, stage)
         if stage != "fit":
             return
-        self._refuse_a_saver_that_would_write_the_live_weights(trainer)
         begins = self._after.in_steps(FitProfile.of(trainer))
         self.update_starting_at_step = begins.step
         log.info("Averaging the weights with decay %s, from %s.", self._decay, begins)
@@ -87,19 +86,3 @@ class EmaWeights(EMAWeightAveraging):
             super().on_train_end(trainer, pl_module)
         else:
             log.info("Averaging never began, so the weights the run trained are the ones it keeps.")
-
-    @staticmethod
-    def _refuse_a_saver_that_would_write_the_live_weights(trainer: L.Trainer) -> None:
-        """A weights-only checkpoint beside an average is a file that says one thing and holds another.
-
-        Measured on lightning 2.6.5: a callback's ``on_save_checkpoint`` runs only for full
-        checkpoints, so on the weights-only path the average is never substituted — and the file would
-        hold the live weights while the metric it was chosen by came from the averaged ones.
-        """
-        if any(isinstance(one, ModelCheckpoint) and one.save_weights_only for one in trainer.checkpoint_callbacks):
-            raise ValueError(
-                "An average of the weights cannot be kept by a checkpoint declaring save_weights_only: "
-                "the file would hold the live weights while the metric it was chosen by came from the "
-                "averaged ones. Declare save_weights_only: false — a full checkpoint is what "
-                "`run.resume_path` continues from anyway."
-            )

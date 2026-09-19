@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from src.config.schema import (
     ComponentConfig,
+    LearnerConfig,
     ModelConfig,
     PreprocessingConfig,
     TaskConfig,
@@ -169,7 +170,7 @@ class ExperimentConfig(BaseModel):
     )
     model: ModelConfig
     tasks: dict[str, TaskConfig]
-    learner: ComponentConfig = Field(default_factory=lambda: ComponentConfig(name="standard"))
+    learner: LearnerConfig = Field(default_factory=lambda: LearnerConfig(name="standard"))
     optimizer: ComponentConfig = Field(default_factory=lambda: ComponentConfig(name="adamw"))
     scheduler: SchedulerConfig | None = None
     loader: LoaderConfig = Field(default_factory=LoaderConfig)

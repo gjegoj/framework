@@ -192,6 +192,18 @@ class ModelConfig(ComponentConfig):
     backbone: ComponentConfig | None = None
 
 
+class LearnerConfig(ComponentConfig):
+    """The algorithm a run trains by; ``loss`` is the child position an algorithm with an objective fills.
+
+    The objective here is not a task's. A task's is what its target is compared with, and every run has
+    one per task; this is what an algorithm adds *beside* them — the distance to a second network, for
+    the one that learns from one. Left out, an algorithm that reads an objective says what it defaults
+    to, in the same place a task kind says it.
+    """
+
+    loss: ComponentConfig | None = None
+
+
 class PreprocessingConfig(ComponentConfig):
     """Modality-specific loading, normalization and collation.
 

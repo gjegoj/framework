@@ -51,16 +51,6 @@ def test_a_decay_that_is_not_a_share_of_the_average_is_refused(decay: float) -> 
         EmaWeights(decay=decay)
 
 
-def test_saving_only_weights_beside_an_average_is_refused(declaration: Mapping[str, Any], tmp_path: Any) -> None:
-    """Lightning runs a callback's save hook only for full checkpoints, so the file would hold the live
-    weights while the metric it was chosen by came from the averaged ones."""
-    saving = {"name": "checkpoint", "save_weights_only": True, "dirpath": str(tmp_path / "kept")}
-    built = prepared(declaration, callbacks=[*averaging(), saving])
-
-    with pytest.raises(ValueError, match="save_weights_only"):
-        built.trainer.fit(built.module, datamodule=built.data)
-
-
 def weights_in(state: Mapping[str, Tensor], model: nn.Module) -> Tensor:
     """The model's own weights out of a whole run's state, in the order the model keeps them."""
     return torch.cat([state[f"{MODEL_PREFIX}{name}"].flatten() for name, _ in model.named_parameters()])

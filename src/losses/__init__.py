@@ -9,6 +9,7 @@ from src.losses.base import Loss, NamedLoss, TorchLoss
 from src.losses.classification import BinaryCrossEntropy, CrossEntropy, Focal
 from src.losses.composite import WeightedSum
 from src.losses.contrastive import InfoNce
+from src.losses.distillation import KullbackLeibler
 from src.losses.metric_learning import ArcFace, ArcFaceProxy
 from src.losses.regression import Expectation, Huber, MeanAbsoluteError, MeanSquaredError, SmoothL1
 from src.losses.segmentation import Dice, IntersectionOverUnion, Tversky
@@ -24,6 +25,7 @@ __all__ = [
     "Huber",
     "InfoNce",
     "IntersectionOverUnion",
+    "KullbackLeibler",
     "Loss",
     "MeanAbsoluteError",
     "MeanSquaredError",

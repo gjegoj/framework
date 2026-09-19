@@ -7,10 +7,10 @@ from typing import cast, override
 
 import torch
 from torch import Tensor
-from torch.nn.functional import kl_div, log_softmax
 
 from src.core import FEATURE_AXIS, Batch, LossOutput, ModelOutput, Semantics
-from src.losses import Loss
+from src.losses import KullbackLeibler, Loss
+from src.losses.build import refuse_an_objective_the_head_does_not_answer
 from src.models import Model
 from src.tasks import Task
 from src.training.learner import StandardLearner
@@ -29,16 +29,15 @@ the runs on either side of the change.
 class DistillationLearner(StandardLearner):
     """A smaller network learns the targets and, beside them, the answers a larger one already gives.
 
-    What the second network buys is everything the targets leave out. A label says one class is right;
-    a trained teacher says how wrong each of the others is, and those proportions are what a small
-    network cannot work out from few examples. So the term here is a divergence between two whole
-    distributions rather than a second look at the true class.
+    How far it is from those answers is an objective in its own right, and it is declared in a position
+    of its own at ``learner.loss``. What makes two answers comparable at all differs with what the heads
+    produce — a projection is softened as it stands, an angle has to be made into a distribution first —
+    and none of that is a property of distilling. Whichever objective a run names, the term reports as
+    ``distillation``: the column is named for the method, so runs either side of a change of objective
+    go on comparing.
 
-    Both are softened before they are compared, because the distinctions worth learning sit in the small
-    probabilities, and an unsoftened teacher spends all of its confidence on one class. Softening also
-    shrinks the term, which is why it is scaled back by the square of the temperature: measured on random
-    logits, without that scale the gradient falls fourfold per doubling of the temperature, so ``weight``
-    would silently mean less at every step of it.
+    ``losses`` above are the tasks' own, one each, against what the data settled. ``loss`` here is the
+    single one this algorithm adds beside them, against what another network answered.
 
     The teacher is held outside the module tree, in a one-tuple, and that is what keeps it out of
     everything a run writes down. Measured: a module reached that way appears in no ``state_dict``, no
@@ -53,8 +52,8 @@ class DistillationLearner(StandardLearner):
 
     Parameters:
         teacher: The network to learn from, already holding the weights it answers with.
-        temperature: How far both distributions are softened before they are compared. One compares them
-            as they are; the usual range is two to ten.
+        loss: How the distance to that network's answers is measured. Left out, it is the divergence
+            between the two softened, over the projections a head ordinarily produces.
         weight: The share of the objective the teacher's answers are, beside what the targets are worth.
     """
 
@@ -65,24 +64,24 @@ class DistillationLearner(StandardLearner):
         losses: Mapping[str, Loss],
         *,
         teacher: Model,
-        temperature: float = 4.0,
+        loss: Loss | None = None,
         weight: float = 1.0,
         learned_only: Collection[str] = (),
     ) -> None:
         super().__init__(model, tasks, losses, learned_only)
-        if temperature <= 0:
-            raise ValueError(
-                f"A temperature softens a distribution by dividing by it, so it is positive; got {temperature}."
-            )
         if weight <= 0:
             raise ValueError(
                 f"`weight` is the share of the objective the teacher is worth, so it is positive; got {weight}."
             )
-        self._refuse_a_task_with_no_distribution_to_soften()
         # Outside the module tree on purpose, and the whole reason this is a one-tuple; see the class.
         self._teacher: tuple[Model] = (teacher.eval(),)
-        self._temperature = temperature
+        self.loss = loss if loss is not None else KullbackLeibler()
         self._weight = weight
+        self._refuse_a_task_this_objective_cannot_read()
+        # After the refusal above, which names the objective rather than the column it reports under:
+        # the run that needs it wrote no name at all, so the one worth printing is the objective's own.
+        # Named for the method rather than for the divergence it uses; see `DISTILLATION`.
+        self.loss.log_name = DISTILLATION
 
     @property
     def teacher(self) -> Model:
@@ -127,11 +126,7 @@ class DistillationLearner(StandardLearner):
         """
         answered, teaches = task.raw(output), task.raw(taught)
         self._refuse_a_teacher_answering_in_another_space(name, answered, teaches)
-        softened = log_softmax(answered / self._temperature, dim=FEATURE_AXIS)
-        teaching = log_softmax(teaches / self._temperature, dim=FEATURE_AXIS)
-        pointwise = kl_div(softened, teaching, reduction="none", log_target=True)
-        divergence = pointwise.sum(FEATURE_AXIS).mean() * self._temperature**2
-        return (LossOutput.reported(DISTILLATION, divergence) * self._weight).prefixed(name)
+        return (self.loss(answered, teaches) * self._weight).prefixed(name)
 
     @staticmethod
     def _refuse_a_teacher_answering_in_another_space(name: str, answered: Tensor, teaches: Tensor) -> None:
@@ -153,13 +148,19 @@ class DistillationLearner(StandardLearner):
                 f"trained on the very classes they declare."
             )
 
-    def _refuse_a_task_with_no_distribution_to_soften(self) -> None:
-        """Softening spreads confidence over classes, and a task answering with something else has none.
+    def _refuse_a_task_this_objective_cannot_read(self) -> None:
+        """Whether the term can read a task's answer at all, asked of the two things that stop it.
 
+        Softening spreads confidence over classes, and a task answering with something else has none.
         Refused rather than skipped: a run declaring a teacher and quietly learning nothing from it for
         half its tasks reports a total that looks like distillation and is not. What the other semantics
         would need is a different measurement — one score against one score for a number, a divergence
         per label rather than over them for a multilabel answer — and each arrives with its own term.
+
+        Then what the head answers with, against what the objective states it reads. Asked here rather
+        than where the run is assembled, because the objective is not always written: left out, it is
+        made in this constructor, and a check standing where only the written form is visible would pass
+        exactly the configs most likely to be wrong — every one written before the position existed.
         """
         unteachable = sorted(name for name, task in self.tasks.items() if task.semantics is not Semantics.MULTICLASS)
         if unteachable:
@@ -169,3 +170,5 @@ class DistillationLearner(StandardLearner):
                 f"Distil the tasks that are judged against one vocabulary, or learn these from their "
                 f"targets alone with `learner: {{name: standard}}`."
             )
+        for name in self.tasks:
+            refuse_an_objective_the_head_does_not_answer(name, self.model.produces(name), self.loss, "learner.loss")

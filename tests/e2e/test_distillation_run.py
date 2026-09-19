@@ -47,12 +47,23 @@ def teacher_of(declared: Mapping[str, Any], tmp_path: Path) -> str:
     return str(next(iter(sorted((tmp_path / "taught").glob("*.ckpt")))))
 
 
-def distilling(declared: Mapping[str, Any], teacher: str) -> dict[str, Any]:
+def distilling(declared: Mapping[str, Any], teacher: str, loss: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """A run learning from a second network as well as from its targets; `loss` is how far it is from it."""
     return {
         **declared,
-        "learner": {"name": "distillation", "temperature": 4.0, "weight": 0.5},
+        "learner": {
+            "name": "distillation",
+            "weight": 0.5,
+            "loss": loss if loss is not None else {"name": "kullback_leibler", "temperature": 4.0},
+        },
         "teacher": {**declared["model"], "checkpoint_path": teacher},
     }
+
+
+def answering_in_angles(declared: Mapping[str, Any]) -> dict[str, Any]:
+    """The same run with a `cosine` head under the angular objective that needs one."""
+    task = {**declared["tasks"]["species"], "head": {"name": "cosine", "embedding_dim": 8}}
+    return {**declared, "tasks": {"species": {**task, "loss": {"name": "arcface", "margin": 0.5, "scale": 16.0}}}}
 
 
 def test_the_run_keeps_and_ships_the_student_alone(declared: dict[str, Any], tmp_path: Path) -> None:
@@ -100,3 +111,27 @@ def test_what_the_student_learned_from_the_teacher_is_a_row_of_its_own(
     with written[0].open() as recorded:
         columns = next(iter(csv.reader(recorded)))
     assert SOFT in columns
+
+
+def test_a_head_that_answers_in_angles_is_distilled_only_where_the_term_is_told_so(
+    declared: dict[str, Any], tmp_path: Path
+) -> None:
+    """The arrangement this position exists for, and the one it has to refuse — assembled, not simulated.
+
+    A `cosine` head answers in ±1, and a divergence over those numbers is nearly flat whatever the two
+    networks think: measured on eight real classes, 256 times smaller than the same comparison made once
+    the angles are turned into logits, and every number a run reports about it looks ordinary. Nothing in
+    the tensor says which space it holds, so the objective says — and a run that does not say is stopped
+    while it is assembled rather than trained on the flat number.
+    """
+    angular = answering_in_angles(declared)
+    teacher = teacher_of(angular, tmp_path)
+
+    with pytest.raises(ValueError, match=r"learner\.loss"):
+        build(load_config(distilling(angular, teacher)))
+
+    told = {"name": "kullback_leibler", "temperature": 4.0, "scale": 16.0}
+    run(build(load_config(distilling(angular, teacher, told))))
+
+    with sorted((tmp_path / "recorded").rglob("metrics.csv"))[0].open() as recorded:
+        assert SOFT in next(iter(csv.reader(recorded)))
