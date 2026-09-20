@@ -252,8 +252,10 @@ learner:
     checkpoint_path: runs/teacher/checkpoints/best.ckpt
 ```
 
-The teacher's heads are sized by this run's own tasks, so nothing about them is written
-twice. It is held outside the module tree: no checkpoint carries it, no export ships it.
+The teacher is sized by this run's own tasks, so its widths are never written twice. It is
+held outside the module tree: no checkpoint carries it, no export ships it. Declare
+`learner.teacher.heads` where it should reach those widths through a head of its own — see
+*Continuing a teacher's head*.
 
 A head answering in cosines needs `scale`, which turns a bounded answer into a
 distribution before it is softened. Declared without one, the pair is refused by name:
@@ -264,6 +266,52 @@ distribution before it is softened. Declared without one, the pair is refused by
 
 Watch `train/<task>/distillation`. The column holds `weight × temperature² × KL`, so
 divide by `temperature²` to compare runs at different temperatures.
+</details>
+
+<details>
+<summary><b>Continuing a teacher's head</b></summary>
+
+A teacher trained with a wide head leaves a stack of layers. Where the student's backbone
+publishes the width that stack passes through, the student can carry the tail of it:
+
+```yaml
+# The teacher: the whole head, over its own 1024-wide features.
+learner:
+  name: distillation
+  weight: 1.0
+  loss: {name: kullback_leibler, temperature: 4.0}
+  teacher:
+    name: composite
+    backbone: {name: timm, model_name: vit_large_patch16_dinov3.lvd1689m}
+    checkpoint_path: runs/teacher/checkpoints/best.ckpt
+    heads:
+      species: {name: mlp, hidden_features: [1280, 128, 64]}
+
+# The student: the tail alone, over its own 1280-wide features, held still.
+tasks:
+  species:
+    head: {name: mlp, hidden_features: [128, 64], checkpoint_path: weights/tail.pt}
+
+callbacks:
+  - {name: freeze, modules: [heads.species]}
+```
+
+`mlp` puts a GELU between every pair of projections. Left without `hidden_features` it is
+one layer as wide as what it reads; declared empty it is refused, because a head of one
+projection is `linear`.
+
+A head's `checkpoint_path` holds weights for **exactly that head** — the same names at the
+same widths — and the file extension is not read, only its contents. Cut the tail out of
+the teacher's checkpoint yourself and save it; a whole run's file is refused by name,
+because its tensors are the run's rather than the head's.
+
+**What this arrangement transfers, and what it does not.** A frozen head constrains the
+route the student takes to its answer, not the answer itself: the backbone beneath it is
+free to produce whatever features make the logits come out right. Against `kullback_leibler`
+over logits alone, freezing the tail therefore changes nothing that a trainable head would
+not also reach. What the arrangement buys is a shared space to compare *features* in — both
+networks reach the same widths by construction, so no projector is needed. The objective
+that reads those features is not here yet.
 </details>
 
 <details>
@@ -518,7 +566,7 @@ Names usable as `name:` in their own position.
 | `tasks.<n>.kind` | `classification`, `binary_classification`, `multilabel_classification`, `segmentation`, `binary_segmentation`, `regression`, `metric_learning`, `contrastive` |
 | `tasks.<n>.loss` | `cross_entropy`, `bce`, `focal`, `dice`, `iou`, `tversky`, `mse`, `mae`, `huber`, `smooth_l1`, `expectation`, `arcface`, `arcface_proxy`, `info_nce` |
 | `tasks.<n>.metrics` | `accuracy`, `f1`, `precision`, `recall`, `iou`, `mae`, `mse`, `confusion_matrix`, `recall_at_k`, `map`, `verification_accuracy`, `verification_threshold` |
-| `tasks.<n>.head` | `linear`, `cosine`, `conv`, `native` |
+| `tasks.<n>.head` | `linear`, `cosine`, `conv`, `mlp`, `native` |
 | `tasks.<n>.target_encoder` | `label`, `identity`, `scalar`, `multilabel`, `mask`, `linear_bins`, `gaussian_bins` |
 | `model.backbone` | `timm`, `smp`, `hf_text`, `multiview`, `multiencoder` |
 | `callbacks` | `checkpoint`, `progress`, `model_summary`, `metric_summary`, `lr_monitor`, `ema`, `freeze`, `batch_transform`, `anneal`, `samples`, `dataset_summary` |
