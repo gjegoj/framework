@@ -13,16 +13,21 @@ from typing import Any
 
 import pytest
 import torch
+from torch import nn
 
 from src.build import build
 from src.config import load_config
+from src.core import submodule_at
 from src.experiment import run
+from src.models.heads import Mlp
 from src.training import DistillationLearner
 from src.training.checkpoints import model_weights
 from tests.support.declarations import smallest_run
 from tests.support.table import write_table
 
 SOFT = "train/species/distillation"
+HEAD = "heads.species"
+"""Where this run's one head sits, in the dot-path a `freeze` declaration names it by."""
 
 
 @pytest.fixture(scope="module")
@@ -47,17 +52,34 @@ def teacher_of(declared: Mapping[str, Any], tmp_path: Path) -> str:
     return str(next(iter(sorted((tmp_path / "taught").glob("*.ckpt")))))
 
 
-def distilling(declared: Mapping[str, Any], teacher: str, loss: Mapping[str, Any] | None = None) -> dict[str, Any]:
+def distilling(
+    declared: Mapping[str, Any],
+    teacher: str,
+    loss: Mapping[str, Any] | None = None,
+    heads: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     """A run learning from a second network as well as from its targets; `loss` is how far it is from it."""
+    taught = {**declared["model"], "checkpoint_path": teacher}
     return {
         **declared,
         "learner": {
             "name": "distillation",
             "weight": 0.5,
             "loss": loss if loss is not None else {"name": "kullback_leibler", "temperature": 4.0},
-            "teacher": {**declared["model"], "checkpoint_path": teacher},
+            "teacher": taught if heads is None else {**taught, "heads": heads},
         },
     }
+
+
+def answering_through(declared: Mapping[str, Any], head: Mapping[str, Any]) -> dict[str, Any]:
+    """The same run, with this head over its one task."""
+    return {**declared, "tasks": {"species": {**declared["tasks"]["species"], "head": head}}}
+
+
+def features_read_by_the_head(declared: Mapping[str, Any]) -> int:
+    """How wide the features this run's head reads are, read off a built run rather than written down."""
+    head = submodule_at(build(load_config(declared)).module.learner.model, HEAD, reader="test")
+    return next(one.in_features for one in head.modules() if isinstance(one, nn.Linear))
 
 
 def answering_in_angles(declared: Mapping[str, Any]) -> dict[str, Any]:
@@ -135,3 +157,31 @@ def test_a_head_that_answers_in_angles_is_distilled_only_where_the_term_is_told_
 
     with sorted((tmp_path / "recorded").rglob("metrics.csv"))[0].open() as recorded:
         assert SOFT in next(iter(csv.reader(recorded)))
+
+
+def test_a_student_answers_through_the_head_it_was_given_while_its_teacher_answers_through_its_own(
+    declared: dict[str, Any], tmp_path: Path
+) -> None:
+    """The arrangement this slice exists for, assembled rather than described.
+
+    A teacher trained with a wide head leaves a stack of layers; the student declares the tail of that
+    stack, starts it from a file prepared for exactly those widths, and holds it still. Two networks,
+    two different heads, one run — and what the student ends with is the numbers it was handed, which is
+    what makes the tail a fixed reading rather than one more thing to learn.
+    """
+    teacher = teacher_of(answering_through(declared, {"name": "mlp", "hidden_features": [8]}), tmp_path)
+    prepared = Mlp(in_features=features_read_by_the_head(declared), out_features=2, hidden_features=[4]).state_dict()
+    kept = tmp_path / "tail.pt"
+    torch.save(prepared, kept)
+
+    taught = distilling(
+        answering_through(declared, {"name": "mlp", "hidden_features": [4], "checkpoint_path": str(kept)}),
+        teacher,
+        heads={"species": {"name": "mlp", "hidden_features": [8]}},
+    )
+    built = build(load_config({**taught, "callbacks": [*declared["callbacks"], {"name": "freeze", "modules": [HEAD]}]}))
+
+    run(built)
+
+    held = submodule_at(built.module.learner.model, HEAD, reader="test").state_dict()
+    assert all(torch.equal(value, prepared[name]) for name, value in held.items())

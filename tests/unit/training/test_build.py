@@ -10,7 +10,7 @@ import torch
 from torch import nn
 from torch.optim import Optimizer
 
-from src.config import ComponentConfig, LearnerConfig, SchedulerConfig
+from src.config import ComponentConfig, HeadConfig, LearnerConfig, SchedulerConfig, TeacherConfig
 from src.core import Batch, Representation, StepOutput, TargetInfo
 from src.losses import KullbackLeibler
 from src.losses.build import build_loss
@@ -22,7 +22,9 @@ from src.training.build import (
     build_learner,
     build_optimizer_factory,
     build_scheduler_factory,
+    build_teacher,
     refuse_a_learner_and_its_child_positions_that_disagree,
+    teacher_heads,
 )
 from src.training.distillation import DistillationLearner
 from src.training.registry import optimizer_registry, scheduler_registry
@@ -193,6 +195,62 @@ def distilled(declared: LearnerConfig, answering: Model | None = None, over: Seq
         losses={name: build_loss(task.default_loss, task.facts()) for name, task in tasks.items()},
         teacher=Echo(answers),
     )
+
+
+RUN_HEADS = {"species": HeadConfig.model_validate({"name": "linear", "stream": "pooled"})}
+"""What this run's own model answers through, already merged with the kind's stream."""
+
+
+def teaching(**declared: Any) -> TeacherConfig:
+    """A teacher as a run declares one: an ordinary model, plus the file its answers come from."""
+    return TeacherConfig.model_validate({"name": "composite", "backbone": {"name": "timm"}, **declared})
+
+
+class TestTeacherHeads:
+    """A teacher is sized by this run's tasks; how it reaches those sizes is its own architecture."""
+
+    def test_a_teacher_that_declares_none_answers_through_the_heads_this_run_uses(self) -> None:
+        """The rule as it stood, and the one every run that never heard of this still gets."""
+        assert teacher_heads(teaching(checkpoint_path=__file__), RUN_HEADS) == RUN_HEADS
+
+    def test_a_teacher_answers_through_the_head_it_declares_rather_than_this_run_s(self) -> None:
+        """A run continuing the tail of a teacher's head needs the whole of that head on the teacher and
+        the tail alone on itself; one declaration for both would make the arrangement unwritable."""
+        declared = {"species": HeadConfig.model_validate({"name": "mlp", "hidden_features": [6]})}
+
+        taught = teacher_heads(teaching(checkpoint_path=__file__, heads=declared), RUN_HEADS)
+
+        assert (taught["species"].name, taught["species"].params["hidden_features"]) == ("mlp", [6])
+
+    def test_a_head_that_names_no_stream_reads_the_one_this_run_reads_for_that_task(self) -> None:
+        """The teacher answers the same task, so it reads the same kind of features; resolving it from
+        the run's own head rather than from the kind leaves that merge with a single home."""
+        declared = {"species": HeadConfig.model_validate({"name": "mlp", "hidden_features": [6]})}
+
+        taught = teacher_heads(teaching(checkpoint_path=__file__, heads=declared), RUN_HEADS)
+
+        assert taught["species"].stream == "pooled"
+
+    def test_heads_declared_beside_a_network_that_arrives_whole_are_refused(self) -> None:
+        """A network reached by import path brings its own everything; heads are not imposed on it, so a
+        declaration of them here would be written meaning to take effect and then quietly dropped."""
+        declared = TeacherConfig.model_validate(
+            {
+                "_target_": "tests.e2e.test_custom_extension.Tiny",
+                "checkpoint_path": __file__,
+                "heads": {"species": {"name": "mlp", "hidden_features": [6]}},
+            }
+        )
+
+        with pytest.raises(ValueError, match="brings its own heads"):
+            build_teacher(declared, heads=RUN_HEADS, outputs={})
+
+    def test_a_head_declared_for_something_this_run_does_not_learn_is_refused(self) -> None:
+        """Built, then asked nothing all run, under a log that reads like any other's."""
+        declared = {"breed": HeadConfig.model_validate({"name": "mlp", "hidden_features": [6]})}
+
+        with pytest.raises(ValueError, match="this run's tasks are"):
+            teacher_heads(teaching(checkpoint_path=__file__, heads=declared), RUN_HEADS)
 
 
 class TestLearner:

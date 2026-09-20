@@ -42,6 +42,7 @@ from src.training.build import (
     build_scheduler_factory,
     build_teacher,
     refuse_a_learner_and_its_child_positions_that_disagree,
+    teacher_heads,
 )
 from src.transforms.build import build_transforms
 
@@ -106,7 +107,9 @@ def build(config: ExperimentConfig) -> Experiment:
         model=model,
         tasks=tasks,
         losses=losses,
-        teacher=build_teacher(config.learner.teacher, heads=heads, outputs=outputs),
+        teacher=build_teacher(
+            config.learner.teacher, heads=teacher_heads(config.learner.teacher, heads), outputs=outputs
+        ),
     )
     return Experiment(
         module=TrainingModule(

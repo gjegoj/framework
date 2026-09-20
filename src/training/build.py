@@ -161,6 +161,34 @@ def build_learner(
     return built
 
 
+def teacher_heads(declared: TeacherConfig | None, heads: Mapping[str, HeadConfig]) -> Mapping[str, HeadConfig]:
+    """The heads a teacher answers through: this run's own, and its own wherever it declared one.
+
+    Its own, because the head is part of what makes a teacher a different network — a run continuing
+    the tail of one needs the whole of that head here and the tail alone on the student, and a single
+    declaration for both would leave the arrangement unwritable. The widths stay derived either way,
+    which is what the rule against saying anything twice was about: the answer's width belongs to the
+    task and the features' width to the teacher's own backbone.
+
+    A head naming no stream reads the one this run's own head for that task reads, rather than the
+    kind's default: the teacher answers the same task, so it reads the same kind of features, and
+    resolving it from the run's own leaves that merge with the single home it already has.
+    """
+    if declared is None or declared.heads is None:
+        return heads
+    unknown = sorted(set(declared.heads) - set(heads))
+    if unknown:
+        raise ValueError(
+            f"`learner.teacher.heads` names {', '.join(unknown)}, and this run's tasks are "
+            f"{', '.join(sorted(heads))}. A head for anything else would be built and then asked "
+            f"nothing, all run, under a log that reads like any other's."
+        )
+    taught = dict(heads)
+    for name, own in declared.heads.items():
+        taught[name] = own if own.stream is not None else own.model_copy(update={"stream": heads[name].stream})
+    return taught
+
+
 def build_teacher(
     declared: TeacherConfig | None, *, heads: Mapping[str, HeadConfig], outputs: Mapping[str, TensorShape]
 ) -> Model | None:
@@ -181,6 +209,10 @@ def build_teacher(
     """
     if declared is None:
         return None
+    if declared.import_path is not None and declared.heads is not None:
+        raise ValueError(
+            f"{declared.spelled!r} is a whole network and brings its own heads; drop `learner.teacher.heads`."
+        )
     teacher = build_model(declared, heads=heads, outputs=outputs)
     load_weights(teacher, model_weights(declared.checkpoint_path), declared.checkpoint_path)
     log.info("The teacher answers with the weights from %s and learns nothing here.", declared.checkpoint_path)

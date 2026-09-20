@@ -4,7 +4,8 @@ line of YAML."""
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
+from itertools import pairwise
 from typing import ClassVar, cast
 
 import torch
@@ -28,6 +29,55 @@ class LinearHead(nn.Module):
 
     def forward(self, features: Tensor) -> Tensor:
         return cast(Tensor, self.projection(features))
+
+
+@head_registry.register("mlp")
+class Mlp(nn.Module):
+    """Several projections of a pooled vector, with a nonlinearity between them.
+
+    The head to declare where a run continues the tail of a larger one: a teacher trained with a wide
+    head leaves a stack of layers, and a student whose backbone publishes the width that stack starts
+    at carries that tail as its own head.
+
+    What makes that arrangement carry anything is the nonlinearity. Projections with nothing between
+    them multiply into a single matrix, so a frozen tail of such a stack is absorbed by whatever
+    trainable layer sits beneath it — measured: the composition reaches every map the single layer
+    reaches, and freezing it constrains nothing.
+
+    GELU rather than a knob, because this is what the field builds the layer with — timm's own ``Mlp``
+    defaults to it — and between two projections of a head the choice changes nothing a run is judged
+    by. A knob with no real choice behind it is one more declaration to keep in step.
+
+    Parameters:
+        hidden_features: The width of each layer between the features read and the answer given, in the
+            order they are read through. Left out, one layer as wide as what it reads, which is what
+            this name carries elsewhere and what keeps every registered head buildable from its two
+            widths alone. Declared empty it is refused: a head of one projection is ``linear``, and one
+            idea spelled two ways is two statements free to drift.
+    """
+
+    reads_axes: ClassVar[tuple[str, ...]] = (Axis.CHANNELS,)
+
+    def __init__(self, in_features: int, out_features: int, hidden_features: Sequence[int] | None = None) -> None:
+        hidden = [in_features] if hidden_features is None else list(hidden_features)
+        if not hidden:
+            raise ValueError(
+                "`hidden_features` is what this head holds and a single projection does not, and an "
+                "empty list declares none of it; a head of one projection is `head: {name: linear}`."
+            )
+        if any(width < 1 for width in hidden):
+            raise ValueError(f"Every layer of a head answers with at least one number; `hidden_features` was {hidden}.")
+        super().__init__()
+        through = [in_features, *hidden, out_features]
+        layers: list[nn.Module] = []
+        for reads, answers in pairwise(through):
+            if layers:
+                layers.append(nn.GELU())
+            layers.append(nn.Linear(reads, answers))
+        self.layers = nn.Sequential(*layers)
+
+    def forward(self, features: Tensor) -> Tensor:
+        return cast(Tensor, self.layers(features))
 
 
 @head_registry.register("conv")

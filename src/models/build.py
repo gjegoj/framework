@@ -14,6 +14,7 @@ from src.models.adapters import Adapter
 from src.models.base import Backbone, HeadConnection, Model, ShapeAware
 from src.models.heads import ExpandedHead, StackedHeads
 from src.models.registry import adapter_registry, backbone_registry, head_registry, model_registry
+from src.models.weights import load_weights, weights_in
 
 log = logging.getLogger(__name__)
 
@@ -118,10 +119,43 @@ def _over(task: str, declared: HeadConfig, stream: str, backbone: Backbone) -> C
     def built(count: int) -> nn.Module:
         with naming(f"tasks.{task}.head"):
             head: nn.Module = instantiate(declared, head_registry, in_features=width, out_features=count)
+            if declared.checkpoint_path is not None:
+                _started_from_its_own_file(head, declared.checkpoint_path)
         _refuse_a_head_that_cannot_read(task, declared.spelled, head, published, stream)
         return head
 
     return built
+
+
+def _started_from_its_own_file(head: nn.Module, path: str) -> None:
+    """This head's weights, from a file written for this head and no other.
+
+    Not matched by shape the way a carried classifier is: that transplant reads a file some other
+    library wrote, in a vocabulary of its own, and the shapes are the only fact both sides share. A
+    file named here was prepared for this head — the tail of a larger one, lifted out and saved — so
+    its names *are* this head's names, and a mismatch is a mistake to say out loud rather than a
+    vocabulary to bridge.
+
+    Whole or refused, for the reason ``load_weights`` keeps: a head half from a file is not that
+    file's head, and a run that filled two layers of three reports every number it prints as though
+    it had started warm.
+    """
+    held = weights_in(path)
+    offered = {name: list(value.shape) for name, value in held.items()}
+    wanted = {name: list(value.shape) for name, value in head.state_dict().items()}
+    if offered != wanted:
+        raise ValueError(
+            f"`checkpoint_path` {path!r} does not hold this head: it holds {_spelled(offered)} and this "
+            f"head is built of {_spelled(wanted)}. Save the part of the head it came from that carries "
+            f"these very names at these very widths."
+        )
+    load_weights(head, held, path)
+
+
+def _spelled(shapes: Mapping[str, list[int]]) -> str:
+    """A few of a module's tensors with their widths, which is what tells two heads apart in a message."""
+    named = [f"{name} {shape}" for name, shape in sorted(shapes.items())]
+    return ", ".join(named[:3]) + ("…" if len(named) > 3 else "")
 
 
 def _started_from(task: str, at: Callable[[int], nn.Module], carried: Mapping[str, Tensor], declared: int) -> nn.Module:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -14,7 +15,7 @@ from src.core import Axis, ModelOutput, Stream, TensorShape, TensorTree
 from src.models import CompositeModel, Model
 from src.models.backbones.multiencoder import MultiEncoderBackbone
 from src.models.build import build_head, build_model
-from src.models.heads import ConvHead, ExpandedHead, LinearHead, StackedHeads
+from src.models.heads import ConvHead, ExpandedHead, LinearHead, Mlp, StackedHeads
 from tests.unit.models.conftest import MAP_WIDTH, NARROW_WIDTH, POOLED_WIDTH, Encoder, Sentences
 
 CLASSES = TensorShape(axes=(Axis.CLASSES,), sizes=(3,))
@@ -218,6 +219,53 @@ class Started(Encoder):
             "fc.weight": torch.full((rows, width), CARRIED_ROW),
             "fc.bias": torch.full((rows,), CARRIED_BIAS),
         }
+
+
+class TestAHeadDeclaredWithItsOwnFile:
+    """Weights prepared for exactly this head, rather than a classifier a backbone's file happened to carry."""
+
+    def built(self, tmp_path: Path, holds: Mapping[str, Tensor], **declared: Any) -> nn.Module:
+        kept = tmp_path / "head.pt"
+        torch.save(dict(holds), kept)
+        return build_head("label", head(checkpoint_path=str(kept), **declared), CLASSES, Encoder()).head
+
+    def tail(self, hidden_features: list[int]) -> Mapping[str, Tensor]:
+        """A head of the declared shape, holding numbers no freshly built one would have."""
+        made = Mlp(in_features=POOLED_WIDTH, out_features=3, hidden_features=hidden_features)
+        return {name: torch.full_like(value, 0.5) for name, value in made.state_dict().items()}
+
+    def test_a_head_declared_with_a_file_holds_the_weights_that_file_names(self, tmp_path: Path) -> None:
+        """A head that started from a file and one that started from `seed` are the same object to every
+        reader below it; what separates them is only whether the file's numbers are in it."""
+        written = self.tail([4])
+
+        built = self.built(tmp_path, written, name="mlp", hidden_features=[4])
+
+        assert all(torch.equal(value, written[name]) for name, value in built.state_dict().items())
+
+    def test_a_file_is_read_beside_a_head_that_names_no_such_argument(self, tmp_path: Path) -> None:
+        """The file is a position the builder fills, not an argument every head has to accept: `linear`
+        takes two widths and nothing else, and declaring a file beside it still builds."""
+        made = LinearHead(in_features=POOLED_WIDTH, out_features=3)
+
+        assert self.built(tmp_path, made.state_dict())
+
+    @pytest.mark.parametrize(
+        ("holding", "refused"),
+        [
+            pytest.param("another head", "does not hold this head", id="the names of some other head"),
+            pytest.param("another width", r"layers\.0\.bias \[9\]", id="this head's names at another width"),
+        ],
+    )
+    def test_a_file_that_is_not_this_head_is_refused_while_the_run_is_assembled(
+        self, tmp_path: Path, holding: str, refused: str
+    ) -> None:
+        """A head half from a file is not that file's head, and a run that filled two layers of three
+        reports every number it prints as though it had started warm."""
+        holds = LinearHead(POOLED_WIDTH, 3).state_dict() if holding == "another head" else self.tail([9])
+
+        with pytest.raises(ValueError, match=refused):
+            self.built(tmp_path, holds, name="mlp", hidden_features=[4])
 
 
 class TestStartedFromAFile:

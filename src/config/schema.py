@@ -101,9 +101,22 @@ class HeadConfig(ComponentConfig):
     Several is how a pairing is declared — ``stream: [image_pooled, text_pooled]`` builds the declared
     head once per stream, at the width each of them publishes, and the order written is the order the
     answers arrive in. One or several is one key rather than two, as ``TaskConfig.loss`` already is.
+
+    ``checkpoint_path`` names weights written for this head and no other — the tail of a larger head a
+    run continues, prepared as a file of its own. Typed here rather than left among the head's own
+    arguments for the reason every child position is: an argument reaches the constructor, and no head
+    should have to accept a knob about where its numbers came from.
     """
 
     stream: str | list[str] | None = None
+    checkpoint_path: str | None = Field(
+        None, min_length=1, description="Weights for exactly this head, prepared wherever they came from."
+    )
+
+    @model_validator(mode="after")
+    def prepared(self) -> HeadConfig:
+        refuse_a_path_that_is_not_there("head.checkpoint_path", self.checkpoint_path)
+        return self
 
     @property
     def streams(self) -> tuple[str, ...]:
@@ -196,8 +209,15 @@ class TeacherConfig(ModelConfig):
     """A second network for a run to learn from, and the weights that make it worth learning from.
 
     An ordinary model declaration, because that is what it is: the same grammar, built by the same
-    builder, sized by the same tasks. Its heads are not written here for exactly that reason — a teacher
-    answers the questions this run asks, and a second statement of their shapes could disagree.
+    builder, sized by the same tasks.
+
+    ``heads`` is the one thing a teacher may say about its own shape, and the widths stay derived
+    either way — that is what the rule against declaring anything twice was protecting. How many
+    numbers a head answers with is the task's, and how wide the features it reads are is its own
+    backbone's; neither is written here. *Which* head reaches those numbers is a different question,
+    and a run continuing the tail of a teacher's head has to be able to answer it: the whole of that
+    head on the teacher, the tail alone on the student. Left out, the teacher answers through the
+    heads this run's own model does.
 
     The weights are not optional, and that is the whole of what this section adds. A network whose head
     was only just initialised answers with noise, and a run distilling from it would descend towards
@@ -206,6 +226,7 @@ class TeacherConfig(ModelConfig):
     """
 
     checkpoint_path: str = Field(min_length=1, description="The run whose weights this teacher answers with.")
+    heads: dict[str, HeadConfig] | None = None
 
     @model_validator(mode="after")
     def taught(self) -> TeacherConfig:

@@ -8,7 +8,7 @@ from torch import nn
 
 from src.core import FEATURE_AXIS, Axis
 from src.models.base import ShapeAware
-from src.models.heads import ConvHead, CosineHead, ExpandedHead, LinearHead, StackedHeads
+from src.models.heads import ConvHead, CosineHead, ExpandedHead, LinearHead, Mlp, StackedHeads
 from src.models.registry import head_registry
 
 WIDTH, CLASSES = 6, 2
@@ -72,6 +72,59 @@ def test_a_conv_head_projects_a_feature_map_and_keeps_its_size(kernel_size: int)
     head = ConvHead(in_features=6, out_features=2, kernel_size=kernel_size)
 
     assert head(torch.zeros(4, 6, 5, 5)).shape == (4, 2, 5, 5)
+
+
+class TestMlp:
+    """Several projections with a nonlinearity between them: what a distilled tail of a head is declared as."""
+
+    def test_every_declared_width_becomes_a_layer_between_the_features_read_and_the_answer(self) -> None:
+        """A run distils into the tail its teacher's head was cut from, and the widths are what make it
+        that tail: one layer fewer or one width off, and the weights of that tail have nowhere to land."""
+        head = Mlp(in_features=WIDTH, out_features=CLASSES, hidden_features=[5, 4])
+
+        widths = [(one.in_features, one.out_features) for one in head.modules() if isinstance(one, nn.Linear)]
+
+        assert widths == [(WIDTH, 5), (5, 4), (4, CLASSES)]
+
+    def test_the_layers_do_not_collapse_into_the_one_projection_they_would_be_without_a_nonlinearity(
+        self,
+    ) -> None:
+        """Projections with nothing between them multiply into a single matrix, and a frozen tail of such
+        a stack is absorbed by whatever trainable layer sits beneath it — measured in this framework: the
+        composition reaches every map the single layer reaches, so freezing it transfers nothing at all.
+
+        Asserted as the failure of an affine reading rather than by looking for the activation: a bias
+        already breaks proportionality, so only the midpoint of two answers separates affine from not.
+        """
+        head = Mlp(in_features=WIDTH, out_features=CLASSES, hidden_features=[5])
+        left, right = torch.randn(4, WIDTH), torch.randn(4, WIDTH)
+
+        assert not torch.allclose(head((left + right) / 2), (head(left) + head(right)) / 2, atol=1e-4)
+
+    def test_a_head_declared_without_widths_holds_one_layer_as_wide_as_what_it_reads(self) -> None:
+        """Every registered head builds from the two widths alone, and this one keeps that contract by the
+        convention its own name carries: measured on timm 1.0.28, ``Mlp(in_features=16, out_features=4)``
+        is 16 then 4. An empty list is a different statement and is refused below."""
+        head = Mlp(in_features=WIDTH, out_features=CLASSES)
+
+        widths = [(one.in_features, one.out_features) for one in head.modules() if isinstance(one, nn.Linear)]
+
+        assert widths == [(WIDTH, WIDTH), (WIDTH, CLASSES)]
+
+    @pytest.mark.parametrize(
+        ("hidden_features", "refused"),
+        [
+            pytest.param([], "linear", id="a stack of one projection is a head this framework already has"),
+            pytest.param([5, 0], "at least one", id="a layer answering with nothing"),
+            pytest.param([-1], "at least one", id="a width below zero"),
+        ],
+    )
+    def test_a_stack_that_would_build_nothing_is_refused_where_it_is_written(
+        self, hidden_features: list[int], refused: str
+    ) -> None:
+        """Both readings size a layer before there is one to size, so both are answered in the constructor."""
+        with pytest.raises(ValueError, match=refused):
+            Mlp(in_features=WIDTH, out_features=CLASSES, hidden_features=hidden_features)
 
 
 class TestExpandedHead:

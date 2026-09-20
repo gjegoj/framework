@@ -58,6 +58,12 @@ def test_the_minimal_experiment_fills_in_every_default(minimal: dict[str, Any]) 
             id="a vocabulary pointed at nothing",
         ),
         pytest.param(
+            "tasks",
+            {"t": {"kind": "classification", "head": {"name": "mlp", "checkpoint_path": "runs/nothing-here.pt"}}},
+            "names no file",
+            id="a head pointed at weights that are not there",
+        ),
+        pytest.param(
             "learner",
             {"name": "distillation", "teacher": {"name": "timm", "checkpoint_path": "runs/nothing-here.ckpt"}},
             "names no file",
