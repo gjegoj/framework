@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from functools import partial
-from typing import cast
+from typing import cast, override
 
 from torch import Tensor, nn
 from torch.nn.functional import normalize
 
 from src.core import FEATURE_AXIS, Axis, TensorShape
-from src.models.base import Neck
+from src.models.base import Neck, PublishesStreams
 from src.models.heads import Mlp
 from src.models.registry import neck_registry
 
@@ -100,8 +100,33 @@ class Projector(Neck):
         return {**self.backbone_shapes, self.stream: TensorShape(axes=(Axis.CHANNELS,), sizes=(self.width,))}
 
     def forward(self, features: Mapping[str, Tensor]) -> Mapping[str, Tensor]:
-        brought = self.norm(self.projection(features[self.stream]))
-        return {**features, self.stream: cast("Tensor", brought)}
+        return self.forward_intermediates(features)[0]
+
+    @override
+    def forward_intermediates(
+        self, features: Mapping[str, Tensor], /
+    ) -> tuple[Mapping[str, Tensor], Mapping[str, Tensor]]:
+        """The brought stream, and every width the stack passed through on the way to it.
+
+        Asked of the stack rather than walked here, because the stack *is* ``Mlp`` wherever a run
+        declared hidden widths — the same class a head is, already publishing under the same names in
+        the same order. Which widths a stack publishes has one home, and it is not this one. A single
+        ``Linear`` is not that class and holds nothing between, so it publishes nothing and says so.
+
+        What comes back is the projection before the norm, because the norm stands on the stack's
+        answer rather than inside it: a term comparing a neck's middle compares the scale along with
+        the direction, and what that is worth is the term's weight to say.
+
+        ``forward`` is this method's first element rather than a second pass written beside it, so the
+        two cannot drift apart — the arrangement ``Mlp`` keeps for the same reason.
+        """
+        read = features[self.stream]
+        projected, published = (
+            self.projection.forward_intermediates(read)
+            if isinstance(self.projection, PublishesStreams)
+            else (cast("Tensor", self.projection(read)), {})
+        )
+        return {**features, self.stream: cast("Tensor", self.norm(projected))}, published
 
 
 class L2Norm(nn.Module):

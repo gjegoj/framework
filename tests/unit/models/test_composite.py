@@ -118,6 +118,44 @@ def test_a_neck_stands_between_the_backbone_and_the_heads_that_read_it(
     assert require_tensor(output.features[Stream.DECODER], name=Stream.DECODER).shape == (2, MAP_WIDTH, SIDE, SIDE)
 
 
+def test_what_a_neck_publishes_on_its_way_is_reported_under_the_position_it_occupies(
+    backbone: Encoder, images: dict[str, Tensor]
+) -> None:
+    """A neck has no task to be named after and no name of its own — it is a position, and this model is
+    what registers it there. Filed beside the heads' streams by the same rule, so a term of
+    `learner.loss` names one the way it names the other.
+
+    The level a distilled pair shares that neither backbone offers: two necks declared alike publish
+    the same width between what they read and what they answer, while two families' own middles are
+    not comparable at all.
+    """
+    brought = Projector(backbone_shapes=backbone.feature_shapes, width=3, stream=Stream.POOLED, hidden_features=[4])
+    model = CompositeModel(
+        backbone,
+        {"label": HeadConnection(Mlp(3, CLASSES, hidden_features=[5]), streams=(Stream.POOLED,))},
+        neck=brought,
+    )
+
+    output = model(images)
+
+    assert set(output.features) == {Stream.POOLED, Stream.DECODER, "neck_hidden_0", "label_hidden_0"}
+    assert require_tensor(output.features["neck_hidden_0"], name="neck_hidden_0").shape == (2, 4)
+    assert require_tensor(output.features[Stream.POOLED], name=Stream.POOLED).shape == (2, 3)
+
+
+def test_a_task_named_after_the_neck_position_is_refused_where_both_are_assembled(backbone: Encoder) -> None:
+    """Both would file what they publish under `neck_<stream>`, and a mapping lets one answer for the
+    other without a word. Refused by whoever can see both at once, which is neither of them."""
+    brought = Projector(backbone_shapes=backbone.feature_shapes, width=3, stream=Stream.POOLED, hidden_features=[4])
+
+    with pytest.raises(ValueError, match="Rename the task"):
+        CompositeModel(
+            backbone,
+            {"neck": HeadConnection(Mlp(3, CLASSES, hidden_features=[5]), streams=(Stream.POOLED,))},
+            neck=brought,
+        )
+
+
 def test_what_a_head_publishes_on_its_way_to_an_answer_is_reported_under_the_task_it_answers(
     backbone: Encoder, images: dict[str, Tensor]
 ) -> None:

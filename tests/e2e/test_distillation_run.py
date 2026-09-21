@@ -31,6 +31,8 @@ SOFT = "train/species/distillation"
 ALIGNED = "train/pooled/representation"
 HIDDEN = "train/species_hidden_0/representation"
 """The term over the head's first hidden width, filed under the name the composite gave that stream."""
+MIDDLE = "train/neck_hidden_0/representation"
+"""The term over the neck's own first hidden width, filed under the position rather than under a task."""
 SHARED = 8
 """The width both networks are brought to, small enough that a head over it is cheap to compare."""
 STUDENT = "test_efficientnet"
@@ -87,14 +89,19 @@ def distilling(
     }
 
 
-def narrowed(declared: Mapping[str, Any], width: int) -> dict[str, Any]:
+def narrowed(declared: Mapping[str, Any], width: int, **declared_neck: Any) -> dict[str, Any]:
     """The same run with its features brought to a width, which is how two networks come to share one.
 
     A position of its own rather than a backbone wrapped around the backbone: the family stays declared
     by the name it had, the paths a `freeze` and an `adapter` write go on meaning what they meant, and
     nothing here spells out an import path to say which family the fixture chose.
+
+    The rest of the neck's own declaration travels through, because a teacher is built from this very
+    mapping: a stack declared here is declared for both networks at once, which is the only way the
+    width between what they read and what they publish is the same width in both.
     """
-    return {**declared, "model": {**declared["model"], "neck": {"name": "projector", "width": width}}}
+    neck = {"name": "projector", "width": width, **declared_neck}
+    return {**declared, "model": {**declared["model"], "neck": neck}}
 
 
 def of_family(declared: Mapping[str, Any], architecture: str) -> dict[str, Any]:
@@ -406,6 +413,34 @@ def test_a_students_hidden_widths_are_pulled_towards_its_teachers_by_the_name_th
         columns = next(iter(csv.reader(recorded)))
     assert ALIGNED in columns
     assert HIDDEN in columns
+
+
+def test_a_term_over_the_middle_of_a_neck_reaches_the_report_by_the_name_the_position_gave_it(
+    declared: dict[str, Any], tmp_path: Path
+) -> None:
+    """The one level a distilled pair shares that neither backbone offers: both necks are declared alike,
+    so the width between what they read and what they publish is the same width in both, while two
+    families' own middles are not comparable at all.
+
+    Published before the norm and before the nonlinearity after it, so this column measures a distance
+    that carries scale; what that is worth is the term's weight to say.
+    """
+    shared = narrowed(declared, SHARED, hidden_features=[SHARED * 2])
+    teacher = teacher_of(shared, tmp_path)
+    terms = [*TERMS, {"loss": "mse", "weight": 1.0, "stream": "neck_hidden_0"}]
+
+    built = build(load_config(distilling(shared, teacher, loss=terms)))
+    before = {name: value.clone() for name, value in built.module.learner.model.named_parameters()}
+
+    run(built)
+
+    after = dict(built.module.learner.model.named_parameters())
+    assert any(not torch.equal(before[name], after[name]) for name in before if name.startswith("neck.")), (
+        "the neck never moved, so there was no run for this column to be read from"
+    )
+    with sorted((tmp_path / "recorded").rglob("metrics.csv"))[0].open() as recorded:
+        columns = next(iter(csv.reader(recorded)))
+    assert MIDDLE in columns
 
 
 def test_a_term_over_a_stream_no_head_publishes_is_refused_naming_what_this_run_does(

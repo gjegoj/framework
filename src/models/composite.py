@@ -11,6 +11,33 @@ from src.core import ModelOutput, Representation, TensorTree, as_children
 from src.models.base import Backbone, HeadConnection, Model, Neck, PublishesStreams, produced_by
 from src.models.registry import model_registry
 
+NECK = "neck"
+"""The word a term of ``learner.loss`` writes to reach what a neck published: ``neck_<stream>``.
+
+The position's own name, as a head's filing name is the task it answers. A label rather than an
+address — the distinction ``training.base.SHARED`` keeps for the same reason: what a run writes down
+belongs to the grammar, and renaming the attribute a model happens to hold its neck at must not
+quietly rename a column in a report.
+"""
+
+
+def _filed_under(owner: str, published: Mapping[str, Tensor]) -> dict[str, Tensor]:
+    """One part's streams under the name this model registered that part at.
+
+    Two parts publish and one rule files both. A head's stream is filed as ``<task>_<stream>``, the way
+    a tower's is ``image_pooled``: two tasks may declare the same head, and a head does not know which
+    of them it was registered under. A neck has no task to be named after and no name of its own, so
+    its streams are filed under the position this model registers it at — and a task named after that
+    position is refused where both are assembled, since here the two would be one name.
+
+    With ``_`` and not the ``/`` this framework reports under, because a term names the stream and
+    reports as ``<stage>/<stream>/representation``, which is read back as ``stage/task/name``:
+    measured, ``species_hidden_0`` lands in the task slot exactly as ``pooled`` does — one graph, a
+    line per stage, a row in the summary — while ``species/hidden_0`` is read as the task ``species``
+    with a family beneath it, drawn a stage per graph and dropped from the summary.
+    """
+    return {f"{owner}_{stream}": value for stream, value in published.items()}
+
 
 @model_registry.register("composite")
 class CompositeModel(Model):
@@ -30,6 +57,11 @@ class CompositeModel(Model):
         # Measured: an attribute left `None` reaches neither `state_dict` nor `named_children`, so a
         # run that declares no neck writes the checkpoint it wrote before this position existed.
         self.neck = neck
+        if neck is not None and NECK in heads:
+            raise ValueError(
+                f"This run declares a neck and a task named {NECK!r}, and both file what they publish "
+                f"under {NECK}_<stream>; one would answer for the other without a word. Rename the task."
+            )
         self.heads = as_children({name: connection.head for name, connection in heads.items()})
         self._streams = {name: connection.streams for name, connection in heads.items()}
 
@@ -55,24 +87,19 @@ class CompositeModel(Model):
 
         Two mappings for two things: ``features`` is what the heads read — the encoding half's streams,
         and it does not grow — while ``published`` is what a term of ``learner.loss`` compares, which is
-        those and whatever a head added. A head therefore never reads another head's stream by the shape
-        of this loop rather than by a refusal written somewhere else.
+        those and whatever a neck or a head added. A head therefore never reads another head's stream by
+        the shape of this loop rather than by a refusal written somewhere else.
 
-        A head's stream is filed as ``<task>_<stream>``, the way a tower's is ``image_pooled``: two tasks
-        may declare the same head, and a head does not know which of them it was registered under. This
-        is the one place that rule is written.
-
-        With ``_`` and not the ``/`` this framework reports under, because a term names the stream and
-        reports as ``<stage>/<stream>/representation``, which is read back as ``stage/task/name``:
-        measured, ``species_hidden_0`` lands in the task slot exactly as ``pooled`` does — one graph,
-        a line per stage, a row in the summary — while ``species/hidden_0`` is read as the task
-        ``species`` with a family beneath it, drawn a stage per graph and dropped from the summary.
+        Both parts are filed by the one call below and go in the same way, rather than the neck's
+        landing beneath the features it came from and a head's above them, which was one rule doing
+        two things. ``_filed_under`` is where the name is made and why it is made that way.
         """
         features = self.backbone(inputs)
+        added: Mapping[str, Tensor] = {}
         if self.neck is not None:
-            features = self.neck(features)
+            features, added = self.neck.forward_intermediates(features)
+        published: dict[str, Tensor] = {**features, **_filed_under(NECK, added)}
         outputs: dict[str, Tensor] = {}
-        published: dict[str, Tensor] = dict(features)
         for name, streams in self._streams.items():
             read = tuple(features[stream] for stream in streams)
             head = self.heads[name]
@@ -85,5 +112,5 @@ class CompositeModel(Model):
                 outputs[name] = cast(Tensor, head(*read))
                 continue
             outputs[name], added = head.forward_intermediates(*read)
-            published.update({f"{name}_{stream}": value for stream, value in added.items()})
+            published.update(_filed_under(name, added))
         return ModelOutput(outputs=outputs, features=published)

@@ -364,6 +364,20 @@ neck reads and what it publishes, with a GELU between every pair — the same wo
 for the same thing, built by that same class, so the stack has one home rather than two free to
 drift. Left out there are none, which is the one projection the name says.
 
+**A stack's widths are streams too.** Each layer between what the neck reads and what it
+publishes is reported under `neck_hidden_<i>`, `i` counting through `hidden_features` from zero,
+and a term names one exactly as it names `pooled`. This is the one level a distilled pair shares
+that neither backbone offers: two necks declared alike publish the same width in the middle, while
+two families' own intermediate layers differ in depth, in width and in resolution, and which of
+one's corresponds to which of the other's is nothing a declaration says.
+
+Published before the norm and before the GELU that follows it, because the norm stands on the
+stack's answer rather than inside it — so a term over a neck's middle compares scale along with
+direction, where a term over `pooled` under a `norm` compares direction alone. What that is worth
+is the term's weight to say. Costs nothing measurable: at `1024 → [256] → 64` over a batch of 128
+the stack answers in 227.42 us through `forward_intermediates` against 228.86 us straight through,
+since it already built and discarded this very mapping.
+
 **One scale for both networks.** `norm` normalizes the brought stream at the end of the neck,
 which is both where the heads read from and where a term of `learner.loss` compares. Under a
 distance toward a target it cannot reach a student publishes features shrunk toward their mean,
@@ -434,10 +448,12 @@ one reading need telling apart, and `log_name` is how a run does it.
 **A head's hidden widths are streams too.** `mlp` publishes each layer between what it reads and
 what it answers — the projection itself, before the GELU that follows it — under
 `<task>_hidden_<i>`, `i` counting through `hidden_features` from zero. A term names one the way it
-names `pooled`. Where the teacher is composed from a `teacher` section, both networks publish it by
-construction, since both heads are built from that same declaration; a teacher arriving whole by
-`_target_` publishes whatever it publishes, and a name only one of them carries is refused at the
-first batch, listing what each does publish:
+names `pooled`. A neck publishes its own the same way, under the position rather than a task, and
+the rule that files both is written once — which is why a task named `neck` beside a declared neck
+is refused where the two are assembled. Where the teacher is composed from a `teacher` section,
+both networks publish it by construction, since both heads are built from that same declaration; a
+teacher arriving whole by `_target_` publishes whatever it publishes, and a name only one of them
+carries is refused at the first batch, listing what each does publish:
 
 ```yaml
     - {loss: mse, weight: 12.0, stream: species_hidden_0}   # the first hidden width, before its GELU

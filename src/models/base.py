@@ -109,6 +109,28 @@ class Neck(nn.Module, ABC):
         """Those same streams, from the ones the backbone published."""
         raise NotImplementedError
 
+    def forward_intermediates(
+        self, features: Mapping[str, Tensor], /
+    ) -> tuple[Mapping[str, Tensor], Mapping[str, Tensor]]:
+        """Those same streams, and whatever this neck published on the way to them.
+
+        A method of the base with a default rather than a protocol, which is how a head declares the
+        very same capability: ``linear`` holds nothing between what it reads and its answer, so for a
+        head there is no sensible default and the capability is optional. A neck's default is both
+        sensible and obvious — nothing between means nothing published — so every neck has it, the
+        composite asks without first asking whether it may, and a neck written tomorrow is right
+        without saying anything. Shaped like ``Backbone.native_head``, which offers the same kind of
+        answer in the same way.
+
+        Answers through ``forward``, so a neck that publishes overrides this method and writes its own
+        ``forward`` as this one's first element — the arrangement ``Projector`` keeps. A neck that writes
+        that line and leaves this default in place has the two calling each other: measured,
+        ``RecursionError`` on the first batch rather than a wrong number.
+
+        Positional-only, so what a neck calls this argument stays the neck's own business.
+        """
+        return self.forward(features), {}
+
 
 @dataclass(frozen=True, slots=True)
 class Encoded:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 import pytest
@@ -9,6 +10,8 @@ import torch
 from torch import Tensor, nn
 
 from src.core import Axis, Stream, TensorShape
+from src.models.base import Neck
+from src.models.heads import Mlp
 from src.models.necks.projector import NORMALIZATIONS, Projector
 from src.models.weights import load_weights
 from tests.unit.models.conftest import MAP, MAP_WIDTH, NARROW, NARROW_WIDTH, POOLED_WIDTH, SIDE, VECTOR
@@ -132,6 +135,73 @@ def test_a_stream_brought_without_a_norm_is_published_exactly_as_it_was_projecte
     features = torch.randn(4, NARROW_WIDTH)
 
     assert torch.equal(brought({Stream.POOLED: features})[Stream.POOLED], brought.projection(features))
+
+
+def test_a_neck_with_nothing_between_answers_with_its_streams_and_publishes_none() -> None:
+    """The default every neck inherits, and what a run declaring one of its own gets without saying so:
+    a neck with nothing between what it reads and what it publishes answers that it published none,
+    rather than leaving whoever assembles it to ask whether it may be asked."""
+
+    class Passing(Neck):
+        @property
+        def feature_shapes(self) -> Mapping[str, TensorShape]:
+            return {Stream.POOLED: NARROW}
+
+        def forward(self, features: Mapping[str, Tensor]) -> Mapping[str, Tensor]:
+            return features
+
+    read: dict[str, Tensor] = {Stream.POOLED: torch.randn(2, NARROW_WIDTH)}
+
+    answered, published = Passing().forward_intermediates(read)
+
+    assert answered is read
+    assert published == {}
+
+
+def test_a_neck_declared_with_hidden_widths_publishes_them_as_the_projections_they_are() -> None:
+    """What a term reaches at a neck's middle: each width the stack passed through, under the name and
+    in the order the stack itself gives it — the same class a head is, so a term names a neck's middle
+    exactly as it names a head's."""
+    brought = Projector(backbone_shapes={Stream.POOLED: NARROW}, width=WIDTH, hidden_features=[7])
+
+    read: dict[str, Tensor] = {Stream.POOLED: torch.randn(4, NARROW_WIDTH)}
+
+    answered, published = brought.forward_intermediates(read)
+
+    assert list(published) == ["hidden_0"]
+    assert tuple(published["hidden_0"].shape) == (4, 7)
+    assert tuple(answered[Stream.POOLED].shape) == (4, WIDTH)
+
+
+def test_the_norm_at_the_end_of_a_neck_stands_on_the_stacks_answer_and_not_inside_it() -> None:
+    """Which widths a stack publishes has one home and it is not this neck, so what the stack published
+    arrives here untouched and the norm is put on the answer alone. A term over `neck_hidden_0`
+    therefore compares a distance carrying scale, where one over the brought stream under a norm
+    compares direction alone — and what that is worth is the term's weight to say.
+
+    Against the stack itself and the norm itself rather than against a second neck: two necks of one
+    set of weights would answer alike under any change made to both, so a norm that reached into the
+    middle of every neck would pass such a test unseen. Exactly rather than within a tolerance, so
+    this is not a claim about a draw either.
+    """
+    brought = Projector(backbone_shapes={Stream.POOLED: NARROW}, width=WIDTH, hidden_features=[7], norm="layer_norm")
+    assert isinstance(brought.projection, Mlp)
+    read = torch.randn(4, NARROW_WIDTH)
+
+    answered, published = brought.forward_intermediates({Stream.POOLED: read})
+
+    assert torch.equal(published["hidden_0"], brought.projection.forward_intermediates(read)[1]["hidden_0"])
+    assert torch.equal(answered[Stream.POOLED], brought.norm(brought.projection(read)))
+
+
+def test_a_neck_of_one_projection_publishes_nothing_because_it_has_nothing_between() -> None:
+    """The knob is the whole of it: a run that declared no hidden widths has no middle to compare at,
+    so there is no name for a term to reach and this neck answers that there is none."""
+    brought = Projector(backbone_shapes={Stream.POOLED: NARROW}, width=WIDTH)
+
+    read: dict[str, Tensor] = {Stream.POOLED: torch.randn(4, NARROW_WIDTH)}
+
+    assert brought.forward_intermediates(read)[1] == {}
 
 
 @pytest.mark.parametrize(
