@@ -337,9 +337,10 @@ features it published, and the heads are sized from whichever of them published 
 — which is every ordinary run — the heads read the backbone and nothing changes, not even the
 checkpoint the run writes.
 
-`projector` republishes one stream through a single linear layer, at a width the run writes
-down. Nothing downstream moves: the stream keeps its name, so a head reads `pooled` as it
-always did and is sized from the new number without being told it.
+`projector` republishes one stream at a width the run writes down — through one projection,
+or through the stack of them a run declares. Nothing downstream moves: the stream keeps its
+name, so a head reads `pooled` as it always did and is sized from the new number without
+being told it.
 
 ```yaml
 model:
@@ -358,8 +359,35 @@ which is the recipe `examples/finetuning.yaml` ships. A projection declared *ins
 backbone would be held still along with it, and the run would report a frozen encoder while
 the one layer it exists to train never moved.
 
-One linear layer, and no knob for a second — a stack of projections is what a head is, and
-`mlp` is where a run declares one.
+**A stack, where one projection is not enough.** `hidden_features` puts layers between what the
+neck reads and what it publishes, with a GELU between every pair — the same word `mlp` writes,
+for the same thing, built by that same class, so the stack has one home rather than two free to
+drift. Left out there are none, which is the one projection the name says.
+
+**One scale for both networks.** `norm` normalizes the brought stream at the end of the neck,
+which is both where the heads read from and where a term of `learner.loss` compares. Under a
+distance toward a target it cannot reach a student publishes features shrunk toward their mean,
+and a head trained on features of full variance then reads a distribution that is not its own;
+the norm restores the scale rather than leaving the student to learn it. `layer_norm` removes the
+mean over the width as well as the scale and `l2` only the scale — measured on features carrying
+a common component, the two answers sit at cos 0.894 — while both publish at the same length, so
+a weight set for one means the same for the other: measured at 512, mean row norm 22.627 either
+way. Neither carries a parameter, so neither is frozen or transplanted with anything.
+
+```yaml
+model:
+  name: composite
+  backbone: {name: timm, model_name: mobilenetv4_conv_small}
+  neck: {name: projector, width: 128, hidden_features: [512], norm: layer_norm}
+```
+
+**A teacher is trained with its norm, never handed one afterwards.** A head trained on
+unnormalized features expects that scale, and a norm put in front of it afterwards is a feature
+space it has never seen. Nothing here catches that for you: measured,
+`LayerNorm(elementwise_affine=False)` registers no parameter at all, so its `state_dict` is empty
+and a checkpoint written without the norm loads into a neck carrying one strictly, silently and
+in full. What *is* caught is a change of stack — `hidden_features` changes the names the
+projection registers, so a file of one stack is refused by name against another.
 
 `stream` is left out where the backbone publishes one, and named where it publishes several:
 `multiencoder` publishes one per tower (`image_pooled`, `text_pooled`). Streams the neck does
@@ -419,7 +447,9 @@ Worth knowing before reaching for it: where the head is held still and shared, m
 beneath it already implies matching these, so such a term reweights the same distance rather than
 adding a new one. Measured on a 512-wide stream under a `[128, 32]` head: of a unit error at 512,
 8.3% reaches the first hidden width and 0.70% the second — which is what a weight of that order is
-for, and why the deepest of them is close to matching logits alone.
+for, and why the deepest of them is close to matching logits alone. Measured on a stream nothing
+normalized: a `norm` on the neck is a different geometry, and weights of that order have to be
+measured again under it.
 
 `learner.weight` is what
  everything learned from the teacher is worth beside the tasks' own

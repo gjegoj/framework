@@ -179,6 +179,33 @@ class TestNeck:
         assert projection(model.heads["t"]).in_features == 6
         assert [name for name, _ in model.named_children()] == ["backbone", "neck", "heads"]
 
+    def test_a_neck_is_built_from_the_words_a_config_writes_rather_than_the_types_it_cannot(self) -> None:
+        """`norm` arrives from a config as a string and `hidden_features` as a list, and `instantiate` is
+        untyped passthrough that `make typecheck` sees nothing of. This is the one place the
+        declaration's own vocabulary is held against what the neck accepts."""
+        declared = composite(
+            neck=ComponentConfig(
+                name="projector", width=6, stream=Stream.POOLED, hidden_features=[10], norm="layer_norm"
+            )
+        )
+
+        model = build_model(declared, {"t": head()}, {"t": CLASSES})
+
+        assert isinstance(model, CompositeModel)
+        assert isinstance(model.neck, Projector) and isinstance(model.neck.norm, nn.LayerNorm)
+        assert projection(model.heads["t"]).in_features == 6
+
+    def test_a_width_no_layer_could_answer_with_is_refused_in_the_name_of_the_position(self) -> None:
+        """A neck builds a stack it did not write, and the class that owns that refusal has never heard
+        of `model.neck`: a reader who is told `hidden_features` is wrong still has to find which of a
+        run's sections wrote it. The position is added by whoever knows it, as `tasks.<task>.head` is."""
+        declared = composite(
+            neck=ComponentConfig(name="projector", width=6, stream=Stream.POOLED, hidden_features=[4, 0])
+        )
+
+        with pytest.raises(ValueError, match=r"model\.neck.*at least one"):
+            build_model(declared, {"t": head()}, {"t": CLASSES})
+
     def test_the_libraries_own_head_over_a_stream_a_neck_replaced_is_refused_by_name(self) -> None:
         """That classifier is sized for the features this run put a neck in front of. Built anyway it
         would read a feature space that is gone, and — since a projection happens to fit whatever it is

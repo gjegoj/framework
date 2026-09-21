@@ -95,8 +95,13 @@ def build_neck(declared: ComponentConfig, backbone: Backbone) -> Neck:
 
     The streams are imposed rather than offered: there is no such thing as a neck that does not know
     what it reads, the way there is no adapter that does not take the network it changes.
+
+    Named here, as a head is at ``tasks.<task>.head``, because a neck builds parts it did not write —
+    a stack of widths is refused by the class that owns that refusal, and that class has never heard
+    of ``model.neck``. The position is the one thing the run knows and the part cannot.
     """
-    built = instantiate(declared, neck_registry, backbone_shapes=backbone.feature_shapes)
+    with naming("model.neck"):
+        built = instantiate(declared, neck_registry, backbone_shapes=backbone.feature_shapes)
     if not isinstance(built, Neck):
         raise TypeError(
             f"'model.neck' built {type(built).__name__}, which is not a Neck: it publishes no feature "

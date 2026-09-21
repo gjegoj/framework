@@ -66,7 +66,9 @@ class Mlp(nn.Module):
                 "empty list declares none of it; a head of one projection is `head: {name: linear}`."
             )
         if any(width < 1 for width in hidden):
-            raise ValueError(f"Every layer of a head answers with at least one number; `hidden_features` was {hidden}.")
+            raise ValueError(
+                f"Every layer of a stack answers with at least one number; `hidden_features` was {hidden}."
+            )
         super().__init__()
         through = [in_features, *hidden, out_features]
         layers: list[nn.Module] = []
