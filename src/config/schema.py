@@ -244,9 +244,22 @@ def validate_losses(loss: ComponentConfig | list[WeightedLossConfig] | None) -> 
 
 
 class ModelConfig(ComponentConfig):
-    """A network by name or import path; ``backbone`` is the child position a composite fills from its own registry."""
+    """A network by name or import path; ``backbone`` and ``neck`` are the child positions a composite
+    fills from their own registries.
+
+    ``neck`` is what a run puts between the two: a backbone reads a sample, a neck reads the features
+    it published, and the heads are sized from whichever of them published last. Left out — which is
+    every ordinary run — the heads read the backbone and nothing about the run changes, not even the
+    checkpoint it writes.
+
+    A position rather than a backbone wrapped around a backbone, because the paths a composite
+    registers are a contract that `freeze`, `adapter` and every checkpoint address: wrapped, a
+    projection moved every path under `backbone` one level down, and `modules: [backbone]` came to
+    mean "the encoder and the projection" in a run that had written it to mean the encoder.
+    """
 
     backbone: ComponentConfig | None = None
+    neck: ComponentConfig | None = None
 
 
 class TeacherConfig(ModelConfig):

@@ -11,6 +11,7 @@ from torch import Tensor, nn
 from src.core import ModelOutput, Representation, Stream, require_tensor
 from src.models import CompositeModel, HeadConnection, Model
 from src.models.heads import CosineHead, ExpandedHead, StackedHeads
+from src.models.necks.projector import Projector
 from tests.unit.models.conftest import MAP_WIDTH, POOLED_WIDTH, SIDE, CompositeFactory, Encoder
 
 CLASSES = 2
@@ -91,3 +92,27 @@ def test_each_task_owns_its_head_and_shares_the_backbone(make_composite: Composi
     assert owned == {id(parameter) for parameter in model.heads["label"].parameters()}
     assert owned.isdisjoint(id(parameter) for parameter in model.backbone.parameters())
     assert list(model.parameters_of("absent")) == []
+
+
+def test_a_neck_stands_between_the_backbone_and_the_heads_that_read_it(
+    backbone: Encoder, images: dict[str, Tensor]
+) -> None:
+    """Both halves of what a neck being a position means: the head reads what the neck published, and
+    what the model publishes as its features is what the neck published too.
+
+    The second half is what a term of `learner.loss` naming a stream compares, so a neck whose output
+    reached the head and not the report would have two networks pulled towards features neither of
+    them answers through.
+    """
+    brought = Projector(backbone_shapes=backbone.feature_shapes, width=3, stream=Stream.POOLED)
+    model = CompositeModel(
+        backbone,
+        {"label": HeadConnection(nn.Linear(3, CLASSES), streams=(Stream.POOLED,))},
+        neck=brought,
+    )
+
+    output = model(images)
+
+    assert require_tensor(output.outputs["label"], name="label").shape == (2, CLASSES)
+    assert require_tensor(output.features[Stream.POOLED], name=Stream.POOLED).shape == (2, 3)
+    assert require_tensor(output.features[Stream.DECODER], name=Stream.DECODER).shape == (2, MAP_WIDTH, SIDE, SIDE)

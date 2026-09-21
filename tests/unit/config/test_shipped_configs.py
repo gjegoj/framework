@@ -24,7 +24,7 @@ from src.export.registry import exporter_registry
 from src.losses.registry import loss_registry
 from src.metrics.registry import metric_registry
 from src.models.build import NATIVE
-from src.models.registry import adapter_registry, backbone_registry, head_registry, model_registry
+from src.models.registry import adapter_registry, backbone_registry, head_registry, model_registry, neck_registry
 from src.tasks.registry import task_registry
 from src.tracking.registry import tracker_registry
 from src.training.registry import learner_registry, optimizer_registry, scheduler_registry
@@ -147,6 +147,9 @@ def declared_names(config: ExperimentConfig) -> Iterator[tuple[ComponentConfig, 
     yield config.model, model_registry
     if config.model.backbone is not None:
         yield config.model.backbone, backbone_registry
+    if config.model.neck is not None:
+        yield config.model.neck, neck_registry
+
     yield config.preprocessing, preprocessor_registry
     yield from ((one, input_encoder_registry) for one in (config.preprocessing.inputs or {}).values())
     yield from ((one, None) for one in config.transforms.values())
@@ -182,6 +185,21 @@ def unresolved_names(config: ExperimentConfig) -> list[str]:
         except (LookupError, TypeError) as error:
             unresolved.append(f"{declared.spelled}: {error}")
     return unresolved
+
+
+def test_a_neck_a_file_declares_is_held_to_the_registry_that_serves_it() -> None:
+    """A position left out of the walk above is a name nothing checks, and it fails in silence: the walk
+    yields no pair for it, so there is nothing to resolve and nothing to report. Written as a name
+    nothing implements, because a walk that skipped the position would pass on such a name just as
+    happily as on one the registry holds.
+
+    ``nonesuch`` rather than a misspelling of ``projector``: the ``typos`` hook rewrites a word that has
+    exactly one candidate correction, and writes without saying so. Measured here — it turned this very
+    declaration into the spelling that resolves, and the gate that had just been green went red.
+    """
+    config = load_config(composed("experiment=examples/classification", "+model.neck={name: nonesuch, width: 8}"))
+
+    assert [name for name in unresolved_names(config) if name.startswith("nonesuch:")]
 
 
 @pytest.mark.parametrize(
@@ -268,6 +286,7 @@ def test_a_run_is_filed_under_what_makes_it_unlike_an_ordinary_one() -> None:
         "adapter=lora",
         "scheduler=cosine",
         "+learner={name: distillation}",
+        "+model.neck={name: projector, width: 512}",
     )
 
     assert [tag for tag in ordinary if tag] == ["timm", "resnet18", "adamw", "lr=0.0003", "bs=32", "epochs=10"]
@@ -278,6 +297,7 @@ def test_a_run_is_filed_under_what_makes_it_unlike_an_ordinary_one() -> None:
         "cosine",
         "lora",
         "distillation",
+        "projector",
     }
 
 

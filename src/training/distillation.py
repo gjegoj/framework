@@ -80,7 +80,7 @@ class DistillationLearner(StandardLearner):
             that wrote its terms gets those and no other.
         representation: How the distance to that network's *features* is measured, by stream. Two
             networks publishing a stream of one name and one width are comparable in it, whether they
-            arrived at that width by construction or through a ``projector`` backbone.
+            arrived at that width by construction or through a ``model.neck``.
         weight: The share of the objective everything learned from the teacher is worth, beside what the
             targets are worth. It scales both halves; the share of one term within them is its own.
     """
@@ -201,8 +201,8 @@ class DistillationLearner(StandardLearner):
             raise ValueError(
                 f"Stream {stream!r}: this run's network publishes {list(answered.shape)} and the teacher "
                 f"publishes {list(teaches.shape)}. How far one representation is from another is a "
-                f"question about two of the same shape; bring both to one width with a `projector` "
-                f"backbone, or compare a stream they already publish alike."
+                f"question about two of the same shape; bring both to one width with a `model.neck`, "
+                f"or compare a stream they already publish alike."
             )
 
     @staticmethod
@@ -267,5 +267,5 @@ def _published(answered: ModelOutput, stream: str, whose: str) -> TensorTree:
         raise ValueError(
             f"A term of `learner.loss` compares stream {stream!r}, and {whose} publishes {carried}. A "
             f"feature is compared between two networks that both publish it: write the name they share, "
-            f"or bring one of them to it with a `projector` backbone."
+            f"or bring one of them to it with a `model.neck`."
         ) from None

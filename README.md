@@ -325,51 +325,58 @@ route the student takes to its answer, not the answer itself: the backbone benea
 free to produce whatever features make the logits come out right. Against `kullback_leibler`
 over logits alone, freezing the tail therefore changes nothing that a trainable head would
 not also reach. What the arrangement buys is a shared space to compare *features* in — both
-networks reach the same widths by construction, so no projector is needed. The term that
+networks reach the same widths by construction, so no neck is needed. The term that
 reads those features is a `stream` on `learner.loss` — see below.
 </details>
 
 <details>
-<summary><b>Bringing a backbone to a width you declare</b></summary>
+<summary><b>A neck between the backbone and its heads</b></summary>
 
-`projector` is declared around another backbone and republishes one of its streams through a
-single linear layer, at a width the run writes down. Nothing downstream moves: the stream
-keeps its name, so a head reads `pooled` as it always did and is sized from the new number
-without being told it.
+`model.neck` is the position between the two: a backbone reads a sample, a neck reads the
+features it published, and the heads are sized from whichever of them published last. Left out
+— which is every ordinary run — the heads read the backbone and nothing changes, not even the
+checkpoint the run writes.
+
+`projector` republishes one stream through a single linear layer, at a width the run writes
+down. Nothing downstream moves: the stream keeps its name, so a head reads `pooled` as it
+always did and is sized from the new number without being told it.
 
 ```yaml
 model:
   name: composite
-  backbone:
-    name: projector
-    width: 128
-    backbone:                        # a nested position has no registry of its own
-      _target_: src.models.TimmBackbone
-      model_name: mobilenetv4_conv_small
+  backbone: {name: timm, model_name: mobilenetv4_conv_small}
+  neck: {name: projector, width: 128}
 ```
 
-Measured on exactly that declaration: the wrapped family publishes `pooled` at 1280, and the
-projector publishes it at 128 through `Linear(1280, 128)`.
+Measured on exactly that declaration: the backbone publishes `pooled` at 1280 and the neck
+publishes it at 128, through `Linear(1280, 128)`.
+
+**Beside the backbone, not around it.** The paths a composite registers — `backbone`, `neck`,
+`heads.<task>` — are what `freeze`, `adapter` and every checkpoint address, so a neck leaves
+them where they were: `modules: [backbone]` holds the encoder and lets the projection learn,
+which is the recipe `examples/finetuning.yaml` ships. A projection declared *inside* the
+backbone would be held still along with it, and the run would report a frozen encoder while
+the one layer it exists to train never moved.
 
 One linear layer, and no knob for a second — a stack of projections is what a head is, and
 `mlp` is where a run declares one.
 
 `stream` is left out where the backbone publishes one, and named where it publishes several:
-`multiencoder` publishes one per tower (`image_pooled`, `text_pooled`). Streams it does not
-bring are published exactly as they arrived. A stream that is still spatial — what `smp`
+`multiencoder` publishes one per tower (`image_pooled`, `text_pooled`). Streams the neck does
+not bring are published exactly as they arrived. A stream that is still spatial — what `smp`
 publishes — is refused by name, because a projection reads a pooled vector and a feature map
-is brought to a width by a convolution this family does not build.
+is brought to a width by a convolution this neck does not build.
 
-A run declaring `head: native` over a projector is refused too: the wrapped library's own
-classifier is sized for the features this one replaced. And where a `checkpoint_path` on the
-wrapped backbone carried a classifier, those rows are not carried on — they were read off the
-width that is gone — and the run says so in its log rather than dropping a warm start in
-silence.
+Per stream, and not per run: over a stream the neck brought, `head: native` is refused — the
+library's own classifier reads a feature space that is gone — and a classifier a
+`checkpoint_path` carried has nowhere to land, so that head starts fresh and the run says so
+rather than dropping a warm start in silence. Over a stream the neck passed through, both are
+exactly what they were.
 
 **What this is for.** Two networks meeting in one space. A teacher and a student publish
-whatever widths their libraries chose, and a projector on either brings both to one declared
-width; from there a head trained on one of them reads the other, and a term of `learner.loss`
-naming that stream is what pulls one towards the other.
+whatever widths their libraries chose, and a neck on either brings both to one declared width;
+from there a head trained on one of them reads the other, and a term of `learner.loss` naming
+that stream is what pulls one towards the other.
 </details>
 
 <details>
@@ -402,16 +409,16 @@ objectives, and the weight inside a term is its share of that — the two levels
 loss list already have.
 
 Both networks have to publish the named stream at the same shape, or the term is refused by
-name with both shapes shown. Where they already publish the same width, no projector is
-wanted; where they do not, a `projector` on either brings them to one.
+name with both shapes shown. Where they already publish the same width, no neck is wanted;
+where they do not, a `model.neck` on either brings them to one.
 
 **Where the two networks meet.** Three arrangements, one declaration:
 
-| | projector | the space they share | what it costs |
+| | neck | the space they share | what it costs |
 |---|---|---|---|
 | on the student alone | student → teacher's width | the teacher's own features | one wide layer, and the head reads a space it was never narrowed for |
 | their widths already agree | on neither | whatever both publish | nothing |
-| on both | each → a width you chose | that width, which the teacher trained for the task | two narrow layers, and a teacher trained with its projector |
+| on both | each → a width you chose | that width, which the teacher trained for the task | two narrow layers, and a teacher trained with its neck |
 
 The first asks nothing of the teacher: an already-trained one is used as it stands, so it is
 the cheapest thing to try, and it is written out below. The last is the cheapest at inference
@@ -424,12 +431,8 @@ by the student, which is the pair that makes any of this mean something:
 ```yaml
 model:
   name: composite
-  backbone:
-    name: projector
-    width: 1024                                 # what the teacher publishes, and now the student too
-    backbone:
-      _target_: src.models.TimmBackbone
-      model_name: mobilenetv4_conv_small
+  backbone: {name: timm, model_name: mobilenetv4_conv_small}
+  neck: {name: projector, width: 1024}           # what the teacher publishes, and now the student too
 
 tasks:
   species:
@@ -451,10 +454,10 @@ callbacks:
 ```
 
 The other two are that one with a line moved. **Where the widths already agree**, drop the
-`projector` and declare the backbone directly — nothing else changes. **A projector on both**
-puts one around the teacher's backbone too, at whatever width you choose, and the teacher is
-trained that way before its head is cut out: the head then reads the narrow space rather than
-the wide one, and `width` is the same number on both sides.
+`neck` line — nothing else changes. **A neck on both** gives the teacher one too, at whatever
+width you choose, and the teacher is trained that way before its head is cut out: the head then
+reads the narrow space rather than the wide one, and `width` is the same number on both sides.
+`learner.teacher` is an ordinary model declaration, so it takes `neck` by the same word.
 
 Each of the three is assembled through the real composition root in
 [`tests/e2e/test_distillation_run.py`](tests/e2e/test_distillation_run.py) — which is where the
@@ -724,7 +727,8 @@ Names usable as `name:` in their own position.
 | `tasks.<n>.metrics` | `accuracy`, `f1`, `precision`, `recall`, `iou`, `mae`, `mse`, `confusion_matrix`, `recall_at_k`, `map`, `verification_accuracy`, `verification_threshold` |
 | `tasks.<n>.head` | `linear`, `cosine`, `conv`, `mlp`, `native` |
 | `tasks.<n>.target_encoder` | `label`, `identity`, `scalar`, `multilabel`, `mask`, `linear_bins`, `gaussian_bins` |
-| `model.backbone` | `timm`, `smp`, `hf_text`, `multiview`, `multiencoder`, `projector` |
+| `model.backbone` | `timm`, `smp`, `hf_text`, `multiview`, `multiencoder` |
+| `model.neck` | `projector` |
 | `callbacks` | `checkpoint`, `progress`, `model_summary`, `metric_summary`, `lr_monitor`, `ema`, `freeze`, `batch_transform`, `anneal`, `samples`, `dataset_summary` |
 | `learner` | `standard`, `distillation` |
 | `learner.loss` | `kullback_leibler`, `mse`, `mae` — one term, or a weighted list of them |

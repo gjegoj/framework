@@ -11,13 +11,13 @@ from src.models.backbones import (
     HFTextBackbone,
     MultiEncoderBackbone,
     MultiViewBackbone,
-    ProjectorBackbone,
     SmpBackbone,
     TimmBackbone,
 )
-from src.models.base import Backbone, HeadConnection, Model, Produces, ShapeAware
+from src.models.base import Backbone, HeadConnection, Model, Neck, Produces, ShapeAware
 from src.models.composite import CompositeModel
 from src.models.heads import ConvHead, CosineHead, LinearHead
+from src.models.necks import Projector
 from src.models.weights import load_weights
 
 __all__ = [
@@ -33,8 +33,9 @@ __all__ = [
     "Model",
     "MultiEncoderBackbone",
     "MultiViewBackbone",
+    "Neck",
     "Produces",
-    "ProjectorBackbone",
+    "Projector",
     "ShapeAware",
     "SmpBackbone",
     "TimmBackbone",

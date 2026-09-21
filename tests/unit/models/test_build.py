@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -12,16 +13,20 @@ from torch import Tensor, nn
 
 from src.config import ComponentConfig, HeadConfig, ModelConfig
 from src.core import Axis, ModelOutput, Stream, TensorShape, TensorTree
-from src.models import CompositeModel, Model
+from src.models import Backbone, CompositeModel, Model
 from src.models.backbones.multiencoder import MultiEncoderBackbone
+from src.models.base import Encoded
 from src.models.build import build_head, build_model
 from src.models.heads import ConvHead, ExpandedHead, LinearHead, Mlp, StackedHeads
+from src.models.necks.projector import Projector
 from tests.unit.models.conftest import MAP_WIDTH, NARROW_WIDTH, POOLED_WIDTH, Encoder, Sentences
 
 CLASSES = TensorShape(axes=(Axis.CLASSES,), sizes=(3,))
 DENSE = TensorShape(axes=(Axis.CLASSES, Axis.HEIGHT, Axis.WIDTH), sizes=(3, None, None))
 SCALAR = TensorShape(axes=(), sizes=())
 ENCODER = ComponentConfig(_target_="tests.unit.models.conftest.Encoder")
+TOWERS = ComponentConfig(_target_="tests.unit.models.test_build.TwoTowers")
+BROUGHT = ComponentConfig(name="projector", width=6, stream="first")
 
 
 def composite(**overrides: Any) -> ModelConfig:
@@ -69,7 +74,7 @@ class TestSizing:
         order: what the schema promises is that the order *written* is the order the answers arrive in,
         and every specimen that happened to be alphabetical left that promise resting on nothing.
         """
-        built = build_head("t", head("linear", ["text_pooled", "image_pooled"]), CLASSES, paired())
+        built = build_head("t", head("linear", ["text_pooled", "image_pooled"]), CLASSES, Encoded(paired()))
 
         assert isinstance(built.head, StackedHeads)
         assert [projection(part).in_features for part in built.head.heads.values()] == [NARROW_WIDTH, POOLED_WIDTH]
@@ -77,7 +82,7 @@ class TestSizing:
 
     def test_a_head_over_one_stream_is_that_head_rather_than_a_stack_holding_it(self) -> None:
         """Every run this framework has is this one; reading a pair is what the other shape is for."""
-        built = build_head("t", head("linear", Stream.POOLED), CLASSES, Encoder())
+        built = build_head("t", head("linear", Stream.POOLED), CLASSES, Encoded(Encoder()))
 
         assert isinstance(built.head, LinearHead)
 
@@ -156,6 +161,71 @@ class TestNativeHead:
             build_model(composite(), {"t": head("native", kernel_size=3)}, {"t": CLASSES})
 
 
+class TestNeck:
+    """What a run puts between its backbone and the heads that read it."""
+
+    def test_a_head_over_a_brought_stream_is_sized_from_the_width_the_neck_declared(self) -> None:
+        """The whole of what a neck is for: the head reads the number the run wrote down rather than the
+        one the library chose, and nothing in the head's own declaration says so.
+
+        The children are asserted beside it because they are the contract the wrapper broke: a path a
+        `freeze` or an `adapter` writes goes on naming what it named before the neck was declared.
+        """
+        declared = composite(neck=ComponentConfig(name="projector", width=6, stream=Stream.POOLED))
+
+        model = build_model(declared, {"t": head()}, {"t": CLASSES})
+
+        assert isinstance(model, CompositeModel)
+        assert projection(model.heads["t"]).in_features == 6
+        assert [name for name, _ in model.named_children()] == ["backbone", "neck", "heads"]
+
+    def test_the_libraries_own_head_over_a_stream_a_neck_replaced_is_refused_by_name(self) -> None:
+        """That classifier is sized for the features this run put a neck in front of. Built anyway it
+        would read a feature space that is gone, and — since a projection happens to fit whatever it is
+        handed once the widths line up — the run would train and report on a number that means nothing.
+        """
+        declared = ModelConfig(name="composite", backbone=TOWERS, neck=BROUGHT)
+
+        with pytest.raises(ValueError, match="replaced"):
+            build_model(declared, {"t": head("native", "first")}, {"t": CLASSES})
+
+    def test_the_libraries_own_head_over_a_stream_the_neck_passed_through_is_built_as_it_always_was(self) -> None:
+        """The rule is per stream and not per run: a neck that brought one tower's features changed
+        nothing about the tower beside it, so the library's head over that one is still its head.
+
+        On a double because no family shipped here can be asked this — each publishes either one stream
+        or several with no classifier of its own — and the arrangement is what a two-headed network from
+        somebody's library leaves behind.
+        """
+        declared = ModelConfig(name="composite", backbone=TOWERS, neck=BROUGHT)
+
+        model = build_model(declared, {"t": head("native", "second")}, {"t": CLASSES})
+
+        assert isinstance(model, CompositeModel)
+        assert projection(model.heads["t"]).in_features == NARROW_WIDTH
+
+    def test_a_run_that_declares_no_neck_registers_none_and_writes_the_checkpoint_it_always_wrote(self) -> None:
+        """Measured: an attribute left `None` is inert — it reaches neither `state_dict` nor
+        `named_children` — so the position costs a run that does not declare one exactly nothing."""
+        model = build_model(composite(), {"t": head()}, {"t": CLASSES})
+
+        assert isinstance(model, CompositeModel)
+        assert model.neck is None
+        assert [name for name, _ in model.named_children()] == ["backbone", "heads"]
+        assert not [name for name in model.state_dict() if name.startswith("neck")]
+
+    def test_a_stream_nobody_publishes_is_refused_in_the_name_of_whichever_published_last(self) -> None:
+        """A refusal that reads a list of streams back names whoever wrote that list, and with a neck
+        declared that is the neck: the backbone's own list is the one the run stopped reading the moment
+        it put something after it, so naming the backbone would send a reader to the wrong class.
+        """
+        backbone = Encoder()
+        brought = Projector(backbone_shapes=backbone.feature_shapes, width=6, stream=Stream.POOLED)
+
+        with pytest.raises(ValueError, match="but Projector publishes"):
+            build_head("t", head(stream="absent"), CLASSES, Encoded(backbone, brought))
+
+
 class TestFamilies:
     def test_a_model_that_arrives_whole_brings_its_own_heads(self) -> None:
         model = build_model(ModelConfig(_target_="tests.unit.models.test_build.Whole"), {"t": head()}, {"t": CLASSES})
@@ -181,6 +251,23 @@ class TestFamilies:
                 "not a Backbone",
                 id="a backbone position holding a network",
             ),
+            pytest.param(
+                ModelConfig(
+                    _target_="tests.unit.models.test_build.Whole",
+                    neck=ComponentConfig(name="projector", width=8),
+                ),
+                "reads its own features",
+                id="a whole model with a neck",
+            ),
+            pytest.param(
+                ModelConfig(
+                    name="composite",
+                    backbone=ENCODER,
+                    neck=ComponentConfig(_target_="tests.unit.models.test_build.NotANeck"),
+                ),
+                "not a Neck",
+                id="a neck position holding something that publishes nothing",
+            ),
         ],
     )
     def test_refuses_a_model_section_that_contradicts_itself(self, declared: ModelConfig, reason: str) -> None:
@@ -188,11 +275,49 @@ class TestFamilies:
             build_model(declared, {"t": head()}, {"t": CLASSES})
 
 
+class TwoTowers(Backbone):
+    """Two pooled streams, each with a classifier of its own, which is what a two-headed network leaves.
+
+    Here rather than in `conftest` because it is the one arrangement no shipped family has: `timm` and
+    `hf_text` publish one stream each, `smp` publishes two that are spatial, and `multiencoder` publishes
+    two and offers no head of its own. Only over a family like this do a neck over one stream and the
+    library's own head over the other meet in one run.
+    """
+
+    @property
+    def feature_shapes(self) -> Mapping[str, TensorShape]:
+        return {
+            "first": TensorShape(axes=(Axis.CHANNELS,), sizes=(POOLED_WIDTH,)),
+            "second": TensorShape(axes=(Axis.CHANNELS,), sizes=(NARROW_WIDTH,)),
+        }
+
+    def forward(self, inputs: Mapping[str, TensorTree]) -> Mapping[str, Tensor]:
+        raise NotImplementedError
+
+    def native_head(self, stream: str, out_features: int) -> nn.Module | None:
+        return nn.Linear(POOLED_WIDTH if stream == "first" else NARROW_WIDTH, out_features)
+
+
 class Whole(Model):
     """A network reached by import path: it owns its heads, so no task's head is built for it."""
 
     def forward(self, inputs: Mapping[str, TensorTree]) -> ModelOutput:
         return ModelOutput(outputs={"t": next(iter(inputs.values()))})
+
+
+class NotANeck(nn.Module):
+    """Something a `_target_` in the neck position may point at: it takes the streams and brings none.
+
+    Takes them, because a neck that did not would be refused a step earlier by the framework naming the
+    argument it tried to hand over — and that refusal is not the one this stands for.
+    """
+
+    def __init__(self, backbone_shapes: Mapping[str, TensorShape]) -> None:
+        super().__init__()
+        self.backbone_shapes = backbone_shapes
+
+    def forward(self, features: Mapping[str, Tensor]) -> Mapping[str, Tensor]:
+        return features
 
 
 class NotAModel(nn.Module):
@@ -227,7 +352,7 @@ class TestAHeadDeclaredWithItsOwnFile:
     def built(self, tmp_path: Path, holds: Mapping[str, Tensor], **declared: Any) -> nn.Module:
         kept = tmp_path / "head.pt"
         torch.save(dict(holds), kept)
-        return build_head("label", head(checkpoint_path=str(kept), **declared), CLASSES, Encoder()).head
+        return build_head("label", head(checkpoint_path=str(kept), **declared), CLASSES, Encoded(Encoder())).head
 
     def tail(self, hidden_features: list[int]) -> Mapping[str, Tensor]:
         """A head of the declared shape, holding numbers no freshly built one would have."""
@@ -273,7 +398,7 @@ class TestStartedFromAFile:
 
     def built(self, task: str = "label", classes: int = 3, **carried: Any) -> nn.Module:
         backbone = Started(**carried)
-        return build_head(task, head(), TensorShape(axes=(Axis.CLASSES,), sizes=(classes,)), backbone).head
+        return build_head(task, head(), TensorShape(axes=(Axis.CLASSES,), sizes=(classes,)), Encoded(backbone)).head
 
     def test_a_file_carrying_every_class_the_task_declares_fills_the_head_it_built(self) -> None:
         """Nothing grew, so nothing is appended: the declared head, with the rows the file already had."""
@@ -306,7 +431,7 @@ class TestStartedFromAFile:
         backbone.carried_head = {"fc.weight": backbone.carried_head["fc.weight"]}
 
         with pytest.raises(ValueError, match=r"projection\.bias"):
-            build_head("label", head(), TensorShape(axes=(Axis.CLASSES,), sizes=(3,)), backbone)
+            build_head("label", head(), TensorShape(axes=(Axis.CLASSES,), sizes=(3,)), Encoded(backbone))
 
     def test_a_file_carrying_more_than_one_head_is_refused_rather_than_read_for_one(self) -> None:
         """smp writes a segmentation head and an auxiliary classifier, and a file may hold both.
@@ -318,11 +443,11 @@ class TestStartedFromAFile:
         backbone.carried_head = {**backbone.carried_head, "aux.weight": torch.zeros(5, POOLED_WIDTH)}
 
         with pytest.raises(ValueError, match="more than one head"):
-            build_head("label", head(), TensorShape(axes=(Axis.CLASSES,), sizes=(3,)), backbone)
+            build_head("label", head(), TensorShape(axes=(Axis.CLASSES,), sizes=(3,)), Encoded(backbone))
 
     def test_a_backbone_that_started_from_no_file_builds_the_head_as_declared(self) -> None:
         """Every ordinary run: nothing was carried, so nothing is transplanted and nothing is checked."""
-        built = build_head("label", head(), TensorShape(axes=(Axis.CLASSES,), sizes=(3,)), Encoder()).head
+        built = build_head("label", head(), TensorShape(axes=(Axis.CLASSES,), sizes=(3,)), Encoded(Encoder())).head
 
         assert isinstance(built, LinearHead) and built.projection.weight.shape == (3, POOLED_WIDTH)
 
@@ -343,3 +468,59 @@ def test_a_carried_classifier_with_more_than_one_head_to_land_in_is_refused_by_n
             {"a": head(), "b": head()},
             shapes,
         )
+
+
+class TestACarriedClassifierUnderANeck:
+    """Rows a weight file carried were read off the features the library published, and a neck replaces them."""
+
+    def test_a_head_over_a_brought_stream_starts_fresh_and_the_run_is_told(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Said rather than refused: the file is named for the encoder's weights and they arrive either
+        way, but a warm start a run asked for and silently did not get is the defect this says out loud.
+        """
+        backbone = Started()
+        brought = Projector(backbone_shapes=backbone.feature_shapes, width=6, stream=Stream.POOLED)
+
+        with caplog.at_level(logging.INFO):
+            built = build_head("t", head(), CLASSES, Encoded(backbone, brought))
+
+        said = "\n".join(caplog.messages)
+        assert projection(built.head).in_features == 6
+        assert "starts fresh" in said
+        assert f"brought from {POOLED_WIDTH} to 6" in said, said
+
+    def test_a_head_over_a_stream_the_neck_passed_through_starts_from_the_rows_as_it_always_did(self) -> None:
+        """Per stream and not per run: a neck that brought the pooled vector left the map beside it
+        alone, so a head over the map reads the file exactly as it read it before any neck existed."""
+        backbone = Started()
+        backbone.carried_head = {
+            "seg.weight": torch.full((3, MAP_WIDTH, 1, 1), CARRIED_ROW),
+            "seg.bias": torch.full((3,), CARRIED_BIAS),
+        }
+        brought = Projector(backbone_shapes=backbone.feature_shapes, width=6, stream=Stream.POOLED)
+
+        built = build_head("t", head("conv", Stream.DECODER), DENSE, Encoded(backbone, brought))
+
+        assert torch.equal(projection(built.head).weight, torch.full((3, MAP_WIDTH, 1, 1), CARRIED_ROW))
+
+    def test_two_heads_over_a_brought_stream_are_not_two_claimants_to_rows_neither_could_hold(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A file carrying one classifier is refused a run of several tasks, because which of them it was
+        trained to answer is written nowhere. Over a stream a neck brought there is no such question: the
+        rows were read off a width that is gone, so no head could hold them however few there were, and
+        refusing sends the run to drop a `checkpoint_path` it wants for the encoder's own weights.
+        """
+        declared = ModelConfig(
+            name="composite",
+            backbone=ComponentConfig(_target_=f"{__name__}.Started"),
+            neck=ComponentConfig(name="projector", width=6, stream=Stream.POOLED),
+        )
+
+        with caplog.at_level(logging.INFO):
+            built = build_model(declared, {"a": head(), "b": head()}, {"a": CLASSES, "b": CLASSES})
+
+        assert isinstance(built, CompositeModel)
+        assert [projection(built.heads[task]).in_features for task in ("a", "b")] == [6, 6]
+        assert "starts fresh" in "\n".join(caplog.messages)

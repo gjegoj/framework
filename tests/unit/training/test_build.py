@@ -208,6 +208,17 @@ def teaching(**declared: Any) -> TeacherConfig:
     return TeacherConfig.model_validate({"name": "composite", "backbone": {"name": "timm"}, **declared})
 
 
+def test_a_teacher_declares_a_neck_because_a_teacher_is_a_model_declaration() -> None:
+    """Nothing in `training/` was written for this. `TeacherConfig` extends `ModelConfig` and the
+    teacher is built by the builder that builds this run's own network, so the position arrives by
+    inheritance — which is the whole reason a neck is a position rather than a backbone around one.
+    """
+    declared = teaching(checkpoint_path=__file__, neck={"name": "projector", "width": 6})
+
+    assert declared.neck is not None
+    assert (declared.neck.name, declared.neck.params) == ("projector", {"width": 6})
+
+
 class TestTeacherHeads:
     """A teacher is sized by this run's tasks; how it reaches those sizes is its own architecture."""
 

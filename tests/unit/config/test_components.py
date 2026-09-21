@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from src.config import ComponentConfig, DistilledLossConfig, HeadConfig, LearnerConfig
+from src.config import ComponentConfig, DistilledLossConfig, HeadConfig, LearnerConfig, ModelConfig
 
 STREAMS_REFUSED = [
     pytest.param(" pooled", id="padded"),
@@ -83,6 +83,21 @@ class TestHead:
         """A feature named twice would build two heads over one stream, which can only be a slip of the pen."""
         with pytest.raises(ValidationError):
             HeadConfig(name="linear", stream=stream)
+
+
+class TestModel:
+    """A network by name, and the child positions a composite fills from their own registries."""
+
+    def test_a_neck_is_a_position_of_its_own_and_never_reaches_the_model_s_constructor(self) -> None:
+        """One declaration cannot be two statements of one thing: what the builder resolves and hands
+        over ready is not also a keyword the model family would have to accept and know how to read."""
+        declared = ModelConfig.model_validate(
+            {"name": "composite", "backbone": {"name": "timm"}, "neck": {"name": "projector", "width": 512}}
+        )
+
+        assert declared.neck is not None
+        assert declared.neck.params == {"width": 512}
+        assert declared.params == {}
 
 
 class TestDistilledTerm:

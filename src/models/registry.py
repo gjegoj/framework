@@ -10,7 +10,8 @@ if TYPE_CHECKING:
     from torch import nn
 
     from src.models.adapters import Adapter
-    from src.models.base import Backbone, Model
+    from src.models.base import Backbone, Model, Neck
+
 
 model_registry: Registry[Model] = Registry("model")
 """Families that compose a backbone with per-task heads; a whole network is reached by ``_target_``."""
@@ -18,6 +19,13 @@ model_registry: Registry[Model] = Registry("model")
 backbone_registry: Registry[Backbone] = Registry("backbone")
 """Feature extractors a composite reads; one of your own is reached by ``_target_``, or named here
 as ``Registry`` describes — a decorator alone leaves the name unresolvable until the module runs."""
+
+neck_registry: Registry[Neck] = Registry("neck")
+"""What `model.neck` writes: what a backbone published, brought to the shape a run's heads read.
+
+Its own names rather than the backbone's, because a registry belongs to a position and these are two.
+A backbone reads a sample and a neck reads features, so neither could stand where the other does, and
+sharing the list would let either be declared where it means nothing."""
 
 adapter_registry: Registry[Adapter] = Registry("adapter")
 """Families of parameters a run adds to a network it did not build; a declaration names one."""

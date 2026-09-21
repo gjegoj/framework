@@ -88,12 +88,11 @@ def distilling(
 def narrowed(declared: Mapping[str, Any], width: int) -> dict[str, Any]:
     """The same run with its features brought to a width, which is how two networks come to share one.
 
-    The wrapped backbone is written out rather than named, because a nested position has no registry of
-    its own — the same reason `configs/model/multiview.yaml` spells its inner one out.
+    A position of its own rather than a backbone wrapped around the backbone: the family stays declared
+    by the name it had, the paths a `freeze` and an `adapter` write go on meaning what they meant, and
+    nothing here spells out an import path to say which family the fixture chose.
     """
-    inner = {name: value for name, value in declared["model"]["backbone"].items() if name != "name"}
-    wrapped = {"name": "projector", "width": width, "backbone": {"_target_": "src.models.TimmBackbone", **inner}}
-    return {**declared, "model": {**declared["model"], "backbone": wrapped}}
+    return {**declared, "model": {**declared["model"], "neck": {"name": "projector", "width": width}}}
 
 
 def of_family(declared: Mapping[str, Any], architecture: str) -> dict[str, Any]:
@@ -276,6 +275,18 @@ def test_a_student_carries_its_teachers_head_over_a_width_they_share_and_it_is_s
 
     built = build(load_config(distilling(held, teacher, loss=TERMS)))
 
+    learner = built.module.learner
+    assert isinstance(learner, DistillationLearner)
+    taught = learner.teacher
+    assert [name for name, _ in taught.named_children()] == ["backbone", "neck", "heads"], (
+        "a teacher is a model declaration, so it takes the same neck by the same word and no code in "
+        "`training/` knows the position exists"
+    )
+    kept = model_weights(teacher)
+    assert all(
+        torch.equal(value, kept[name]) for name, value in taught.state_dict().items() if name.startswith("neck.")
+    ), "the teacher's neck was built fresh rather than read from the run that trained it"
+
     before = head_weights(built)
     assert all(torch.equal(before[name], carried[name]) for name in carried), "the head did not start from the file"
 
@@ -321,3 +332,35 @@ def test_a_student_of_another_family_is_brought_to_the_width_its_teacher_already
         columns = next(iter(csv.reader(recorded)))
     assert SOFT in columns
     assert ALIGNED in columns
+
+
+def test_holding_the_backbone_still_leaves_a_neck_the_run_declared_free_to_learn(
+    declared: dict[str, Any], tmp_path: Path
+) -> None:
+    """The recipe `examples/finetuning.yaml` ships — hold the pretrained encoder, learn what is above it
+    — and the whole reason a projection is a position rather than a backbone wrapped around one.
+
+    With the projection inside the backbone, `modules: [backbone]` held it too: the run trained only its
+    heads, the log said `Frozen until …: backbone`, and the space the arrangement exists to learn could
+    not move. Here the two are named apart, so one is held and the other learns.
+    """
+    held = {
+        **declared,
+        "model": {**declared["model"], "neck": {"name": "projector", "width": SHARED}},
+        # `train_bn` off because this test says "held still" and means it: left on, which is the
+        # default and the right one for a real finetune, normalisation keeps learning and the encoder's
+        # own parameters move — measured here, where it read as a frozen backbone that moved.
+        "callbacks": [*declared["callbacks"], {"name": "freeze", "modules": ["backbone"], "train_bn": False}],
+    }
+    built = build(load_config(held))
+    before = {name: value.clone() for name, value in built.module.learner.model.named_parameters()}
+
+    run(built)
+
+    after = dict(built.module.learner.model.named_parameters())
+    assert all(torch.equal(before[name], after[name]) for name in before if name.startswith("backbone.")), (
+        "the backbone moved while it was held still"
+    )
+    assert any(not torch.equal(before[name], after[name]) for name in before if name.startswith("neck.")), (
+        "the neck never moved, so the space this run exists to learn was frozen with the encoder"
+    )

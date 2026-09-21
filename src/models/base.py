@@ -83,6 +83,85 @@ class Backbone(nn.Module, ABC):
         return None
 
 
+class Neck(nn.Module, ABC):
+    """What a backbone published, brought to the shape this run's heads read.
+
+    Between the two rather than around either, so that what a declaration named stays where it named
+    it: ``backbone`` is the encoder and nothing else, ``neck`` is what a run put after it, and a path
+    a ``freeze`` or an ``adapter`` writes goes on meaning what it meant before a neck was declared.
+    Wrapped instead, a projection moved every path beneath it one level down, and the recipe
+    ``examples/finetuning.yaml`` ships — ``modules: [backbone]`` — held that projection still along
+    with the encoder, which is the one layer such a run exists to learn.
+
+    A backbone reads a sample; a neck reads features. That is the whole of the difference, and it is
+    why ``multiview`` and ``multiencoder`` are backbones — each is about how inputs are read — while
+    bringing a stream to a width is not.
+    """
+
+    @property
+    @abstractmethod
+    def feature_shapes(self) -> Mapping[str, TensorShape]:
+        """Every stream this neck publishes: the ones it brought, and the ones it passed on."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def forward(self, features: Mapping[str, Tensor]) -> Mapping[str, Tensor]:
+        """Those same streams, from the ones the backbone published."""
+        raise NotImplementedError
+
+
+@dataclass(frozen=True, slots=True)
+class Encoded:
+    """The encoding half of a network — a backbone and whatever a run put after it — as the heads see it.
+
+    One value rather than four arguments, because a head is built against all of it at once and the
+    four travel together through every helper that sizes one: the shapes it is read from, the
+    library's own classifier and its own head — both of which belong to the backbone — and which
+    streams a neck published at another shape, since a library's head over one of those reads a
+    feature space that is gone.
+
+    Two fields and three derivations, because the other three are answers to what these two are. A
+    fact stated twice would be free to disagree with itself the day a neck published a stream the
+    backbone never did.
+    """
+
+    backbone: Backbone
+    neck: Neck | None = None
+
+    @property
+    def _publishing(self) -> Backbone | Neck:
+        """Whichever of the two the heads read from: the neck where a run declared one, else the backbone.
+
+        Written once and read by both derivations below, because "which of the two" is one question and
+        answering it twice is how the two answers get to disagree. Spelled ``is None`` rather than
+        ``or``: an ``nn.Module`` may define ``__len__`` — measured, ``bool(nn.Sequential())`` is False —
+        and a neck built from an empty one would then be passed over for the backbone in silence.
+        """
+        return self.backbone if self.neck is None else self.neck
+
+    @property
+    def published(self) -> Mapping[str, TensorShape]:
+        """What the heads read: the neck's streams where a run declared one, the backbone's otherwise."""
+        return self._publishing.feature_shapes
+
+    @property
+    def brought(self) -> frozenset[str]:
+        """The streams a neck publishes at another shape than the backbone did.
+
+        Derived rather than declared: a neck says what it publishes and nothing about what it changed,
+        and the comparison is the whole of the question. A stream passed through untouched is not here,
+        so the library's own head over it goes on being the head over it.
+        """
+        return frozenset(
+            name for name, shape in self.published.items() if self.backbone.feature_shapes.get(name) != shape
+        )
+
+    @property
+    def publisher(self) -> str:
+        """Whose name a refusal about a stream carries: the last thing that published it."""
+        return type(self._publishing).__name__
+
+
 @dataclass(frozen=True, slots=True)
 class HeadConnection:
     """One ready head and the features it reads, in order; the mapping key that holds it names its output.
