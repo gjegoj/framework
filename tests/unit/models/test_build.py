@@ -225,6 +225,15 @@ class TestNeck:
         with pytest.raises(ValueError, match="but Projector publishes"):
             build_head("t", head(stream="absent"), CLASSES, Encoded(backbone, brought))
 
+    def test_a_head_cannot_be_sized_from_a_stream_another_head_publishes(self) -> None:
+        """A head's hidden width is a stream a term may compare and never one a head may read: heads are
+        sized from what the encoding half published, and a head reading a head would be an order nobody
+        declared. Held by the refusal that is already here, because a head's streams never enter
+        `Encoded.published` at all — this is what pins that they do not.
+        """
+        with pytest.raises(ValueError, match="reads 'species_hidden_0', but Encoder publishes"):
+            build_head("t", head(stream="species_hidden_0"), CLASSES, Encoded(Encoder()))
+
 
 class TestFamilies:
     def test_a_model_that_arrives_whole_brings_its_own_heads(self) -> None:

@@ -6,6 +6,7 @@ import json
 from collections.abc import Mapping
 from pathlib import Path
 
+import onnx
 import pytest
 import torch
 from torch import nn
@@ -40,6 +41,22 @@ def prepared() -> DatasetInfo:
     """What the run's encoders published about the one input this graph takes."""
     shape = TensorShape(axes=(Axis.CHANNELS,), sizes=(FEATURES,))
     return DatasetInfo(inputs={"features": InputInfo(shape=shape, normalization=NORMALIZATION)}, targets={})
+
+
+class Publishing(Model):
+    """A network whose forward publishes a feature nothing downstream reads — which is what a head with
+    hidden widths makes of ``ModelOutput.features``, and what export has to be able to look past."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.answer = nn.Linear(FEATURES, 2)
+        self.hidden = nn.Linear(FEATURES, 3)
+
+    def forward(self, inputs: Mapping[str, TensorTree]) -> ModelOutput:
+        features = require_tensor(inputs["features"], name="features")
+        return ModelOutput(
+            outputs={"species": self.answer(features)}, features={"species_hidden_0": self.hidden(features)}
+        )
 
 
 def shipped(tmp_path: Path, *declared: dict[str, object], graph: DeployableModel | None = None) -> Manifest:
@@ -264,3 +281,22 @@ def test_an_artifact_is_written_from_the_model_in_eval_however_it_was_handed_ove
     manifest = ship(graph, prepared(), formats, tmp_path / "model")
 
     assert manifest.artifacts[0].parity.within_tolerance
+
+
+def test_a_stream_a_head_publishes_for_a_term_is_not_carried_into_the_artifact(tmp_path: Path) -> None:
+    """A hidden width is computed for a distillation term and asked for by nothing a deployment runs, so
+    it is dead in the graph — and tracing drops it along with the weights that made it.
+
+    Asserted on the weights the file carries rather than on its outputs: a graph is built from the tasks
+    it was handed, so an output nothing serves would be left out whatever the forward did, and a test
+    reading only those would pass for a reason other than its name. Measured on torch 2.13: this graph
+    holds one `Gemm` and one `Softmax`, and the hidden projection is in neither.
+    """
+    served = [Classification("species", TargetInfo(classes={0: "cat", 1: "dog"}))]
+    graph = DeployableModel(Publishing(), served, input_names=("features",)).eval()
+
+    shipped(tmp_path, {"name": "onnx", "opset": 18, "simplify": False}, graph=graph)
+
+    written = onnx.load(str(tmp_path / "model.onnx"))
+    assert [one.name for one in written.graph.output] == ["species"]
+    assert [one.name for one in written.graph.initializer] == ["model.answer.weight", "model.answer.bias"]

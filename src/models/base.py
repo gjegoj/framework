@@ -200,6 +200,32 @@ class Produces(Protocol):
     produces: ClassVar[Representation]
 
 
+@runtime_checkable
+class PublishesStreams(Protocol):
+    """A head that computes named streams on its way to an answer, for a second network to be compared at.
+
+    A protocol rather than a base, as ``ShapeAware`` and ``Produces`` are: there is no sensible default,
+    because ``linear`` has nothing between what it reads and what it answers. The head names its stages,
+    since it alone knows which of its tensors is a representation and which an implementation detail;
+    the task is named by the composite, since a head does not know which task it answers and should not.
+
+    ``forward_intermediates`` is timm's word for exactly this operation, so a reader who knows timm knows
+    the shape and the order of what comes back. Not ``publish``: ``Task.publish`` is that kind's reading
+    of a projection, and one word for two things is a defect however good the word.
+
+    One stream read, rather than the ``*features`` a head is handed, because one is what the head that
+    publishes them reads. A signature wide enough for a head nobody has written is one no type checker
+    can hold anybody to: measured, against ``*features`` no head here was a subtype of this at all —
+    ``Mlp`` takes a single tensor — so every narrowing to this protocol was narrowing to nothing.
+    Positional-only, so what a head calls that argument stays the head's own business. It widens on the
+    day a head publishing from two streams arrives, together with that head.
+    """
+
+    def forward_intermediates(self, features: Tensor, /) -> tuple[Tensor, Mapping[str, Tensor]]:
+        """Its answer, and every stream it publishes on the way to it, from the one pass that computed both."""
+        ...
+
+
 def produced_by(head: nn.Module) -> Representation:
     """What a head's numbers are: what the head says, or a projection where it says nothing.
 

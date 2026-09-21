@@ -29,6 +29,8 @@ from tests.support.table import write_table
 
 SOFT = "train/species/distillation"
 ALIGNED = "train/pooled/representation"
+HIDDEN = "train/species_hidden_0/representation"
+"""The term over the head's first hidden width, filed under the name the composite gave that stream."""
 SHARED = 8
 """The width both networks are brought to, small enough that a head over it is cheap to compare."""
 STUDENT = "test_efficientnet"
@@ -364,3 +366,61 @@ def test_holding_the_backbone_still_leaves_a_neck_the_run_declared_free_to_learn
     assert any(not torch.equal(before[name], after[name]) for name in before if name.startswith("neck.")), (
         "the neck never moved, so the space this run exists to learn was frozen with the encoder"
     )
+
+
+def test_a_students_hidden_widths_are_pulled_towards_its_teachers_by_the_name_the_head_gave_them(
+    declared: dict[str, Any], tmp_path: Path
+) -> None:
+    """The arrangement whole: a neck on both networks, the teacher's `mlp` head carried and held still,
+    and a term over the head's own first hidden width beside the one over the width they share.
+
+    A stream published by the head rather than by the encoding half, named on the term exactly as
+    `pooled` is — which is the whole of what the position buys. What can move is the neck, because the
+    head cannot: it is bit for bit the file it started from, so every term of this run pulls on the
+    features beneath it or on nothing.
+
+    The neck moving is this run's liveness and not the new term's signature — the task's own objective
+    reaches it through the held-still head, and `TERMS` already compares `pooled`. What is this term's
+    alone is the column: a name no network here published before a head did.
+    """
+    stacked: dict[str, Any] = {"name": "mlp", "hidden_features": [6, 4]}
+    shared = answering_through(narrowed(declared, SHARED), stacked)
+    teacher = teacher_of(shared, tmp_path)
+    student = answering_through(shared, {**stacked, "checkpoint_path": head_of(teacher, tmp_path)})
+    held = {**student, "callbacks": [*student["callbacks"], {"name": "freeze", "modules": [HEAD]}]}
+    terms = [*TERMS, {"loss": "mse", "weight": 3.0, "stream": "species_hidden_0"}]
+
+    built = build(load_config(distilling(held, teacher, loss=terms)))
+    before = {name: value.clone() for name, value in built.module.learner.model.named_parameters()}
+
+    run(built)
+
+    after = dict(built.module.learner.model.named_parameters())
+    assert any(not torch.equal(before[name], after[name]) for name in before if name.startswith("neck.")), (
+        "nothing beneath the held-still head moved, so there was no run for these columns to be read from"
+    )
+    assert all(torch.equal(before[name], after[name]) for name in before if name.startswith(HEAD)), (
+        "the held-still head moved"
+    )
+    with sorted((tmp_path / "recorded").rglob("metrics.csv"))[0].open() as recorded:
+        columns = next(iter(csv.reader(recorded)))
+    assert ALIGNED in columns
+    assert HIDDEN in columns
+
+
+def test_a_term_over_a_stream_no_head_publishes_is_refused_naming_what_this_run_does(
+    declared: dict[str, Any], tmp_path: Path
+) -> None:
+    """A head of two hidden widths publishes two, so a term over a third names a stream nobody publishes
+    — refused where every stream refusal is, by a list that carries the head's own streams beside the
+    encoding half's, which is what says the two are one namespace to a term rather than two.
+
+    A head that publishes rather than the `linear` that publishes nothing, because the list is half of
+    what is asserted here and a `linear` run leaves that half empty; that `linear` declares no such
+    capability at all is the unit test's to say.
+    """
+    shared = answering_through(narrowed(declared, SHARED), {"name": "mlp", "hidden_features": [6, 4]})
+    teacher = teacher_of(shared, tmp_path)
+
+    with pytest.raises(ValueError, match=r"species_hidden_2'.*publishes pooled, species_hidden_0, species_hidden_1"):
+        run(build(load_config(distilling(shared, teacher, loss=[{"loss": "mse", "stream": "species_hidden_2"}]))))

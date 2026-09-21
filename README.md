@@ -403,6 +403,24 @@ The terms report as `<task>/distillation` and `<stream>/representation`, each na
 *read* rather than for the loss it used, so a column survives a change of measure; two terms over
 one reading need telling apart, and `log_name` is how a run does it.
 
+**A head's hidden widths are streams too.** `mlp` publishes each layer between what it reads and
+what it answers — the projection itself, before the GELU that follows it — under
+`<task>_hidden_<i>`, `i` counting through `hidden_features` from zero. A term names one the way it
+names `pooled`. Where the teacher is composed from a `teacher` section, both networks publish it by
+construction, since both heads are built from that same declaration; a teacher arriving whole by
+`_target_` publishes whatever it publishes, and a name only one of them carries is refused at the
+first batch, listing what each does publish:
+
+```yaml
+    - {loss: mse, weight: 12.0, stream: species_hidden_0}   # the first hidden width, before its GELU
+```
+
+Worth knowing before reaching for it: where the head is held still and shared, matching the stream
+beneath it already implies matching these, so such a term reweights the same distance rather than
+adding a new one. Measured on a 512-wide stream under a `[128, 32]` head: of a unit error at 512,
+8.3% reaches the first hidden width and 0.70% the second — which is what a weight of that order is
+for, and why the deepest of them is close to matching logits alone.
+
 `learner.weight` is what
  everything learned from the teacher is worth beside the tasks' own
 objectives, and the weight inside a term is its share of that — the two levels a task and its

@@ -14,7 +14,7 @@ from src.models.backbones import (
     SmpBackbone,
     TimmBackbone,
 )
-from src.models.base import Backbone, HeadConnection, Model, Neck, Produces, ShapeAware
+from src.models.base import Backbone, HeadConnection, Model, Neck, Produces, PublishesStreams, ShapeAware
 from src.models.composite import CompositeModel
 from src.models.heads import ConvHead, CosineHead, LinearHead
 from src.models.necks import Projector
@@ -36,6 +36,7 @@ __all__ = [
     "Neck",
     "Produces",
     "Projector",
+    "PublishesStreams",
     "ShapeAware",
     "SmpBackbone",
     "TimmBackbone",

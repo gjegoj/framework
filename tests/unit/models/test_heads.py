@@ -7,7 +7,7 @@ import torch
 from torch import nn
 
 from src.core import FEATURE_AXIS, Axis
-from src.models.base import ShapeAware
+from src.models.base import PublishesStreams, ShapeAware
 from src.models.heads import ConvHead, CosineHead, ExpandedHead, LinearHead, Mlp, StackedHeads
 from src.models.registry import head_registry
 
@@ -125,6 +125,38 @@ class TestMlp:
         """Both readings size a layer before there is one to size, so both are answered in the constructor."""
         with pytest.raises(ValueError, match=refused):
             Mlp(in_features=WIDTH, out_features=CLASSES, hidden_features=hidden_features)
+
+    def test_each_hidden_width_is_published_before_the_nonlinearity_after_it_and_the_answer_is_the_answer(
+        self,
+    ) -> None:
+        """What a term of `learner.loss` compares between two networks at a hidden width is the projection
+        that width is — before GELU folds distinct pre-activations onto one another — and the answer that
+        comes back beside it is the very tensor `forward` gives, so nothing is computed twice or apart.
+        """
+        head = Mlp(in_features=WIDTH, out_features=CLASSES, hidden_features=[5, 4])
+        features = torch.randn(4, WIDTH)
+
+        answer, published = head.forward_intermediates(features)
+
+        assert list(published) == ["hidden_0", "hidden_1"]
+        assert torch.equal(published["hidden_0"], head.layers[0](features))
+        assert torch.equal(published["hidden_1"], head.layers[2](head.layers[1](head.layers[0](features))))
+        assert torch.equal(answer, head(features))
+
+    def test_a_stack_of_hidden_widths_says_it_publishes_streams_and_a_single_projection_does_not(self) -> None:
+        """The composite asks by `isinstance`, so the capability is the head's to declare: `mlp` has widths
+        between what it reads and what it answers, `linear` has nothing there to publish.
+
+        Bound to the protocol by the annotation as well as asserted, because `isinstance` on a runtime
+        protocol is `hasattr` and nothing more: it admits a head whose `forward_intermediates` answers
+        with another shape entirely. The annotation is the half of the contract `make typecheck` holds,
+        and it is here rather than in the composite because the composite reads `nn.Module` and learns
+        only that something satisfies the protocol — never that this head still does.
+        """
+        publishing: PublishesStreams = Mlp(in_features=WIDTH, out_features=CLASSES, hidden_features=[5])
+
+        assert isinstance(publishing, PublishesStreams)
+        assert not isinstance(LinearHead(in_features=WIDTH, out_features=CLASSES), PublishesStreams)
 
 
 class TestExpandedHead:

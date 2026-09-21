@@ -77,7 +77,34 @@ class Mlp(nn.Module):
         self.layers = nn.Sequential(*layers)
 
     def forward(self, features: Tensor) -> Tensor:
-        return cast(Tensor, self.layers(features))
+        return self.forward_intermediates(features)[0]
+
+    def forward_intermediates(self, features: Tensor) -> tuple[Tensor, dict[str, Tensor]]:
+        """Each hidden width, read before the nonlinearity after it; then the answer.
+
+        Before rather than after: a distance between two networks compares the projection, and GELU
+        folds distinct pre-activations onto one another — measured, the same perturbation of the width
+        beneath is seen as 0.306 or 0.364 depending on the regime. No knob for the other side until a
+        run asks for one. ``forward`` is this method's first element rather than a second pass written
+        beside it, so the two cannot drift apart.
+
+        Unpacked rather than sliced because ``Sequential.__getitem__`` is annotated ``Sequential |
+        Module`` and a slice of it is therefore not iterable to a type checker.
+
+        Every run pays for this, since a head publishes whether or not a term reads it, so what it costs
+        is measured rather than argued: against calling the stack straight through, 1.77 us on top of
+        54.69 us at ``[128, 32]`` over a batch of 128 — 3.2% of a head that is itself a sliver of a step.
+        The alternative is the model asking which streams a term wants, which is the objective's
+        declaration reaching into the network; that is a worse thing to own than 1.77 us.
+        """
+        published: dict[str, Tensor] = {}
+        *through, answering = self.layers
+        read = features
+        for layer in through:
+            read = layer(read)
+            if isinstance(layer, nn.Linear):
+                published[f"hidden_{len(published)}"] = read
+        return cast(Tensor, answering(read)), published
 
 
 @head_registry.register("conv")

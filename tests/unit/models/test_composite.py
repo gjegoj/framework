@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 
 import pytest
 import torch
 from torch import Tensor, nn
 
-from src.core import ModelOutput, Representation, Stream, require_tensor
+from src.core import ModelOutput, Representation, Stream, TensorTree, require_tensor
 from src.models import CompositeModel, HeadConnection, Model
-from src.models.heads import CosineHead, ExpandedHead, StackedHeads
+from src.models.heads import CosineHead, ExpandedHead, Mlp, StackedHeads
 from src.models.necks.projector import Projector
 from tests.unit.models.conftest import MAP_WIDTH, POOLED_WIDTH, SIDE, CompositeFactory, Encoder
 
@@ -116,3 +116,73 @@ def test_a_neck_stands_between_the_backbone_and_the_heads_that_read_it(
     assert require_tensor(output.outputs["label"], name="label").shape == (2, CLASSES)
     assert require_tensor(output.features[Stream.POOLED], name=Stream.POOLED).shape == (2, 3)
     assert require_tensor(output.features[Stream.DECODER], name=Stream.DECODER).shape == (2, MAP_WIDTH, SIDE, SIDE)
+
+
+def test_what_a_head_publishes_on_its_way_to_an_answer_is_reported_under_the_task_it_answers(
+    backbone: Encoder, images: dict[str, Tensor]
+) -> None:
+    """A term of `learner.loss` names a stream, and two tasks may declare the same head — so a head's
+    stream is filed under the task, by the composite, which alone knows what the head was registered as.
+
+    The answer is untouched: what the run is judged by does not change because more of the network has
+    become visible to a term.
+    """
+    model = CompositeModel(
+        backbone,
+        {"label": HeadConnection(Mlp(POOLED_WIDTH, CLASSES, hidden_features=[5, 4]), streams=(Stream.POOLED,))},
+    )
+
+    output = model(images)
+
+    head = model.heads["label"]
+    assert isinstance(head, Mlp)
+    assert set(output.features) == {Stream.POOLED, Stream.DECODER, "label_hidden_0", "label_hidden_1"}
+    assert require_tensor(output.features["label_hidden_0"], name="label_hidden_0").shape == (2, 5)
+    assert torch.equal(
+        require_tensor(output.features["label_hidden_0"], name="label_hidden_0"),
+        head.layers[0](require_tensor(output.features[Stream.POOLED], name=Stream.POOLED)),
+    )
+    assert require_tensor(output.outputs["label"], name="label").shape == (2, CLASSES)
+
+
+def test_a_head_with_nothing_to_publish_leaves_the_features_exactly_what_the_encoding_half_published(
+    make_composite: CompositeFactory, images: dict[str, Tensor]
+) -> None:
+    """Every ordinary run: a `linear` head declares no capability, and what the report and a term see is
+    the backbone's streams and not one key more — the position costs a run that does not use it nothing.
+    """
+    output = make_composite()(images)
+
+    assert set(output.features) == {Stream.POOLED, Stream.DECODER}
+
+
+class Handing(Encoder):
+    """An encoder that keeps a reference to the mapping it handed over, which is the only way a caller
+    growing that very mapping rather than a copy of it is observable from outside."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.handed: Mapping[str, Tensor] = {}
+
+    def forward(self, inputs: Mapping[str, TensorTree]) -> Mapping[str, Tensor]:
+        self.handed = super().forward(inputs)
+        return self.handed
+
+
+def test_what_a_head_publishes_does_not_grow_the_features_the_heads_were_handed(
+    images: dict[str, Tensor],
+) -> None:
+    """Two mappings for two things, and this is the half that makes the other one structural: a head's
+    stream reaches the report without reaching what the heads read, so no head can read another head's
+    stream however the tasks are ordered — and nothing the backbone kept is written into behind its back.
+    """
+    backbone = Handing()
+    model = CompositeModel(
+        backbone,
+        {"label": HeadConnection(Mlp(POOLED_WIDTH, CLASSES, hidden_features=[5]), streams=(Stream.POOLED,))},
+    )
+
+    output = model(images)
+
+    assert set(backbone.handed) == {Stream.POOLED, Stream.DECODER}
+    assert "label_hidden_0" in output.features
