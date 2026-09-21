@@ -8,7 +8,7 @@ from typing import cast, override
 import torch
 from torch import Tensor
 
-from src.core import FEATURE_AXIS, Batch, LossOutput, ModelOutput, Semantics
+from src.core import FEATURE_AXIS, Batch, LossOutput, ModelOutput, Semantics, TensorTree, as_children, require_tensor
 from src.losses import KullbackLeibler, Loss
 from src.losses.build import refuse_an_objective_the_head_does_not_answer
 from src.models import Model
@@ -25,19 +25,41 @@ the runs on either side of the change.
 """
 
 
+REPRESENTATION = "representation"
+"""What the term measuring the distance between the two networks' features is called.
+
+Its own word rather than ``DISTILLATION``, because the two measure different things: one is a
+divergence between answers, the other a distance between the features those answers were read from.
+Under one word a chart would carry two lines a reader could not tell apart, and the prefix — a task
+for one, a stream for the other — is not something a reader of a legend can be expected to decode.
+"""
+
+
 @learner_registry.register(DISTILLATION)
 class DistillationLearner(StandardLearner):
-    """A smaller network learns the targets and, beside them, the answers a larger one already gives.
+    """A smaller network learns the targets and, beside them, what a larger one already answers and reads.
 
-    How far it is from those answers is an objective in its own right, and it is declared in a position
-    of its own at ``learner.loss``. What makes two answers comparable at all differs with what the heads
-    produce — a projection is softened as it stands, an angle has to be made into a distribution first —
-    and none of that is a property of distilling. Whichever objective a run names, the term reports as
-    ``distillation``: the column is named for the method, so runs either side of a change of objective
-    go on comparing.
+    What it learns from that second network is declared in a position of its own at ``learner.loss`` —
+    one term or several, written the way a task's losses are. A term names a ``stream`` to be compared
+    with the teacher's feature of that name, and names none to be compared with its answers. The two are
+    indexed differently, which is why they are held apart here: one term per task for the answers, one
+    per stream for the features.
 
-    ``losses`` above are the tasks' own, one each, against what the data settled. ``loss`` here is the
-    single one this algorithm adds beside them, against what another network answered.
+    What makes two answers comparable at all differs with what the heads produce — a projection is
+    softened as it stands, an angle has to be made into a distribution first — and none of that is a
+    property of distilling. A term reports under the name its *reading* gives it, ``distillation`` or
+    ``representation``, so that runs either side of a change of measure go on comparing; a run writing
+    ``log_name`` keeps what it wrote, and nothing here renames an objective it was handed.
+
+    Both halves are worth something on their own. Answers carry the proportions a label leaves out —
+    how wrong each of the other classes is — and a teacher confident enough spends nearly all of that
+    on one class, leaving little to learn. Features carry the representation those answers were read
+    from, which is what a frozen head turns into a shared space: a student whose features land where the
+    teacher's do answers as the teacher does, by construction. Neither is the other, and a run may write
+    one, the other, or both.
+
+    ``losses`` above are the tasks' own, one each, against what the data settled. What is written here
+    is what this algorithm adds beside them, against what another network answered or read.
 
     The teacher is held outside the module tree, in a one-tuple, and that is what keeps it out of
     everything a run writes down. Measured: a module reached that way appears in no ``state_dict``, no
@@ -52,9 +74,15 @@ class DistillationLearner(StandardLearner):
 
     Parameters:
         teacher: The network to learn from, already holding the weights it answers with.
-        loss: How the distance to that network's answers is measured. Left out, it is the divergence
-            between the two softened, over the projections a head ordinarily produces.
-        weight: The share of the objective the teacher's answers are, beside what the targets are worth.
+        loss: How the distance to that network's *answers* is measured, one term per task. Left out with
+            nothing else written, it is the divergence between the two softened, over the projections a
+            head ordinarily produces; left out beside a term over features, it is nothing, because a run
+            that wrote its terms gets those and no other.
+        representation: How the distance to that network's *features* is measured, by stream. Two
+            networks publishing a stream of one name and one width are comparable in it, whether they
+            arrived at that width by construction or through a ``projector`` backbone.
+        weight: The share of the objective everything learned from the teacher is worth, beside what the
+            targets are worth. It scales both halves; the share of one term within them is its own.
     """
 
     def __init__(
@@ -65,6 +93,7 @@ class DistillationLearner(StandardLearner):
         *,
         teacher: Model,
         loss: Loss | None = None,
+        representation: Mapping[str, Loss] | None = None,
         weight: float = 1.0,
         learned_only: Collection[str] = (),
     ) -> None:
@@ -75,13 +104,22 @@ class DistillationLearner(StandardLearner):
             )
         # Outside the module tree on purpose, and the whole reason this is a one-tuple; see the class.
         self._teacher: tuple[Model] = (teacher.eval(),)
-        self.loss = loss if loss is not None else KullbackLeibler()
+        # Registered as children so the terms travel with the run: `.to()` walks them, a checkpoint keeps
+        # them, and an objective holding parameters is kept where every other one is. Measured: an empty
+        # `ModuleDict` puts nothing in a `state_dict`, so a run comparing no features writes down no more
+        # than it ever did.
+        self.representation = as_children(dict(representation or {}))
+        self.loss = loss
+        if self.loss is None and not self.representation:
+            # Nothing written at all: an algorithm that learns from a second network learns from its
+            # answers, which is what distilling has meant here. Not added beside terms a run did write —
+            # one pulling features alone would then descend a divergence nobody asked for. Named here
+            # because no declaration named it; a term that was written keeps the name it was given, which
+            # is how a run tells two terms over one reading apart.
+            self.loss = KullbackLeibler()
+            self.loss.log_name = DISTILLATION
         self._weight = weight
         self._refuse_a_task_this_objective_cannot_read()
-        # After the refusal above, which names the objective rather than the column it reports under:
-        # the run that needs it wrote no name at all, so the one worth printing is the objective's own.
-        # Named for the method rather than for the divergence it uses; see `DISTILLATION`.
-        self.loss.log_name = DISTILLATION
 
     @property
     def teacher(self) -> Model:
@@ -99,7 +137,14 @@ class DistillationLearner(StandardLearner):
         if not terms:
             return terms
         taught = self._taught(batch)
-        return [*terms, *(self._agreement(name, task, output, taught) for name, task in self._scored().items())]
+        objective = self.loss
+        answered = (
+            [self._agreement(name, task, objective, output, taught) for name, task in self._scored().items()]
+            if objective is not None
+            else []
+        )
+        aligned = [self._alignment(stream, output, taught) for stream in self.representation]
+        return [*terms, *answered, *aligned]
 
     def _taught(self, batch: Batch) -> ModelOutput:
         """What the teacher answers, on the device the rest of the run has been moved to.
@@ -117,7 +162,9 @@ class DistillationLearner(StandardLearner):
         with torch.no_grad():
             return cast("ModelOutput", self.teacher(batch.inputs))
 
-    def _agreement(self, name: str, task: Task, output: ModelOutput, taught: ModelOutput) -> LossOutput:
+    def _agreement(
+        self, name: str, task: Task, objective: Loss, output: ModelOutput, taught: ModelOutput
+    ) -> LossOutput:
         """How far one task's answer is from the teacher's, as a term under that task's own name.
 
         Summed over the classes and averaged over everything else, so that the number means the same for
@@ -126,7 +173,37 @@ class DistillationLearner(StandardLearner):
         """
         answered, teaches = task.raw(output), task.raw(taught)
         self._refuse_a_teacher_answering_in_another_space(name, answered, teaches)
-        return (self.loss(answered, teaches) * self._weight).prefixed(name)
+        return (objective(answered, teaches) * self._weight).prefixed(name)
+
+    def _alignment(self, stream: str, output: ModelOutput, taught: ModelOutput) -> LossOutput:
+        """How far this run's features are from the teacher's, as a term under the stream's own name.
+
+        Prefixed by the stream as an agreement is prefixed by the task, because that is what tells one
+        term of this kind from another: a run may pull two streams, and a total that summed them would
+        answer neither `how far is the encoder` nor `how far is the decoder`.
+        """
+        answered = require_tensor(_published(output, stream, "this run's network"), name=stream)
+        teaches = require_tensor(_published(taught, stream, "the teacher"), name=stream)
+        self._refuse_a_teacher_whose_features_are_another_shape(stream, answered, teaches)
+        objective = cast("Loss", self.representation[stream])
+        return (objective(answered, teaches) * self._weight).prefixed(stream)
+
+    @staticmethod
+    def _refuse_a_teacher_whose_features_are_another_shape(stream: str, answered: Tensor, teaches: Tensor) -> None:
+        """Two representations of different widths are not close or far apart; they are not comparable.
+
+        Here rather than at the build, for the reason the refusal below keeps: a teacher the root composed
+        publishes what its own backbone declares, but one arriving whole by `_target_` publishes whatever
+        it publishes, and only its answer says what that is. `mse_loss` broadcasts, so a teacher of one
+        number against a student of a hundred gives a finite number and a total that reads like work.
+        """
+        if answered.shape != teaches.shape:
+            raise ValueError(
+                f"Stream {stream!r}: this run's network publishes {list(answered.shape)} and the teacher "
+                f"publishes {list(teaches.shape)}. How far one representation is from another is a "
+                f"question about two of the same shape; bring both to one width with a `projector` "
+                f"backbone, or compare a stream they already publish alike."
+            )
 
     @staticmethod
     def _refuse_a_teacher_answering_in_another_space(name: str, answered: Tensor, teaches: Tensor) -> None:
@@ -162,6 +239,8 @@ class DistillationLearner(StandardLearner):
         made in this constructor, and a check standing where only the written form is visible would pass
         exactly the configs most likely to be wrong — every one written before the position existed.
         """
+        if self.loss is None:
+            return
         unteachable = sorted(name for name, task in self.tasks.items() if task.semantics is not Semantics.MULTICLASS)
         if unteachable:
             raise ValueError(
@@ -172,3 +251,21 @@ class DistillationLearner(StandardLearner):
             )
         for name in self.tasks:
             refuse_an_objective_the_head_does_not_answer(name, self.model.produces(name), self.loss, "learner.loss")
+
+
+def _published(answered: ModelOutput, stream: str, whose: str) -> TensorTree:
+    """The stream a term names, refused by name where the network that was asked publishes others.
+
+    Named here rather than left to a `KeyError` for the reason every such refusal is: three declarations
+    have to agree on one word — the two backbones' published names and the `stream` a term wrote — and a
+    bare key error names none of them.
+    """
+    try:
+        return answered.features[stream]
+    except KeyError:
+        carried = ", ".join(sorted(answered.features)) or "nothing"
+        raise ValueError(
+            f"A term of `learner.loss` compares stream {stream!r}, and {whose} publishes {carried}. A "
+            f"feature is compared between two networks that both publish it: write the name they share, "
+            f"or bring one of them to it with a `projector` backbone."
+        ) from None

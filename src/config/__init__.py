@@ -20,6 +20,7 @@ from src.config.experiment import (
 from src.config.schema import (
     ClassFile,
     ComponentConfig,
+    DistilledLossConfig,
     HeadConfig,
     LearnerConfig,
     ModelConfig,
@@ -38,6 +39,7 @@ def load_config(raw: Mapping[str, Any]) -> ExperimentConfig:
 __all__ = [
     "ClassFile",
     "ComponentConfig",
+    "DistilledLossConfig",
     "ExperimentConfig",
     "HeadConfig",
     "LearnerConfig",

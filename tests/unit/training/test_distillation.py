@@ -9,18 +9,22 @@ import pytest
 import torch
 from torch import Tensor, nn
 
-from src.core import Batch, ModelOutput, TargetInfo, TensorTree
-from src.losses import KullbackLeibler, Loss
+from src.core import Batch, ModelOutput, Stream, TargetInfo, TensorTree
+from src.losses import KullbackLeibler, Loss, MeanSquaredError
 from src.losses.build import build_loss
 from src.models import Model
 from src.tasks import Classification, Regression, Task
-from src.training.distillation import DistillationLearner
+from src.training.distillation import DISTILLATION, REPRESENTATION, DistillationLearner
 
 TASK = "species"
 CLASSES = {0: "cat", 1: "dog", 2: "bird"}
 STUDENT = torch.tensor([[2.0, 0.0, 0.0], [0.0, 2.0, 0.0]])
 TEACHER = torch.tensor([[1.0, 0.5, 0.0], [0.0, 1.5, 0.5]])
 SOFT = f"{TASK}/distillation"
+STREAM = Stream.POOLED
+STUDENT_FEATURES = torch.tensor([[1.0, 0.0], [0.0, 1.0]])
+TEACHER_FEATURES = torch.tensor([[1.0, 1.0], [1.0, 1.0]])
+ALIGNED = f"{STREAM}/representation"
 
 
 class Logits(Model):
@@ -34,13 +38,17 @@ class Logits(Model):
     the teacher would then collect gradients through a test that looked like it was about the learner.
     """
 
-    def __init__(self, logits: Tensor) -> None:
+    def __init__(self, logits: Tensor, features: Tensor | None = None) -> None:
         super().__init__()
         self.logits = nn.Parameter(logits.clone())
         self.scale = nn.Parameter(torch.ones(()))
+        self.features = None if features is None else nn.Parameter(features.clone())
 
     def forward(self, inputs: Mapping[str, TensorTree]) -> ModelOutput:
-        return ModelOutput(outputs={TASK: self.logits * self.scale})
+        return ModelOutput(
+            outputs={TASK: self.logits * self.scale},
+            features={} if self.features is None else {STREAM: self.features * self.scale},
+        )
 
 
 def batch() -> Batch:
@@ -48,12 +56,44 @@ def batch() -> Batch:
 
 
 def taught(
-    *, student: Tensor = STUDENT, teacher: Tensor = TEACHER, task: Task | None = None, **declared: Any
+    *,
+    student: Tensor = STUDENT,
+    teacher: Tensor = TEACHER,
+    student_features: Tensor | None = None,
+    teacher_features: Tensor | None = None,
+    task: Task | None = None,
+    **declared: Any,
 ) -> DistillationLearner:
-    """A run of one task over one network, with a second network beside it to agree with."""
+    """A run of one task over one network, with a second network beside it to agree with.
+
+    Both networks publish no feature stream unless a test says they do, so every run written before
+    features could be compared reads here exactly as it read.
+    """
     learned = task if task is not None else Classification(TASK, TargetInfo(classes=CLASSES))
     losses: dict[str, Loss] = {learned.name: build_loss(learned.default_loss, learned.facts())}
-    return DistillationLearner(Logits(student), {learned.name: learned}, losses, teacher=Logits(teacher), **declared)
+    return DistillationLearner(
+        Logits(student, student_features),
+        {learned.name: learned},
+        losses,
+        teacher=Logits(teacher, teacher_features),
+        **declared,
+    )
+
+
+def reported_as[T: Loss](objective: T, column: str) -> T:
+    """An objective named the way a builder names the term a run declared: for what that term reads.
+
+    Named there rather than by the learner, because a run writing `log_name` has to keep it — so nothing
+    downstream renames an objective it was handed. A test constructing the learner by hand stands where
+    the builder would, and does what the builder does.
+    """
+    objective.log_name = column
+    return objective
+
+
+def pulling(**declared: Any) -> DistillationLearner:
+    """A run whose teacher is listened to through a feature stream, which is what these tests are about."""
+    return taught(student_features=STUDENT_FEATURES, teacher_features=TEACHER_FEATURES, **declared)
 
 
 def student_of(learner: DistillationLearner) -> Logits:
@@ -74,7 +114,7 @@ def test_the_teacher_is_nowhere_the_run_writes_itself_down() -> None:
     learner = taught()
 
     assert not any("teacher" in name for name in learner.state_dict())
-    assert [name for name, _ in learner.named_children()] == ["model", "losses", "loss"]
+    assert [name for name, _ in learner.named_children()] == ["model", "losses", "representation", "loss"]
     grouped = {id(parameter) for group in learner.parameter_groups() for parameter in group["params"]}
     assert grouped.isdisjoint({id(parameter) for parameter in learner.teacher.parameters()})
 
@@ -128,7 +168,7 @@ def test_the_term_is_the_softened_divergence_over_classes_scaled_by_the_square_o
     over the classes, average over the batch, multiply by the temperature squared. They agree with
     ``kl_div`` to six places, which is float32 against the arithmetic done in float64.
     """
-    objective = None if declared is None else KullbackLeibler(temperature=declared)
+    objective = None if declared is None else reported_as(KullbackLeibler(temperature=declared), DISTILLATION)
 
     assert float(terms(taught(loss=objective))[SOFT].detach()) == pytest.approx(divergence, rel=1e-5)
 
@@ -149,7 +189,7 @@ def test_the_temperature_leaves_the_weight_meaning_what_it_meant() -> None:
     """
     gradients = []
     for temperature in (1.0, 8.0):
-        learner = taught(loss=KullbackLeibler(temperature=temperature))
+        learner = taught(loss=reported_as(KullbackLeibler(temperature=temperature), DISTILLATION))
         output = learner.step(batch())
         assert output.loss is not None
         output.loss.breakdown()[SOFT].backward()
@@ -202,3 +242,83 @@ def test_the_share_of_the_total_a_weighted_teacher_is_worth_is_reported_too() ->
 
     assert f"{SOFT}/contribution" in reported
     assert float(reported[f"{SOFT}/contribution"].detach()) == pytest.approx(float(reported[SOFT].detach()) * 0.5)
+
+
+def test_how_far_the_features_are_from_the_teachers_is_reported_under_the_stream_that_was_read() -> None:
+    """One term per stream, prefixed by the stream, as a task's term is prefixed by the task."""
+    assert ALIGNED in terms(pulling(representation={STREAM: reported_as(MeanSquaredError(), REPRESENTATION)}))
+
+
+def test_a_teacher_whose_features_the_student_already_matches_adds_nothing() -> None:
+    """This term is a distance, so two identical representations are zero of it; a run reporting
+    otherwise would be descending something that is not the distance its name claims."""
+    learner = taught(
+        student_features=TEACHER_FEATURES,
+        teacher_features=TEACHER_FEATURES,
+        representation={STREAM: reported_as(MeanSquaredError(), REPRESENTATION)},
+    )
+
+    assert terms(learner)[ALIGNED].item() == pytest.approx(0.0)
+
+
+def test_the_share_the_teacher_is_worth_scales_the_features_term_as_it_scales_the_answers() -> None:
+    """One number for the whole of what is learned from a second network, both halves of it."""
+    reported = terms(pulling(representation={STREAM: reported_as(MeanSquaredError(), REPRESENTATION)}, weight=3.0))
+
+    assert reported[f"{ALIGNED}/contribution"].item() == pytest.approx(reported[ALIGNED].item() * 3.0)
+
+
+def test_a_run_pulling_features_alone_descends_no_divergence_nobody_wrote() -> None:
+    """The default over the answers is what an algorithm makes when a run declared nothing at all; a run
+    that did declare its terms gets those and no second one added silently beside them."""
+    reported = terms(pulling(representation={STREAM: reported_as(MeanSquaredError(), REPRESENTATION)}))
+
+    assert ALIGNED in reported
+    assert SOFT not in reported
+
+
+def test_a_term_that_named_itself_keeps_that_name_through_the_learner() -> None:
+    """`log_name` is how a run tells two terms over one reading apart, so a learner naming them all alike
+    would undo exactly the distinction the run wrote down."""
+    named = KullbackLeibler()
+    named.log_name = "divergence"
+
+    assert f"{TASK}/divergence" in terms(taught(loss=named))
+
+
+def test_a_teacher_whose_features_are_another_shape_is_refused_rather_than_broadcast() -> None:
+    """`mse_loss` broadcasts, so a teacher of one number against a student of two gives a finite number
+    and a total that reads like distillation."""
+    learner = taught(
+        student_features=STUDENT_FEATURES,
+        teacher_features=torch.ones(2, 1),
+        representation={STREAM: reported_as(MeanSquaredError(), REPRESENTATION)},
+    )
+
+    with pytest.raises(ValueError, match=STREAM):
+        terms(learner)
+
+
+def test_a_network_publishing_no_such_stream_is_refused_by_the_name_of_the_stream() -> None:
+    """A teacher arriving whole by `_target_` publishes whatever it publishes, and only its answer says
+    what that is — the same reason the refusal about answers stands where this one does."""
+    learner = taught(
+        student_features=STUDENT_FEATURES,
+        representation={STREAM: reported_as(MeanSquaredError(), REPRESENTATION)},
+    )
+
+    with pytest.raises(ValueError, match=STREAM):
+        terms(learner)
+
+
+def test_a_task_that_is_not_a_distribution_over_classes_is_distilled_through_its_features() -> None:
+    """Softening spreads confidence over classes and a regression has none — but a representation is a
+    representation, and a run learning only that from its teacher has nothing to soften."""
+    learner = pulling(
+        task=Regression(TASK, TargetInfo()),
+        student=torch.tensor([[1.0], [2.0]]),
+        teacher=torch.tensor([[1.0], [2.0]]),
+        representation={STREAM: reported_as(MeanSquaredError(), REPRESENTATION)},
+    )
+
+    assert ALIGNED in terms(learner)

@@ -10,9 +10,9 @@ from torch import Tensor
 
 from src.config import ComponentConfig, WeightedLossConfig
 from src.core import LossOutput, Semantics, TargetInfo
-from src.losses import CrossEntropy, Expectation, Focal, Loss, TorchLoss, WeightedSum
+from src.losses import CrossEntropy, Expectation, Focal, KullbackLeibler, Loss, TorchLoss, WeightedSum
 from src.losses.build import build_loss
-from src.losses.registry import loss_registry
+from src.losses.registry import distillation_loss_registry, loss_registry
 from src.tasks import BinarySegmentation, Classification, Regression, Segmentation
 from src.tasks.registry import task_registry
 from tests.support.tasks import CLASSES as THREE
@@ -110,6 +110,31 @@ class TestContract:
         built(name)(outputs, targets).total.backward()
 
         assert outputs.grad is not None and torch.any(outputs.grad != 0)
+
+
+class TestPositions:
+    """A registry belongs to a position, and a name written in the wrong one would build and mean nothing."""
+
+    def test_a_distance_between_two_answers_is_a_name_the_learner_writes(self) -> None:
+        """`learner.loss: {name: mse}` is logit matching, which is as much a distance to a teacher as a
+        divergence is, so this position holds it. What a task is judged by reads a target the data
+        settled and has nothing to say about a second network, so those names stay out."""
+        assert {"mse", "mae"} <= set(distillation_loss_registry)
+        assert "cross_entropy" not in distillation_loss_registry
+        assert "dice" not in distillation_loss_registry
+
+    def test_a_declaration_becomes_an_objective_the_same_way_whichever_position_wrote_it(self) -> None:
+        """One home for the grammar — a name, a component, a weighted list, the collapse of a single
+        term, the fallback to a module reached by `_target_` — so a second position does not grow a
+        second normalisation, free to drift from the first."""
+        built = build_loss(ComponentConfig(name="kullback_leibler"), facts={}, registry=distillation_loss_registry)
+
+        assert isinstance(built, KullbackLeibler)
+
+    def test_a_name_belonging_to_another_position_is_refused_by_the_registry_that_does_not_hold_it(self) -> None:
+        """Which is the whole of what two registries buy: `dice` builds and means nothing here."""
+        with pytest.raises(LookupError, match="distillation loss 'dice'"):
+            build_loss(ComponentConfig(name="dice"), facts={}, registry=distillation_loss_registry)
 
 
 class TestAngular:

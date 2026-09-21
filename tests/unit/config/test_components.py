@@ -7,7 +7,15 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from src.config import ComponentConfig, HeadConfig
+from src.config import ComponentConfig, DistilledLossConfig, HeadConfig, LearnerConfig
+
+STREAMS_REFUSED = [
+    pytest.param(" pooled", id="padded"),
+    pytest.param(["image_pooled", " text_pooled"], id="padded among several"),
+    pytest.param(["pooled", "pooled"], id="one feature named twice"),
+    pytest.param([], id="a list naming nothing"),
+]
+"""One table for the two declarations that name a backbone's features, because the rule they read is one."""
 
 
 @pytest.mark.parametrize(
@@ -70,16 +78,80 @@ class TestHead:
         """Whichever shape the declaration took, what builds the head reads one: `stream: pooled` is a list of one."""
         assert HeadConfig.model_validate(declared).streams == streams
 
-    @pytest.mark.parametrize(
-        "stream",
-        [
-            pytest.param(" pooled", id="padded"),
-            pytest.param(["image_pooled", " text_pooled"], id="padded among several"),
-            pytest.param(["pooled", "pooled"], id="one feature named twice"),
-            pytest.param([], id="a list naming nothing"),
-        ],
-    )
+    @pytest.mark.parametrize("stream", STREAMS_REFUSED)
     def test_refuses_anything_but_distinct_names_of_features(self, stream: Any) -> None:
         """A feature named twice would build two heads over one stream, which can only be a slip of the pen."""
         with pytest.raises(ValidationError):
             HeadConfig(name="linear", stream=stream)
+
+
+class TestDistilledTerm:
+    """One term of what a run learns from a second network, and which of its answers the term compares."""
+
+    def test_a_term_that_names_no_stream_compares_the_answers(self) -> None:
+        """Which is what distilling here has always meant, so every config written before this key
+        existed goes on meaning what it meant."""
+        assert DistilledLossConfig.model_validate({"loss": "mse"}).streams == ()
+
+    @pytest.mark.parametrize(
+        ("declared", "streams"),
+        [
+            pytest.param({"loss": "mse", "stream": "pooled"}, ("pooled",), id="one"),
+            pytest.param(
+                {"loss": "mse", "stream": ["image_pooled", "text_pooled"]},
+                ("image_pooled", "text_pooled"),
+                id="several, in the order they were written",
+            ),
+        ],
+    )
+    def test_names_one_stream_or_several_the_same_way_a_head_does(
+        self, declared: Any, streams: tuple[str, ...]
+    ) -> None:
+        """The same word in the same shape: it is the same question about the same names a backbone publishes."""
+        assert DistilledLossConfig.model_validate(declared).streams == streams
+
+    @pytest.mark.parametrize("stream", STREAMS_REFUSED)
+    def test_refuses_anything_but_distinct_names_of_features(self, stream: Any) -> None:
+        """One rule about stream names, read here and by a head; a second copy would be free to drift."""
+        with pytest.raises(ValidationError):
+            DistilledLossConfig.model_validate({"loss": "mse", "stream": stream})
+
+
+class TestLearner:
+    """The algorithm a run trains by, and what it is declared to learn from a second network."""
+
+    def test_declares_one_objective_or_a_weighted_list_of_them(self) -> None:
+        """The grammar `tasks.<name>.loss` already uses, because it is the same question asked of a
+        second network: one term, or several with the shares they are worth."""
+        one = LearnerConfig.model_validate({"name": "distillation", "loss": {"name": "kullback_leibler"}})
+        several = LearnerConfig.model_validate(
+            {
+                "name": "distillation",
+                "loss": [
+                    {"loss": {"name": "kullback_leibler", "temperature": 3.0}},
+                    {"loss": "mse", "weight": 5.0, "stream": "pooled"},
+                ],
+            }
+        )
+
+        assert isinstance(one.loss, ComponentConfig)
+        assert isinstance(several.loss, list)
+        assert [term.streams for term in several.loss] == [(), ("pooled",)]
+        assert [term.weight for term in several.loss] == [1.0, 5.0]
+
+    def test_a_stream_written_beside_a_single_objective_is_refused_where_the_list_would_carry_it(self) -> None:
+        """One objective is the loss itself, and every other key beside it is that loss's own argument —
+        so a `stream` written there would reach the constructor of a loss that has no such parameter,
+        and the run would compare answers while its declaration says features.
+        """
+        with pytest.raises(ValidationError, match="stream"):
+            LearnerConfig.model_validate({"name": "distillation", "loss": {"name": "mse", "stream": "pooled"}})
+
+    def test_a_typed_position_never_reaches_the_constructor_s_own_arguments(self) -> None:
+        """One declaration cannot be two statements of one thing: what the builder resolves is not also
+        handed to the learner as a keyword it would have to accept."""
+        declared = LearnerConfig.model_validate(
+            {"name": "distillation", "weight": 2.0, "loss": [{"loss": "mse", "stream": "pooled"}]}
+        )
+
+        assert declared.params == {"weight": 2.0}

@@ -10,16 +10,18 @@ from torch import Tensor, nn
 
 from src.core import FEATURE_AXIS, LossOutput
 from src.losses.base import Loss, TorchLoss
-from src.losses.registry import loss_registry
+from src.losses.registry import distillation_loss_registry, loss_registry
 
 
 @loss_registry.register("mse")
+@distillation_loss_registry.register("mse")
 class MeanSquaredError(TorchLoss):
     module_type: ClassVar[type[nn.Module]] = nn.MSELoss
     squeezes_channel: ClassVar[bool] = True
 
 
 @loss_registry.register("mae")
+@distillation_loss_registry.register("mae")
 class MeanAbsoluteError(TorchLoss):
     module_type: ClassVar[type[nn.Module]] = nn.L1Loss
     squeezes_channel: ClassVar[bool] = True

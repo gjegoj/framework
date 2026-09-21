@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any, override
 
 import pytest
@@ -12,15 +12,17 @@ from torch.optim import Optimizer
 
 from src.config import ComponentConfig, HeadConfig, LearnerConfig, SchedulerConfig, TeacherConfig
 from src.core import Batch, Representation, StepOutput, TargetInfo
-from src.losses import KullbackLeibler
+from src.losses import KullbackLeibler, Loss, WeightedSum
 from src.losses.build import build_loss
 from src.models import Model
-from src.tasks import Classification, MetricLearning
+from src.tasks import Classification, MetricLearning, Task
 from src.training import StandardLearner
 from src.training.base import FitProfile, Learner, ParameterGroup
 from src.training.build import (
     build_learner,
+    build_objective,
     build_optimizer_factory,
+    build_representation,
     build_scheduler_factory,
     build_teacher,
     refuse_a_learner_and_its_child_positions_that_disagree,
@@ -231,6 +233,19 @@ class TestTeacherHeads:
 
         assert taught["species"].stream == "pooled"
 
+    def test_a_teacher_inheriting_this_runs_head_does_not_inherit_the_file_that_head_continues(self) -> None:
+        """That file holds weights prepared for *this run's* head — the head of a teacher it is carrying
+        over. The teacher's own weights arrive whole from its `checkpoint_path`, so the file would be
+        read and immediately written over, and would refuse outright the day the teacher's features are
+        a different width from the student's.
+        """
+        own = HeadConfig.model_validate({"name": "linear", "stream": "pooled", "checkpoint_path": __file__})
+
+        inherited = teacher_heads(teaching(checkpoint_path=__file__), {"species": own})
+
+        assert inherited["species"].checkpoint_path is None
+        assert own.checkpoint_path == __file__  # the run's own head keeps what it was given
+
     def test_heads_declared_beside_a_network_that_arrives_whole_are_refused(self) -> None:
         """A network reached by import path brings its own everything; heads are not imposed on it, so a
         declaration of them here would be written meaning to take effect and then quietly dropped."""
@@ -328,6 +343,98 @@ class TestLearner:
         assert isinstance(built.loss, KullbackLeibler)
         assert (built.loss.temperature, built.loss.scale) == (2.0, 8.0)
 
+    def test_one_objective_written_the_short_way_is_the_one_term_it_always_was(self) -> None:
+        """Every config written before this position grew a list arrives here and leaves exactly as it did,
+        under the name the column has always carried."""
+        built = build_objective(LearnerConfig.model_validate({"name": "distillation", "loss": SOFT}))
+
+        assert isinstance(built, KullbackLeibler)
+        assert built.log_name == "distillation"
+
+    def test_several_objectives_over_the_answers_are_summed_and_each_reports_under_its_own_name(self) -> None:
+        """Two terms over one reading would report under one name and be refused when they were added;
+        `log_name` is how a run tells them apart, and this is what a report then shows."""
+        built = build_objective(
+            LearnerConfig.model_validate(
+                {
+                    "name": "distillation",
+                    "loss": [
+                        {"loss": "kullback_leibler", "log_name": "divergence"},
+                        {"loss": "mse", "weight": 0.5, "log_name": "logit_match"},
+                    ],
+                }
+            )
+        )
+        assert built is not None
+
+        reported = built(torch.zeros(2, 3), torch.zeros(2, 3)).losses
+
+        assert isinstance(built, WeightedSum)
+        assert sorted(reported) == ["divergence", "logit_match"]
+
+    def test_a_term_that_names_a_stream_is_no_part_of_what_compares_the_answers(self) -> None:
+        """It compares features. Summed into the answers' objective it would be a number reported under a
+        name for something else, and descended as though it were that."""
+        declared = LearnerConfig.model_validate({"name": "distillation", "loss": [{"loss": "mse", "stream": "pooled"}]})
+
+        assert build_objective(declared) is None
+
+    def test_a_term_naming_a_stream_becomes_an_objective_for_that_stream(self) -> None:
+        """Per stream rather than one objective over all of them: a run pulling one gently and another
+        hard writes two terms, and a single sum of them could be neither read back nor weighted apart."""
+        built = build_representation(
+            LearnerConfig.model_validate({"name": "distillation", "loss": [{"loss": "mse", "stream": "pooled"}]})
+        )
+
+        assert sorted(built) == ["pooled"]
+        assert built["pooled"].log_name == "representation"
+
+    def test_a_term_naming_several_streams_becomes_one_objective_for_each(self) -> None:
+        """A loss is a module; one object under two names would add their states together the day an
+        objective keeps any, and neither stream could be read back on its own."""
+        built = build_representation(
+            LearnerConfig.model_validate(
+                {"name": "distillation", "loss": [{"loss": "mse", "stream": ["encoder", "decoder"]}]}
+            )
+        )
+
+        assert sorted(built) == ["decoder", "encoder"]
+        assert built["encoder"] is not built["decoder"]
+
+    def test_two_terms_over_one_stream_are_that_streams_weighted_sum(self) -> None:
+        """Pulled two ways at once, a stream is still one comparison, and each way is still read back."""
+        built = build_representation(
+            LearnerConfig.model_validate(
+                {
+                    "name": "distillation",
+                    "loss": [
+                        {"loss": "mse", "stream": "pooled", "log_name": "squared"},
+                        {"loss": "mae", "stream": "pooled", "weight": 0.5, "log_name": "absolute"},
+                    ],
+                }
+            )
+        )
+
+        reported = built["pooled"](torch.zeros(2, 3), torch.zeros(2, 3)).losses
+
+        assert sorted(reported) == ["absolute", "squared"]
+
+    def test_nothing_written_over_the_features_is_no_objective_over_them(self) -> None:
+        """A run distilling answers alone gets exactly that, with nothing built and nothing reported."""
+        assert build_representation(LearnerConfig.model_validate({"name": "distillation", "loss": SOFT})) == {}
+
+    def test_a_term_over_a_stream_reaches_the_learner_that_compares_it(self) -> None:
+        """The position is filled by the builder that owns it and handed over as a fact, so a run that
+        wrote one gets a learner holding it rather than a declaration nobody read."""
+        declared = LearnerConfig.model_validate(
+            {"name": "distillation", "loss": [{"loss": "kullback_leibler"}, {"loss": "mse", "stream": "pooled"}]}
+        )
+
+        built = distilled(declared)
+
+        assert isinstance(built, DistillationLearner)
+        assert sorted(built.representation) == ["pooled"]
+
     def test_an_objective_named_from_the_registry_that_serves_another_position_is_refused(self) -> None:
         """A registry belongs to a position: what a task is judged by and what a teacher is agreed with
         are different questions, and a name answering one of them answers nothing about the other."""
@@ -383,6 +490,22 @@ class TestLearner:
         with pytest.raises(ValueError, match=r"'identity'.*learner\.loss"):
             distilled(declared, answering=Mixed(answers), over=("species", "identity"))
 
+    def test_a_term_over_a_feature_stream_beside_a_learner_that_reads_none_is_refused(self) -> None:
+        """An offered fact a constructor does not name is dropped by contract; a *declaration* is not one.
+
+        A term written meaning to pull features, beside an algorithm that compares only answers, would be
+        built and then asked nothing for the whole run, under a log that reads like any other's.
+        """
+        declared = LearnerConfig.model_validate(
+            {
+                "_target_": "tests.unit.training.test_build.Answering",
+                "loss": [{"loss": "mse", "stream": "pooled"}],
+            }
+        )
+
+        with pytest.raises(ValueError, match="names no `representation`"):
+            refuse_a_learner_and_its_child_positions_that_disagree(declared)
+
     def test_something_that_compares_no_two_answers_is_refused_where_it_was_declared(self) -> None:
         """A `_target_` reaches anything at all; what this position takes reads two answers and reports one."""
         declared = LearnerConfig.model_validate({"name": "distillation", "loss": {"_target_": "torch.nn.Identity"}})
@@ -396,6 +519,21 @@ class TestLearner:
 
         with pytest.raises(ValueError, match="takes no temperature"):
             distilled(declared)
+
+
+class Answering(Learner):
+    """A learner reading what a second network answered, and knowing nothing of what it answered from.
+
+    A learner a reader might write themselves: it takes a teacher and an objective over its answers, and
+    no `representation`. Never built — what is asked of it is its constructor's signature.
+    """
+
+    def __init__(self, model: Model, tasks: Mapping[str, Task], *, teacher: Model, loss: Loss | None = None) -> None:
+        super().__init__(model, tasks)
+        self.teacher, self.loss = teacher, loss
+
+    def step(self, batch: Batch) -> StepOutput:
+        raise NotImplementedError
 
 
 class Lonely(Learner):

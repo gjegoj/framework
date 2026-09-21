@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections import defaultdict
 from collections.abc import Callable, Mapping, Sequence
 from functools import partial
 from inspect import signature
@@ -14,16 +15,18 @@ from torch.optim import Optimizer
 if TYPE_CHECKING:
     from lightning.pytorch.utilities.types import LRSchedulerConfigType
 
-from src.config import ComponentConfig, HeadConfig, LearnerConfig, SchedulerConfig, TeacherConfig
+from src.config import ComponentConfig, DistilledLossConfig, HeadConfig, LearnerConfig, SchedulerConfig, TeacherConfig
 from src.config.instantiate import fill_signature, instantiate, instantiate_offering, resolve_factory, resolve_params
 from src.core import TensorShape, naming
 from src.losses import Loss
+from src.losses.build import build_loss
 from src.losses.registry import distillation_loss_registry
 from src.models import Model, load_weights
 from src.models.build import build_model
 from src.tasks import Task
 from src.training.base import FitProfile, Learner, OptimizerFactory, SchedulerFactory
 from src.training.checkpoints import model_weights
+from src.training.distillation import DISTILLATION, REPRESENTATION
 from src.training.registry import learner_registry, optimizer_registry, profiler_registry, scheduler_registry
 
 log = logging.getLogger(__name__)
@@ -57,23 +60,62 @@ def learners_naming(part: str) -> str:
     return ", ".join(sorted(name for name in learner_registry if _names(learner_registry.get(name), part)))
 
 
+def _declared_terms(declared: LearnerConfig) -> list[DistilledLossConfig]:
+    """One grammar out of the two a declaration may use: one objective, or a weighted list of them.
+
+    Shaped like ``losses.build._weighted`` and for its reason: a run writing one term and a run writing
+    three arrive here and leave alike, so nothing downstream has to know which way it was written.
+    """
+    if declared.loss is None:
+        return []
+    if isinstance(declared.loss, ComponentConfig):
+        return [DistilledLossConfig(loss=declared.loss)]
+    return list(declared.loss)
+
+
 def build_objective(declared: LearnerConfig) -> Loss | None:
-    """The objective declared below the learner, built from the registry that serves that position.
+    """How far this run's answers are from the teacher's: every term below the learner that named no stream.
 
     Resolved here rather than left among the learner's own arguments: a registry belongs to a position,
     so a ``name`` one level down resolves to nothing and would travel on as the mapping it literally is.
     This is the same child position ``model.backbone`` is, filled the same way by the builder that owns it.
     """
-    if declared.loss is None:
-        return None
+    answered = [term for term in _declared_terms(declared) if not term.streams]
+    return _against_the_teacher(answered, DISTILLATION) if answered else None
+
+
+def build_representation(declared: LearnerConfig) -> Mapping[str, Loss]:
+    """How far this run's features are from the teacher's, one objective per stream a term named.
+
+    Per stream rather than one objective over all of them, because the streams are compared separately
+    and reported separately: a run pulling ``encoder`` gently and ``decoder`` hard writes two terms, and
+    a single sum of them could be neither read back nor weighted apart.
+
+    A separate objective per stream even where one term named several, because a loss is a module: one
+    object standing under two names would add their states together the day an objective keeps any.
+    """
+    over: dict[str, list[DistilledLossConfig]] = defaultdict(list)
+    for term in _declared_terms(declared):
+        for stream in term.streams:
+            over[stream].append(term)
+    return {stream: _against_the_teacher(terms, REPRESENTATION) for stream, terms in over.items()}
+
+
+def _against_the_teacher(terms: Sequence[DistilledLossConfig], reported_as: str) -> Loss:
+    """The declared terms as one objective, each reporting under the name its reading gives it.
+
+    Built through the one function that turns a declaration into an objective, so that the normalisation,
+    the collapse of a single unweighted term and the fallback to a module reached by ``_target_`` are
+    stated once and serve both positions that write one.
+
+    A term's default name comes from what it reads rather than from the loss it uses, so that a column
+    survives a change of measure — the reason ``DISTILLATION`` is named for the method rather than for
+    the divergence it happens to use. A term that wrote ``log_name`` keeps it, which is how a run tells
+    two terms over one reading apart.
+    """
+    named = [one if one.log_name is not None else one.model_copy(update={"log_name": reported_as}) for one in terms]
     with naming("learner.loss"):
-        built = instantiate(declared.loss, distillation_loss_registry)
-        if not isinstance(built, Loss):
-            raise TypeError(
-                f"{declared.loss.spelled!r} built {type(built).__name__}, which does not compare this run's "
-                "answer with the teacher's: an objective takes both and reports one number."
-            )
-        return built
+        return build_loss(named, facts={}, registry=distillation_loss_registry)
 
 
 def refuse_a_learner_and_its_child_positions_that_disagree(declared: LearnerConfig) -> None:
@@ -108,6 +150,13 @@ def refuse_a_learner_and_its_child_positions_that_disagree(declared: LearnerConf
                 f"`{part}` in its constructor: it would be built and then asked nothing. Declare a learner "
                 f"that reads one — {learners_naming(part)} — or drop `learner.{part}`."
             )
+    if any(term.streams for term in _declared_terms(declared)) and not _names(factory, "representation"):
+        raise ValueError(
+            f"`learner.loss` declares a term over a feature stream, and `learner` is {declared.spelled!r}, "
+            f"which names no `representation` in its constructor: the term would be built and then asked "
+            f"nothing. Declare a learner that reads one — {learners_naming('representation')} — or drop "
+            f"the `stream` from that term, and it compares the answers instead."
+        )
     if declared.teacher is None and _names(factory, "teacher"):
         raise ValueError(
             f"`learner` is {declared.spelled!r}, which learns from a second network, and there is nothing "
@@ -142,7 +191,6 @@ def build_learner(
     """
     learned_only = sorted(name for name, task in tasks.items() if task.info.open_set)
     _refuse_a_total_that_would_mean_two_things(tasks, learned_only)
-    objective = build_objective(declared)
     built = instantiate_offering(
         declared,
         learner_registry,
@@ -151,7 +199,8 @@ def build_learner(
         losses=losses,
         learned_only=learned_only,
         teacher=teacher,
-        loss=objective,
+        loss=build_objective(declared),
+        representation=build_representation(declared),
     )
     if not isinstance(built, Learner):
         raise TypeError(
@@ -173,9 +222,17 @@ def teacher_heads(declared: TeacherConfig | None, heads: Mapping[str, HeadConfig
     A head naming no stream reads the one this run's own head for that task reads, rather than the
     kind's default: the teacher answers the same task, so it reads the same kind of features, and
     resolving it from the run's own leaves that merge with the single home it already has.
+
+    What a head inherited from this run does *not* bring with it is its ``checkpoint_path``. That file
+    holds weights prepared for the student's head — most often the teacher's own head, carried over —
+    and the teacher's weights arrive whole from its own ``checkpoint_path`` moments later. Inherited, it
+    would be read and immediately written over, and it would refuse outright the day the two networks
+    read features of different widths, which is the very arrangement this position exists for. A head
+    the teacher declared for itself keeps whatever it was written with.
     """
+    inherited = {name: _without_the_students_file(own) for name, own in heads.items()}
     if declared is None or declared.heads is None:
-        return heads
+        return inherited
     unknown = sorted(set(declared.heads) - set(heads))
     if unknown:
         raise ValueError(
@@ -183,10 +240,19 @@ def teacher_heads(declared: TeacherConfig | None, heads: Mapping[str, HeadConfig
             f"{', '.join(sorted(heads))}. A head for anything else would be built and then asked "
             f"nothing, all run, under a log that reads like any other's."
         )
-    taught = dict(heads)
+    taught = dict(inherited)
     for name, own in declared.heads.items():
         taught[name] = own if own.stream is not None else own.model_copy(update={"stream": heads[name].stream})
     return taught
+
+
+def _without_the_students_file(own: HeadConfig) -> HeadConfig:
+    """One of this run's heads as a teacher inherits it: the same head, minus where the student's came from.
+
+    The same declaration back where there was no file to drop, so a run that never wrote one goes on
+    being handed the very heads it declared.
+    """
+    return own if own.checkpoint_path is None else own.model_copy(update={"checkpoint_path": None})
 
 
 def build_teacher(

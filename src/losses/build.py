@@ -10,20 +10,25 @@ from torch import nn
 
 from src.config import ComponentConfig, WeightedLossConfig
 from src.config.instantiate import instantiate_offering
-from src.core import Representation
+from src.core import Registry, Representation
 from src.losses.base import Loss, NamedLoss
 from src.losses.composite import WeightedSum
 from src.losses.registry import loss_registry
 
 
-def build_loss(declared: object, facts: Mapping[str, Any]) -> Loss:
-    """One task's objective, from the declaration that settled it and what the run settled about its target.
+def build_loss(declared: object, facts: Mapping[str, Any], *, registry: Registry[Loss] = loss_registry) -> Loss:
+    """An objective, from the declaration that settled it and what the run settled about what it reads.
 
     Which declaration that is — the run's or the task's own default — is decided before this call, so
     this package needs to know nothing about tasks. Facts are never declared: each reaches a loss that
     names it in its constructor, and a declaration restating one is refused by name.
+
+    ``registry`` is the position's, because a registry belongs to a position and there is more than one
+    that writes an objective: a task's is judged against a target the data settled, and a learner's
+    against what a second network answered. The grammar around the name is the same either way — that
+    is why this is one function — and which names are writable is not.
     """
-    parts = [(_one(part.loss, facts, part.log_name), part.weight) for part in _weighted(declared)]
+    parts = [(_one(part.loss, facts, part.log_name, registry), part.weight) for part in _weighted(declared)]
     if len(parts) == 1 and parts[0][1] == 1.0:
         return parts[0][0]
     return WeightedSum(parts)
@@ -71,8 +76,8 @@ def _weighted(declared: object) -> list[WeightedLossConfig]:
     raise TypeError(f"A loss is declared as a name, a component or a weighted list; got {type(declared).__name__}.")
 
 
-def _one(declared: ComponentConfig, facts: Mapping[str, Any], log_name: str | None) -> Loss:
-    built: Any = instantiate_offering(declared, loss_registry, **facts)
+def _one(declared: ComponentConfig, facts: Mapping[str, Any], log_name: str | None, registry: Registry[Loss]) -> Loss:
+    built: Any = instantiate_offering(declared, registry, **facts)
     if not isinstance(built, Loss):
         if not (isinstance(built, nn.Module) and _compares_two_tensors(built)):
             raise TypeError(

@@ -301,17 +301,173 @@ one layer as wide as what it reads; declared empty it is refused, because a head
 projection is `linear`.
 
 A head's `checkpoint_path` holds weights for **exactly that head** — the same names at the
-same widths — and the file extension is not read, only its contents. Cut the tail out of
-the teacher's checkpoint yourself and save it; a whole run's file is refused by name,
-because its tensors are the run's rather than the head's.
+same widths — and the file extension is not read, only its contents. A whole run's file is
+refused by name, because its tensors are the run's rather than the head's. Cut the tail out
+of one with
+[`scripts/cut_head_tail.py`](scripts/cut_head_tail.py). Given the widths the student's head
+is built at, it renumbers the layers and checks the cut before it writes:
+
+```bash
+uv run python -m scripts.cut_head_tail runs/teacher/checkpoints/best.ckpt weights/tail.ckpt \
+    --task species --in-features 1280 --out-features 8 --hidden 128 64
+```
+
+Given no widths at all, it takes the head whole — which is what a student carrying all of
+its teacher's head needs, and the ordinary case once both networks are brought to one width:
+
+```bash
+uv run python -m scripts.cut_head_tail runs/teacher/checkpoints/best.ckpt weights/head.ckpt \
+    --task species
+```
 
 **What this arrangement transfers, and what it does not.** A frozen head constrains the
 route the student takes to its answer, not the answer itself: the backbone beneath it is
 free to produce whatever features make the logits come out right. Against `kullback_leibler`
 over logits alone, freezing the tail therefore changes nothing that a trainable head would
 not also reach. What the arrangement buys is a shared space to compare *features* in — both
-networks reach the same widths by construction, so no projector is needed. The objective
-that reads those features is not here yet.
+networks reach the same widths by construction, so no projector is needed. The term that
+reads those features is a `stream` on `learner.loss` — see below.
+</details>
+
+<details>
+<summary><b>Bringing a backbone to a width you declare</b></summary>
+
+`projector` is declared around another backbone and republishes one of its streams through a
+single linear layer, at a width the run writes down. Nothing downstream moves: the stream
+keeps its name, so a head reads `pooled` as it always did and is sized from the new number
+without being told it.
+
+```yaml
+model:
+  name: composite
+  backbone:
+    name: projector
+    width: 128
+    backbone:                        # a nested position has no registry of its own
+      _target_: src.models.TimmBackbone
+      model_name: mobilenetv4_conv_small
+```
+
+Measured on exactly that declaration: the wrapped family publishes `pooled` at 1280, and the
+projector publishes it at 128 through `Linear(1280, 128)`.
+
+One linear layer, and no knob for a second — a stack of projections is what a head is, and
+`mlp` is where a run declares one.
+
+`stream` is left out where the backbone publishes one, and named where it publishes several:
+`multiencoder` publishes one per tower (`image_pooled`, `text_pooled`). Streams it does not
+bring are published exactly as they arrived. A stream that is still spatial — what `smp`
+publishes — is refused by name, because a projection reads a pooled vector and a feature map
+is brought to a width by a convolution this family does not build.
+
+A run declaring `head: native` over a projector is refused too: the wrapped library's own
+classifier is sized for the features this one replaced. And where a `checkpoint_path` on the
+wrapped backbone carried a classifier, those rows are not carried on — they were read off the
+width that is gone — and the run says so in its log rather than dropping a warm start in
+silence.
+
+**What this is for.** Two networks meeting in one space. A teacher and a student publish
+whatever widths their libraries chose, and a projector on either brings both to one declared
+width; from there a head trained on one of them reads the other, and a term of `learner.loss`
+naming that stream is what pulls one towards the other.
+</details>
+
+<details>
+<summary><b>Distilling features as well as answers</b></summary>
+
+`learner.loss` takes one term or a weighted list of them, the way `tasks.<name>.loss` does. A
+term that names a `stream` compares that feature of the two networks; a term that names none
+compares their answers.
+
+```yaml
+learner:
+  name: distillation
+  weight: 1.0                                   # what the teacher is worth in all
+  loss:
+    - {loss: {name: kullback_leibler, temperature: 3.0}}
+    - {loss: mse, weight: 5.0, stream: pooled}  # its share within that
+  teacher:
+    name: composite
+    backbone: {name: timm, model_name: vit_large_patch16_dinov3.lvd1689m, pretrained: false}
+    checkpoint_path: runs/teacher/checkpoints/best.ckpt
+```
+
+The terms report as `<task>/distillation` and `<stream>/representation`, each named for what it
+*read* rather than for the loss it used, so a column survives a change of measure; two terms over
+one reading need telling apart, and `log_name` is how a run does it.
+
+`learner.weight` is what
+ everything learned from the teacher is worth beside the tasks' own
+objectives, and the weight inside a term is its share of that — the two levels a task and its
+loss list already have.
+
+Both networks have to publish the named stream at the same shape, or the term is refused by
+name with both shapes shown. Where they already publish the same width, no projector is
+wanted; where they do not, a `projector` on either brings them to one.
+
+**Where the two networks meet.** Three arrangements, one declaration:
+
+| | projector | the space they share | what it costs |
+|---|---|---|---|
+| on the student alone | student → teacher's width | the teacher's own features | one wide layer, and the head reads a space it was never narrowed for |
+| their widths already agree | on neither | whatever both publish | nothing |
+| on both | each → a width you chose | that width, which the teacher trained for the task | two narrow layers, and a teacher trained with its projector |
+
+The first asks nothing of the teacher: an already-trained one is used as it stands, so it is
+the cheapest thing to try, and it is written out below. The last is the cheapest at inference
+and the most task-specific, because every direction in a narrow space the teacher trained is a
+direction its head reads.
+
+That first arrangement whole, with the teacher's head cut out by the command above and carried
+by the student, which is the pair that makes any of this mean something:
+
+```yaml
+model:
+  name: composite
+  backbone:
+    name: projector
+    width: 1024                                 # what the teacher publishes, and now the student too
+    backbone:
+      _target_: src.models.TimmBackbone
+      model_name: mobilenetv4_conv_small
+
+tasks:
+  species:
+    head: {name: linear, checkpoint_path: weights/head.ckpt}   # the teacher's own, cut out whole
+
+learner:
+  name: distillation
+  weight: 1.0
+  loss:
+    - {loss: {name: kullback_leibler, temperature: 3.0}}
+    - {loss: mse, weight: 5.0, stream: pooled}
+  teacher:
+    name: composite
+    backbone: {name: timm, model_name: vit_large_patch16_dinov3.lvd1689m}
+    checkpoint_path: runs/teacher/checkpoints/best.ckpt
+
+callbacks:
+  - {name: freeze, modules: [heads.species]}     # what makes the shared space mean anything
+```
+
+The other two are that one with a line moved. **Where the widths already agree**, drop the
+`projector` and declare the backbone directly — nothing else changes. **A projector on both**
+puts one around the teacher's backbone too, at whatever width you choose, and the teacher is
+trained that way before its head is cut out: the head then reads the narrow space rather than
+the wide one, and `width` is the same number on both sides.
+
+Each of the three is assembled through the real composition root in
+[`tests/e2e/test_distillation_run.py`](tests/e2e/test_distillation_run.py) — which is where the
+column names above come from.
+
+
+**Why both terms.** Answers carry the proportions a label leaves out — how wrong each of the
+other classes is — but a confident teacher spends nearly all of that on one class, leaving
+little there to learn. Features carry the representation those answers were read from. With
+the teacher's head carried over and held still, a student whose features land where the
+teacher's do answers as the teacher does, by construction — and that is what makes freezing
+the head worth anything, since on its own, under a divergence over logits, it constrains
+nothing a trainable head would not also reach.
 </details>
 
 <details>
@@ -568,10 +724,10 @@ Names usable as `name:` in their own position.
 | `tasks.<n>.metrics` | `accuracy`, `f1`, `precision`, `recall`, `iou`, `mae`, `mse`, `confusion_matrix`, `recall_at_k`, `map`, `verification_accuracy`, `verification_threshold` |
 | `tasks.<n>.head` | `linear`, `cosine`, `conv`, `mlp`, `native` |
 | `tasks.<n>.target_encoder` | `label`, `identity`, `scalar`, `multilabel`, `mask`, `linear_bins`, `gaussian_bins` |
-| `model.backbone` | `timm`, `smp`, `hf_text`, `multiview`, `multiencoder` |
+| `model.backbone` | `timm`, `smp`, `hf_text`, `multiview`, `multiencoder`, `projector` |
 | `callbacks` | `checkpoint`, `progress`, `model_summary`, `metric_summary`, `lr_monitor`, `ema`, `freeze`, `batch_transform`, `anneal`, `samples`, `dataset_summary` |
 | `learner` | `standard`, `distillation` |
-| `learner.loss` | `kullback_leibler` |
+| `learner.loss` | `kullback_leibler`, `mse`, `mae` — one term, or a weighted list of them |
 | `adapter` | `lora` |
 | `export` | `onnx`, `pt2`, `torchscript`, `ncnn`, `tensorrt` |
 | `tracker` | `csv`, `clearml` |

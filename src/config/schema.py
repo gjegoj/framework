@@ -67,6 +67,56 @@ def refuse_a_path_that_is_not_there(key: str, path: str | None) -> None:
         raise ValueError(f"{key} names no file: {path}")
 
 
+def validate_streams(value: str | list[str] | None) -> str | list[str] | None:
+    """Every spelling checked in one place, because there is one rule and two ways of writing it.
+
+    Read by the two declarations that name a backbone's features: a head, which reads one or several,
+    and a term of ``learner.loss``, which compares them between two networks. One home rather than a
+    copy each — it is one rule about one kind of name, and the day it grows a case two copies would be
+    free to grow it differently.
+    """
+    names = streams_named(value)
+    if value is not None and not names:
+        raise ValueError("A stream is named in order to be read; a list naming none names nothing.")
+    if any(not name or name.strip() != name for name in names):
+        raise ValueError("A stream is named by an unpadded name.")
+    if len(set(names)) != len(names):
+        raise ValueError("Streams are named distinctly: one written twice would be read twice.")
+    return value
+
+
+def streams_named(value: str | list[str] | None) -> tuple[str, ...]:
+    """The features a declaration names, as whoever reads them sees them however they were spelled."""
+    if value is None:
+        return ()
+    return (value,) if isinstance(value, str) else tuple(value)
+
+
+class NamesStreams(BaseModel):
+    """A declaration naming features a backbone publishes: one, or several where there is a real choice.
+
+    Two positions write this word — a head, which reads what it names, and a term of ``learner.loss``,
+    which compares it between two networks — and it means the same thing in both, so it is declared
+    once. What each of them does with the names is what their own docstrings say.
+
+    Measured on pydantic 2.13.4, mixing this in leaves each class's own ``extra`` policy standing:
+    ``HeadConfig`` keeps ``allow`` and carries a head's arguments through, and a term keeps ``forbid``
+    and refuses a misspelled key.
+    """
+
+    stream: str | list[str] | None = None
+
+    @property
+    def streams(self) -> tuple[str, ...]:
+        """The features named, as whoever builds from this sees them however the declaration spelled them."""
+        return streams_named(self.stream)
+
+    @field_validator("stream")
+    @classmethod
+    def named_streams(cls, value: str | list[str] | None) -> str | list[str] | None:
+        return validate_streams(value)
+
+
 class ClassFile(BaseModel):
     model_config = ConfigDict(extra="forbid")
     file: str = Field(min_length=1)
@@ -92,7 +142,22 @@ class WeightedLossConfig(BaseModel):
         return value
 
 
-class HeadConfig(ComponentConfig):
+class DistilledLossConfig(WeightedLossConfig, NamesStreams):
+    """One term of what a run learns from a second network, and which of its answers the term compares.
+
+    ``stream`` is the word a head already writes, and it means here exactly what it means there: a name
+    the backbone publishes. Named, this term compares that feature of the two networks — one term per
+    name; left out, it compares their answers, which is what distilling here has always meant.
+
+    ``weight`` is the share within what is learned from the teacher, and ``learner.weight`` is what that
+    whole half is worth beside the tasks' own objectives — the two levels a task and its loss list
+    already have. ``log_name`` is how a run tells two terms over one reading apart; left out, a term is
+    named for what it reads rather than for the loss it uses, so that a column survives a change of
+    measure.
+    """
+
+
+class HeadConfig(ComponentConfig, NamesStreams):
     """A head and the feature streams it reads — one, or several where a task is learned over them together.
 
     ``stream`` rather than ``input``: a run's inputs are what the data feeds the model
@@ -108,7 +173,6 @@ class HeadConfig(ComponentConfig):
     should have to accept a knob about where its numbers came from.
     """
 
-    stream: str | list[str] | None = None
     checkpoint_path: str | None = Field(
         None, min_length=1, description="Weights for exactly this head, prepared wherever they came from."
     )
@@ -117,26 +181,6 @@ class HeadConfig(ComponentConfig):
     def prepared(self) -> HeadConfig:
         refuse_a_path_that_is_not_there("head.checkpoint_path", self.checkpoint_path)
         return self
-
-    @property
-    def streams(self) -> tuple[str, ...]:
-        """The features this head reads, as whoever builds it sees them however the declaration spelled it."""
-        if self.stream is None:
-            return ()
-        return (self.stream,) if isinstance(self.stream, str) else tuple(self.stream)
-
-    @field_validator("stream")
-    @classmethod
-    def named_streams(cls, value: str | list[str] | None) -> str | list[str] | None:
-        """Every spelling checked in one place, because there is one rule and two ways of writing it."""
-        names = (value,) if isinstance(value, str) else tuple(value or ())
-        if value is not None and not names:
-            raise ValueError("A head reads at least one feature; a list naming none builds nothing.")
-        if any(not name or name.strip() != name for name in names):
-            raise ValueError("A head reads feature names, each of them unpadded.")
-        if len(set(names)) != len(names):
-            raise ValueError("A head reads distinct features: one named twice would build two heads over it.")
-        return value
 
 
 class TaskConfig(BaseModel):
@@ -248,10 +292,38 @@ class LearnerConfig(ComponentConfig):
     that learns from one. Left out, an algorithm that reads an objective says what it defaults to, in
     the same place a task kind says it. ``teacher`` has no such default: a network to learn from cannot
     be derived from anything the run already holds.
+
+    One term or several, written the way ``tasks.<name>.loss`` is written, because it is the same
+    question asked of a second network. A term that names a ``stream`` compares that feature of the two
+    networks, one term per name; a term that names none compares their answers. ``weight`` here is what
+    the whole of what is learned from the teacher is worth beside the tasks' own objectives, and the
+    share inside a term is its own — the two levels a task and its loss list already have.
     """
 
-    loss: ComponentConfig | None = None
+    loss: ComponentConfig | list[DistilledLossConfig] | None = None
     teacher: TeacherConfig | None = None
+
+    @field_validator("loss")
+    @classmethod
+    def compared(
+        cls, value: ComponentConfig | list[DistilledLossConfig] | None
+    ) -> ComponentConfig | list[DistilledLossConfig] | None:
+        """A single objective is that loss itself, so `stream` beside it would be its constructor's.
+
+        Refused rather than read, because both spellings otherwise build: the loss takes the word as an
+        argument it never declared, or swallows it in ``**kwargs``, and the run compares answers while
+        the declaration says features. Only this word — ``weight`` beside a single objective is a real
+        argument of real losses (``cross_entropy`` weights its classes by it), so what looks like the
+        same slip there is a declaration this cannot tell from the genuine one.
+        """
+        if isinstance(value, ComponentConfig) and "stream" in value.params:
+            raise ValueError(
+                "`learner.loss` names one objective here, and every key beside it is that loss's own "
+                "argument, so `stream` would reach its constructor. A term comparing a feature of the "
+                f"two networks is an item of the list: `loss: [{{loss: {value.spelled}, stream: "
+                f"{value.params['stream']!r}}}]`."
+            )
+        return value
 
 
 class PreprocessingConfig(ComponentConfig):
