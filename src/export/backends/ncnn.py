@@ -24,28 +24,21 @@ One home, because three readers need it: the export that writes the pair, the re
 and the record that has to tell a deployment this artifact does not travel alone.
 """
 
-DEPLOYMENT_BATCH = 1
-"""The second shape the converter is given, so it does not settle the batch into the graph.
-
-pnnx reads what varies between two shapes; one row against the example's own is the difference that
-matters, and it is the size a phone actually sends.
-"""
-
 
 def require_pnnx() -> Path:
     """The converter, or a refusal naming it — the binary that turns TorchScript into an ncnn graph.
 
-    Not a dependency of this framework: it ships a platform-specific binary, and the framework cannot
-    hold a build for every platform it runs on. Everything a declaration can get wrong is settled before
-    this is reached, so a bad one answers on any machine.
+    A dependency, but one that ships a binary per platform, and the binary is where it fails: measured
+    2026-09-25, the macOS one in pnnx 20260526 is built for macOS 15 and does not start on 14 — which
+    ``_convert`` reports in the converter's own words. Everything a declaration can get wrong is settled
+    before this is reached, so a bad one answers on any machine.
     """
     try:
         import pnnx
     except ImportError as error:
         raise ImportError(
-            "pnnx is not installed, so this run cannot convert anything to ncnn. It is `pip install "
-            "pnnx`, which ships the converter binary, and it is not a dependency of this framework "
-            "because that binary is built per platform."
+            "pnnx is not installed, so this run cannot convert anything to ncnn. It is a dependency of this "
+            "framework, and `make install` puts it back."
         ) from error
     return Path(pnnx.EXEC_PATH)
 
@@ -62,11 +55,10 @@ class NcnnExporter(Exporter):
     The names do not survive: ncnn blobs are pnnx's (``in0``, ``out0``), not this run's task names, so a
     deployment reads them out of the ``.param`` and a record of this artifact has to say the order.
 
-    Nothing below ``require_pnnx`` has been measured. The converter ships as a platform binary, and the
-    one in this environment refuses to start (built for macOS 15, and this is 14.3) — so the conversion
-    is written from pnnx's documented interface and proven by nobody. The reader below is unmeasured for
-    the same reason: with no artifact to open, a hand-written ncnn graph was tried and crashed the
-    process outright, which is why the return codes are checked before anything else touches the net.
+    Measured 2026-09-25 with pnnx 20260526 and ncnn 1.0.20260526 on Linux, where the converter starts: a
+    mobilenetv3 run was converted and read back by the reader below, and the one row ``write`` traces at
+    is what that measurement changed. The reader checks return codes before anything else touches the
+    net, because a hand-written graph ncnn refused was measured to crash the process on the next call.
     """
 
     suffix: ClassVar[str] = "param"
@@ -106,13 +98,27 @@ class NcnnExporter(Exporter):
         return {"fp16": self.fp16}
 
     def write(self, graph: DeployableModel, example: tuple[Tensor, ...], path: Path) -> None:
+        """Convert from a graph traced at one row, which is the only shape an ncnn graph has.
+
+        ncnn carries no batch axis, and pnnx takes one out by finding it at size one. Measured with pnnx
+        20260526: from a trace at two rows it writes every ``Linear`` as a ``Gemm`` whose row count ncnn
+        reads off how it packed the blob — (16, 8) on AVX-512 where the model answers 8 numbers, and not
+        those numbers either — while the same graph traced at one row comes out with ``InnerProduct``.
+        pnnx refuses a shape other than the one a graph was traced at, so the trace and the converter are
+        handed the same row.
+
+        Written through the declared step's ``write`` rather than its ``export``: that refuses an example
+        of one row, because a format with a batch axis would settle it at one — the axis this format lacks.
+        """
         converter = require_pnnx()
+        one = tuple(tensor[:1] for tensor in example)
         with TemporaryDirectory() as scratch:
-            traced = self.torchscript.export(graph, example, Path(scratch) / "graph")
-            self._convert(converter, traced, example, path, Path(scratch))
+            traced = self.torchscript.artifact_path(Path(scratch) / "graph")
+            self.torchscript.write(graph, one, traced)
+            self._convert(converter, traced, one, path, Path(scratch))
 
     def _convert(self, converter: Path, traced: Path, example: tuple[Tensor, ...], path: Path, scratch: Path) -> None:
-        """Run the converter over the traced graph, at two shapes, and refuse whatever it did not write.
+        """Run the converter over the traced graph, at the shape it was traced at, and refuse what it did not write.
 
         Run as the tool rather than through ``pnnx.convert``: that wrapper does not look at what the
         binary returned and then imports the Python file the conversion was supposed to generate, so a
@@ -124,8 +130,7 @@ class NcnnExporter(Exporter):
             [
                 str(converter),
                 traced.name,
-                f"inputshape={_shapes(example, int(example[0].shape[BATCH_AXIS]))}",
-                f"inputshape2={_shapes(example, DEPLOYMENT_BATCH)}",
+                f"inputshape={_shapes(example)}",
                 # Absolute, because the converter runs somewhere else: a destination as the caller wrote
                 # it — and the shipped run directory is relative — would resolve against the scratch
                 # directory below and be swept away with it, after an exit code saying all was well.
@@ -178,7 +183,8 @@ def _extracted(extractor: Any, name: str, path: Path) -> numpy.ndarray:
 
     Checked for the same reason the two loads above are: a failed extraction hands back an empty ``Mat``,
     which stacks into a shape nothing else explains, and the comparison that follows would be measuring
-    the absence rather than the artifact. Unmeasured like everything else below ``require_pnnx``.
+    the absence rather than the artifact. No graph has refused an extraction yet, so this branch is
+    unmeasured.
     """
     said, blob = extractor.extract(name)
     if said != 0:
@@ -189,8 +195,6 @@ def _extracted(extractor: Any, name: str, path: Path) -> numpy.ndarray:
     return numpy.array(blob)
 
 
-def _shapes(example: tuple[Tensor, ...], batch: int) -> str:
-    """The converter's spelling of a batch of inputs: ``[2,3,224,224],[2,4]``, one bracket per input."""
-    return ",".join(
-        "[" + ",".join(str(size) for size in (batch, *one.shape[BATCH_AXIS + 1 :])) + "]" for one in example
-    )
+def _shapes(example: tuple[Tensor, ...]) -> str:
+    """The converter's spelling of the inputs as given: ``[1,3,224,224],[1,4]``, one bracket per input."""
+    return ",".join("[" + ",".join(str(size) for size in one.shape) + "]" for one in example)

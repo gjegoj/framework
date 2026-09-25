@@ -1,7 +1,8 @@
 # @package _global_
 # A graph for phones: `<name>.param` says what the network is, `<name>.bin` holds its weights, and
-# neither half deploys alone. Converted by `pnnx` from a TorchScript graph this writes first; `pnnx` is
-# not a dependency of this framework because it ships a converter binary per platform.
+# neither half deploys alone. Converted by `pnnx` from a TorchScript graph this writes first, at one row:
+# an ncnn graph has no batch axis. `pnnx` ships its converter as a binary per platform, and the macOS one
+# (pnnx 20260526) needs macOS 15 — on an older Mac this refuses, naming the converter's own error.
 # ncnn names its own blobs (`in0`, `out0`) rather than keeping this run's task names, so a deployment
 # reads them from the `.param` and takes the outputs in the order the record lists them.
 # `fp16` is what a phone is usually given an ncnn graph for; it is written out here because it is the

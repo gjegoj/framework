@@ -16,6 +16,7 @@ from src.core import ModelOutput, TargetInfo, TensorTree, as_children, require_t
 from src.export import DeployableModel, Exporter, as_outputs
 from src.export.backends import ncnn
 from src.export.backends.onnx import CONVERTERS
+from src.export.backends.torchscript import TorchScriptExporter
 from src.export.registry import exporter_registry
 from src.export.verification import verify
 from src.models import Model
@@ -240,6 +241,36 @@ def test_the_converter_is_told_where_to_write_in_terms_that_do_not_depend_on_whe
 
     assert all(Path(one).is_absolute() for one in seen), seen
     assert (tmp_path / written).exists()
+
+
+def test_the_converter_is_handed_one_sample_because_an_ncnn_graph_has_no_batch_axis(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Measured on pnnx 20260526: from a graph traced at two rows it writes every `Linear` as a `Gemm` whose
+    row count ncnn reads off how it packed the blob — (16, 8) on AVX-512 where the model answers 8 numbers,
+    and not those numbers either. Traced at one row, the same graph comes out with `InnerProduct`. pnnx
+    refuses a shape other than the one the graph was traced at, so the trace and the converter get one row."""
+    traced: list[int] = []
+
+    class Tracing(TorchScriptExporter):
+        def write(self, graph: DeployableModel, example: tuple[Tensor, ...], path: Path) -> None:
+            traced.append(int(example[0].shape[0]))
+            super().write(graph, example, path)
+
+    told: dict[str, str] = {}
+
+    def converter(argv: list[str], **options: Any) -> subprocess.CompletedProcess[str]:
+        told.update(dict(one.split("=", 1) for one in argv[1:] if "=" in one))
+        for key in ("ncnnparam", "ncnnbin"):
+            Path(told[key]).write_bytes(b"")
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(ncnn.subprocess, "run", converter)
+
+    exporter("ncnn", torchscript=Tracing()).export(deployable(), example(), tmp_path / "model")
+
+    assert traced == [1]
+    assert told["inputshape"] == f"[1,{FEATURES}]" and "inputshape2" not in told
 
 
 def test_a_graph_ncnn_will_not_read_is_refused_rather_than_crashing_the_process(tmp_path: Path) -> None:
