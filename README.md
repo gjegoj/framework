@@ -642,6 +642,13 @@ beside it.
 Trackers: `none` (default), `csv` for a local file, `clearml` to upload. `lr_monitor`
 needs one; `metric_summary` adds its table only where a backend keeps one, and is left
 alone otherwise.
+
+With `clearml`, a run also keeps the model's files as artifacts of its task: the checkpoint it
+ended holding — or the one `run.checkpoint_path` pointed a run that does not train at — and every
+format `export` wrote, each with the files it cannot be opened without. `tracker.keep_suffixes`
+narrows them (left out, every one is kept), and a format above `tracker.keep_max_gib` (1 by
+default) stays on disk with a warning. ClearML's own capture of PyTorch weights is switched off,
+which is what used to file every epoch's checkpoint as a model; declaring it back on is refused.
 </details>
 
 <details>

@@ -17,9 +17,13 @@ from src.experiment import Experiment, run
 from src.training import model_weights, restore_best_weights
 from src.training.checkpoints import LEARNER_PREFIX, MODEL_PREFIX
 from tests.support.declarations import BACKBONE
+from tests.support.pages import FileRecorder
 
 LEARNED_MARGIN = "losses.species.margin"
 """Where an objective that carries parameters sits inside a learner, for a run declaring one below."""
+
+KEEPING = {"_target_": "tests.support.pages.FileRecorder"}
+"""A tracker that keeps files; what a run handed it is read back through `handed`."""
 
 
 def written(path: Path, weights: Mapping[str, Any]) -> str:
@@ -42,6 +46,10 @@ def learning_its_objective(declaration: Mapping[str, Any]) -> dict[str, Any]:
 
 def experiment(declaration: Mapping[str, Any], **overrides: Any) -> Experiment:
     return build(load_config({**declaration, **overrides}))
+
+
+def handed(built: Experiment) -> list[tuple[str, tuple[str, ...]]]:
+    return cast(FileRecorder, built.trainer.logger).files
 
 
 class Learned(nn.Module):
@@ -76,20 +84,23 @@ class TestWeights:
             restore_best_weights(_kept(path), Learned())
 
     def test_the_checkpoint_a_run_kept_is_what_it_ends_holding(self, tmp_path: Path) -> None:
-        """Lightning reloads nothing when the module is passed explicitly, so the run would ship its last epoch."""
+        """Lightning reloads nothing when the module is passed explicitly, so the run would ship its last epoch.
+
+        The file read back is also the answer: it is the one a tracker is handed, and asking `best_model_path`
+        again anywhere else would be a second statement of which checkpoint the run kept."""
         learner = Learned()
         path = written(tmp_path / "best.ckpt", {"weight": torch.zeros(2, 2), "bias": torch.zeros(2)})
 
-        restore_best_weights(_kept(path), learner)
+        answered = restore_best_weights(_kept(path), learner)
 
         assert torch.equal(learner.model.weight, torch.zeros(2, 2))
+        assert answered == path
 
     def test_a_run_that_kept_nothing_ends_holding_what_it_trained(self) -> None:
         learner = Learned()
         before = learner.model.weight.clone()
 
-        restore_best_weights(_kept(""), learner)
-
+        assert restore_best_weights(_kept(""), learner) is None
         assert torch.equal(learner.model.weight, before)
 
 
@@ -310,13 +321,14 @@ class TestWhatARunShips:
         path it was handed, so under a strategy that keeps every process inside the script each of them
         would write the same artifact at the same moment, over each other.
         """
-        built = experiment(declaration, export=[{"name": "torchscript"}])
+        built = experiment(declaration, export=[{"name": "torchscript"}], tracker=KEEPING)
         monkeypatch.setattr(type(built.trainer), "is_global_zero", property(lambda self: False))
 
         manifest = run(built)
 
         assert manifest.artifacts == ()
         assert not list(Path(declaration["run"]["directory"]).glob("model.*"))
+        assert handed(built) == []
 
     def test_a_run_that_declared_no_format_writes_nothing_and_says_nothing(
         self, declaration: Mapping[str, Any]
@@ -336,6 +348,48 @@ class TestWhatARunShips:
 
         kept = list(Path(cast(Any, built.trainer.logger).log_dir).glob("model.json"))
         assert len(kept) == 1
+
+    def test_a_run_hands_its_tracker_the_checkpoint_it_ended_holding_and_every_format_whole(
+        self, declaration: Mapping[str, Any]
+    ) -> None:
+        kept = str(Path(declaration["run"]["directory"]) / "checkpoints")
+        built = experiment(
+            declaration,
+            export=[{"name": "onnx", "external_data": True}],
+            tracker=KEEPING,
+            callbacks=[{"name": "checkpoint", "dirpath": kept, "filename": "kept"}],
+            run={**declaration["run"], "test": False},
+        )
+
+        run(built)
+
+        assert handed(built) == [("kept.ckpt", ()), ("model.onnx", ("model.onnx.data",))]
+
+    @pytest.mark.parametrize(
+        ("train", "expected"),
+        [
+            pytest.param(False, [("given.ckpt", ()), ("model.onnx", ())], id="what a run that learns nothing holds"),
+            pytest.param(True, [("model.onnx", ())], id="where a run that trains started"),
+        ],
+    )
+    def test_the_file_a_run_was_pointed_at_is_handed_over_only_by_a_run_that_learned_nothing(
+        self, declaration: Mapping[str, Any], tmp_path: Path, train: bool, expected: list[tuple[str, tuple[str, ...]]]
+    ) -> None:
+        """Checkpointing is off, so the run that trains keeps nothing of its own: the file it started from is the
+        only one it could wrongly hand over. Measured: left on, Lightning adds a `ModelCheckpoint` of its own
+        wherever a run declared none."""
+        given = written(tmp_path / "given.ckpt", experiment(declaration).module.learner.model.state_dict())
+        built = experiment(
+            declaration,
+            export=[{"name": "onnx"}],
+            tracker=KEEPING,
+            trainer={**declaration["trainer"], "enable_checkpointing": False},
+            run={**declaration["run"], "train": train, "test": False, "checkpoint_path": given},
+        )
+
+        run(built)
+
+        assert handed(built) == expected
 
     def test_a_run_is_left_able_to_carry_on_after_shipping(self, declaration: Mapping[str, Any]) -> None:
         """Writing moves the graph to the processor and turns training off; both belong to the caller."""

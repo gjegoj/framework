@@ -42,6 +42,7 @@ from src.core.taxonomy import (
     Stream,
 )
 from src.core.types import (
+    BYTES_PER_GIB,
     DRAWN_AXIS,
     FEATURE_AXIS,
     ShapeTree,
@@ -53,6 +54,7 @@ from src.core.types import (
 )
 
 __all__ = [
+    "BYTES_PER_GIB",
     "CELLS",
     "DRAWN_AXIS",
     "ERROR",

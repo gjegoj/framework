@@ -14,9 +14,9 @@ import numpy as np
 import pytest
 from torch.utils.data import DataLoader, Dataset
 
-from src.core import Sample, require_tensor
+from src.core import BYTES_PER_GIB, Sample, require_tensor
 from src.data import StandardPreprocessor
-from src.data.cache import BYTES_PER_GIB, Cache, Key, RamCache
+from src.data.cache import Cache, Key, RamCache
 from src.data.encoders import ImageEncoder, MaskEncoder, MultilabelEncoder
 from src.data.preprocessor import BATCH_PER_WORKER
 from src.data.registry import cache_registry

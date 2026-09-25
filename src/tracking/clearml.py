@@ -18,11 +18,13 @@ from lightning.pytorch.loggers import Logger
 from lightning.pytorch.loggers.logger import rank_zero_experiment
 from lightning.pytorch.utilities.rank_zero import rank_zero_only
 
+from src.core import BYTES_PER_GIB
 from src.tracking.keys import SEGMENT, MetricKey
 from src.tracking.registry import tracker_registry
 
 if TYPE_CHECKING:
     from argparse import Namespace
+    from pathlib import Path
 
     from clearml import Task
     from clearml.logger import Logger as Backend
@@ -54,7 +56,17 @@ class ClearMLTracker(Logger):
             debug sample, and a debug sample goes to ``api.files_server`` and nowhere else — read in
             clearml 2.1.10: ``output_uri`` is documented for models and artifacts, and no key of
             ``clearml.conf`` reaches it. What does is the logger's own destination, which is why this
-            is the one parameter here the service is never handed.
+            is the one parameter here the service is never handed. An artifact goes here too when the task
+            has no ``output_uri`` — read in 2.1.10: ``upload_artifact`` uses ``task.output_uri`` or the
+            logger's default destination, which this sets; ``task.output_uri`` is set by a declared one, by
+            ``sdk.development.default_output_uri`` in ``clearml.conf``, or by the project's default.
+        keep_suffixes: Which of the model's files this run keeps here, by suffix — without the dot and in lower
+            case, as ``export`` spells it; a checkpoint goes by its own file's, ``ckpt`` for one Lightning wrote.
+            ``None`` keeps every one, an empty list none.
+        keep_max_gib: The size of a whole format above which it stays on disk, named in a warning; ``None`` for
+            no limit. One by default: a student's checkpoint is tens of megabytes, a ViT-L teacher's with its
+            optimizer and average is gigabytes, and an upload that size at the end of every run should be asked
+            for rather than waited through.
         **options: Forwarded to ``Task.init`` verbatim, so every upstream knob stays reachable.
     """
 
@@ -65,17 +77,44 @@ class ClearMLTracker(Logger):
         tags: Sequence[str] | None = None,
         reuse_last_task_id: bool = False,
         media_uri: str | None = None,
+        *,
+        keep_suffixes: Sequence[str] | None = None,
+        keep_max_gib: float | None = 1.0,
         **options: Any,
     ) -> None:
         super().__init__()
+        if isinstance(keep_suffixes, str) or any(one != one.lstrip(".").lower() for one in keep_suffixes or ()):
+            raise ValueError(
+                "`tracker.keep_suffixes` lists suffixes without their dot and in lower case, as `export` spells "
+                f"them, e.g. [onnx, ckpt]; got {keep_suffixes!r}."
+            )
+        if keep_max_gib is not None and keep_max_gib <= 0:
+            raise ValueError(
+                f"`tracker.keep_max_gib` is the size above which a format stays on disk, so it is positive; got "
+                f"{keep_max_gib}. Write `null` for no limit."
+            )
+        frameworks = options.pop("auto_connect_frameworks", {"pytorch": False})
+        if frameworks is True or (isinstance(frameworks, Mapping) and frameworks.get("pytorch")):
+            raise ValueError(
+                f"`tracker.auto_connect_frameworks: {frameworks!r}` has ClearML capture the model's weights itself — "
+                "every epoch's checkpoint and the one read back, never what `export` wrote — and which of them reach "
+                "the service is `tracker.keep_suffixes`. Leave `pytorch` out of the mapping, or the key out altogether."
+            )
         self._declared: dict[str, Any] = {
             "project_name": project_name,
             "task_name": task_name,
             "tags": _worth_showing(tags or ()),
             "reuse_last_task_id": reuse_last_task_id,
             **options,
+            # Measured (spec 2026-09-25): left on, ClearML's PyTorch hook files every epoch's checkpoint as an
+            # output model and the one read back as an input model. A framework a mapping does not name it
+            # captures, and a mapping that is empty — like `False` or `None` — it reads as nothing at all, so
+            # `pytorch` is added to a mapping and never to a declaration that already turns everything off.
+            "auto_connect_frameworks": {**frameworks, "pytorch": False} if frameworks else frameworks,
         }
         self._media_uri = media_uri
+        self._keep_suffixes = None if keep_suffixes is None else frozenset(keep_suffixes)
+        self._keep_max_gib = keep_max_gib
         self._task: Task | None = None
 
     @property
@@ -183,6 +222,61 @@ class ClearMLTracker(Logger):
         the service stores a mapping as something they can fetch back as one.
         """
         self.experiment.upload_artifact(name, dict(record))
+
+    @rank_zero_only
+    def log_file(self, path: Path, travels_with: Sequence[Path] = ()) -> None:
+        """The ``KeepsFiles`` port: a format and what travels with it, as artifacts of the task.
+
+        An artifact rather than an ``OutputModel``: read in 2.1.10, a model with no ``output_uri`` registers the
+        path on the machine that trained and uploads nothing, while an artifact goes wherever the record already
+        goes — the task's ``output_uri`` (declared, or from ``clearml.conf`` or the project), else ``media_uri``,
+        else the file server.
+
+        Each file is waited for, because this is the last thing a run does, after Lightning's ``finalize``, and a
+        line saying a file is on the service has to mean it is. Queuing them all and waiting once would save the
+        upload time of every file but the largest, over one shared link, at the price of a failure only
+        ClearML's own log would see. The first file the service does not take stops the format — what follows
+        would only add to half a model there — and the warning says how much of the format did arrive.
+        """
+        whole = (path, *travels_with)
+        if self._keep_suffixes is not None and path.suffix.removeprefix(".") not in self._keep_suffixes:
+            log.info(
+                "%s stays on disk: `tracker.keep_suffixes` keeps %s.",
+                path.name,
+                ", ".join(sorted(self._keep_suffixes)) or "nothing",
+            )
+            return
+        gib = sum(one.stat().st_size for one in whole) / BYTES_PER_GIB
+        if self._keep_max_gib is not None and gib > self._keep_max_gib:
+            log.warning(
+                "%s is %.2f GiB with what travels with it, above `tracker.keep_max_gib: %s`; it stays in %s. Raise "
+                "the limit, or write `keep_max_gib: null`, to keep it on the service.",
+                path.name,
+                gib,
+                self._keep_max_gib,
+                path.parent,
+            )
+            return
+        for sent, one in enumerate(whole):
+            try:
+                taken = self.experiment.upload_artifact(one.name, artifact_object=one, wait_on_upload=True)
+            except Exception as error:
+                taken, why = False, str(error)
+            else:
+                why = "the service declined it"
+            if not taken:
+                log.warning(
+                    "ClearML could not keep %s (%s); %d of the %d files of %s reached it, and all of them are still "
+                    "in %s.",
+                    one.name,
+                    why,
+                    sent,
+                    len(whole),
+                    path.name,
+                    path.parent,
+                )
+                return
+            log.info("%s is kept on the service.", one.name)
 
     @rank_zero_only
     def record_summary(self, name: str, value: float) -> None:

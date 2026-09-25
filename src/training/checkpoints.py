@@ -27,8 +27,8 @@ LEARNER_PREFIX = f"{TrainingModule.LEARNER}."
 """The same, one level up: everything the run learned, rather than the network alone."""
 
 
-def restore_best_weights(trainer: L.Trainer, learner: nn.Module) -> None:
-    """Put back what the epoch this run kept had learned. A run that kept nothing does nothing here.
+def restore_best_weights(trainer: L.Trainer, learner: nn.Module) -> str | None:
+    """Put back what the epoch this run kept had learned, and answer with the file it was read from.
 
     The learner rather than the network inside it: an objective carrying parameters of its own — an
     angular margin's prototypes, a learned uncertainty — is optimized and checkpointed with the run, and
@@ -37,11 +37,16 @@ def restore_best_weights(trainer: L.Trainer, learner: nn.Module) -> None:
 
     Lightning restores nothing here: measured on 2.6.5, a module passed explicitly is never reloaded, so
     a run would report one epoch's numbers while keeping another on disk, and then ship that one.
+
+    The file is the answer because it is the checkpoint the run ends holding — what the export is written
+    from and what a tracker is handed — and this is where that is decided. A run that kept nothing answers
+    ``None``.
     """
     kept = str(getattr(trainer.checkpoint_callback, "best_model_path", ""))
     if kept:
         load_weights(learner, _under(LEARNER_PREFIX, kept), kept)
         log.info("Restored the model and the objective from %s, the epoch this run kept.", kept)
+    return kept or None
 
 
 def load_checkpoint(model: nn.Module, path: str) -> None:

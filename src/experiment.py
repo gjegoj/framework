@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from src.export import DeployableModel, Manifest, ship
-from src.tracking import KeepsRecord
+from src.tracking import KeepsFiles, KeepsRecord
 from src.training import load_checkpoint, load_learned, restore_best_weights
 
 if TYPE_CHECKING:
@@ -66,7 +66,9 @@ def run(experiment: Experiment) -> Manifest:
             load_checkpoint(learner.model, config.run.checkpoint_path)
     if config.run.train:
         experiment.trainer.fit(experiment.module, datamodule=experiment.data, ckpt_path=config.run.resume_path)
-        restore_best_weights(experiment.trainer, learner)
+        held = restore_best_weights(experiment.trainer, learner)
+    else:
+        held = config.run.checkpoint_path
     if experiment.adapter is not None:
         # After the epoch this run kept has been read back, because that file was written while the
         # network was adapted and nothing could read it once the delta is folded in; and before anything
@@ -74,20 +76,21 @@ def run(experiment: Experiment) -> Manifest:
         experiment.adapter.merge()
     if config.run.test:
         experiment.trainer.test(experiment.module, datamodule=experiment.data, verbose=False)
-    return _ship(experiment)
+    return _ship(experiment, held)
 
 
-def _ship(experiment: Experiment) -> Manifest:
-    """Write the declared formats from the weights this run ended holding, and keep the record of it.
+def _ship(experiment: Experiment, held: str | None) -> Manifest:
+    """Write the declared formats from the weights this run ended holding, and leave the tracker what it can keep.
 
     Last of all, because everything before it can change which weights those are, and because writing
     moves the graph to the processor and back: a run with anything left to do would be doing it on a
     model that had just been moved twice for somebody else's benefit.
 
-    The record goes to the tracker as well as beside the artifacts — the same one, where the run's
-    declaration already went, so the two are read side by side. A backend with nowhere to keep one says
-    so by not implementing the port, and the run carries on: the file beside the artifacts is the copy
-    that exists whatever a run declared for a tracker, including nothing.
+    The record goes to the tracker as well as beside the artifacts, and so do the files the model is in —
+    ``held``, the checkpoint the run ended holding, and every format with what it cannot be opened without —
+    where the run's declaration already went, so they are read side by side. A backend with nowhere to keep
+    either says so by not implementing its port, and the run carries on: what was written stays where it was
+    written, whatever a run declared for a tracker, including nothing.
     """
     if not experiment.trainer.is_global_zero:
         # One publisher, because this writes bytes rather than logs a value: a strategy that keeps every
@@ -97,9 +100,15 @@ def _ship(experiment: Experiment) -> Manifest:
     config = experiment.declaration
     learner = experiment.module.learner
     info = experiment.data.info
+    directory = Path(config.run.directory)
     graph = DeployableModel(learner.model, list(learner.tasks.values()), input_names=list(info.inputs))
-    manifest = ship(graph, info, experiment.exporters, Path(config.run.directory) / MODEL)
+    manifest = ship(graph, info, experiment.exporters, directory / MODEL)
     logger = experiment.trainer.logger
     if manifest.artifacts and isinstance(logger, KeepsRecord):
         logger.log_record(MODEL, manifest.as_record())
+    if isinstance(logger, KeepsFiles):
+        if held is not None:
+            logger.log_file(Path(held))
+        for written in manifest.artifacts:
+            logger.log_file(directory / written.artifact, [directory / name for name in written.travels_with])
     return manifest

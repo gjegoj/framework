@@ -11,7 +11,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Mapping, Sequence
+    from pathlib import Path
 
     from src.core import Bars, Matrix
 
@@ -68,3 +69,15 @@ class KeepsRecord(Protocol):
     """
 
     def log_record(self, name: str, record: Mapping[str, object]) -> None: ...
+
+
+@runtime_checkable
+class KeepsFiles(Protocol):
+    """A backend with somewhere to keep a file a run produced: the model, in whichever form it left in.
+
+    A file and what has to be beside it arrive together, in the words ``Exporter.travels_with`` uses — ``path``
+    is what a deployment opens, ``travels_with`` what it cannot open without. A backend judging them one at a
+    time could keep half a format: ``model.onnx`` without ``model.onnx.data`` opens nowhere.
+    """
+
+    def log_file(self, path: Path, travels_with: Sequence[Path] = ()) -> None: ...

@@ -32,9 +32,10 @@ tracker:
   project_name: ${run.project}
   task_name: ${run.name}
   # Where a page drawn by `callbacks=samples` is uploaded. Left out, it goes to `api.files_server`,
-  # and there is no other way to move it: `output_uri` is for models and artifacts, and no key of
-  # clearml.conf reaches a debug sample. Credentials are clearml.conf's, and a destination this run
-  # cannot write to is refused when the run is created rather than at the epoch that first draws.
+  # and there is no other way to move it: `output_uri` is where models and artifacts go first, and an
+  # artifact falls back to this one, but no key of clearml.conf reaches a debug sample. Credentials are
+  # clearml.conf's, and a destination this run cannot write to is refused when the run is created
+  # rather than at the epoch that first draws.
   #
   # If a run that draws pages records nothing at all — scalars included — this is the second thing to
   # suspect, not the first. Numbers and files do share one queue and one worker in the SDK, so an
@@ -44,6 +45,19 @@ tracker:
   # SDK's own recovery misses that: it catches a reporter that died, never one alive and stuck.
   # `report_use_subprocess: false` in clearml.conf brought that run back.
   # media_uri: s3://bucket/clearml-media
+
+  # The files the model is in — the checkpoint the run ended holding (or, for a run that does not train,
+  # the one `run.checkpoint_path` pointed it at) and every format `export` wrote, with what it cannot be
+  # opened without — are kept as artifacts of the task, beside `model.json`. They go to the task's
+  # `output_uri` — declared here, or set by `sdk.development.default_output_uri` in clearml.conf or by
+  # the project's default — else to `media_uri`, else to the file server. ClearML's own capture of
+  # PyTorch weights is off for this; it filed every epoch's checkpoint as a model.
+  #
+  # Narrow them by a suffix as `export` spells it — a checkpoint goes by its own file's, `ckpt` for one
+  # Lightning wrote; a format above the limit stays on disk, named in a warning. Left out: every suffix,
+  # one GiB.
+  # keep_suffixes: [onnx, ckpt]
+  # keep_max_gib: 1.0
   tags:
     - ${oc.select:model.backbone.name,''}          # the family the heads are built over: timm / smp / hf_text
     - ${oc.select:model.backbone.model_name,''}    # the network itself, as timm and a text family name it

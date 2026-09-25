@@ -17,9 +17,9 @@ import numpy as np
 import torch
 from torch import Tensor
 
+from src.core import BYTES_PER_GIB
 from src.data.registry import cache_registry
 
-BYTES_PER_GIB = 1024**3
 SEGMENT_BYTES = 256 * 1024**2
 """Arenas grow one shared segment at a time, never past the budget: no upfront reservation, few handles."""
 

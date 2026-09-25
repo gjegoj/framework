@@ -1,8 +1,9 @@
-"""Trackers a test can look inside: one that shows pages, and one that only holds numbers."""
+"""Trackers a test can look inside: one that shows pages, one that keeps files, and one that only holds numbers."""
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
+from pathlib import Path
 from typing import Any
 
 from lightning.pytorch.loggers import Logger
@@ -43,3 +44,15 @@ class PageRecorder(NumbersOnly):
         if self.fails:
             raise OSError("the page could not be written")
         self.pages.append((title, html, iteration))
+
+
+class FileRecorder(NumbersOnly):
+    """A backend that can keep files, and remembers every one it was handed, by name, with its companions."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.files: list[tuple[str, tuple[str, ...]]] = []
+
+    def log_file(self, path: Path, travels_with: Sequence[Path] = ()) -> None:
+        assert path.exists() and all(one.exists() for one in travels_with), "a run handed over a file it never wrote"
+        self.files.append((path.name, tuple(one.name for one in travels_with)))

@@ -1,4 +1,4 @@
-"""Tensor trees and unbatched shapes shared by inputs and intermediate features."""
+"""Tensor trees and unbatched shapes shared by inputs and intermediate features, and the unit a size is declared in."""
 
 from __future__ import annotations
 
@@ -82,6 +82,10 @@ answer is, and what an input *is* stays what one view is, which is also what a d
 holds rather than how deep each of them is. Both folds leave a sample's own answers adjacent, which is
 the order an objective comparing them relies on, and both read this one name.
 """
+
+BYTES_PER_GIB = 1024**3
+"""Binary, as a size declared in GiB is read. In the core because more than one package declares one, and a
+package does not import another to learn a unit."""
 
 
 def drop_feature_axis(values: Tensor) -> Tensor:

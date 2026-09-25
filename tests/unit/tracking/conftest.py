@@ -26,6 +26,9 @@ class Recorded:
     connected: dict[str, Any] = field(default_factory=dict)
     flushes: int = 0
     fails_to_flush: bool = False
+    waited: list[str] = field(default_factory=list)
+    fails_to_upload: str | None = None
+    declines_upload: str | None = None
 
 
 @pytest.fixture
@@ -69,8 +72,15 @@ def clearml(monkeypatch: pytest.MonkeyPatch) -> Recorded:
         def get_logger(self) -> Backend:
             return Backend()
 
-        def upload_artifact(self, name: str, artifact_object: Any) -> None:
+        def upload_artifact(self, name: str, artifact_object: Any, wait_on_upload: bool = False) -> bool:
+            if name == recorded.fails_to_upload:
+                raise RuntimeError("the service is unreachable")
+            if name == recorded.declines_upload:
+                return False
             recorded.artifacts[name] = artifact_object
+            if wait_on_upload:
+                recorded.waited.append(name)
+            return True
 
         def connect(self, values: dict[str, Any]) -> None:
             recorded.connected = values
