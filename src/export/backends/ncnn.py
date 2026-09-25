@@ -70,8 +70,9 @@ class NcnnExporter(Exporter):
         torchscript: TorchScriptExporter | None = None,
         atol: float = ABSOLUTE_TOLERANCE,
         rtol: float = RELATIVE_TOLERANCE,
+        verify: bool = True,
     ) -> None:
-        super().__init__(atol=atol, rtol=rtol)
+        super().__init__(atol=atol, rtol=rtol, verify=verify)
         self.fp16 = fp16
         if torchscript is not None and not isinstance(torchscript, TorchScriptExporter):
             raise TypeError(

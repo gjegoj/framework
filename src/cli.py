@@ -59,7 +59,8 @@ def table_for(manifest: Manifest) -> Table:
 
     There is no verdict column, because there is no verdict to show: an artifact outside its tolerance
     stops the run rather than reaching this table. What stands in its place is the share of the
-    allowance each one used, which is the very number the refusal would have been made of.
+    allowance each one used, which is the very number the refusal would have been made of. A format
+    declared ``verify: false`` has none of those numbers, and its row says so where they would be.
     """
     built = Table(title="Shipped", show_header=True)
     built.add_column("Artifact")
@@ -68,13 +69,16 @@ def table_for(manifest: Manifest) -> Table:
     built.add_column("Worst difference", justify="right")
     built.add_column("Of its allowance", justify="right")
     for one in manifest.artifacts:
-        built.add_row(
-            one.artifact,
-            ", ".join(one.travels_with) or "nothing",
-            ", ".join(str(batch) for batch in one.parity.batches),
-            f"{one.parity.difference:.2e}",
-            f"{one.parity.allowance_used:.1%}",
+        proven = (
+            ("not verified", "—", "—")
+            if one.parity is None
+            else (
+                ", ".join(str(batch) for batch in one.parity.batches),
+                f"{one.parity.difference:.2e}",
+                f"{one.parity.allowance_used:.1%}",
+            )
         )
+        built.add_row(one.artifact, ", ".join(one.travels_with) or "nothing", *proven)
     return built
 
 

@@ -46,6 +46,16 @@ def test_a_tolerance_that_could_prove_nothing_is_refused_where_it_is_declared(at
         Writes(atol=atol, rtol=rtol)
 
 
+@pytest.mark.parametrize(
+    "declared",
+    [pytest.param({"atol": 1e-3}, id="an absolute allowance"), pytest.param({"rtol": 1e-2}, id="a relative one")],
+)
+def test_an_allowance_for_a_format_nothing_compares_is_refused(declared: dict[str, float]) -> None:
+    """An allowance is what a comparison is judged by; beside `verify: false` it would be read by nothing."""
+    with pytest.raises(ValueError, match="`verify: false`"):
+        Writes(verify=False, **declared)
+
+
 def test_asking_where_an_artifact_goes_writes_nothing(tmp_path: Path) -> None:
     """A question with a side effect leaves empty directories behind for every format a run considered."""
     destination = tmp_path / "artifacts" / "model"

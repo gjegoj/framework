@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
@@ -16,6 +17,8 @@ from src.core import DatasetInfo, Normalization, class_name
 from src.export.base import BATCH_AXIS, WRITTEN_FROM, Exporter, beside
 from src.export.deployable import DeployableModel, as_outputs, example_inputs
 from src.export.verification import Parity, verify
+
+log = logging.getLogger(__name__)
 
 MANIFEST_SUFFIX = "json"
 """What the record is written under, beside the artifacts it describes and named as they are."""
@@ -71,6 +74,8 @@ class ArtifactRecord:
 
     A record of an artifact nobody compared with the model would be a record of a guess, so the parity
     travels with it — including the batch sizes it was asked at, because that is the claim being made.
+    Where a run declared ``verify: false`` for the format, nobody did compare it, and ``parity`` is
+    ``None``: the record says so rather than carrying a number nobody measured.
 
     ``artifact`` is the file a deployment opens and ``travels_with`` what has to be beside it. Two names
     rather than one list, because those are two questions and a list answers them only to a reader who
@@ -81,7 +86,7 @@ class ArtifactRecord:
     travels_with: tuple[str, ...]
     written_by: str
     details: Mapping[str, object]
-    parity: Parity
+    parity: Parity | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -166,7 +171,13 @@ def _written(
     exporter: Exporter, graph: DeployableModel, example: tuple[Tensor, ...], destination: Path
 ) -> ArtifactRecord:
     path = exporter.export(graph, example, destination)
-    parity = verify(exporter, path, graph, example)
+    parity = verify(exporter, path, graph, example) if exporter.verify else None
+    if parity is None:
+        log.warning(
+            "%s is shipped without being compared with the model: its format was declared `verify: false`, so "
+            "nothing here shows it answers what the model answers, and its record carries no parity.",
+            path.name,
+        )
     return ArtifactRecord(
         artifact=path.name,
         travels_with=tuple(one.name for one in exporter.travels_with(path)),

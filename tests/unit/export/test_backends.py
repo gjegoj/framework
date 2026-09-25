@@ -136,6 +136,13 @@ def test_an_example_of_one_row_cannot_carry_a_free_batch_and_is_refused_saying_s
         exporter(format_name).export(deployable(), example(1), tmp_path / "model")
 
 
+@pytest.mark.parametrize("format_name", EVERY)
+def test_any_format_can_be_declared_without_a_comparison(format_name: str) -> None:
+    """The declaration is the one place a run says its machine cannot run a format; a backend whose own
+    constructor did not take it would refuse the run with a bare `TypeError` instead."""
+    assert exporter(format_name, verify=False).verify is False
+
+
 def test_the_names_the_graph_declares_are_the_names_inside_the_onnx_file(tmp_path: Path) -> None:
     """Named tensors are what a serving runtime feeds by; nothing else in the tree checks they landed."""
     import onnxruntime

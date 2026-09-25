@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -163,6 +164,7 @@ def test_a_manifest_carries_what_each_artifact_was_proven_by(tmp_path: Path) -> 
     """A record of an artifact nobody compared with the model would be a record of a guess."""
     (built,) = shipped(tmp_path, {"name": "pt2"}).artifacts
 
+    assert built.parity is not None, "compared, since nothing declared otherwise"
     assert built.parity.within_tolerance
     assert built.parity.batches == (2, 1)
 
@@ -256,6 +258,23 @@ def test_a_publication_that_fails_leaves_no_record_standing_over_the_artifact_it
     assert not record.exists()
 
 
+def test_a_format_declared_without_a_comparison_ships_with_a_record_that_claims_none(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """For a machine that cannot run what it writes: measured 2026-09-25, ncnn 1.0.20260526 answers noise on
+    an x86 CPU with AVX-512 FP16 for a graph that matches its model on ARM to 1e-7. Nothing written from this
+    graph can match it, so reaching a record at all is what shows nothing compared the two — and the record
+    and the log both say so, rather than a number nobody measured."""
+    restless = DeployableModel(Restless(), [Regression("value", TargetInfo())], input_names=("features",))
+
+    with caplog.at_level(logging.WARNING):
+        (built,) = shipped(tmp_path, {"name": "torchscript", "verify": False}, graph=restless).artifacts
+
+    written = json.loads(beside(tmp_path / "model", MANIFEST_SUFFIX).read_text(encoding="utf-8"))
+    assert built.parity is None and written["artifacts"][0]["parity"] is None
+    assert "model.pt is shipped without being compared with the model" in caplog.text
+
+
 class Dropping(Model):
     """A network that answers differently in training, which is what makes the state visible at all."""
 
@@ -280,7 +299,8 @@ def test_an_artifact_is_written_from_the_model_in_eval_however_it_was_handed_ove
 
     manifest = ship(graph, prepared(), formats, tmp_path / "model")
 
-    assert manifest.artifacts[0].parity.within_tolerance
+    parity = manifest.artifacts[0].parity
+    assert parity is not None and parity.within_tolerance
 
 
 def test_a_stream_a_head_publishes_for_a_term_is_not_carried_into_the_artifact(tmp_path: Path) -> None:

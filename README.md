@@ -637,7 +637,8 @@ TorchScript graph, and `tensorrt` compiles the ONNX graph for one GPU — it nee
 `tensorrt` package, which is not a dependency here and needs a GPU at import.
 
 Each artifact is checked against the model it came from and described by a `model.json`
-beside it.
+beside it. Where the exporting machine cannot run a format correctly, `verify: false` on that
+format ships it uncompared — the log says so, and its record carries `parity: null`.
 
 Trackers: `none` (default), `csv` for a local file, `clearml` to upload. `lr_monitor`
 needs one; `metric_summary` adds its table only where a backend keeps one, and is left

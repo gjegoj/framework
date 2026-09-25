@@ -79,8 +79,9 @@ class TensorRtExporter(Exporter):
         onnx: OnnxExporter | None = None,
         atol: float = ABSOLUTE_TOLERANCE,
         rtol: float = RELATIVE_TOLERANCE,
+        verify: bool = True,
     ) -> None:
-        super().__init__(atol=atol, rtol=rtol)
+        super().__init__(atol=atol, rtol=rtol, verify=verify)
         if precision not in set(Precision):
             raise ValueError(f"Unknown TensorRT precision {precision!r}; an engine is built in {', '.join(Precision)}.")
         if not 0 < min_batch <= opt_batch <= max_batch:

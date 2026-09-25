@@ -78,6 +78,23 @@ def test_every_number_is_shown_under_the_column_that_names_it() -> None:
     }
 
 
+def test_an_artifact_nothing_compared_says_so_where_its_numbers_would_be() -> None:
+    """A run may declare `verify: false`; a blank there would read as a comparison that found nothing."""
+    artifact = ArtifactRecord(
+        artifact="model.param", travels_with=("model.bin",), written_by="NcnnExporter", details={}, parity=None
+    )
+
+    built = cli.table_for(Manifest(inputs=(), outputs=(), artifacts=(artifact,)))
+
+    assert {one.header: list(one.cells) for one in built.columns} == {
+        "Artifact": ["model.param"],
+        "Travels with": ["model.bin"],
+        "Proven at": ["not verified"],
+        "Worst difference": ["—"],
+        "Of its allowance": ["—"],
+    }
+
+
 def test_an_artifact_that_travels_alone_says_so_rather_than_leaving_a_blank() -> None:
     artifact = ArtifactRecord(
         artifact="model.pt2", travels_with=(), written_by="Pt2Exporter", details={}, parity=Parity(0.0, 0.0, (2, 1))

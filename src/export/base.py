@@ -124,15 +124,26 @@ class Exporter(ABC):
 
     Tolerances live here because they are knowledge of the format rather than of any one run: how much
     a written graph drifts follows from how it is written, and nothing a config could say changes it.
+
+    ``verify: false`` is the one exception, and it is the run's to declare rather than the format's: a
+    machine whose runtime cannot be trusted with the format it writes. Measured 2026-09-25, ncnn
+    1.0.20260526 on an x86 CPU with AVX-512 FP16 answers noise for a graph that matches its model on ARM
+    to 1e-7. The file is then shipped with a record that says nothing compared it, never a number.
     """
 
     suffix: ClassVar[str]
     """The extension this format writes under; an artifact's name is built from it."""
 
-    def __init__(self, atol: float = ABSOLUTE_TOLERANCE, rtol: float = RELATIVE_TOLERANCE) -> None:
+    def __init__(self, atol: float = ABSOLUTE_TOLERANCE, rtol: float = RELATIVE_TOLERANCE, verify: bool = True) -> None:
         _refuse_an_allowance_that_proves_nothing(atol, rtol)
+        if not verify and (atol, rtol) != (ABSOLUTE_TOLERANCE, RELATIVE_TOLERANCE):
+            raise ValueError(
+                f"An allowance of atol {atol} and rtol {rtol} is what a comparison is judged by, and "
+                "`verify: false` declares there will be none. Declare one or the other."
+            )
         self.atol = atol
         self.rtol = rtol
+        self.verify = verify
 
     def artifact_path(self, destination: Path) -> Path:
         """Where this format's artifact goes: ``destination`` under this format's own suffix."""

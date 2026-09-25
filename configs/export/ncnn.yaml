@@ -8,6 +8,12 @@
 # `fp16` is what a phone is usually given an ncnn graph for; it is written out here because it is the
 # only choice this format has. The TorchScript step it converts from can be declared under it the way
 # `tensorrt.yaml` declares its ONNX one, and is left out because nothing about that step is a choice.
+#
+# The graph is read back and compared with the model on the machine that exports it, so that machine's
+# ncnn has to compute correctly. Measured 2026-09-25: ncnn 1.0.20260526 on an x86 CPU with AVX-512 FP16
+# answers noise for a graph that matches the model on ARM to 1e-7. There, `verify: false` ships the graph
+# uncompared, says so in the log, and records its parity as null — check it where it will run instead.
 export:
   - name: ncnn
     fp16: false
+    # verify: false
