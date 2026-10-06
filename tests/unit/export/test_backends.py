@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import subprocess
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -278,6 +278,111 @@ def test_the_converter_is_handed_one_sample_because_an_ncnn_graph_has_no_batch_a
 
     assert traced == [1]
     assert told["inputshape"] == f"[1,{FEATURES}]" and "inputshape2" not in told
+
+
+class Scaled(Model):
+    """A head shifted and scaled twice through `torch.addcmul`, the way timm's GlobalResponseNorm writes it."""
+
+    def __init__(self, reads: str, width: int) -> None:
+        super().__init__()
+        self._reads = reads
+        self.head = nn.Linear(FEATURES, width)
+        self.weight = nn.Parameter(torch.randn(width))
+        self.bias = nn.Parameter(torch.randn(width))
+
+    def forward(self, inputs: Mapping[str, TensorTree]) -> ModelOutput:
+        features = self.head(require_tensor(inputs[self._reads], name=self._reads))
+        once = torch.addcmul(self.bias, self.weight, features)
+        return ModelOutput(outputs={"species": torch.addcmul(self.bias, self.weight, once)})
+
+
+def scaled() -> DeployableModel:
+    task = Classification("species", TargetInfo(classes={0: "cat", 1: "dog"}))
+    return DeployableModel(Scaled("features", task.out_features()), [task], input_names=("features",)).eval()
+
+
+def pnnx_stand_in(
+    param: str = "", reading: Callable[[Path], None] = lambda traced: None
+) -> Callable[..., subprocess.CompletedProcess[str]]:
+    """What the converter does, as far as this backend can see: reads the traced file it is handed, and
+    writes the graph it is told to — `param` as the text of it — beside an empty `.bin`."""
+
+    def converter(argv: list[str], **options: Any) -> subprocess.CompletedProcess[str]:
+        reading(Path(options["cwd"]) / argv[1])
+        told = dict(one.split("=", 1) for one in argv[1:] if "=" in one)
+        Path(told["ncnnparam"]).write_text(param)
+        Path(told["ncnnbin"]).write_bytes(b"")
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    return converter
+
+
+def test_an_operation_pnnx_has_no_layer_for_is_rewritten_into_ones_it_has_and_the_run_is_told(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Measured 2026-10-06, pnnx 20260526 on a ConvNeXt-V2: every `torch.addcmul` — timm's GRN, one per
+    block — came out as an `aten::addcmul` layer ncnn does not have, and the graph loaded nowhere. The
+    converter is handed the same arithmetic in operations it converts, and the run says how many it was."""
+    graph, one = scaled(), example(1)
+    handed: list[Any] = []
+    monkeypatch.setattr(
+        ncnn.subprocess, "run", pnnx_stand_in(reading=lambda traced: handed.append(torch.jit.load(str(traced))))
+    )
+
+    with caplog.at_level(logging.INFO, logger=ncnn.__name__):
+        exporter("ncnn").export(graph, example(), tmp_path / "model")
+
+    (converted,) = handed
+    assert "aten::addcmul" not in str(converted.inlined_graph)
+    torch.testing.assert_close(as_outputs(converted(*one)), as_outputs(graph(*one)))
+    assert any("rewrote 2" in record.getMessage() for record in caplog.records), caplog.text
+
+
+def test_a_graph_pnnx_converts_whole_reaches_it_as_torch_saved_it_and_nothing_is_said(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Rewritten only where there is something to rewrite: a graph without the operation reaches the
+    converter byte for byte as torch saved it, and a line about a rewrite that never happened is noise."""
+    saved: list[bytes] = []
+
+    class Tracing(TorchScriptExporter):
+        def write(self, graph: DeployableModel, example: tuple[Tensor, ...], path: Path) -> None:
+            super().write(graph, example, path)
+            saved.append(path.read_bytes())
+
+    handed: list[bytes] = []
+    monkeypatch.setattr(
+        ncnn.subprocess, "run", pnnx_stand_in(reading=lambda traced: handed.append(traced.read_bytes()))
+    )
+
+    with caplog.at_level(logging.INFO, logger=ncnn.__name__):
+        exporter("ncnn", torchscript=Tracing()).export(deployable(), example(), tmp_path / "model")
+
+    assert handed == saved
+    assert not [record for record in caplog.records if record.name == ncnn.__name__]
+
+
+UNFINISHED_GRAPH = """7767517
+4 5
+Input in0 0 1 in0
+pnnx.Expression pnnx_expr_0 0 1 one
+aten::addcmul pnnx_0 4 1 bias weight in0 one x
+aten::addcmul pnnx_1 4 1 bias weight x one out0
+"""
+"""What pnnx 20260526 wrote for a ConvNeXt-V2, cut down: two operations it left under their torch names,
+and the constant they shared under its own."""
+
+
+def test_a_layer_pnnx_left_unconverted_is_refused_by_name_rather_than_shipped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Measured: ncnn reads a graph up to the first layer of a name it does not have, answers
+    `layer pnnx.Expression not exists or registered`, and refuses the whole file. Read off the text, which
+    needs no ncnn at all — so it holds under `verify: false`, which ships without loading anything."""
+    monkeypatch.setattr(ncnn.subprocess, "run", pnnx_stand_in(param=UNFINISHED_GRAPH))
+
+    with pytest.raises(RuntimeError, match=r"aten::addcmul \(2\).*pnnx\.Expression \(1\)"):
+        exporter("ncnn", verify=False).export(deployable(), example(), tmp_path / "model")
 
 
 def test_a_graph_ncnn_will_not_read_is_refused_rather_than_crashing_the_process(tmp_path: Path) -> None:

@@ -17,13 +17,14 @@ from src.export.registry import exporter_registry
 
 
 @contextmanager
-def _without_the_authoring_notice() -> Iterator[None]:
-    """Silence torch's ``torch.jit`` deprecation notice around this module's own calls, and only there.
+def without_the_authoring_notice() -> Iterator[None]:
+    """Silence torch's ``torch.jit`` deprecation notice around this package's own calls, and only there.
 
     What torch deprecated is the authoring API, not the artifact: a ``.pt`` file is what libtorch loads,
     and choosing to write one is a decision this module states in full below. Repeating a notice about a
     decision already made, on every call of a run, teaches a reader to skim warnings — and every other
-    deprecation, including ones they can act on, still reaches them.
+    deprecation, including ones they can act on, still reaches them. Public because the ncnn backend reads
+    and rewrites the very file this module writes, and says the same about it.
     """
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", message=r"`torch\.jit\.", category=DeprecationWarning)
@@ -52,15 +53,15 @@ class TorchScriptExporter(Exporter):
     suffix: ClassVar[str] = "pt"
 
     def write(self, graph: DeployableModel, example: tuple[Tensor, ...], path: Path) -> None:
-        with torch.no_grad(), _without_the_authoring_notice():
+        with torch.no_grad(), without_the_authoring_notice():
             torch.jit.save(torch.jit.trace(graph, example), str(path))
 
     def load(self, path: Path) -> Runnable:
-        with _without_the_authoring_notice():
+        with without_the_authoring_notice():
             module = torch.jit.load(str(path))
 
         def run(tensors: tuple[Tensor, ...]) -> tuple[Tensor, ...]:
-            with torch.no_grad(), _without_the_authoring_notice():
+            with torch.no_grad(), without_the_authoring_notice():
                 return as_outputs(cast(Any, module(*tensors)))
 
         return run

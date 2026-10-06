@@ -636,6 +636,11 @@ export:
 TorchScript graph, and `tensorrt` compiles the ONNX graph for one GPU — it needs the
 `tensorrt` package, which is not a dependency here and needs a GPU at import.
 
+`pnnx` has no ncnn layer for `torch.addcmul` — the GRN in every ConvNeXt-V2 block — so the
+ncnn export hands it `add(input, mul(t1, t2), alpha=value)` instead, the same arithmetic,
+and the log says how many it rewrote. Whatever else `pnnx` leaves unconverted is refused
+by name before the graph ships, `verify: false` or not.
+
 Each artifact is checked against the model it came from and described by a `model.json`
 beside it. Where the exporting machine cannot run a format correctly, `verify: false` on that
 format ships it uncompared — the log says so, and its record carries `parity: null`.

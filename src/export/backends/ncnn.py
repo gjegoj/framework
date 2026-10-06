@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import logging
 import subprocess
+from collections import Counter
 from collections.abc import Mapping
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -12,10 +14,37 @@ import numpy
 import torch
 from torch import Tensor
 
-from src.export.backends.torchscript import TorchScriptExporter
+from src.export.backends.torchscript import TorchScriptExporter, without_the_authoring_notice
 from src.export.base import ABSOLUTE_TOLERANCE, BATCH_AXIS, RELATIVE_TOLERANCE, Exporter, Runnable
 from src.export.deployable import DeployableModel
 from src.export.registry import exporter_registry
+
+log = logging.getLogger(__name__)
+
+ADDCMUL = """
+graph(%input, %tensor1, %tensor2, %value):
+    %result = aten::addcmul(%input, %tensor1, %tensor2, %value)
+    return (%result)"""
+AS_ADD_OF_MUL = """
+graph(%input, %tensor1, %tensor2, %value):
+    %product = aten::mul(%tensor1, %tensor2)
+    %result = aten::add(%input, %product, %value)
+    return (%result)"""
+"""The one operation pnnx is known to leave unconverted, and the same arithmetic in two it converts.
+
+Measured 2026-10-06 with pnnx 20260526 on a ConvNeXt-V2 nano: each `torch.addcmul` — timm's
+GlobalResponseNorm, once per block — came out as an `aten::addcmul` layer, its ``value=1`` as a
+`pnnx.Expression`, and ncnn 1.0.20260526 refused the file. ``addcmul(input, t1, t2, value)`` is
+``add(input, mul(t1, t2), alpha=value)`` by definition, so no approximation is made: on that model the
+rewritten graph answered as the original to 1.2e-7 at 128x128 and to 0 at 224x224.
+"""
+
+UNCONVERTED = ("::", ".")
+"""How a layer pnnx could not convert is spelled in the graph it writes.
+
+Under its own operator name — `aten::addcmul`, `pnnx.Expression` — where every ncnn layer is a bare
+word: `BinaryOp`, `Convolution`, `InnerProduct`.
+"""
 
 WEIGHTS = "bin"
 """What an ncnn graph's weights are called, sitting beside the graph itself.
@@ -54,6 +83,10 @@ class NcnnExporter(Exporter):
 
     The names do not survive: ncnn blobs are pnnx's (``in0``, ``out0``), not this run's task names, so a
     deployment reads them out of the ``.param`` and a record of this artifact has to say the order.
+
+    What pnnx cannot convert it leaves in the graph under its torch name, and ncnn then refuses the whole
+    file. The one such operation known here, ``addcmul``, is rewritten before conversion — out loud, in
+    the run's log — and any other is refused by name once pnnx has written the graph.
 
     Measured 2026-09-25 with pnnx 20260526 and ncnn 1.0.20260526 on Linux, where the converter starts: a
     mobilenetv3 run was converted and read back by the reader below, and the one row ``write`` traces at
@@ -116,6 +149,7 @@ class NcnnExporter(Exporter):
         with TemporaryDirectory() as scratch:
             traced = self.torchscript.artifact_path(Path(scratch) / "graph")
             self.torchscript.write(graph, one, traced)
+            _rewrite_what_pnnx_cannot_convert(traced)
             self._convert(converter, traced, one, path, Path(scratch))
 
     def _convert(self, converter: Path, traced: Path, example: tuple[Tensor, ...], path: Path, scratch: Path) -> None:
@@ -152,6 +186,7 @@ class NcnnExporter(Exporter):
                 f"{', missing ' + ', '.join(missing) if missing else ''}). It said: "
                 f"{' | '.join(trouble[-3:]) or 'nothing at all'}"
             )
+        _refuse_layers_ncnn_does_not_have(path)
 
     def load(self, path: Path) -> Runnable:
         import ncnn
@@ -177,6 +212,56 @@ class NcnnExporter(Exporter):
             return tuple(torch.from_numpy(numpy.stack([row[at] for row in rows])) for at in range(len(answers)))
 
         return run
+
+
+def _rewrite_what_pnnx_cannot_convert(traced: Path) -> None:
+    """Hand the converter ``addcmul`` as the ``add`` of a ``mul``, and say so, with how many were rewritten.
+
+    Here, on the scratch copy the converter reads, rather than in the TorchScript step: a ``.pt`` is
+    loaded by libtorch, which has ``addcmul``, so the artifact a run declares as ``torchscript`` stays as
+    torch wrote it. Inlined first, because the call sits inside each block's own method and a pattern is
+    matched within one graph; saved back only when something was rewritten, so a graph without the
+    operation reaches the converter byte for byte as torch saved it.
+
+    The number said is read off the graph after the pass, not counted before it: a form the pattern does
+    not match stays as it was, is not reported as rewritten, and is refused once pnnx has written it.
+    """
+    with without_the_authoring_notice():
+        module = torch.jit.load(str(traced))
+        graph = module.graph
+        torch._C._jit_pass_inline(graph)
+        found = len(graph.findAllNodes("aten::addcmul"))
+        if not found:
+            return
+        torch._C._jit_pass_custom_pattern_based_rewrite_graph(ADDCMUL, AS_ADD_OF_MUL, graph)
+        rewritten = found - len(graph.findAllNodes("aten::addcmul"))
+        if rewritten:
+            module.save(str(traced))
+    log.info(
+        "pnnx has no ncnn layer for torch.addcmul, so before converting this rewrote %d of the %d in the traced "
+        "graph as add(input, mul(tensor1, tensor2), alpha=value) — the same arithmetic, in operations it has.",
+        rewritten,
+        found,
+    )
+
+
+def _refuse_layers_ncnn_does_not_have(path: Path) -> None:
+    """A graph pnnx could not finish is refused here, by the names of what it left.
+
+    Measured: ncnn reads a graph up to the first layer of a name it does not have and refuses the whole
+    file, so such a graph loads nowhere. Read off the text, which needs no ncnn: ``verify: false`` ships
+    without loading anything, and that is exactly how a graph like this once left a run.
+    """
+    lines = path.read_text(encoding="utf-8").splitlines()[2:]  # past the magic number and the counts
+    kinds = (line.split(maxsplit=1)[0] for line in lines if line.strip())
+    left = Counter(kind for kind in kinds if any(mark in kind for mark in UNCONVERTED))
+    if left:
+        named = ", ".join(f"{kind} ({count})" for kind, count in sorted(left.items()))
+        raise RuntimeError(
+            f"pnnx left {named} in {path.name}, and ncnn has no layer by that name, so the graph would load "
+            "nowhere. The model computes something pnnx converts to none of ncnn's layers: write it in "
+            "operations pnnx does convert — as this backend does for torch.addcmul — or export another format."
+        )
 
 
 def _extracted(extractor: Any, name: str, path: Path) -> numpy.ndarray:

@@ -5,6 +5,8 @@
 # (pnnx 20260526) needs macOS 15 — on an older Mac this refuses, naming the converter's own error.
 # ncnn names its own blobs (`in0`, `out0`) rather than keeping this run's task names, so a deployment
 # reads them from the `.param` and takes the outputs in the order the record lists them.
+# pnnx has no ncnn layer for `torch.addcmul` (ConvNeXt-V2's GRN), so it is handed the same arithmetic as
+# add + mul, and the log says how many; any other operation pnnx leaves unconverted is refused by name.
 # `fp16` is what a phone is usually given an ncnn graph for; it is written out here because it is the
 # only choice this format has. The TorchScript step it converts from can be declared under it the way
 # `tensorrt.yaml` declares its ONNX one, and is left out because nothing about that step is a choice.
